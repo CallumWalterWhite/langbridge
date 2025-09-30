@@ -1,0 +1,37 @@
+version: 1.0
+services:
+  langbridge:
+    build: .
+    container_name: langbridge
+    ports:
+      - "8000:8000"
+    environment:
+      - ENV=production
+      - PORT=8000
+      - DB_HOST=db
+      - DB_PORT=5432
+      - DB_USER=your_db_user
+      - DB_PASSWORD=your_db_password
+      - DB_NAME=your_db_name
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - SECRET_KEY=your_secret_key
+    depends_on:
+      - db
+      - redis
+
+  db:
+    image: postgres:13
+    container_name: langbridge_db
+    environment:
+      - POSTGRES_USER=your_db_user
+      - POSTGRES_PASSWORD=your_db_password
+      - POSTGRES_DB=your_db_name
+    volumes:
+      - db_data:/var/lib/postgresql/data
+
+  redis:
+    image: redis:6
+    container_name: langbridge_redis
+    ports:
+      - "6379:6379"

@@ -1,0 +1,10 @@
+registries:
+  - type: github
+    client_id: 'github_client_id'
+    client_secret: 'github_client_secret'
+    authorize_url: 'github_authorize_url'
+    access_token_url: 'github_access_token_url'
+    api_base_url: 'github_api_base_url'
+    scopes:
+      - 'read:user'
+      - 'user:email'
