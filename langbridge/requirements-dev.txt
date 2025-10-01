@@ -2,3 +2,5 @@ fastapi[standard]==0.117.1
 pydantic_settings==2.11.0
 dependency-injector==4.48.2
 sqlalchemy==2.0.43
+authlib==1.6.4
+itsdangerous==2.2.0
