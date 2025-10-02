@@ -1,37 +1,68 @@
-version: 1.0
+version: "3.9"
 services:
-  langbridge:
-    build: .
-    container_name: langbridge
+  backend:
+    build:
+      context: ./langbridge
+      dockerfile: Dockerfile
+    container_name: langbridge-backend
+    env_file:
+      - ./langbridge/.env
+    environment:
+      ENVIRONMENT: development
+      BACKEND_URL: http://localhost:8000
+      FRONTEND_URL: http://localhost:3000
+      POSTGRES_SERVER: db
+      POSTGRES_PORT: 5432
+      POSTGRES_USER: langbridge
+      POSTGRES_PASSWORD: langbridge
+      POSTGRES_DB: langbridge
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
     ports:
       - "8000:8000"
+  client:
+    build:
+      context: ./client
+      dockerfile: Dockerfile
+      args:
+        NEXT_PUBLIC_BACKEND_URL: http://localhost:8000
+    container_name: langbridge-client
     environment:
-      - ENV=production
-      - PORT=8000
-      - DB_HOST=db
-      - DB_PORT=5432
-      - DB_USER=your_db_user
-      - DB_PASSWORD=your_db_password
-      - DB_NAME=your_db_name
-      - REDIS_HOST=redis
-      - REDIS_PORT=6379
-      - SECRET_KEY=your_secret_key
+      NODE_ENV: production
+      NEXT_PUBLIC_BACKEND_URL: http://localhost:8000
+      PORT: 3000
     depends_on:
-      - db
-      - redis
-
+      - backend
+    ports:
+      - "3000:3000"
   db:
-    image: postgres:13
-    container_name: langbridge_db
+    image: postgres:16-alpine
+    container_name: langbridge-db
     environment:
-      - POSTGRES_USER=your_db_user
-      - POSTGRES_PASSWORD=your_db_password
-      - POSTGRES_DB=your_db_name
+      POSTGRES_USER: langbridge
+      POSTGRES_PASSWORD: langbridge
+      POSTGRES_DB: langbridge
     volumes:
-      - db_data:/var/lib/postgresql/data
-
+      - pg_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U langbridge"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
   redis:
-    image: redis:6
-    container_name: langbridge_redis
+    image: redis:7-alpine
+    container_name: langbridge-redis
     ports:
       - "6379:6379"
+    volumes:
+      - redis_data:/data
+volumes:
+  pg_data:
+  redis_data:

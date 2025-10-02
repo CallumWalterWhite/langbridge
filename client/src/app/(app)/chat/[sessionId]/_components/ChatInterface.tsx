@@ -60,7 +60,7 @@ export function ChatInterface({ sessionId }: ChatInterfaceProps) {
     refetchInterval: 8000,
   });
 
-  const messages = chatQuery.data ?? [];
+  const messages = useMemo(() => chatQuery.data ?? [], [chatQuery.data]);
 
   const sendMessageMutation = useMutation<ChatMessagePair, Error, { content: string }, { snapshot: ChatMessage[]; optimisticId: string }>(
     {

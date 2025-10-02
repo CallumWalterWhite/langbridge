@@ -12,6 +12,8 @@ type DialogContextValue = {
 
 const DialogContext = React.createContext<DialogContextValue | null>(null);
 
+type DialogInteractiveElement = React.ReactElement;
+
 export interface DialogProps {
   open?: boolean;
   defaultOpen?: boolean;
@@ -46,14 +48,18 @@ function useDialogContext(component: string) {
 }
 
 export interface DialogTriggerProps {
-  children: React.ReactElement;
+  children: DialogInteractiveElement;
 }
 
 export function DialogTrigger({ children }: DialogTriggerProps) {
   const { setOpen } = useDialogContext('DialogTrigger');
-  return React.cloneElement(children, {
-    onClick: (event: React.MouseEvent) => {
-      children.props.onClick?.(event);
+  const interactiveChild = children as React.ReactElement<{
+    onClick?: React.MouseEventHandler<HTMLElement>;
+  }>;
+
+  return React.cloneElement(interactiveChild, {
+    onClick: (event: React.MouseEvent<HTMLElement>) => {
+      interactiveChild.props.onClick?.(event);
       if (!event.defaultPrevented) {
         setOpen(true);
       }
@@ -143,21 +149,25 @@ export const DialogDescription = ({ className, ...props }: React.HTMLAttributes<
   <p className={cn('text-sm text-slate-600', className)} {...props} />
 );
 
-export interface DialogFooterProps extends React.HTMLAttributes<HTMLDivElement> {}
+export type DialogFooterProps = React.HTMLAttributes<HTMLDivElement>;
 
 export const DialogFooter = ({ className, ...props }: DialogFooterProps) => (
   <div className={cn('mt-8 flex flex-col-reverse gap-3 sm:flex-row sm:justify-end', className)} {...props} />
 );
 
 export interface DialogCloseProps {
-  children: React.ReactElement;
+  children: DialogInteractiveElement;
 }
 
 export function DialogClose({ children }: DialogCloseProps) {
   const { setOpen } = useDialogContext('DialogClose');
-  return React.cloneElement(children, {
-    onClick: (event: React.MouseEvent) => {
-      children.props.onClick?.(event);
+  const interactiveChild = children as React.ReactElement<{
+    onClick?: React.MouseEventHandler<HTMLElement>;
+  }>;
+
+  return React.cloneElement(interactiveChild, {
+    onClick: (event: React.MouseEvent<HTMLElement>) => {
+      interactiveChild.props.onClick?.(event);
       if (!event.defaultPrevented) {
         setOpen(false);
       }

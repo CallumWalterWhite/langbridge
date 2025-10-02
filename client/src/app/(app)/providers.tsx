@@ -2,10 +2,11 @@
 
 import * as React from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import type { QueryClientConfig } from '@tanstack/react-query';
 
 import { ToastProvider } from '@/components/ui/toast';
 
-const queryClientConfig = {
+const queryClientConfig: QueryClientConfig = {
   defaultOptions: {
     queries: {
       refetchOnWindowFocus: false,
@@ -16,7 +17,7 @@ const queryClientConfig = {
       retry: 0,
     },
   },
-} satisfies Parameters<typeof QueryClient>[0];
+};
 
 export function AppProviders({ children }: { children: React.ReactNode }) {
   const [queryClient] = React.useState(() => new QueryClient(queryClientConfig));
@@ -27,3 +28,4 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
     </QueryClientProvider>
   );
 }
+

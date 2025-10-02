@@ -51,9 +51,13 @@ export interface DrawerTriggerProps {
 
 export function DrawerTrigger({ children }: DrawerTriggerProps) {
   const { setOpen } = useDrawer('DrawerTrigger');
-  return React.cloneElement(children, {
-    onClick: (event: React.MouseEvent) => {
-      children.props.onClick?.(event);
+  const interactiveChild = children as React.ReactElement<{
+    onClick?: React.MouseEventHandler<HTMLElement>;
+  }>;
+
+  return React.cloneElement(interactiveChild, {
+    onClick: (event: React.MouseEvent<HTMLElement>) => {
+      interactiveChild.props.onClick?.(event);
       if (!event.defaultPrevented) {
         setOpen(true);
       }
@@ -140,9 +144,13 @@ export interface DrawerCloseProps {
 
 export function DrawerClose({ children }: DrawerCloseProps) {
   const { setOpen } = useDrawer('DrawerClose');
-  return React.cloneElement(children, {
-    onClick: (event: React.MouseEvent) => {
-      children.props.onClick?.(event);
+  const interactiveChild = children as React.ReactElement<{
+    onClick?: React.MouseEventHandler<HTMLElement>;
+  }>;
+
+  return React.cloneElement(interactiveChild, {
+    onClick: (event: React.MouseEvent<HTMLElement>) => {
+      interactiveChild.props.onClick?.(event);
       if (!event.defaultPrevented) {
         setOpen(false);
       }
