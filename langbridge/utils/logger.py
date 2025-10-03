@@ -2,7 +2,7 @@ import logging
 from logging.handlers import RotatingFileHandler
 import os
 
-LOCAL_LOG_DIR = '/var/log/'
+LOCAL_LOG_DIR = './'
 
 def get_root_logger():
     """Returns the root logger object ("")

@@ -10,10 +10,10 @@ type ButtonVariant = 'default' | 'secondary' | 'outline' | 'ghost';
 type ButtonSize = 'sm' | 'md' | 'lg' | 'icon';
 
 const VARIANT_CLASSES: Record<ButtonVariant, string> = {
-  default: 'bg-slate-900 text-white hover:bg-slate-900/90 focus-visible:ring-slate-900',
-  secondary: 'bg-white text-slate-900 border border-slate-200 hover:bg-slate-100 focus-visible:ring-slate-200',
-  outline: 'border border-slate-200 text-slate-900 hover:bg-slate-100 focus-visible:ring-slate-200',
-  ghost: 'text-slate-700 hover:bg-slate-100 focus-visible:ring-slate-200',
+  default: 'bg-[color:var(--accent)] text-white hover:bg-[color:var(--accent-strong)] focus-visible:ring-[color:var(--accent)]',
+  secondary: 'border border-[color:var(--panel-border)] bg-[color:var(--panel-bg)] text-[color:var(--text-primary)] hover:bg-[color:var(--panel-alt)] focus-visible:ring-[color:var(--border-strong)]',
+  outline: 'border border-[color:var(--border-strong)] bg-transparent text-[color:var(--text-primary)] hover:bg-[color:var(--panel-alt)] focus-visible:ring-[color:var(--border-strong)]',
+  ghost: 'bg-transparent text-[color:var(--text-secondary)] hover:bg-[color:var(--panel-alt)] focus-visible:ring-[color:var(--border-strong)]',
 };
 
 const SIZE_CLASSES: Record<ButtonSize, string> = {
@@ -50,7 +50,7 @@ export const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
       <button
         ref={ref}
         className={cn(
-          'inline-flex items-center justify-center gap-2 rounded-md font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50',
+          'inline-flex items-center justify-center gap-2 rounded-md font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--app-bg)] disabled:pointer-events-none disabled:opacity-50',
           VARIANT_CLASSES[variant],
           SIZE_CLASSES[size],
           className,
