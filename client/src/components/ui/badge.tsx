@@ -5,11 +5,11 @@ import { cn } from '@/lib/utils';
 type BadgeVariant = 'default' | 'success' | 'destructive' | 'secondary' | 'warning';
 
 const VARIANT_MAP: Record<BadgeVariant, string> = {
-  default: 'bg-slate-900 text-white',
-  success: 'bg-emerald-100 text-emerald-700',
-  destructive: 'bg-red-100 text-red-700',
-  secondary: 'bg-slate-200 text-slate-800',
-  warning: 'bg-amber-100 text-amber-700',
+  default: 'bg-[color:var(--accent)] text-white',
+  success: 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-200',
+  destructive: 'bg-red-500/15 text-red-600 dark:text-red-200',
+  secondary: 'bg-[color:var(--chip-bg)] text-[color:var(--text-secondary)]',
+  warning: 'bg-amber-500/15 text-amber-600 dark:text-amber-200',
 };
 
 export interface BadgeProps extends React.HTMLAttributes<HTMLSpanElement> {

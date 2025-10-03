@@ -12,10 +12,12 @@ import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useToast } from '@/components/ui/toast';
 import { cn, formatRelativeDate } from '@/lib/utils';
+import { createChatSession } from '@/orchestration/chat';
+import type { ChatSessionResponse } from '@/orchestration/chat';
 
 import { AddSourceDialog } from './AddSourceDialog';
 import { QuickAgentCreateDrawer } from './QuickAgentCreateDrawer';
-import type { CreateChatResponse, DataSource } from '../types';
+import type { DataSource } from '../types';
 
 const API_BASE = process.env.NEXT_PUBLIC_BACKEND_URL ?? '';
 
@@ -142,19 +144,8 @@ export function DashboardCards() {
     },
   });
 
-  const startChatMutation = useMutation<CreateChatResponse, Error>({
-    mutationFn: async () => {
-      const response = await fetch(withApiBase('/api/v1/chat/sessions'), {
-        method: 'POST',
-        credentials: 'include',
-        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-      });
-      if (!response.ok) {
-        const message = await response.text();
-        throw new Error(message || 'Failed to start chat session');
-      }
-      return response.json();
-    },
+  const startChatMutation = useMutation<ChatSessionResponse, Error>({
+    mutationFn: () => createChatSession(),
     onError: (error) => {
       toast({ title: 'Something went wrong', description: error.message, variant: 'destructive' });
     },

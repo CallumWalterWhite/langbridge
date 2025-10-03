@@ -13,7 +13,3 @@ export type Agent = {
   sourceIds: string[];
   createdAt: string;
 };
-
-export type CreateChatResponse = {
-  sessionId: string;
-};
