@@ -1,8 +1,42 @@
-from sqlalchemy import Column, String, UUID
+from sqlalchemy import Column, String, UUID, Table
 from sqlalchemy.orm import relationship, Mapped, mapped_column
 from sqlalchemy import ForeignKey
 
 from .base import Base
+
+class Organization(Base):
+    """Organization entity stored in the relational database."""
+
+    __tablename__ = "organizations"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, index=True)
+    name = Column(String(255), unique=True, nullable=False, index=True)
+    users: Mapped[list["User"]] = relationship(
+        secondary="organization_user_association",
+        back_populates="organizations",
+    )
+    
+class Project(Base):
+    """Project entity stored in the relational database."""
+
+    __tablename__ = "projects"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, index=True)
+    name = Column(String(255), unique=True, nullable=False, index=True)
+    organization_id: Mapped[int] = mapped_column(ForeignKey("organizations.id"), nullable=False)
+    organization: Mapped[Organization] = relationship()
+    users: Mapped[list["User"]] = relationship(
+        secondary="project_user_association",
+        back_populates="projects",
+    )
+
+organization_user_table = Table(
+    "organization_user_association",
+    Base.metadata,
+    Column("organization_id", ForeignKey("organizations.id"), primary_key=True),
+    Column("user_id", ForeignKey("users.id"), primary_key=True),
+)
+
 
 class User(Base):
     """User entity stored in the relational database."""
@@ -12,6 +46,14 @@ class User(Base):
     id = Column(UUID(as_uuid=True), primary_key=True, index=True)
     username = Column(String(255), unique=True, nullable=False, index=True)
     oauth_accounts: Mapped[list["OAuthAccount"]] = relationship(back_populates="user", cascade="all, delete-orphan")
+    organizations: Mapped[list[Organization]] = relationship(
+        secondary=organization_user_table,
+        back_populates="users",
+    )
+    projects: Mapped[list[Project]] = relationship(
+        secondary="project_user_association",
+        back_populates="users",
+    )
 
 class OAuthAccount(Base):
     """OAuth account linked to a user."""
