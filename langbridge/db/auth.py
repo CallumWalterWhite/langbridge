@@ -1,5 +1,6 @@
-from sqlalchemy import Boolean, Column, Integer, String, UUID
-from sqlalchemy.orm import relationship, Mapped
+from sqlalchemy import Column, String, UUID
+from sqlalchemy.orm import relationship, Mapped, mapped_column
+from sqlalchemy import ForeignKey
 
 from .base import Base
 
@@ -19,8 +20,13 @@ class OAuthAccount(Base):
 
     id = Column(UUID(as_uuid=True), primary_key=True, index=True)
     user: Mapped[User] = relationship(back_populates="oauth_accounts")
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
     provider = Column(String(50), nullable=False)
-    provider_account_id = Column(String(255), nullable=False)
+    name = Column(String(255), nullable=True)
+    email = Column(String(255), nullable=True)
+    avatar_url = Column(String(255), nullable=True)
+    sub = Column(String(255), nullable=True)
+    provider_account_id = Column(String(255), nullable=True)
 
     __table_args__ = (
         {'sqlite_autoincrement': True},

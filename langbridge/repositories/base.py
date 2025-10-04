@@ -16,3 +16,5 @@ class BaseRepository:
     
     def get_all(self):
         return self._session.query(self._model).all()
+    
+#TODO add 

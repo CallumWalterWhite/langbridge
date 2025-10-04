@@ -5,6 +5,7 @@ import base64
 import hashlib
 import hmac
 from typing import List, Literal, Optional, Union
+import uuid
 
 from authlib.integrations.starlette_client import OAuth, OAuthError
 from fastapi import Request
@@ -29,7 +30,7 @@ class OAuthProviderUserInfo(_Base):
 class OAuthUserHttpProvider(ABC):
     """Abstract base class for OAuth user info providers."""
     
-    async def fetch_user_info(self, request: Request) -> OAuthProviderUserInfo:
+    async def fetch_user_info(self, token: dict) -> OAuthProviderUserInfo:
         raise NotImplementedError
 
 class GithubUserHttpProvider(OAuthUserHttpProvider):
@@ -38,7 +39,7 @@ class GithubUserHttpProvider(OAuthUserHttpProvider):
     def __init__(self, oauth: OAuth):
         self._oauth = oauth
 
-    async def fetch_user_info(self, request: Request) -> OAuthProviderUserInfo:
+    async def fetch_user_info(self, token: dict) -> OAuthProviderUserInfo:
         async with httpx.AsyncClient() as client:
             user_resp = await client.get("https://api.github.com/user", headers={"Authorization": f"Bearer {token['access_token']}"})
             user_resp.raise_for_status()
@@ -72,18 +73,26 @@ class AuthService:
     def __init__(
             self, 
             user_repository: UserRepository,
+            oauth_account_repository: OAuthAccountRepository,
             oauth: OAuth):
         self._user_repository = user_repository
+        self._oauth_account_repository = oauth_account_repository
         self._oauth = oauth
 
     def get_user_by_username(self, username: str) -> Optional[User]:
         return self._user_repository.get_by_username(username)
+    
+    async def authorize_redirect(self, request: Request, provider: Union[GITHUB, None], redirect_uri: str) -> httpx.Response:
+        if provider not in self.__provider_property_map:
+            raise BusinessValidationError(f"Unsupported provider: {provider}")
+        oauth_provider = self.__provider_property_map[provider](self._oauth)
+        return await oauth_provider.authorize_redirect(request, redirect_uri) # type: ignore
 
     async def authenticate_callback(self, request: Request, provider: Union[GITHUB, None]) -> None:
         if provider not in self.__provider_property_map:
             raise BusinessValidationError(f"Unsupported provider: {provider}")
         try:
-            await (
+            token = await (
                 self.__provider_property_map[provider](self._oauth)
             ).authorize_access_token(request)
         except OAuthError as e:
@@ -93,12 +102,32 @@ class AuthService:
             raise BusinessValidationError(f"Unsupported provider for user info: {provider}")
         
         user_info_provider = self.__provider_userinfo_map[provider](self._oauth)
-        user_info: OAuthProviderUserInfo = await user_info_provider.fetch_user_info(request)
+        user_info: OAuthProviderUserInfo = await user_info_provider.fetch_user_info(token)
 
         user: Optional[User] = self.get_user_by_username(user_info.username)
-
+        
+        if not user:
+            user = self.create_user(user_info, provider)
+        elif not (user.oauth_accounts and any(oa.provider == provider and oa.provider_account_id == user_info.sub for oa in user.oauth_accounts)):
+            self.create_oauth_account(user, user_info, provider)
+        return user
             
-    async def create_user(
+    def create_oauth_account(self, user: User, user_info: OAuthProviderUserInfo, oauth_provider: Union[GITHUB, None]) -> OAuthAccount:
+        if oauth_provider not in PROVIDERS:
+            raise BusinessValidationError(f"Unsupported provider: {oauth_provider}")
+
+        oauth_account = OAuthAccount(
+            id=uuid.uuid4(),
+            user=user,
+            provider=oauth_provider,
+            provider_account_id=user_info.sub
+        )
+        self._oauth_account_repository.add(oauth_account)
+
+        return oauth_account
+            
+            
+    def create_user(
             self,
             user_info: OAuthProviderUserInfo,
             oauth_provider: Union[GITHUB, None],
@@ -110,17 +139,9 @@ class AuthService:
             raise BusinessValidationError(f"User with username '{user_info.username}' already exists")
 
         user = User(
+            id=uuid.uuid4(),
             username=user_info.username,
         )
         self._user_repository.add(user)
-
-        oauth_account = OAuthAccount(
-            user=user,
-            provider=oauth_provider,
-            provider_account_id=user_info.sub,
-            access_token="",  # Access token handling can be implemented as needed
-        )
-        oauth_repo = OAuthAccountRepository(self._user_repository._session)
-        oauth_repo.add(oauth_account)
-
+        self.create_oauth_account(user, user_info, oauth_provider)
         return user

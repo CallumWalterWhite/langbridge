@@ -6,7 +6,7 @@ from db import (
     session_scope,
 )
 from auth.register import create_oauth_client
-from repositories.user_repository import UserRepository
+from repositories.user_repository import UserRepository, OAuthAccountRepository
 from services.auth_service import AuthService
 from config import settings
 
@@ -31,5 +31,7 @@ class Container(containers.DeclarativeContainer):
     session = providers.Resource(session_scope, session_factory=session_factory)
 
     user_repository = providers.Factory(UserRepository, session=session)
+    
+    oauth_account_repository = providers.Factory(OAuthAccountRepository, session=session)
 
-    auth_service = providers.Factory(AuthService, user_repository=user_repository)
+    auth_service = providers.Factory(AuthService, user_repository=user_repository, oauth_account_repository=oauth_account_repository, oauth=oauth)

@@ -1,5 +1,5 @@
 from .base import Base
-from .models.auth import User
+from .auth import User
 from .session import (
     create_engine_for_url,
     create_session_factory,

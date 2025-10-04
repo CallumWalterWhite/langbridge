@@ -6,7 +6,7 @@ from dependency_injector.wiring import Provide, inject
 import httpx
 
 from ioc import Container
-from langbridge.langbridge.db.auth import User
+from db.auth import OAuthAccount, User
 from auth.jwt import create_jwt, set_session_cookie, verify_jwt
 from schemas.auth import LoginResponse, RegisterRequest, UserResponse
 from services.auth_service import AuthService
@@ -24,38 +24,32 @@ def health_check() -> dict[str, str]:
 @inject
 async def login_github(
         request: Request,
-        oauth: OAuth = Depends(Provide[Container.oauth])):
+        auth_service: AuthService = Depends(Provide[Container.auth_service])):
     redirect_uri = f"{settings.BACKEND_URL}{settings.API_V1_STR}/auth/github/callback"
-    return await oauth.github.authorize_redirect(request, redirect_uri) # type: ignore
+    # return await oauth.github.authorize_redirect(request, redirect_uri) # type: ignore
+    return await auth_service.authorize_redirect(request, 'github', redirect_uri)
 
 @router.get("/github/callback")
 @inject
 async def auth_github_callback(
     request: Request,
-    oauth: OAuth = Depends(Provide[Container.oauth])):
-    try:
-        token = await oauth.github.authorize_access_token(request) # type: ignore
-    except OAuthError as e:
-        raise HTTPException(status_code=400, detail=f"OAuth error: {e.error}")
-
-    # Never return the token to the browser -- exchange happens server-side only
-    async with httpx.AsyncClient() as client:
-        user_resp = await client.get("https://api.github.com/user", headers={"Authorization": f"Bearer {token['access_token']}"})
-        user_resp.raise_for_status()
-        user = user_resp.json()
-
-        email_resp = await client.get("https://api.github.com/user/emails", headers={"Authorization": f"Bearer {token['access_token']}"})
-        email_resp.raise_for_status()
-        emails = email_resp.json()
-
-    primary_email = next((e["email"] for e in emails if e.get("primary") and e.get("verified")), None)
+    auth_service: AuthService = Depends(Provide[Container.auth_service])):
+    user: User = await auth_service.authenticate_callback(request, 'github')
+    
+    oauth_account: Optional[OAuthAccount] = next(
+        (oa for oa in user.oauth_accounts if oa.provider == 'github'),
+        None
+    )
+    
+    if not oauth_account:
+        raise HTTPException(status_code=400, detail="OAuth account not found for user")
 
     session_claims = {
-        "sub": str(user.get("id")),
-        "username": user.get("login"),
-        "name": user.get("name"),
-        "avatar_url": user.get("avatar_url"),
-        "email": primary_email,
+        "sub": oauth_account.sub,
+        "username": user.username,
+        "name": oauth_account.name,
+        "avatar_url": oauth_account.avatar_url,
+        "email": oauth_account.email,
         "provider": "github",
     }
 
