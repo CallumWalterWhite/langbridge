@@ -7,10 +7,7 @@ from uuid import uuid4
 from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel, ConfigDict, Field
 
-
-def _to_camel(string: str) -> str:
-    parts = string.split('_')
-    return parts[0] + ''.join(word.capitalize() for word in parts[1:])
+from utils.schema import _to_camel
 
 
 DataSourceType = Literal['snowflake', 'postgres', 'mysql', 'api']

@@ -19,6 +19,9 @@ class InvalidResourceType(Exception):
 class JWTError(Exception):
     pass
 
+class AuthenticationError(Exception):
+    pass
+
 class BusinessValidationError(Exception):
     def __init__(self, message: str, errors: Optional[Dict] = None):
         super().__init__(message)
@@ -31,3 +34,14 @@ class BusinessValidationError(Exception):
 class InvalidInputBusinessValidationError(BusinessValidationError):
     def __init__(self, message: str, errors: Optional[Dict] = None):
         super().__init__(message, errors)
+
+class QuotaExceededBusinessValidationError(BusinessValidationError):
+    def __init__(self, message: str, errors: Optional[Dict] = None):
+        super().__init__(message, errors)
+
+class PermissionDeniedBusinessValidationError(BusinessValidationError):
+    def __init__(self, message: str, errors: Optional[Dict] = None):
+        super().__init__(message, errors)
+
+class ExternalServiceError(Exception):
+    pass

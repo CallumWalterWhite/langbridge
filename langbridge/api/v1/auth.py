@@ -6,7 +6,7 @@ from dependency_injector.wiring import Provide, inject
 import httpx
 
 from ioc import Container
-from db.models import User
+from langbridge.langbridge.db.auth import User
 from auth.jwt import create_jwt, set_session_cookie, verify_jwt
 from schemas.auth import LoginResponse, RegisterRequest, UserResponse
 from services.auth_service import AuthService
@@ -81,32 +81,3 @@ async def me(request: Request):
         raise HTTPException(status_code=401, detail="Unauthenticated")
     claims = verify_jwt(token)
     return {"user": claims}
-
-@router.post("/register", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
-@inject
-def register_user(
-    payload: RegisterRequest,
-    auth_service: AuthService = Depends(Provide[Container.auth_service]),
-) -> UserResponse:
-    try:
-        user: User = auth_service.register(payload.username, payload.password)
-    except ValueError as exc:  # pragma: no cover
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
-    return UserResponse.model_validate(user)
-
-@router.post("/login", response_model=LoginResponse)
-@inject
-def login(
-    credentials: HTTPBasicCredentials = Depends(security),
-    auth_service: AuthService = Depends(Provide[Container.auth_service]),
-) -> LoginResponse:
-    if not auth_service.authenticate(credentials.username, credentials.password):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid credentials",
-            headers={"WWW-Authenticate": "Basic"},
-        )
-    token = auth_service.create_basic_token(credentials.username, credentials.password)
-    return LoginResponse(access_token=token)
-
-

@@ -8,7 +8,7 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
 
 from .base import Base
-from . import models  # noqa: F401 - ensure models are registered with metadata
+from . import auth  # noqa: F401 - ensure models are registered with metadata
 
 
 def create_engine_for_url(database_url: str, echo: bool = False) -> Engine:

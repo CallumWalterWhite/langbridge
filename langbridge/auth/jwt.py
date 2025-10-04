@@ -11,7 +11,6 @@ def create_jwt(payload: dict) -> str:
     to_encode = payload | {"exp": exp}
     return jwt.encode(to_encode, settings.JWT_SECRET, algorithm=settings.JWT_ALG)
 
-
 def verify_jwt(token: str) -> dict:
     try:
         return jwt.decode(token, settings.JWT_SECRET, algorithms=[settings.JWT_ALG])

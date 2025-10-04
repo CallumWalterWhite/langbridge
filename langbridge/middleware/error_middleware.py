@@ -2,6 +2,7 @@ import logging
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import Response
 from errors.application_errors import (
+    AuthenticationError,
     ResourceAlreadyExists, 
     ResourceNotFound, 
     InvalidRequest, 
@@ -33,5 +34,8 @@ class ErrorMiddleware(BaseHTTPMiddleware):
         except BusinessValidationError as e:
             self.logger.error("Business validation error", exc_info=True)
             response = Response(content=str(e), status_code=400)
+        except AuthenticationError as e:
+            self.logger.error("Authentication error", exc_info=True)
+            response = Response(content=str(e), status_code=401)
         
         return response
