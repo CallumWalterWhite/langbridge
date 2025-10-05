@@ -1,6 +1,7 @@
 import Link from 'next/link';
 
 import { ThemeToggle } from '@/components/ThemeToggle';
+import { LogoutButton } from '@/components/LogoutButton';
 
 import { DashboardCards } from './_components/DashboardCards';
 
@@ -60,6 +61,7 @@ export default function DashboardPage() {
           </div>
           <div className="inline-flex items-center gap-3">
             <ThemeToggle size="sm" />
+            <LogoutButton />
             <Link
               href="/docs/whats-new"
               className="hidden rounded-full border border-[color:var(--border-strong)] px-3 py-1 text-xs font-medium text-[color:var(--text-secondary)] transition hover:border-[color:var(--border-strong-hover)] hover:text-[color:var(--text-primary)] md:inline-flex"

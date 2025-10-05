@@ -5,6 +5,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { History, RefreshCw, Send, Sparkles } from 'lucide-react';
 
 import { ThemeToggle } from '@/components/ThemeToggle';
+import { LogoutButton } from '@/components/LogoutButton';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -133,6 +134,7 @@ export function ChatInterface({ sessionId }: ChatInterfaceProps) {
         </div>
         <div className="flex flex-col items-end gap-3">
           <ThemeToggle size="sm" />
+          <LogoutButton />
           {lastUpdated ? (
             <p className="text-xs text-[color:var(--text-muted)]">Updated {formatRelativeDate(lastUpdated)}</p>
           ) : null}

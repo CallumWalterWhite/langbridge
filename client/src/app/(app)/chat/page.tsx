@@ -6,6 +6,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ArrowRight, MessageSquare, Plus, RefreshCw } from 'lucide-react';
 
 import { ThemeToggle } from '@/components/ThemeToggle';
+import { LogoutButton } from '@/components/LogoutButton';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useToast } from '@/components/ui/toast';
@@ -59,6 +60,7 @@ export default function ChatIndexPage() {
         </div>
         <div className="flex flex-col items-end gap-3 sm:flex-row sm:items-center">
           <ThemeToggle size="sm" className="sm:order-2" />
+          <LogoutButton className="sm:order-3" />
           <Button
             onClick={handleCreateChat}
             size="sm"

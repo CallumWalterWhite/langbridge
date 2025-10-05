@@ -2,6 +2,8 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
+import { LogoutButton } from '@/components/LogoutButton';
+
 import { ApiError } from '@/orchestration/http';
 import {
   createOrganization,
@@ -151,10 +153,17 @@ export default function OrganizationsPage(): JSX.Element {
   return (
     <div className="flex min-h-screen flex-col bg-[color:var(--shell-bg)] text-[color:var(--text-primary)]">
       <header className="border-b border-[color:var(--panel-border)] bg-[color:var(--panel-bg)] px-6 py-5 shadow-soft">
-        <h1 className="text-xl font-semibold">Organizations & Projects</h1>
-        <p className="mt-1 text-sm text-[color:var(--text-secondary)]">
-          Create shared workspaces, spin up projects, and bring collaborators into your teams.
-        </p>
+        <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+          <div>
+            <h1 className="text-xl font-semibold">Organizations & Projects</h1>
+            <p className="mt-1 text-sm text-[color:var(--text-secondary)]">
+              Create shared workspaces, spin up projects, and bring collaborators into your teams.
+            </p>
+          </div>
+          <div className="flex items-center gap-3">
+            <LogoutButton />
+          </div>
+        </div>
       </header>
 
       <main className="mx-auto flex w-full max-w-6xl flex-1 flex-col gap-6 px-6 py-8">
