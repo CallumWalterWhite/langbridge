@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 from datetime import datetime, timezone
 from typing import Dict, List, Literal
 from uuid import uuid4
@@ -88,7 +86,7 @@ async def create_chat_session() -> ChatSessionResponse:
     _CHAT_SESSIONS[identifier] = session
     _CHAT_MESSAGES[identifier] = []
     _add_system_message(identifier, 'This is a stub conversation. Connect your LLM to generate real responses.')
-    return ChatSessionResponse(session_id=identifier)
+    return ChatSessionResponse(session_id=identifier) # type: ignore
 
 
 @router.get('/sessions/{session_id}/messages', response_model=List[ChatMessage])

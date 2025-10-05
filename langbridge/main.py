@@ -12,7 +12,7 @@ from ioc import Container
 from ioc.wiring import wire_packages
 from utils.logger import setup_file_logging
 
-from middleware import UnitOfWorkMiddleware, ErrorMiddleware
+from middleware import UnitOfWorkMiddleware, ErrorMiddleware, AuthMiddleware
 
 def custom_generate_unique_id(route: APIRoute) -> str:
     return f"{route.tags[0]}-{route.name}"
@@ -20,7 +20,7 @@ def custom_generate_unique_id(route: APIRoute) -> str:
 container = Container()
 wire_packages(
     container,
-    package_names=["api", "services", "repositories"],  # add more roots as needed
+    package_names=["api", "services", "repositories", "auth"],  # add more roots as needed
     extra_modules=["main"],  # optional: single modules to wire
 )
 
@@ -49,6 +49,7 @@ if settings.IS_LOCAL:
 
 app.add_middleware(ErrorMiddleware)
 app.add_middleware(UnitOfWorkMiddleware)
+app.add_middleware(AuthMiddleware)
 app.add_middleware(
     SessionMiddleware,
     secret_key=settings.SESSION_SECRET,

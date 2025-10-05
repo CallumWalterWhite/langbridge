@@ -3,6 +3,21 @@ import { apiFetch } from '../http';
 
 const BASE_PATH = '/api/v1/chat';
 
+interface MeResponse {
+  user: {
+    sub: string;
+    username: string;
+    name?: string;
+    avatar_url?: string;
+    email?: string;
+    provider: string;
+  };
+}
+
+export async function checkAuth(): Promise<MeResponse> {
+  return apiFetch<MeResponse>('/api/v1/auth/me');
+}
+
 export async function listChatSessions(): Promise<ChatSession[]> {
   return apiFetch<ChatSession[]>(`${BASE_PATH}/sessions`);
 }

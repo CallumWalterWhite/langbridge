@@ -37,3 +37,6 @@ class AuthRegistry(_Base):
 
 class AuthManifest(_Base):
     registries: list[AuthRegistry] = Field(default_factory=list)
+
+class CurrentUser(_Base):
+    username: str

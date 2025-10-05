@@ -1,0 +1,136 @@
+import uuid
+from typing import Annotated, Any, List
+
+from dependency_injector.wiring import Provide, inject
+from fastapi import APIRouter, Depends, FastAPI, Request, Response, Body, status
+
+
+from auth.dependencies import get_current_user
+from db.auth import Organization, User
+from ioc import Container
+from schemas import (
+    InviteUserRequest,
+    OrganizationCreateRequest,
+    OrganizationInviteResponse,
+    OrganizationResponse,
+    ProjectCreateRequest,
+    ProjectInviteResponse,
+    ProjectResponse,
+)
+from services.auth_service import AuthService
+from services.organization_service import OrganizationService
+
+
+router = APIRouter(prefix="/organizations", tags=["organizations"])
+
+
+def _serialize_project(project) -> ProjectResponse:
+    return ProjectResponse.model_validate(
+        {
+            "id": project.id,
+            "name": project.name,
+            "organization_id": project.organization_id,
+        }
+    )
+
+
+def _serialize_organization(organization: Organization) -> OrganizationResponse:
+    project_models = [_serialize_project(project) for project in organization.projects]
+    return OrganizationResponse.model_validate(
+        {
+            "id": organization.id,
+            "name": organization.name,
+            "member_count": len(organization.users),
+            "projects": [proj.model_dump() for proj in project_models],
+        }
+    )
+
+
+@router.get("", response_model=List[OrganizationResponse])
+@inject
+def list_organizations(
+    current_user: User = Depends(get_current_user),
+    organization_service: OrganizationService = Depends(Provide[Container.organization_service]),
+) -> List[OrganizationResponse]:
+    organizations = organization_service.list_user_organizations(current_user)
+    return [_serialize_organization(org) for org in organizations]
+
+
+@router.post("", response_model=OrganizationResponse, status_code=status.HTTP_201_CREATED)
+@inject
+def create_organization(
+    payload: OrganizationCreateRequest,
+    current_user: User = Depends(get_current_user),
+    organization_service: OrganizationService = Depends(Provide[Container.organization_service]),
+) -> OrganizationResponse:
+    organization = organization_service.create_organization(current_user, payload.name)
+    return _serialize_organization(organization)
+
+
+@router.get("/{organization_id}/projects", response_model=List[ProjectResponse])
+@inject
+def list_projects(
+    organization_id: uuid.UUID,
+    current_user: User = Depends(get_current_user),
+    auth_service: AuthService = Depends(Provide[Container.auth_service]),
+    organization_service: OrganizationService = Depends(Provide[Container.organization_service]),
+) -> List[ProjectResponse]:
+    user = auth_service.get_user_by_username(current_user.username)
+    projects = organization_service.list_projects_for_organization(organization_id, user)
+    return [_serialize_project(project) for project in projects]
+
+
+@router.post("/{organization_id}/projects", response_model=ProjectResponse, status_code=status.HTTP_201_CREATED)
+@inject
+def create_project(
+    organization_id: uuid.UUID,
+    payload: Annotated[ProjectCreateRequest, Body(...)],
+    current_user: User = Depends(get_current_user),
+    auth_service: AuthService = Depends(Provide[Container.auth_service]),
+    organization_service: OrganizationService = Depends(Provide[Container.organization_service]),
+) -> ProjectResponse:
+    user = auth_service.get_user_by_username(current_user.username)
+    project = organization_service.create_project(organization_id, user, payload.name)
+    return _serialize_project(project)
+
+
+@router.post("/{organization_id}/invites", response_model=OrganizationInviteResponse, status_code=status.HTTP_201_CREATED)
+@inject
+def invite_to_organization(
+    organization_id: uuid.UUID,
+    payload: Annotated[InviteUserRequest, Body(...)],
+    current_user: User = Depends(get_current_user),
+    auth_service: AuthService = Depends(Provide[Container.auth_service]),
+    organization_service: OrganizationService = Depends(Provide[Container.organization_service]),
+) -> OrganizationInviteResponse:
+    user = auth_service.get_user_by_username(current_user.username)
+    invite = organization_service.invite_user_to_organization(
+        organization_id,
+        user,
+        payload.username,
+    )
+    return OrganizationInviteResponse.model_validate(invite)
+
+
+@router.post(
+    "/{organization_id}/projects/{project_id}/invites",
+    response_model=ProjectInviteResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+@inject
+def invite_to_project(
+    organization_id: uuid.UUID,
+    project_id: uuid.UUID,
+    payload: Annotated[InviteUserRequest, Body(...)],
+    current_user: User = Depends(get_current_user),
+    auth_service: AuthService = Depends(Provide[Container.auth_service]),
+    organization_service: OrganizationService = Depends(Provide[Container.organization_service]),
+) -> ProjectInviteResponse:
+    user = auth_service.get_user_by_username(current_user.username)
+    invite = organization_service.invite_user_to_project(
+        organization_id,
+        project_id,
+        user,
+        payload.username,
+    )
+    return ProjectInviteResponse.model_validate(invite)

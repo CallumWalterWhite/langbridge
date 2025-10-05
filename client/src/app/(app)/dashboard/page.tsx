@@ -26,6 +26,9 @@ export default function DashboardPage() {
             Data connections
           </Link>
           <Link className="block rounded-lg px-3 py-2 text-[color:var(--text-secondary)] transition hover:bg-[color:var(--panel-alt)] hover:text-[color:var(--text-primary)]" href="/agents">
+          <Link className="block rounded-lg px-3 py-2 text-[color:var(--text-secondary)] transition hover:bg-[color:var(--panel-alt)] hover:text-[color:var(--text-primary)]" href="/organizations">
+            Organizations & projects
+          </Link>
             Agents & playbooks
           </Link>
           <Link className="block rounded-lg px-3 py-2 text-[color:var(--text-secondary)] transition hover:bg-[color:var(--panel-alt)] hover:text-[color:var(--text-primary)]" href="/chat">
@@ -72,3 +75,4 @@ export default function DashboardPage() {
     </div>
   );
 }
+
