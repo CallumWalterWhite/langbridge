@@ -25,6 +25,15 @@ class InviteStatus(enum.Enum):
     ACCEPTED = "accepted"
     DECLINED = "declined"
 
+class OrganizationRole(enum.Enum):
+    ADMIN = "admin"
+    MEMBER = "member"
+    OWNER = "owner"
+
+class ProjectRole(enum.Enum):
+    ADMIN = "admin"
+    MEMBER = "member"
+    OWNER = "owner"
 
 class Organization(Base):
     __tablename__ = "organizations"
@@ -79,7 +88,7 @@ class OrganizationUser(Base):
 
     organization_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("organizations.id"), primary_key=True)
     user_id: Mapped[uuid.UUID]         = mapped_column(ForeignKey("users.id"), primary_key=True)
-    role: Mapped[str]                  = mapped_column(String(50), nullable=False, default="member")
+    role: Mapped[OrganizationRole]     = mapped_column(SqlEnum(OrganizationRole, name="organization_role"), nullable=False, default=OrganizationRole.MEMBER)
 
     organization: Mapped["Organization"] = relationship(back_populates="user_links")
     user: Mapped["User"]                 = relationship(back_populates="organization_links")
@@ -90,7 +99,7 @@ class ProjectUser(Base):
 
     project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id"), primary_key=True)
     user_id: Mapped[uuid.UUID]   = mapped_column(ForeignKey("users.id"), primary_key=True)
-    role: Mapped[str]            = mapped_column(String(50), nullable=False, default="member")
+    role: Mapped[ProjectRole]     = mapped_column(SqlEnum(ProjectRole, name="project_role"), nullable=False, default=ProjectRole.MEMBER)
 
     project: Mapped["Project"] = relationship(back_populates="user_links")
     user: Mapped["User"] = relationship(back_populates="projects_links")

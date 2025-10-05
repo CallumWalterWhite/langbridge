@@ -12,6 +12,14 @@ import logging
 from auth.jwt import verify_jwt
 from services.auth_service import AuthService
 
+PATHS_TO_EXCLUDE = [
+    "/api/v1/auth/health",
+    "/api/v1/auth/login/github",
+    "/api/v1/auth/github/callback",
+    "/api/v1/auth/logout",
+    "/api/v1/auth/me",
+]
+
 class AuthMiddleware(BaseHTTPMiddleware):
     def __init__(self, app, 
                  auth_service: AuthService = Depends(Provide[Container.auth_service]),):
@@ -20,7 +28,8 @@ class AuthMiddleware(BaseHTTPMiddleware):
         self.auth_service = auth_service
 
     async def dispatch(self, request: Request, call_next) -> Response:
-        if request.url.path.startswith("api/v1/auth/"):  # skip auth for auth endpoints
+        self.logger.debug(f"AuthMiddleware: Processing request {request.method} {request.url.path}")
+        if any(request.url.path.startswith(path) for path in PATHS_TO_EXCLUDE):
             return await call_next(request)
 
         token = request.cookies.get(settings.COOKIE_NAME)

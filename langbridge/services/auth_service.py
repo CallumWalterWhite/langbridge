@@ -127,7 +127,7 @@ class AuthService:
         user_info_provider = self.__provider_userinfo_map[provider](self._oauth) # type: ignore[arg-type]
         user_info: OAuthProviderUserInfo = await user_info_provider.fetch_user_info(token)
 
-        user = self.get_user_by_username(user_info.username)
+        user: Optional[User] = self._user_repository.get_by_username(user_info.username)
 
         if not user:
             user = self.create_user(user_info, provider)
@@ -174,7 +174,7 @@ class AuthService:
         if oauth_provider not in PROVIDERS:
             raise BusinessValidationError(f"Unsupported provider: {oauth_provider}")
 
-        if self.get_user_by_username(user_info.username):
+        if self._user_repository.get_by_username(user_info.username):
             raise BusinessValidationError(
                 f"User with username '{user_info.username}' already exists"
             )

@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 
 from sqlalchemy.orm import Session
 
-from db.auth import InviteStatus, Organization, OrganizationInvite, Project, ProjectInvite, User
+from db.auth import InviteStatus, Organization, OrganizationInvite, OrganizationRole, Project, ProjectInvite, ProjectRole, User
 from errors.application_errors import (
     BusinessValidationError,
     PermissionDeniedBusinessValidationError,
@@ -55,16 +55,15 @@ class OrganizationService:
         if organization is None:
             organization = Organization(name=default_name)
             self._organization_repository.add(organization)
-            self._session.flush()
         if not self._organization_repository.is_member(organization, user):
-            self._organization_repository.add_member(organization, user)
+            self._organization_repository.add_member(organization, user, OrganizationRole.OWNER)
 
         project = self._project_repository.get_by_name_within_org(organization.id, default_name)
         if project is None:
             project = Project(name=default_name, organization=organization)
             self._project_repository.add(project)
         if not self._project_repository.is_member(project, user):
-            self._project_repository.add_member(project, user)
+            self._project_repository.add_member(project, user, ProjectRole.OWNER)
 
         return organization, project
 
@@ -79,7 +78,6 @@ class OrganizationService:
 
         organization = Organization(name=normalized_name)
         self._organization_repository.add(organization)
-        self._session.flush()
         self._organization_repository.add_member(organization, owner)
         return organization
 
@@ -100,7 +98,6 @@ class OrganizationService:
 
         project = Project(name=normalized_name, organization=organization)
         self._project_repository.add(project)
-        self._session.flush()
         self._project_repository.add_member(project, requester)
         return project
 

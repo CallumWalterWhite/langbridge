@@ -4,15 +4,13 @@ import uuid
 
 from sqlalchemy.orm import Session
 
-from db.auth import Organization, Project, OrganizationInvite, ProjectInvite, User
+from db.auth import Organization, Project, OrganizationInvite, ProjectInvite, User, OrganizationUser, ProjectUser, ProjectRole, OrganizationRole
 from .base import BaseRepository
 
 
 import uuid
 from sqlalchemy.orm import Session
 from sqlalchemy import select, exists
-
-from db.auth import Organization, Project, OrganizationInvite, ProjectInvite, User, OrganizationUser, ProjectUser
 
 class OrganizationRepository(BaseRepository):
     """Data access helper for organization entities."""
@@ -36,7 +34,7 @@ class OrganizationRepository(BaseRepository):
             .all()
         )
 
-    def add_member(self, organization: Organization, user: User, role: str = "member") -> OrganizationUser:
+    def add_member(self, organization: Organization, user: User, role: OrganizationRole = OrganizationRole.MEMBER) -> OrganizationUser:
         """
         Upsert membership with role. Returns the OrganizationUser link.
         """
@@ -123,7 +121,7 @@ class ProjectRepository(BaseRepository):
             .all()
         )
 
-    def add_member(self, project: Project, user: User, role: str = "member") -> ProjectUser:
+    def add_member(self, project: Project, user: User, role: ProjectRole = ProjectRole.MEMBER) -> ProjectUser:
         """
         Upsert membership with role. Returns the ProjectUser link.
         """

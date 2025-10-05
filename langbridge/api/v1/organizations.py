@@ -72,11 +72,9 @@ def create_organization(
 def list_projects(
     organization_id: uuid.UUID,
     current_user: User = Depends(get_current_user),
-    auth_service: AuthService = Depends(Provide[Container.auth_service]),
     organization_service: OrganizationService = Depends(Provide[Container.organization_service]),
 ) -> List[ProjectResponse]:
-    user = auth_service.get_user_by_username(current_user.username)
-    projects = organization_service.list_projects_for_organization(organization_id, user)
+    projects = organization_service.list_projects_for_organization(organization_id, current_user)
     return [_serialize_project(project) for project in projects]
 
 
@@ -84,13 +82,11 @@ def list_projects(
 @inject
 def create_project(
     organization_id: uuid.UUID,
-    payload: Annotated[ProjectCreateRequest, Body(...)],
+    payload: ProjectCreateRequest,
     current_user: User = Depends(get_current_user),
-    auth_service: AuthService = Depends(Provide[Container.auth_service]),
     organization_service: OrganizationService = Depends(Provide[Container.organization_service]),
 ) -> ProjectResponse:
-    user = auth_service.get_user_by_username(current_user.username)
-    project = organization_service.create_project(organization_id, user, payload.name)
+    project = organization_service.create_project(organization_id, current_user, payload.name)
     return _serialize_project(project)
 
 
@@ -98,15 +94,13 @@ def create_project(
 @inject
 def invite_to_organization(
     organization_id: uuid.UUID,
-    payload: Annotated[InviteUserRequest, Body(...)],
+    payload: InviteUserRequest,
     current_user: User = Depends(get_current_user),
-    auth_service: AuthService = Depends(Provide[Container.auth_service]),
     organization_service: OrganizationService = Depends(Provide[Container.organization_service]),
 ) -> OrganizationInviteResponse:
-    user = auth_service.get_user_by_username(current_user.username)
     invite = organization_service.invite_user_to_organization(
         organization_id,
-        user,
+        current_user,
         payload.username,
     )
     return OrganizationInviteResponse.model_validate(invite)
@@ -121,16 +115,14 @@ def invite_to_organization(
 def invite_to_project(
     organization_id: uuid.UUID,
     project_id: uuid.UUID,
-    payload: Annotated[InviteUserRequest, Body(...)],
+    payload: InviteUserRequest,
     current_user: User = Depends(get_current_user),
-    auth_service: AuthService = Depends(Provide[Container.auth_service]),
     organization_service: OrganizationService = Depends(Provide[Container.organization_service]),
 ) -> ProjectInviteResponse:
-    user = auth_service.get_user_by_username(current_user.username)
     invite = organization_service.invite_user_to_project(
         organization_id,
         project_id,
-        user,
+        current_user,
         payload.username,
     )
     return ProjectInviteResponse.model_validate(invite)
