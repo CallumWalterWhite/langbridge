@@ -5,7 +5,7 @@ from .base import _Base
 
 
 class ConnectorResponse(_Base):
-    id: str
+    id: Optional[UUID] = None
     name: str
     description: Optional[str] = None
     version: Optional[str] = None

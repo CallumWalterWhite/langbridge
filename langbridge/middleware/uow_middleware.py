@@ -5,6 +5,7 @@ from starlette.responses import Response
 from sqlalchemy.orm import Session, sessionmaker
 from dependency_injector.wiring import Provide
 from ioc import Container
+from errors.application_errors import BusinessValidationError
 import logging
 
 class UnitOfWorkMiddleware(BaseHTTPMiddleware):
@@ -17,6 +18,7 @@ class UnitOfWorkMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next) -> Response:
         self.session.autoflush = False
         try:
+            self.session.begin_nested()
             self.logger.debug("Starting a new database session.")
             response = await call_next(request)
             self.session.commit()
@@ -26,5 +28,9 @@ class UnitOfWorkMiddleware(BaseHTTPMiddleware):
             self.logger.error("Rolling back due to exception: %s", e)
             self.session.rollback()
             raise e
+        except BusinessValidationError as bve:
+            self.logger.error("Business validation error: %s", bve)
+            self.session.rollback()
+            raise bve
         finally:
             self.session.close()

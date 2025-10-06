@@ -2,7 +2,7 @@ import json
 from typing import Union
 from sqlalchemy.orm import Session
 from db.auth import Organization, Project
-from db.connector import Connector
+from db.connector import Connector, DatabaseConnector
 from errors.application_errors import BusinessValidationError
 from repositories.connector_repository import ConnectorRepository
 from repositories.organization_repository import OrganizationRepository, ProjectRepository
@@ -48,6 +48,7 @@ class ConnectorService:
     def create_connector(
         self, create_request: CreateConnectorRequest
     ) -> Connector:
+        connector_type: ConnectorType = ConnectorType(create_request.connector_type.upper())
         config_json: str
         if hasattr(create_request, "config") and create_request.config is not None:
             config_json = json.dumps(create_request.config)
@@ -55,21 +56,24 @@ class ConnectorService:
             raise BusinessValidationError("Connector config must be provided")
         
         try:
-            config_factory: BaseConnectorConfigFactory = get_connector_config_factory(create_request.connector_type)
+            config_factory: BaseConnectorConfigFactory = get_connector_config_factory(connector_type)
             config_instance: BaseConnectorConfig = config_factory.create(create_request.config["config"])
-            connection_tester: BaseConnectorTester = get_connector_tester(create_request.connector_type)
+            connection_tester: BaseConnectorTester = get_connector_tester(connector_type)
             connection_result: Union[bool, str] = connection_tester.test(config_instance)
             if connection_result is not True:
                 raise BusinessValidationError(f"Connection test failed: {connection_result}")
         except ValueError as e:
             raise BusinessValidationError(str(e))
         
-        connector = Connector(
+        connector = DatabaseConnector( #TODO: handle other connector types
             name=create_request.name,
-            type=create_request.connector_type,
+            type="database_connector",
+            connector_type=connector_type.value,
             config_json=config_json,
             description=create_request.description,
         )
+        
+        self._connector_repository.add(connector)
         
         if create_request.organization_id is None and create_request.project_id is None:
             raise BusinessValidationError("Either organization_id or project_id must be provided")
@@ -91,7 +95,6 @@ class ConnectorService:
                 organization = self._organization_repository.get_by_id(project.organization_id)
                 organization.connectors.append(connector)
         
-        self._connector_repository.add(connector)
         return connector
 
     def get_connector(self, connector_id: str) -> Connector:
