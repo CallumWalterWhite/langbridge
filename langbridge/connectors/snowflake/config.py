@@ -1,7 +1,42 @@
-from connectors.config import BaseConnectorConfigSchemaFactory, ConnectorConfigSchema, ConnectorConfigEntrySchema
+from connectors.config import (
+    BaseConnectorConfigSchemaFactory, 
+    BaseConnectorConfigFactory,
+    ConnectorConfigSchema, 
+    ConnectorConfigEntrySchema, 
+    BaseConnectorConfig,
+    ConnectorType
+)
+
+class SnowflakeConnectorConfig(BaseConnectorConfig):
+    account: str
+    user: str
+    password: str
+    database: str
+    warehouse: str | None = None
+    schema: str | None = None
+    role: str | None = None
+
+    @classmethod
+    def create_from_dict(cls, data: dict) -> "SnowflakeConnectorConfig":
+        return cls(
+            account=data.get("account"),
+            user=data.get("user"),
+            password=data.get("password"),
+            database=data.get("database"),
+            warehouse=data.get("warehouse"),
+            schema=data.get("schema"),
+            role=data.get("role"),
+        )
+        
+class SnowflakeConnectorConfigFactory(BaseConnectorConfigFactory):
+    type = ConnectorType.SNOWFLAKE
+
+    @classmethod
+    def create(cls, config: dict) -> BaseConnectorConfig:
+        return SnowflakeConnectorConfig.create_from_dict(config)
 
 class SnowflakeConnectorConfigSchemaFactory(BaseConnectorConfigSchemaFactory):
-    type = "snowflake"
+    type = ConnectorType.SNOWFLAKE
 
     @classmethod
     def create(cls, config: dict) -> ConnectorConfigSchema:

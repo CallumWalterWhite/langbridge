@@ -1,8 +1,24 @@
 from abc import ABC
-from typing import Any, List, Optional
+from enum import Enum
+from typing import TYPE_CHECKING, Any, List, Optional
 
 from schemas.base import _Base
 
+class ConnectorType(Enum):
+    POSTGRES = "POSTGRES"
+    MYSQL = "MYSQL"
+    MONGODB = "MONGODB"
+    SNOWFLAKE = "SNOWFLAKE"
+    REDSHIFT = "REDSHIFT"
+    BIGQUERY = "BIGQUERY"
+    SQLSERVER = "SQLSERVER"
+    ORACLE = "ORACLE"
+    ELASTICSEARCH = "ELASTICSEARCH"
+    RESTAPI = "RESTAPI"
+    GRAPHQL = "GRAPHQL"
+    SALESFORCE = "SALESFORCE"
+    ZAPIER = "ZAPIER"
+    GENERIC = "GENERIC"
 
 class ConnectorConfigEntrySchema(_Base):
     field: str
@@ -24,9 +40,33 @@ class ConnectorConfigSchema(_Base):
     connector_type: str
     config: List[ConnectorConfigEntrySchema]
 
+class BaseConnectorConfig(_Base):
+    pass
+
+class BaseConnectorConfigFactory(ABC):
+    type: ConnectorType
+
+    @classmethod
+    def create(cls, config: dict) -> BaseConnectorConfig:
+        return BaseConnectorConfig(**config)
+
 class BaseConnectorConfigSchemaFactory(ABC):
-    type: str
+    type: ConnectorType
 
     @classmethod
     def create(cls, config: dict) -> ConnectorConfigSchema:
         return ConnectorConfigSchema(**config)
+    
+def get_connector_config_factory(type_s: ConnectorType) -> BaseConnectorConfigFactory:
+    subclasses = BaseConnectorConfigFactory.__subclasses__()
+    for subclass in subclasses:
+        if subclass.type.value == type_s.value:
+            return subclass
+    raise ValueError(f"No factory found for type: {type_s}")
+
+def get_connector_config_schema_factory(type_s: ConnectorType) -> BaseConnectorConfigSchemaFactory:
+    subclasses = BaseConnectorConfigSchemaFactory.__subclasses__()
+    for subclass in subclasses:
+        if subclass.type.value == type_s.value:
+            return subclass
+    raise ValueError(f"No schema factory found for type: {type_s}")

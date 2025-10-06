@@ -1,6 +1,8 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from dependency_injector.wiring import Provide, inject
 from ioc import Container
+from connectors.config import ConnectorConfigSchema
+from errors.application_errors import BusinessValidationError
 from schemas.connectors import ConnectorResponse, CreateConnectorRequest, UpdateConnectorRequest
 from services.connector_service import ConnectorService
 
@@ -23,6 +25,18 @@ def get_connector(
 ):
     connector = connector_service.get_connector(connector_id)
     return ConnectorResponse.model_validate(connector)
+
+@router.get("/schema/{connector_type}", response_model=ConnectorConfigSchema)
+@inject
+def get_connector_schema(
+    connector_type: str,
+    connector_service: ConnectorService = Depends(Provide[Container.connector_service]),
+):
+    try:
+        schema = connector_service.get_connector_config_schema(connector_type)
+        return schema
+    except BusinessValidationError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
 
 @router.put("/{connector_id}", response_model=ConnectorResponse)
 @inject

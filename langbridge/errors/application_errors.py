@@ -42,6 +42,10 @@ class QuotaExceededBusinessValidationError(BusinessValidationError):
 class PermissionDeniedBusinessValidationError(BusinessValidationError):
     def __init__(self, message: str, errors: Optional[Dict] = None):
         super().__init__(message, errors)
+        
+class ConnectionTestFailedError(BusinessValidationError):
+    def __init__(self, message: str, errors: Optional[Dict] = None):
+        super().__init__(message, errors)
 
 class ExternalServiceError(Exception):
     pass

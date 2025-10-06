@@ -1,4 +1,5 @@
 import json
+from typing import Union
 from sqlalchemy.orm import Session
 from db.auth import Organization, Project
 from db.connector import Connector
@@ -6,7 +7,16 @@ from errors.application_errors import BusinessValidationError
 from repositories.connector_repository import ConnectorRepository
 from repositories.organization_repository import OrganizationRepository, ProjectRepository
 from schemas.connectors import CreateConnectorRequest, UpdateConnectorRequest
-
+from connectors.connection_tester import get_connector_tester, BaseConnectorTester
+from connectors.config import (
+    BaseConnectorConfig,
+    ConnectorType,
+    get_connector_config_factory, 
+    get_connector_config_schema_factory, 
+    ConnectorConfigSchema, 
+    BaseConnectorConfigFactory, 
+    BaseConnectorConfigSchemaFactory
+)
 
 class ConnectorService:
     """Domain logic for managing connectors."""
@@ -26,19 +36,33 @@ class ConnectorService:
 
     def list_project_connectors(self, project: Project) -> list[Connector]:
         return project.connectors
+    
+    def get_connector_config_schema(self, connector_type: str) -> ConnectorConfigSchema:
+        try:
+            connector_type: ConnectorType = ConnectorType(connector_type.upper())
+            config_schema_factory: BaseConnectorConfigSchemaFactory = get_connector_config_schema_factory(connector_type)
+            return config_schema_factory.create({})
+        except ValueError as e:
+            raise BusinessValidationError(str(e))
         
     def create_connector(
         self, create_request: CreateConnectorRequest
     ) -> Connector:
         config_json: str
-        if hasattr(create_request, "config_json") and create_request.config_json is not None:
-            # Already a string on the DTO
-            config_json = create_request.config_json
-        elif hasattr(create_request, "config") and create_request.config is not None:
-            # Likely a dict on the DTO, serialize it
+        if hasattr(create_request, "config") and create_request.config is not None:
             config_json = json.dumps(create_request.config)
         else:
             raise BusinessValidationError("Connector config must be provided")
+        
+        try:
+            config_factory: BaseConnectorConfigFactory = get_connector_config_factory(create_request.connector_type)
+            config_instance: BaseConnectorConfig = config_factory.create(create_request.config["config"])
+            connection_tester: BaseConnectorTester = get_connector_tester(create_request.connector_type)
+            connection_result: Union[bool, str] = connection_tester.test(config_instance)
+            if connection_result is not True:
+                raise BusinessValidationError(f"Connection test failed: {connection_result}")
+        except ValueError as e:
+            raise BusinessValidationError(str(e))
         
         connector = Connector(
             name=create_request.name,
