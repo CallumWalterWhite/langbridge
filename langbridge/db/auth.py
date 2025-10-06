@@ -1,6 +1,5 @@
-from __future__ import annotations
-
 import enum
+from typing import TYPE_CHECKING
 import uuid
 from datetime import datetime
 
@@ -18,7 +17,10 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.sql import func
 
 from .base import Base
+from db.associations import organization_connectors, project_connectors
 
+if TYPE_CHECKING:
+    from .connector import Connector
 
 class InviteStatus(enum.Enum):
     PENDING = "pending"
@@ -51,6 +53,10 @@ class Organization(Base):
         back_populates="organizations",
         viewonly=True,
     )
+    
+    connectors: Mapped[list["Connector"]] = relationship(
+        "Connector", secondary=organization_connectors, back_populates="organizations", viewonly=False
+    )
 
     projects: Mapped[list["Project"]] = relationship("Project", back_populates="organization", cascade="all, delete-orphan")
     invites:  Mapped[list["OrganizationInvite"]] = relationship("OrganizationInvite", back_populates="organization", cascade="all, delete-orphan")
@@ -76,6 +82,10 @@ class Project(Base):
         secondary="project_user_association",
         back_populates="projects",
         viewonly=True
+    )
+    
+    connectors: Mapped[list["Connector"]] = relationship(
+        "Connector", secondary=project_connectors, back_populates="projects", viewonly=False
     )
 
     invites: Mapped[list["ProjectInvite"]] = relationship("ProjectInvite", back_populates="project", cascade="all, delete-orphan")

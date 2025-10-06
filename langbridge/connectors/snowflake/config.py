@@ -18,7 +18,6 @@ class SnowflakeConnectorConfigSchemaFactory(BaseConnectorConfigSchemaFactory):
                     label="Account",
                     description="Snowflake Account",
                     type="string",
-                    value="",
                     required=True,
                 ),
                 ConnectorConfigEntrySchema(
@@ -26,7 +25,6 @@ class SnowflakeConnectorConfigSchemaFactory(BaseConnectorConfigSchemaFactory):
                     label="User",
                     description="Snowflake User",
                     type="string",
-                    value="",
                     required=True,
                 ),
                 ConnectorConfigEntrySchema(
@@ -34,7 +32,6 @@ class SnowflakeConnectorConfigSchemaFactory(BaseConnectorConfigSchemaFactory):
                     label="Password",
                     description="Snowflake Password",
                     type="password",
-                    value="",
                     required=True,
                 ),
                 ConnectorConfigEntrySchema(
@@ -42,7 +39,6 @@ class SnowflakeConnectorConfigSchemaFactory(BaseConnectorConfigSchemaFactory):
                     label="Database",
                     description="Snowflake Database",
                     type="string",
-                    value="",
                     required=True,
                 ),
                 ConnectorConfigEntrySchema(
@@ -50,7 +46,6 @@ class SnowflakeConnectorConfigSchemaFactory(BaseConnectorConfigSchemaFactory):
                     label="Warehouse",
                     description="Snowflake Warehouse",
                     type="string",
-                    value="",
                     required=False,
                 ),
                 ConnectorConfigEntrySchema(
@@ -58,7 +53,6 @@ class SnowflakeConnectorConfigSchemaFactory(BaseConnectorConfigSchemaFactory):
                     label="Schema",
                     description="Snowflake Schema",
                     type="string",
-                    value="",
                     required=False,
                 ),
                 ConnectorConfigEntrySchema(
@@ -66,7 +60,6 @@ class SnowflakeConnectorConfigSchemaFactory(BaseConnectorConfigSchemaFactory):
                     label="Role",
                     description="Snowflake Role",
                     type="string",
-                    value="",
                     required=False,
                 ),
             ],

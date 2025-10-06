@@ -64,7 +64,7 @@ class Settings(BaseSettings):
     
     SHOPIFY_INTEGRATION_BASE_URL: str = ""
 
-    DISABLE_AUTH: bool = False
+    DISABLE_AUTH: bool = True
     ENABLE_INTEGRATION: bool = True
     
     SHOPIFY_GLOBAL_INTEGRATION_SECRET: str = "hello123"

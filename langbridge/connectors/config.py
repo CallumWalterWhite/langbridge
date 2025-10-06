@@ -1,12 +1,12 @@
 from abc import ABC
-from typing import List, Optional
+from typing import Any, List, Optional
 
 from schemas.base import _Base
 
 
 class ConnectorConfigEntrySchema(_Base):
     field: str
-    value: str
+    value: Optional[Any] = None
     label: Optional[str] = None
     required: bool
     default: Optional[str] = None

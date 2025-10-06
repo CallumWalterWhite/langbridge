@@ -18,6 +18,8 @@ PATHS_TO_EXCLUDE = [
     "/api/v1/auth/github/callback",
     "/api/v1/auth/logout",
     "/api/v1/auth/me",
+    "/docs",
+    "/openapi.json"
 ]
 
 class AuthMiddleware(BaseHTTPMiddleware):
@@ -29,7 +31,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
 
     async def dispatch(self, request: Request, call_next) -> Response:
         self.logger.debug(f"AuthMiddleware: Processing request {request.method} {request.url.path}")
-        if any(request.url.path.startswith(path) for path in PATHS_TO_EXCLUDE):
+        if any(request.url.path.startswith(path) for path in PATHS_TO_EXCLUDE) or settings.DISABLE_AUTH:
             return await call_next(request)
 
         token = request.cookies.get(settings.COOKIE_NAME)

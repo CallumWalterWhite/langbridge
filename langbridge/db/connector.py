@@ -1,41 +1,35 @@
 from sqlalchemy import UUID, Column, String, ForeignKey
+from sqlalchemy.orm import Mapped, relationship
 from db.base import Base
+from db.associations import organization_connectors, project_connectors
+from db.auth import Organization, Project
 
 class Connector(Base):
-    """A Data source Connector."""
-
     __tablename__ = "connectors"
 
     id = Column(UUID(as_uuid=True), primary_key=True, index=True)
     name = Column(String(255), unique=True, nullable=False, index=True)
+    description = Column(String(1024))
     type = Column(String(50), nullable=False)
-    config_json = Column(String, nullable=False)  # JSON configuration as a string
+    config_json = Column(String, nullable=False)
 
-    __mapper_args__ = {
-        "polymorphic_identity": "connector",   # Base identity
-        "polymorphic_on": type                 # Discriminator column
-    }
+    # polymorphic
+    __mapper_args__ = {"polymorphic_identity": "connector", "polymorphic_on": type}
 
+    # backrefs to orgs/projects
+    organizations: Mapped[list["Organization"]] = relationship(
+        "Organization", secondary=organization_connectors, back_populates="connectors"
+    )
+    projects: Mapped[list["Project"]] = relationship(
+        "Project", secondary=project_connectors, back_populates="connectors"
+    )
 
 class DatabaseConnector(Connector):
-    """A Database Connector."""
-
     __tablename__ = "database_connectors"
-
     id = Column(UUID(as_uuid=True), ForeignKey("connectors.id"), primary_key=True)
-
-    __mapper_args__ = {
-        "polymorphic_identity": "database_connector",
-    }
-
+    __mapper_args__ = {"polymorphic_identity": "database_connector"}
 
 class APIConnector(Connector):
-    """An API Connector."""
-
     __tablename__ = "api_connectors"
-
     id = Column(UUID(as_uuid=True), ForeignKey("connectors.id"), primary_key=True)
-
-    __mapper_args__ = {
-        "polymorphic_identity": "api_connector",
-    }
+    __mapper_args__ = {"polymorphic_identity": "api_connector"}

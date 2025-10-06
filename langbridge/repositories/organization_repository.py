@@ -1,13 +1,10 @@
-from __future__ import annotations
-
 import uuid
 
 from sqlalchemy.orm import Session
 
 from db.auth import Organization, Project, OrganizationInvite, ProjectInvite, User, OrganizationUser, ProjectUser, ProjectRole, OrganizationRole
+from db.connector import Connector
 from .base import BaseRepository
-
-
 import uuid
 from sqlalchemy.orm import Session
 from sqlalchemy import select, exists

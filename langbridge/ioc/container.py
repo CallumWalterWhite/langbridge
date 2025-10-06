@@ -6,6 +6,8 @@ from db import (
     session_scope,
 )
 from auth.register import create_oauth_client
+from repositories.connector_repository import ConnectorRepository
+from services.connector_service import ConnectorService
 from repositories.user_repository import UserRepository, OAuthAccountRepository
 from repositories.organization_repository import (
     OrganizationInviteRepository,
@@ -44,6 +46,8 @@ class Container(containers.DeclarativeContainer):
     project_repository = providers.Factory(ProjectRepository, session=session)
     organization_invite_repository = providers.Factory(OrganizationInviteRepository, session=session)
     project_invite_repository = providers.Factory(ProjectInviteRepository, session=session)
+    connector_repository = providers.Factory(ConnectorRepository, session=session)
+    
 
     organization_service = providers.Factory(
         OrganizationService,
@@ -61,4 +65,11 @@ class Container(containers.DeclarativeContainer):
         oauth_account_repository=oauth_account_repository,
         oauth=oauth,
         organization_service=organization_service,
+    )
+    
+    connector_service = providers.Factory(
+        ConnectorService,
+        connector_repository=connector_repository,
+        organization_repository=organization_repository,
+        project_repository=project_repository
     )

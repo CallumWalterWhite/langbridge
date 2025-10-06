@@ -37,7 +37,6 @@ class OrganizationService:
         self._organization_invite_repository = organization_invite_repository
         self._project_invite_repository = project_invite_repository
         self._user_repository = user_repository
-        self._session = session
 
     def list_user_organizations(self, user: User) -> list[Organization]:
         return self._organization_repository.list_for_user(user)
