@@ -37,6 +37,9 @@ class ConnectorService:
     def list_project_connectors(self, project: Project) -> list[Connector]:
         return project.connectors
     
+    def list_connector_types(self) -> list[str]:
+        return [ct.value for ct in ConnectorType]
+    
     def get_connector_config_schema(self, connector_type: str) -> ConnectorConfigSchema:
         try:
             connector_type: ConnectorType = ConnectorType(connector_type.upper())

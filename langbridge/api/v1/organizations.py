@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, FastAPI, Request, Response, Body, status
 
 
 from auth.dependencies import get_current_user
-from db.auth import Organization, User
+from db.auth import Organization, Project, User
 from ioc import Container
 from schemas import (
     InviteUserRequest,
@@ -24,7 +24,7 @@ from services.organization_service import OrganizationService
 router = APIRouter(prefix="/organizations", tags=["organizations"])
 
 
-def _serialize_project(project) -> ProjectResponse:
+def _serialize_project(project: Project) -> ProjectResponse:
     return ProjectResponse.model_validate(
         {
             "id": project.id,

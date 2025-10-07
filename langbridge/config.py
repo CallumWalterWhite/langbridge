@@ -27,6 +27,7 @@ class Settings(BaseSettings):
     ENVIRONMENT: Literal["local", "staging", "development", "production"] = "local"
     
     IS_LOCAL: bool = ENVIRONMENT == "local"
+    LOCAL_TOKEN: str = "localdevtoken"
     
     @computed_field  # type: ignore[prop-decorator]
     @property
@@ -98,6 +99,9 @@ class Settings(BaseSettings):
     GITHUB_API_BASE_URL: str = "https://api.github.com/"
 
     SESSION_SECRET: str = "supersecretkey"
+    
+    CONFIG_KEYRING: str = "default"  # JSON-encoded dict of base64 keys, e.g. '{"key-id-1": "base64key1",
+    CONFIG_ACTIVE_KEY: str = "default"  # key ID of the active key in the keyring
 
 settings = Settings()  # type: ignore
 

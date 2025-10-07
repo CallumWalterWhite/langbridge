@@ -26,6 +26,14 @@ def get_connector(
     connector = connector_service.get_connector(connector_id)
     return ConnectorResponse.model_validate(connector)
 
+@router.get("/schemas/type", response_model=list[str])
+@inject
+def list_connector_types(
+    connector_service: ConnectorService = Depends(Provide[Container.connector_service]),
+):
+    types = connector_service.list_connector_types()
+    return types
+
 @router.get("/schema/{connector_type}", response_model=ConnectorConfigSchema)
 @inject
 def get_connector_schema(

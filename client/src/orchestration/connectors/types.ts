@@ -1,0 +1,50 @@
+export interface ConnectorConfigEntry {
+  field: string;
+  value?: unknown;
+  label?: string | null;
+  required: boolean;
+  default?: string | null;
+  description: string;
+  type: string;
+  valueList?: string[] | null;
+}
+
+export interface ConnectorConfigSchema {
+  name: string;
+  description: string;
+  version: string;
+  label: string;
+  icon: string;
+  connectorType: string;
+  config: ConnectorConfigEntry[];
+}
+
+export interface ConnectorResponse {
+  id?: string;
+  name: string;
+  description?: string | null;
+  version?: string | null;
+  label?: string | null;
+  icon?: string | null;
+  connectorType?: string | null;
+  organizationId?: string | null;
+  projectId?: string | null;
+  config?: Record<string, unknown> | null;
+}
+
+export interface ConnectorConfigPayload {
+  config: Record<string, unknown>;
+  [key: string]: unknown;
+}
+
+export interface CreateConnectorPayload {
+  name: string;
+  description?: string;
+  version?: string;
+  label?: string;
+  icon?: string;
+  connectorType: string;
+  organizationId?: string;
+  projectId?: string;
+  config: ConnectorConfigPayload;
+}

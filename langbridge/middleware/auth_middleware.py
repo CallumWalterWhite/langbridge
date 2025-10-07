@@ -31,7 +31,15 @@ class AuthMiddleware(BaseHTTPMiddleware):
 
     async def dispatch(self, request: Request, call_next) -> Response:
         self.logger.debug(f"AuthMiddleware: Processing request {request.method} {request.url.path}")
-        if any(request.url.path.startswith(path) for path in PATHS_TO_EXCLUDE) or settings.DISABLE_AUTH:
+        
+        if settings.IS_LOCAL:
+            token = request.headers.get("Authorization")
+            if token == settings.LOCAL_TOKEN:
+                request.state.username = "CallumWalterWhite"
+                request.state.user = self.auth_service.get_user_by_username("CallumWalterWhite")
+                return await call_next(request)
+        
+        if any(request.url.path.startswith(path) for path in PATHS_TO_EXCLUDE):
             return await call_next(request)
 
         token = request.cookies.get(settings.COOKIE_NAME)
