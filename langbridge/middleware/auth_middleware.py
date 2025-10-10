@@ -14,12 +14,13 @@ from services.auth_service import AuthService
 
 PATHS_TO_EXCLUDE = [
     "/api/v1/auth/health",
-    "/api/v1/auth/login/github",
+    "/api/v1/auth/login",
     "/api/v1/auth/github/callback",
+    "/api/v1/auth/google/callback",
     "/api/v1/auth/logout",
     "/api/v1/auth/me",
     "/docs",
-    "/openapi.json"
+    "/openapi.json",
 ]
 
 class AuthMiddleware(BaseHTTPMiddleware):

@@ -98,6 +98,12 @@ class Settings(BaseSettings):
     GITHUB_ACCESS_TOKEN_URL: str = "https://github.com/login/oauth/access_token"
     GITHUB_API_BASE_URL: str = "https://api.github.com/"
 
+    GOOGLE_CLIENT_ID: str = ""
+    GOOGLE_CLIENT_SECRET: str = ""
+    GOOGLE_AUTHORIZE_URL: str = "https://accounts.google.com/o/oauth2/v2/auth"
+    GOOGLE_ACCESS_TOKEN_URL: str = "https://oauth2.googleapis.com/token"
+    GOOGLE_API_BASE_URL: str = "https://www.googleapis.com/oauth2/v2/"
+
     SESSION_SECRET: str = "supersecretkey"
     
     CONFIG_KEYRING: str = "default"  # JSON-encoded dict of base64 keys, e.g. '{"key-id-1": "base64key1",

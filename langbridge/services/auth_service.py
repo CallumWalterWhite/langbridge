@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 from abc import ABC
-from typing import List, Literal, Optional, Union
+from typing import List, Literal, Optional
 import uuid
+import re
 
 from authlib.integrations.starlette_client import OAuth, OAuthError
 from fastapi import Request
@@ -14,8 +15,8 @@ from schemas.base import _Base
 from repositories.user_repository import UserRepository, OAuthAccountRepository
 from services.organization_service import OrganizationService
 
-GITHUB = Literal['github']
-PROVIDERS: List[GITHUB] = ['github']
+ProviderLiteral = Literal['github', 'google']
+PROVIDERS: List[ProviderLiteral] = ['github', 'google']
 
 
 class OAuthProviderUserInfo(_Base):
@@ -68,14 +69,56 @@ class GithubUserHttpProvider(OAuthUserHttpProvider):
         )
 
 
+class GoogleUserHttpProvider(OAuthUserHttpProvider):
+    """Handles fetching user info from Google using OAuth2."""
+
+    USERINFO_ENDPOINT = "https://www.googleapis.com/oauth2/v2/userinfo"
+
+    def __init__(self, oauth: OAuth):
+        self._oauth = oauth
+
+    async def fetch_user_info(self, token: dict) -> OAuthProviderUserInfo:
+        access_token = token.get("access_token")
+        if not access_token:
+            raise AuthenticationError("Missing access token in Google OAuth flow.")
+
+        async with httpx.AsyncClient() as client:
+            response = await client.get(
+                self.USERINFO_ENDPOINT,
+                headers={"Authorization": f"Bearer {access_token}"},
+            )
+            response.raise_for_status()
+            profile = response.json()
+
+        email = profile.get("email")
+        raw_username = ""
+        if email:
+            raw_username = email.split("@")[0]
+        elif profile.get("name"):
+            raw_username = profile["name"].replace(" ", "")
+        elif profile.get("id"):
+            raw_username = profile["id"]
+
+        return OAuthProviderUserInfo(
+            sub=str(profile.get("id")),
+            username=raw_username,
+            name=profile.get("name"),
+            avatar_url=profile.get("picture"),
+            email=email,
+            provider="google",
+        )
+
+
 class AuthService:
     """Domain logic for authenticating and registering users."""
 
     __provider_property_map = {
         'github': lambda oauth: oauth.github,  # type: ignore[attr-defined]
+        'google': lambda oauth: oauth.google,  # type: ignore[attr-defined]
     }
     __provider_userinfo_map: dict[str, type[OAuthUserHttpProvider]] = {
         'github': GithubUserHttpProvider,
+        'google': GoogleUserHttpProvider,
     }
 
     def __init__(
@@ -99,7 +142,7 @@ class AuthService:
     async def authorize_redirect(
         self,
         request: Request,
-        provider: Union[GITHUB, None],
+        provider: ProviderLiteral,
         redirect_uri: str,
     ) -> httpx.Response:
         if provider not in self.__provider_property_map:
@@ -110,7 +153,7 @@ class AuthService:
     async def authenticate_callback(
         self,
         request: Request,
-        provider: Union[GITHUB, None],
+        provider: ProviderLiteral,
     ) -> User:
         if provider not in self.__provider_property_map:
             raise BusinessValidationError(f"Unsupported provider: {provider}")
@@ -124,14 +167,20 @@ class AuthService:
         if provider not in self.__provider_userinfo_map:
             raise BusinessValidationError(f"Unsupported provider for user info: {provider}")
 
-        user_info_provider = self.__provider_userinfo_map[provider](self._oauth) # type: ignore[arg-type]
+        user_info_provider = self.__provider_userinfo_map[provider](self._oauth)  # type: ignore[arg-type]
         user_info: OAuthProviderUserInfo = await user_info_provider.fetch_user_info(token)
 
-        user: Optional[User] = self._user_repository.get_by_username(user_info.username)
+        existing_oauth_account: Optional[OAuthAccount] = None
+        if user_info.sub:
+            existing_oauth_account = self._oauth_account_repository.get_by_provider_account(provider, user_info.sub)
+
+        user: Optional[User] = existing_oauth_account.user if existing_oauth_account else None
+        if not user:
+            user = self._user_repository.get_by_username(user_info.username)
 
         if not user:
             user = self.create_user(user_info, provider)
-        elif not (
+        elif not existing_oauth_account and not (
             user.oauth_accounts
             and any(
                 oa.provider == provider and oa.provider_account_id == user_info.sub
@@ -147,7 +196,7 @@ class AuthService:
         self,
         user: User,
         user_info: OAuthProviderUserInfo,
-        oauth_provider: Union[GITHUB, None],
+        oauth_provider: ProviderLiteral,
     ) -> OAuthAccount:
         if oauth_provider not in PROVIDERS:
             raise BusinessValidationError(f"Unsupported provider: {oauth_provider}")
@@ -169,20 +218,39 @@ class AuthService:
     def create_user(
         self,
         user_info: OAuthProviderUserInfo,
-        oauth_provider: Union[GITHUB, None],
+        oauth_provider: ProviderLiteral,
     ) -> User:
         if oauth_provider not in PROVIDERS:
             raise BusinessValidationError(f"Unsupported provider: {oauth_provider}")
 
-        if self._user_repository.get_by_username(user_info.username):
-            raise BusinessValidationError(
-                f"User with username '{user_info.username}' already exists"
-            )
+        username = self._resolve_unique_username(user_info)
+        user_info.username = username
 
         user = User(
             id=uuid.uuid4(),
-            username=user_info.username,
+            username=username,
         )
         self._user_repository.add(user)
         self.create_oauth_account(user, user_info, oauth_provider)
         return user
+
+    def _resolve_unique_username(self, user_info: OAuthProviderUserInfo) -> str:
+        base_username = user_info.username or ""
+
+        if user_info.email and not base_username:
+            base_username = user_info.email.split("@")[0]
+
+        if not base_username:
+            base_username = f"{user_info.provider}_{user_info.sub}"
+
+        sanitized = re.sub(r"[^a-zA-Z0-9._-]", "", base_username).lower()
+        if not sanitized:
+            sanitized = f"{user_info.provider}_{user_info.sub}"
+
+        candidate = sanitized
+        suffix = 1
+        while self._user_repository.get_by_username(candidate):
+            candidate = f"{sanitized}{suffix}"
+            suffix += 1
+
+        return candidate

@@ -8,3 +8,13 @@ registries:
     scopes:
       - 'read:user'
       - 'user:email'
+  - type: google
+    client_id: 'google_client_id'
+    client_secret: 'google_client_secret'
+    authorize_url: 'google_authorize_url'
+    access_token_url: 'google_access_token_url'
+    api_base_url: 'google_api_base_url'
+    scopes:
+      - 'openid'
+      - 'email'
+      - 'profile'

@@ -25,3 +25,13 @@ class OAuthAccountRepository(BaseRepository):
 
     def __init__(self, session: Session):
         super().__init__(session, OAuthAccount)
+
+    def get_by_provider_account(self, provider: str, provider_account_id: str) -> OAuthAccount | None:
+        return (
+            self._session.query(OAuthAccount)
+            .filter(
+                OAuthAccount.provider == provider,
+                OAuthAccount.provider_account_id == provider_account_id,
+            )
+            .one_or_none()
+        )

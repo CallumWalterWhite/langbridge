@@ -1,15 +1,13 @@
-from abc import ABC, abstractmethod
 from typing import Union
 from connectors.connection_tester import BaseConnectorTester
 
 from snowflake.connector import connect, ProgrammingError, OperationalError, DatabaseError
 
-from errors.application_errors import BusinessValidationError
 from connectors.config import ConnectorType
 from .config import SnowflakeConnectorConfig
 
 class SnowflakeConnectorTester(BaseConnectorTester):
-    type: str = ConnectorType.SNOWFLAKE
+    type: ConnectorType = ConnectorType.SNOWFLAKE
     
     def test(self, config: SnowflakeConnectorConfig) -> Union[bool, str]:
         try:
