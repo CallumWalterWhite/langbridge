@@ -29,6 +29,11 @@ const NAV_ITEMS: NavItem[] = [
     description: 'Manage structured connectors and retrievers powering your agents.',
   },
   {
+    href: '/semantic-model',
+    label: 'Semantic models',
+    description: 'Build semantic layers and publish curated data models for agents.',
+  },
+  {
     href: '/agents',
     label: 'LLM connections',
     description: 'Register provider credentials for upcoming agent builders.',

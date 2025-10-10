@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from .base import Base
 from . import auth  # noqa: F401 - ensure models are registered with metadata
+from . import semantic  # noqa: F401 - ensure semantic models are registered
 
 
 def create_engine_for_url(database_url: str, echo: bool = False) -> Engine:

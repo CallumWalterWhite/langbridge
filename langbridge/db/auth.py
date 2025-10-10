@@ -27,6 +27,7 @@ from db.associations import (
 if TYPE_CHECKING:
     from .connector import Connector
     from .agent import LLMConnection
+    from .semantic import SemanticModelEntry
 
 class InviteStatus(enum.Enum):
     PENDING = "pending"
@@ -66,6 +67,9 @@ class Organization(Base):
     llm_connections: Mapped[list["LLMConnection"]] = relationship(
         "LLMConnection", secondary=organization_llm_connections, back_populates="organizations", viewonly=False
     )
+    semantic_models: Mapped[list["SemanticModelEntry"]] = relationship(
+        "SemanticModelEntry", back_populates="organization", cascade="all, delete-orphan"
+    )
 
     projects: Mapped[list["Project"]] = relationship("Project", back_populates="organization", cascade="all, delete-orphan")
     invites:  Mapped[list["OrganizationInvite"]] = relationship("OrganizationInvite", back_populates="organization", cascade="all, delete-orphan")
@@ -98,6 +102,9 @@ class Project(Base):
     )
     llm_connections: Mapped[list["LLMConnection"]] = relationship(
         "LLMConnection", secondary=project_llm_connections, back_populates="projects", viewonly=False
+    )
+    semantic_models: Mapped[list["SemanticModelEntry"]] = relationship(
+        "SemanticModelEntry", back_populates="project", cascade="all, delete-orphan"
     )
 
     invites: Mapped[list["ProjectInvite"]] = relationship("ProjectInvite", back_populates="project", cascade="all, delete-orphan")

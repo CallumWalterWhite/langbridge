@@ -482,7 +482,7 @@ export default function DataConnectionsPage(): JSX.Element {
         <Select
           id={`config-${entry.field}`}
           placeholder={`Select ${entry.label ?? entry.field}`}
-          value={value}
+          value={value || ''}
           onChange={(event) => handleConfigChange(entry.field, event.target.value)}
         >
           <option value="true">True</option>

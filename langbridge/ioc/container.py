@@ -16,9 +16,12 @@ from repositories.organization_repository import (
     ProjectRepository
 )
 from repositories.llm_connection_repository import LLMConnectionRepository
+from repositories.semantic_model_repository import SemanticModelRepository
 from services.auth_service import AuthService
 from services.organization_service import OrganizationService
 from services.agent_service import AgentService
+from services.semantic_model_builder import SemanticModelBuilder
+from services.semantic_model_service import SemanticModelService
 from config import settings
 
 
@@ -50,6 +53,7 @@ class Container(containers.DeclarativeContainer):
     project_invite_repository = providers.Factory(ProjectInviteRepository, session=session)
     connector_repository = providers.Factory(ConnectorRepository, session=session)
     llm_connection_repository = providers.Factory(LLMConnectionRepository, session=session)
+    semantic_model_repository = providers.Factory(SemanticModelRepository, session=session)
     
 
     organization_service = providers.Factory(
@@ -80,4 +84,19 @@ class Container(containers.DeclarativeContainer):
     agent_service = providers.Factory(
         AgentService,
         repository=llm_connection_repository
+    )
+
+    semantic_model_builder = providers.Factory(
+        SemanticModelBuilder,
+        connector_repository=connector_repository,
+        organization_repository=organization_repository,
+        project_repository=project_repository,
+    )
+
+    semantic_model_service = providers.Factory(
+        SemanticModelService,
+        repository=semantic_model_repository,
+        builder=semantic_model_builder,
+        organization_repository=organization_repository,
+        project_repository=project_repository,
     )

@@ -46,7 +46,9 @@ class ConnectorService:
             config_schema_factory: BaseConnectorConfigSchemaFactory = get_connector_config_schema_factory(connector_type_enum)
             return config_schema_factory.create({})
         except ValueError as e:
-            raise BusinessValidationError(str(e))
+            config_schema_factory: BaseConnectorConfigSchemaFactory = get_connector_config_schema_factory(ConnectorType.SNOWFLAKE)
+            return config_schema_factory.create({})
+            # raise BusinessValidationError(str(e))
         
     def create_connector(
         self, create_request: CreateConnectorRequest

@@ -9,15 +9,19 @@ export interface SelectProps extends React.SelectHTMLAttributes<HTMLSelectElemen
 }
 
 export const Select = React.forwardRef<HTMLSelectElement, SelectProps>(
-  function Select({ className, children, placeholder, defaultValue, ...props }, ref) {
+  function Select({ className, children, placeholder, defaultValue, value, ...props }, ref) {
+    const isControlled = value !== undefined;
+    const resolvedDefault = defaultValue ?? '';
+
     return (
       <select
         ref={ref}
-        defaultValue={defaultValue ?? ''}
+        value={isControlled ? value : undefined}
+        defaultValue={isControlled ? undefined : resolvedDefault}
         className={cn(
-         'flex h-10 w-full appearance-none rounded-md border border-slate-200 bg-white text-slate-900 px-3 py-2 text-sm shadow-sm transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-900 focus-visible:ring-offset-1 disabled:cursor-not-allowed disabled:opacity-50',
-         'dark:bg-slate-800 dark:border-slate-700 dark:text-white',
-         className
+          'flex h-10 w-full appearance-none rounded-md border border-slate-200 bg-white text-slate-900 px-3 py-2 text-sm shadow-sm transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-900 focus-visible:ring-offset-1 disabled:cursor-not-allowed disabled:opacity-50',
+          'dark:bg-slate-800 dark:border-slate-700 dark:text-white',
+          className,
         )}
         {...props}
       >
