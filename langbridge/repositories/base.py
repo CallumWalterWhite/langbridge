@@ -1,14 +1,18 @@
+from typing import Optional
 from sqlalchemy.orm import Session
+
+from db.base import Base
 
 class BaseRepository:
     def __init__(self, session: Session, model):
         self._session = session
         self._model = model
 
-    def add(self, instance):
+    def add(self, instance) -> Base:
         self._session.add(instance)
+        return instance
 
-    def delete(self, instance):
+    def delete(self, instance) -> None:
         self._session.delete(instance)
 
     def get_by_id(self, id):

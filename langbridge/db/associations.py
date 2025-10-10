@@ -16,3 +16,17 @@ project_connectors = Table(
     Column("project_id", UUID(as_uuid=True), ForeignKey("projects.id"), primary_key=True),
     Column("connector_id", UUID(as_uuid=True), ForeignKey("connectors.id"), primary_key=True),
 )
+
+organization_llm_connections = Table(
+    "organization_llm_connections",
+    Base.metadata,
+    Column("organization_id", UUID(as_uuid=True), ForeignKey("organizations.id"), primary_key=True),
+    Column("llm_connection_id", UUID(as_uuid=True), ForeignKey("llm_connections.id"), primary_key=True),
+)
+
+project_llm_connections = Table(
+    "project_llm_connections",
+    Base.metadata,
+    Column("project_id", UUID(as_uuid=True), ForeignKey("projects.id"), primary_key=True),
+    Column("llm_connection_id", UUID(as_uuid=True), ForeignKey("llm_connections.id"), primary_key=True),
+)

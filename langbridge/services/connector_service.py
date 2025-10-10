@@ -1,5 +1,5 @@
 import json
-from typing import Union
+from typing import Optional, Union
 from sqlalchemy.orm import Session
 from db.auth import Organization, Project
 from db.connector import Connector, DatabaseConnector
@@ -42,8 +42,8 @@ class ConnectorService:
     
     def get_connector_config_schema(self, connector_type: str) -> ConnectorConfigSchema:
         try:
-            connector_type: ConnectorType = ConnectorType(connector_type.upper())
-            config_schema_factory: BaseConnectorConfigSchemaFactory = get_connector_config_schema_factory(connector_type)
+            connector_type_enum: ConnectorType = ConnectorType(connector_type.upper())
+            config_schema_factory: BaseConnectorConfigSchemaFactory = get_connector_config_schema_factory(connector_type_enum)
             return config_schema_factory.create({})
         except ValueError as e:
             raise BusinessValidationError(str(e))
@@ -61,7 +61,7 @@ class ConnectorService:
         try:
             config_factory: BaseConnectorConfigFactory = get_connector_config_factory(connector_type)
             config_instance: BaseConnectorConfig = config_factory.create(create_request.config["config"])
-            connection_tester: BaseConnectorTester = get_connector_tester(connector_type)
+            connection_tester: BaseConnectorTester = get_connector_tester(connector_type.value)
             connection_result: Union[bool, str] = connection_tester.test(config_instance)
             if connection_result is not True:
                 raise BusinessValidationError(f"Connection test failed: {connection_result}")
@@ -81,14 +81,13 @@ class ConnectorService:
         if create_request.organization_id is None and create_request.project_id is None:
             raise BusinessValidationError("Either organization_id or project_id must be provided")
         
-        if create_request.organization_id:
-            organization: Organization = self._organization_repository.get_by_id(create_request.organization_id)
-            if not organization:
-                raise BusinessValidationError("Organization not found")
-            organization.connectors.append(connector)
+        organization: Optional[Organization] = self._organization_repository.get_by_id(create_request.organization_id)
+        if not organization:
+            raise BusinessValidationError("Organization not found")
+        organization.connectors.append(connector)
         
         if create_request.project_id:
-            project: Project = self._project_repository.get_by_id(create_request.project_id)
+            project: Optional[Project] = self._project_repository.get_by_id(create_request.project_id)
             if not project:
                 raise BusinessValidationError("Project not found")
             project.connectors.append(connector)

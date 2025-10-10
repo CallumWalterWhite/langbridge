@@ -13,7 +13,7 @@ router = APIRouter(prefix="/connectors", tags=["connectors"])
 def create_connector(
     request: CreateConnectorRequest,
     connector_service: ConnectorService = Depends(Provide[Container.connector_service]),
-):
+) -> ConnectorResponse:
     connector = connector_service.create_connector(request)
     return ConnectorResponse.model_validate(connector)
 
@@ -22,7 +22,7 @@ def create_connector(
 def get_connector(
     connector_id: str,
     connector_service: ConnectorService = Depends(Provide[Container.connector_service]),
-):
+) -> ConnectorResponse:
     connector = connector_service.get_connector(connector_id)
     return ConnectorResponse.model_validate(connector)
 
@@ -30,7 +30,7 @@ def get_connector(
 @inject
 def list_connector_types(
     connector_service: ConnectorService = Depends(Provide[Container.connector_service]),
-):
+) -> list[str]:
     types = connector_service.list_connector_types()
     return types
 
@@ -39,7 +39,7 @@ def list_connector_types(
 def get_connector_schema(
     connector_type: str,
     connector_service: ConnectorService = Depends(Provide[Container.connector_service]),
-):
+) -> ConnectorConfigSchema:
     try:
         schema = connector_service.get_connector_config_schema(connector_type)
         return schema
@@ -61,7 +61,7 @@ def update_connector(
 def delete_connector(
     connector_id: str,
     connector_service: ConnectorService = Depends(Provide[Container.connector_service]),
-):
+) -> None:
     connector_service.delete_connector(connector_id)
     return None
 
@@ -69,6 +69,6 @@ def delete_connector(
 @inject
 def list_connectors(
     connector_service: ConnectorService = Depends(Provide[Container.connector_service]),
-):
+) -> list[ConnectorResponse]:
     connectors = connector_service._connector_repository.get_all()
     return [ConnectorResponse.model_validate(conn) for conn in connectors]

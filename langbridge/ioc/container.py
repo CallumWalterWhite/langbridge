@@ -13,10 +13,12 @@ from repositories.organization_repository import (
     OrganizationInviteRepository,
     OrganizationRepository,
     ProjectInviteRepository,
-    ProjectRepository,
+    ProjectRepository
 )
+from repositories.llm_connection_repository import LLMConnectionRepository
 from services.auth_service import AuthService
 from services.organization_service import OrganizationService
+from services.agent_service import AgentService
 from config import settings
 
 
@@ -47,6 +49,7 @@ class Container(containers.DeclarativeContainer):
     organization_invite_repository = providers.Factory(OrganizationInviteRepository, session=session)
     project_invite_repository = providers.Factory(ProjectInviteRepository, session=session)
     connector_repository = providers.Factory(ConnectorRepository, session=session)
+    llm_connection_repository = providers.Factory(LLMConnectionRepository, session=session)
     
 
     organization_service = providers.Factory(
@@ -72,4 +75,9 @@ class Container(containers.DeclarativeContainer):
         connector_repository=connector_repository,
         organization_repository=organization_repository,
         project_repository=project_repository
+    )
+
+    agent_service = providers.Factory(
+        AgentService,
+        repository=llm_connection_repository
     )

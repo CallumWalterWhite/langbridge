@@ -12,7 +12,7 @@ class ConnectorResponse(_Base):
     label: Optional[str] = None
     icon: Optional[str] = None
     connector_type: Optional[str] = None
-    organization_id: Optional[UUID] = None
+    organization_id: UUID
     project_id: Optional[UUID] = None
     config: Optional[Dict[str, Any]] = None
     
@@ -21,9 +21,8 @@ class CreateConnectorRequest(_Base):
     description: Optional[str] = None
     version: Optional[str] = None
     label: Optional[str] = None
-    icon: Optional[str] = None
-    connector_type: Optional[str] = None
-    organization_id: Optional[UUID] = None
+    connector_type: str
+    organization_id: UUID
     project_id: Optional[UUID] = None
     config: Optional[Dict[str, Any]] = None
     
@@ -34,6 +33,6 @@ class UpdateConnectorRequest(_Base):
     label: Optional[str] = None
     icon: Optional[str] = None
     connector_type: Optional[str] = None
-    organization_id: Optional[UUID] = None
+    organization_id: UUID
     project_id: Optional[UUID] = None
     config: Optional[Dict[str, Any]] = None

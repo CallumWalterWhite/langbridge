@@ -28,9 +28,5 @@ class UnitOfWorkMiddleware(BaseHTTPMiddleware):
             self.logger.error("Rolling back due to exception: %s", e)
             self.session.rollback()
             raise e
-        except BusinessValidationError as bve:
-            self.logger.error("Business validation error: %s", bve)
-            self.session.rollback()
-            raise bve
         finally:
             self.session.close()

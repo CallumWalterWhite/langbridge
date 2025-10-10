@@ -1,39 +1,55 @@
-from typing import Dict, List
-from uuid import uuid4
-from fastapi import APIRouter, HTTPException, status
-
-from schemas.agents import Agent, AgentCreate, AgentCreateResponse
-from .datasources import _DATA_SOURCES
-
+from typing import List
+from fastapi import APIRouter, Depends, HTTPException, status
+from ioc import Container
+from dependency_injector.wiring import Provide, inject
+from services.agent_service import AgentService
+from schemas.llm_connections import LLMConnectionCreate, LLMConnectionResponse, LLMConnectionResponse, LLMConnectionTest, LLMConnectionUpdate
 
 router = APIRouter(prefix='/agents', tags=['agents'])
 
+@router.post("/llm-connections", response_model=LLMConnectionResponse)
+@inject
+def create_llm_connection(
+    request: LLMConnectionCreate,
+    agent_service: AgentService = Depends(Provide[Container.connector_service])
+) -> LLMConnectionResponse:
+    connection = agent_service.create_llm_connection(request)
+    return LLMConnectionResponse.model_validate(connection)
 
-_AGENTS: Dict[str, Agent] = {}
+@router.get("/llm-connections", response_model=List[LLMConnectionResponse])
+@inject
+def list_llm_connections(
+    agent_service: AgentService = Depends(Provide[Container.agent_service])
+) -> List[LLMConnectionResponse]:
+    connections = agent_service.list_llm_connections()
+    return [LLMConnectionResponse.model_validate(conn) for conn in connections]
 
+@router.get("/llm-connections/{connection_id}", response_model=LLMConnectionResponse)
+@inject
+def get_llm_connection(
+    connection_id: int,
+    agent_service: AgentService = Depends(Provide[Container.agent_service])
+) -> LLMConnectionResponse:
+    connection = agent_service.get_llm_connection(connection_id)
+    if not connection:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="LLM Connection not found")
+    return LLMConnectionResponse.model_validate(connection)
 
-@router.get('', response_model=List[Agent])
-async def list_agents() -> List[Agent]:
-    return list(_AGENTS.values())
+@router.put("/llm-connections/{connection_id}", response_model=LLMConnectionResponse)
+@inject
+def update_llm_connection(
+    connection_id: int,
+    request: LLMConnectionUpdate,
+    agent_service: AgentService = Depends(Provide[Container.agent_service])
+ )-> LLMConnectionResponse:
+    connection = agent_service.update_llm_connection(connection_id, request)
+    return LLMConnectionResponse.model_validate(connection)
 
-
-@router.post('', response_model=AgentCreateResponse, status_code=status.HTTP_201_CREATED)
-async def create_agent(payload: AgentCreate) -> AgentCreateResponse:
-    if not payload.name.strip():
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail='Name is required')
-
-    missing_sources = [source_id for source_id in payload.source_ids if source_id not in _DATA_SOURCES]
-    if missing_sources:
-        detail = f"Unknown data source ids: {', '.join(missing_sources)}"
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=detail)
-
-    identifier = str(uuid4())
-    agent = Agent(
-        id=identifier,
-        name=payload.name.strip(),
-        kind=payload.kind,
-        source_ids=payload.source_ids,
-    )
-    _AGENTS[identifier] = agent
-    return AgentCreateResponse(id=identifier)
-
+@router.post("/llm-connections/test", response_model=dict)
+@inject
+def test_llm_connection(
+    request: LLMConnectionTest,
+    agent_service: AgentService = Depends(Provide[Container.agent_service])
+) -> dict:
+    result = agent_service.test_llm_connection(request)
+    return result

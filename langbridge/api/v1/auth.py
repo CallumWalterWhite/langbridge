@@ -1,17 +1,14 @@
-from typing import Annotated, Optional
-from fastapi import APIRouter, Depends, HTTPException, Request, status, Body
+from typing import Optional
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse, RedirectResponse
-from fastapi.security import HTTPBasic, HTTPBasicCredentials
+from fastapi.security import HTTPBasic
 from dependency_injector.wiring import Provide, inject
-import httpx
 
 from ioc import Container
 from db.auth import OAuthAccount, User
 from auth.jwt import create_jwt, set_session_cookie, verify_jwt
-from schemas.auth import LoginResponse, RegisterRequest, UserResponse
 from services.auth_service import AuthService
 from config import settings
-from authlib.integrations.starlette_client import OAuth, OAuthError
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 security = HTTPBasic()
@@ -26,7 +23,6 @@ async def login_github(
         request: Request,
         auth_service: AuthService = Depends(Provide[Container.auth_service])):
     redirect_uri = f"{settings.BACKEND_URL}{settings.API_V1_STR}/auth/github/callback"
-    # return await oauth.github.authorize_redirect(request, redirect_uri) # type: ignore
     return await auth_service.authorize_redirect(request, 'github', redirect_uri)
 
 @router.get("/github/callback")
