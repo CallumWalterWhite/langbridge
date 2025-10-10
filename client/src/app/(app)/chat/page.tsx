@@ -5,8 +5,6 @@ import { useRouter } from 'next/navigation';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ArrowRight, MessageSquare, Plus, RefreshCw } from 'lucide-react';
 
-import { ThemeToggle } from '@/components/ThemeToggle';
-import { LogoutButton } from '@/components/LogoutButton';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useToast } from '@/components/ui/toast';
@@ -46,32 +44,32 @@ export default function ChatIndexPage() {
   };
 
   return (
-    <div className="flex min-h-full flex-col gap-6 px-6 py-10 text-[color:var(--text-secondary)] transition-colors sm:px-10 lg:px-14">
-      <header className="surface-panel flex flex-col gap-4 rounded-3xl p-6 shadow-soft sm:flex-row sm:items-end sm:justify-between">
-        <div className="space-y-3">
-          <p className="text-xs font-semibold uppercase tracking-[0.2em] text-[color:var(--text-muted)]">Conversations</p>
-          <div className="space-y-2">
-            <h1 className="text-2xl font-semibold text-[color:var(--text-primary)] md:text-3xl">Your chat workspace</h1>
-            <p className="text-sm md:text-base">
-              Review recent sessions, resume ongoing investigations, or spin up a new assistant conversation grounded in
-              your connected data sources.
-            </p>
+    <div className="space-y-6 text-[color:var(--text-secondary)]">
+      <header className="surface-panel rounded-3xl p-6 shadow-soft">
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+          <div className="space-y-3">
+            <p className="text-xs font-semibold uppercase tracking-[0.2em] text-[color:var(--text-muted)]">Conversations</p>
+            <div className="space-y-2">
+              <h1 className="text-2xl font-semibold text-[color:var(--text-primary)] md:text-3xl">Your chat workspace</h1>
+              <p className="text-sm md:text-base">
+                Review recent sessions, resume ongoing investigations, or spin up a new assistant conversation grounded in
+                your connected data sources.
+              </p>
+            </div>
           </div>
-        </div>
-        <div className="flex flex-col items-end gap-3 sm:flex-row sm:items-center">
-          <ThemeToggle size="sm" className="sm:order-2" />
-          <LogoutButton className="sm:order-3" />
-          <Button
-            onClick={handleCreateChat}
-            size="sm"
-            className="gap-2 sm:order-1"
-            disabled={createSessionMutation.isPending}
-            isLoading={createSessionMutation.isPending}
-            loadingText="Creating..."
-          >
-            <Plus className="h-4 w-4" aria-hidden="true" />
-            New conversation
-          </Button>
+          <div className="flex flex-col items-start gap-3 sm:flex-row sm:items-center sm:justify-end">
+            <Button
+              onClick={handleCreateChat}
+              size="sm"
+              className="gap-2"
+              disabled={createSessionMutation.isPending}
+              isLoading={createSessionMutation.isPending}
+              loadingText="Creating..."
+            >
+              <Plus className="h-4 w-4" aria-hidden="true" />
+              New conversation
+            </Button>
+          </div>
         </div>
       </header>
 

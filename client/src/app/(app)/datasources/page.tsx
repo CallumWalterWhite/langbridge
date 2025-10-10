@@ -14,8 +14,6 @@ import {
   Snowflake as SnowflakeIcon,
 } from 'lucide-react';
 
-import { LogoutButton } from '@/components/LogoutButton';
-import { ThemeToggle } from '@/components/ThemeToggle';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -34,11 +32,8 @@ import {
   type ConnectorResponse,
   type CreateConnectorPayload,
 } from '@/orchestration/connectors';
-import {
-  fetchOrganizations,
-  type Organization,
-  type Project,
-} from '@/orchestration/organizations';
+import type { Project } from '@/orchestration/organizations';
+import { useWorkspaceScope } from '@/context/workspaceScope';
 
 type FeedbackTone = 'positive' | 'negative';
 
@@ -107,8 +102,6 @@ export default function DataConnectionsPage(): JSX.Element {
     organizationId: '',
     projectId: '',
   });
-  const [organizations, setOrganizations] = useState<Organization[]>([]);
-  const [organizationsLoading, setOrganizationsLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [feedback, setFeedback] = useState<FeedbackState | null>(null);
   const [createdConnector, setCreatedConnector] = useState<ConnectorResponse | null>(null);
@@ -201,21 +194,23 @@ export default function DataConnectionsPage(): JSX.Element {
     void loadConnectorSchemas();
   }, [connectorTypes, loadSchemaForType]);
 
-  useEffect(() => {
-    async function loadOrganizations(): Promise<void> {
-      setOrganizationsLoading(true);
-      try {
-        const data = await fetchOrganizations();
-        setOrganizations(data);
-      } catch (error) {
-        showFeedback(resolveErrorMessage(error), 'negative');
-      } finally {
-        setOrganizationsLoading(false);
-      }
-    }
+  const {
+    organizations,
+    loading: organizationsLoading,
+    selectedOrganizationId: activeOrganizationId,
+    selectedProjectId: activeProjectId,
+  } = useWorkspaceScope();
 
-    void loadOrganizations();
-  }, [showFeedback]);
+  useEffect(() => {
+    setFormFields((current) => {
+      const nextOrganization = activeOrganizationId ?? '';
+      const nextProject = activeProjectId ?? '';
+      if (current.organizationId === nextOrganization && current.projectId === nextProject) {
+        return current;
+      }
+      return { ...current, organizationId: nextOrganization, projectId: nextProject };
+    });
+  }, [activeOrganizationId, activeProjectId]);
 
   const selectedSchema = selectedType ? schemasByType[selectedType] ?? null : null;
   const isSchemaLoading = Boolean(selectedType && !selectedSchema);
@@ -539,310 +534,274 @@ export default function DataConnectionsPage(): JSX.Element {
   }
 
   return (
-    <div className="flex min-h-screen flex-col bg-[color:var(--shell-bg)] text-[color:var(--text-primary)]">
-      <header className="border-b border-[color:var(--panel-border)] bg-[color:var(--panel-bg)] px-6 py-5 shadow-soft">
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <div>
-            <h1 className="text-lg font-semibold text-[color:var(--text-primary)]">Connector builder</h1>
-            <p className="text-sm text-[color:var(--text-secondary)]">
-              Discover available connector types, inspect their schema, and publish new connections.
-            </p>
-          </div>
-          <div className="flex items-center gap-3">
-            <ThemeToggle size="sm" />
-            <LogoutButton />
-          </div>
-        </div>
-      </header>
-
-      <main className="mx-auto flex w-full max-w-5xl flex-1 flex-col gap-6 px-6 py-8">
-        {feedback ? (
-          <div
-            role="status"
-            className={`rounded-md border px-4 py-3 text-sm ${
-              feedback.tone === 'positive'
-                ? 'border-emerald-400 bg-emerald-50 text-emerald-700'
-                : 'border-rose-400 bg-rose-50 text-rose-800'
-            }`}
-          >
-            {feedback.message}
-          </div>
-        ) : null}
-
-        <section className="rounded-xl border border-[color:var(--panel-border)] bg-[color:var(--panel-bg)] p-6 shadow-soft">
-          <header className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-            <div>
-              <h2 className="text-base font-semibold text-[color:var(--text-primary)]">
-                Choose a connector type
-              </h2>
-              <p className="text-sm text-[color:var(--text-secondary)]">
-                Click a card to load its schema and generate a tailored form automatically.
-              </p>
-            </div>
-            {typesLoading ? <Spinner className="h-5 w-5 text-[color:var(--text-secondary)]" /> : null}
-          </header>
-
-          {sortedConnectorTypes.length > 0 ? (
-            <div className="mt-5 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-              {sortedConnectorTypes.map((type) => (
-                <ConnectorTypeCard
-                  key={type}
-                  type={type}
-                  schema={schemasByType[type]}
-                  isSelected={selectedType === type}
-                  isLoading={selectedType === type && isSchemaLoading}
-                  onSelect={handleTypeSelect}
-                />
-              ))}
-            </div>
-          ) : (
-            <div className="mt-5 flex items-center gap-2 rounded-lg border border-dashed border-[color:var(--panel-border)] bg-[color:var(--panel-alt)] px-4 py-6 text-sm text-[color:var(--text-secondary)]">
-              <Spinner className="h-4 w-4 text-[color:var(--text-secondary)]" />
-              Fetching connector types...
-            </div>
+    <div className="space-y-6 text-[color:var(--text-secondary)]">
+      {feedback ? (
+        <div
+          role="status"
+          className={cn(
+            'rounded-lg border px-4 py-3 text-sm shadow-soft',
+            feedback.tone === 'positive'
+              ? 'border-emerald-400/60 bg-emerald-500/10 text-emerald-700'
+              : 'border-rose-400/60 bg-rose-500/10 text-rose-800',
           )}
+        >
+          {feedback.message}
+        </div>
+      ) : null}
 
-          {selectedSchema ? <div className="mt-6">{renderSchemaDetails(selectedSchema)}</div> : null}
-        </section>
+      <section className="rounded-xl border border-[color:var(--panel-border)] bg-[color:var(--panel-bg)] p-6 shadow-soft">
+        <header className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <h2 className="text-base font-semibold text-[color:var(--text-primary)]">Choose a connector type</h2>
+            <p>Click a card to load its schema and generate a tailored form automatically.</p>
+          </div>
+          {typesLoading ? <Spinner className="h-5 w-5 text-[color:var(--text-secondary)]" /> : null}
+        </header>
 
-        {selectedType ? (
-          isSchemaLoading ? (
-            <section className="rounded-xl border border-dashed border-[color:var(--panel-border)] bg-[color:var(--panel-bg)] p-6 text-center text-sm text-[color:var(--text-secondary)] shadow-soft">
-              Loading the schema for {selectedType}...
-            </section>
-          ) : selectedSchema ? (
-            <section className="rounded-xl border border-[color:var(--panel-border)] bg-[color:var(--panel-bg)] p-6 shadow-soft">
-              <form className="space-y-8" onSubmit={handleSubmit}>
-                <div className="space-y-4">
-                  <div className="flex items-center justify-between gap-3">
-                    <div>
-                      <h2 className="text-base font-semibold text-[color:var(--text-primary)]">
-                        Connector details
-                      </h2>
-                      <p className="text-sm text-[color:var(--text-secondary)]">
-                        Customize the metadata that shows up for this connector.
-                      </p>
-                    </div>
-                    {selectedSchema.icon ? (
-                      <span className="rounded-full bg-[color:var(--panel-alt)] px-3 py-1 text-xs text-[color:var(--text-secondary)]">
-                        Icon: {selectedSchema.icon}
-                      </span>
-                    ) : null}
+        {sortedConnectorTypes.length > 0 ? (
+          <div className="mt-5 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            {sortedConnectorTypes.map((type) => (
+              <ConnectorTypeCard
+                key={type}
+                type={type}
+                schema={schemasByType[type]}
+                isSelected={selectedType === type}
+                isLoading={selectedType === type && isSchemaLoading}
+                onSelect={handleTypeSelect}
+              />
+            ))}
+          </div>
+        ) : (
+          <div className="mt-5 flex items-center gap-2 rounded-lg border border-dashed border-[color:var(--panel-border)] bg-[color:var(--panel-alt)] px-4 py-6 text-sm">
+            <Spinner className="h-4 w-4 text-[color:var(--text-secondary)]" />
+            Fetching connector types...
+          </div>
+        )}
+
+        {selectedSchema ? <div className="mt-6">{renderSchemaDetails(selectedSchema)}</div> : null}
+      </section>
+
+      {selectedType ? (
+        isSchemaLoading ? (
+          <section className="rounded-xl border border-dashed border-[color:var(--panel-border)] bg-[color:var(--panel-bg)] p-6 text-center text-sm shadow-soft">
+            Loading the schema for {selectedType}...
+          </section>
+        ) : selectedSchema ? (
+          <section className="rounded-xl border border-[color:var(--panel-border)] bg-[color:var(--panel-bg)] p-6 shadow-soft">
+            <form className="space-y-8" onSubmit={handleSubmit}>
+              <div className="space-y-4">
+                <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                  <div>
+                    <h2 className="text-base font-semibold text-[color:var(--text-primary)]">Connector details</h2>
+                    <p>
+                      Give the connector a friendly name and optional metadata that appears in dashboards.
+                    </p>
                   </div>
+                  {schemaSummary ? <div className="text-xs text-[color:var(--text-muted)]">{schemaSummary}</div> : null}
+                </div>
 
-                  <div className="grid gap-4 sm:grid-cols-2">
-                    <div className="space-y-2">
-                      <Label htmlFor="connector-name" className="text-[color:var(--text-secondary)]">
-                        Name *
-                      </Label>
-                      <Input
-                        id="connector-name"
-                        value={formFields.name}
-                        onChange={(event) => handleFieldChange('name', event.target.value)}
-                        placeholder={selectedSchema.name}
-                      />
-                    </div>
-
-                    <div className="space-y-2">
-                      <Label htmlFor="connector-label" className="text-[color:var(--text-secondary)]">
-                        Label
-                      </Label>
-                      <Input
-                        id="connector-label"
-                        value={formFields.label}
-                        onChange={(event) => handleFieldChange('label', event.target.value)}
-                        placeholder={selectedSchema.label}
-                      />
-                    </div>
-
-                    <div className="space-y-2">
-                      <Label htmlFor="connector-version" className="text-[color:var(--text-secondary)]">
-                        Version
-                      </Label>
-                      <Input
-                        id="connector-version"
-                        value={formFields.version}
-                        onChange={(event) => handleFieldChange('version', event.target.value)}
-                        placeholder={selectedSchema.version}
-                      />
-                    </div>
-
-                    <div className="space-y-2">
-                      <Label htmlFor="connector-icon" className="text-[color:var(--text-secondary)]">
-                        Icon
-                      </Label>
-                      <Input
-                        id="connector-icon"
-                        value={formFields.icon}
-                        onChange={(event) => handleFieldChange('icon', event.target.value)}
-                        placeholder={selectedSchema.icon}
-                      />
-                    </div>
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <div className="space-y-2">
+                    <Label htmlFor="connector-name" className="text-[color:var(--text-secondary)]">
+                      Name
+                    </Label>
+                    <Input
+                      id="connector-name"
+                      value={formFields.name}
+                      onChange={(event) => handleFieldChange('name', event.target.value)}
+                      placeholder={selectedSchema.name}
+                      required
+                    />
                   </div>
 
                   <div className="space-y-2">
-                    <Label htmlFor="connector-description" className="text-[color:var(--text-secondary)]">
-                      Description
+                    <Label htmlFor="connector-label" className="text-[color:var(--text-secondary)]">
+                      Label
                     </Label>
-                    <Textarea
-                      id="connector-description"
-                      value={formFields.description}
-                      onChange={(event) => handleFieldChange('description', event.target.value)}
-                      placeholder={selectedSchema.description}
+                    <Input
+                      id="connector-label"
+                      value={formFields.label}
+                      onChange={(event) => handleFieldChange('label', event.target.value)}
+                      placeholder={selectedSchema.label}
+                    />
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="connector-version" className="text-[color:var(--text-secondary)]">
+                      Version
+                    </Label>
+                    <Input
+                      id="connector-version"
+                      value={formFields.version}
+                      onChange={(event) => handleFieldChange('version', event.target.value)}
+                      placeholder={selectedSchema.version}
+                    />
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="connector-icon" className="text-[color:var(--text-secondary)]">
+                      Icon
+                    </Label>
+                    <Input
+                      id="connector-icon"
+                      value={formFields.icon}
+                      onChange={(event) => handleFieldChange('icon', event.target.value)}
+                      placeholder={selectedSchema.icon}
                     />
                   </div>
                 </div>
 
-                <div className="space-y-4">
-                  <div>
-                    <h3 className="text-base font-semibold text-[color:var(--text-primary)]">
-                      Connection scope
-                    </h3>
-                    <p className="text-sm text-[color:var(--text-secondary)]">
-                      Add the organization or project that should own this connector. Provide at least one ID.
-                    </p>
+                <div className="space-y-2">
+                  <Label htmlFor="connector-description" className="text-[color:var(--text-secondary)]">
+                    Description
+                  </Label>
+                  <Textarea
+                    id="connector-description"
+                    value={formFields.description}
+                    onChange={(event) => handleFieldChange('description', event.target.value)}
+                    placeholder={selectedSchema.description}
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-4">
+                <div>
+                  <h3 className="text-base font-semibold text-[color:var(--text-primary)]">Connection scope</h3>
+                  <p className="text-sm">
+                    Add the organization or project that should own this connector. Provide at least one ID.
+                  </p>
+                </div>
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <div className="space-y-2">
+                    <Label htmlFor="organization-id" className="text-[color:var(--text-secondary)]">
+                      Organization
+                    </Label>
+                    <Select
+                      id="organization-id"
+                      value={organizationId}
+                      placeholder={organizationsLoading ? 'Loading organizations...' : 'Select an organization'}
+                      disabled={organizationsLoading || organizations.length === 0}
+                      onChange={(event) => handleOrganizationSelect(event.target.value)}
+                    >
+                      {organizations.map((organization) => (
+                        <option key={organization.id} value={organization.id}>
+                          {organization.name}
+                        </option>
+                      ))}
+                    </Select>
+                    {organizations.length === 0 && !organizationsLoading ? (
+                      <p className="text-xs text-[color:var(--text-muted)]">
+                        You do not have any organizations yet. Create one to continue.
+                      </p>
+                    ) : null}
                   </div>
-                  <div className="grid gap-4 sm:grid-cols-2">
-                    <div className="space-y-2">
-                      <Label htmlFor="organization-id" className="text-[color:var(--text-secondary)]">
-                        Organization
-                      </Label>
-                      <Select
-                        id="organization-id"
-                        value={organizationId}
-                        placeholder={
-                          organizationsLoading ? 'Loading organizations...' : 'Select an organization'
-                        }
-                        disabled={organizationsLoading || organizations.length === 0}
-                        onChange={(event) => handleOrganizationSelect(event.target.value)}
+
+                  <div className="space-y-2">
+                    <Label htmlFor="project-id" className="text-[color:var(--text-secondary)]">
+                      Project
+                    </Label>
+                    <Select
+                      id="project-id"
+                      value={projectId}
+                      placeholder={
+                        organizationId
+                          ? projectOptions.length > 0
+                            ? 'Select a project'
+                            : 'No projects found for this organization'
+                          : 'Select a project'
+                      }
+                      disabled={projectOptions.length === 0}
+                      onChange={(event) => handleProjectSelect(event.target.value)}
+                    >
+                      {projectOptions.map((project) => (
+                        <option key={project.id} value={project.id}>
+                          {organizationId ? project.name : `${project.organizationName} - ${project.name}`}
+                        </option>
+                      ))}
+                    </Select>
+                  </div>
+                </div>
+              </div>
+
+              <div className="space-y-4">
+                <div>
+                  <h3 className="text-base font-semibold text-[color:var(--text-primary)]">Connector configuration</h3>
+                  <p className="text-sm">Fill in the required connection fields. We will validate the schema before saving.</p>
+                </div>
+
+                <div className="grid gap-4 sm:grid-cols-2">
+                  {configEntries.map((entry) => (
+                    <div key={entry.field} className="space-y-2">
+                      <Label
+                        htmlFor={`config-${entry.field}`}
+                        className="flex items-center gap-2 text-[color:var(--text-secondary)]"
                       >
-                        {organizations.map((organization) => (
-                          <option key={organization.id} value={organization.id}>
-                            {organization.name}
-                          </option>
-                        ))}
-                      </Select>
-                      {organizations.length === 0 && !organizationsLoading ? (
-                        <p className="text-xs text-[color:var(--text-muted)]">
-                          You do not have any organizations yet. Create one to continue.
-                        </p>
+                        <span>{entry.label ?? entry.field}</span>
+                        {entry.required ? (
+                          <span className="rounded-full bg-rose-100 px-2 py-0.5 text-xs font-medium text-rose-700">
+                            Required
+                          </span>
+                        ) : null}
+                      </Label>
+                      {renderConfigInput(entry)}
+                      {entry.description ? (
+                        <p className="text-xs text-[color:var(--text-muted)]">{entry.description}</p>
                       ) : null}
                     </div>
-
-                    <div className="space-y-2">
-                      <Label htmlFor="project-id" className="text-[color:var(--text-secondary)]">
-                        Project
-                      </Label>
-                      <Select
-                        id="project-id"
-                        value={projectId}
-                        placeholder={
-                          organizationId
-                            ? projectOptions.length > 0
-                              ? 'Select a project'
-                              : 'No projects found for this organization'
-                            : 'Select a project'
-                        }
-                        disabled={projectOptions.length === 0}
-                        onChange={(event) => handleProjectSelect(event.target.value)}
-                      >
-                        {projectOptions.map((project) => (
-                          <option key={project.id} value={project.id}>
-                            {organizationId ? project.name : `${project.organizationName} - ${project.name}`}
-                          </option>
-                        ))}
-                      </Select>
-                    </div>
-                  </div>
+                  ))}
                 </div>
+              </div>
 
-                <div className="space-y-4">
-                  <div>
-                    <h3 className="text-base font-semibold text-[color:var(--text-primary)]">
-                      Connector configuration
-                    </h3>
-                    <p className="text-sm text-[color:var(--text-secondary)]">
-                      Fill in the required connection fields. We will validate the schema before saving.
-                    </p>
-                  </div>
-
-                  <div className="grid gap-4 sm:grid-cols-2">
-                    {configEntries.map((entry) => (
-                      <div key={entry.field} className="space-y-2">
-                        <Label
-                          htmlFor={`config-${entry.field}`}
-                          className="flex items-center gap-2 text-[color:var(--text-secondary)]"
-                        >
-                          <span>{entry.label ?? entry.field}</span>
-                          {entry.required ? (
-                            <span className="rounded-full bg-rose-100 px-2 py-0.5 text-xs font-medium text-rose-700">
-                              Required
-                            </span>
-                          ) : null}
-                        </Label>
-                        {renderConfigInput(entry)}
-                        {entry.description ? (
-                          <p className="text-xs text-[color:var(--text-muted)]">{entry.description}</p>
-                        ) : null}
-                      </div>
-                    ))}
-                  </div>
+              <div className="flex items-center justify-between gap-3 border-t border-[color:var(--panel-border)] pt-4 text-xs">
+                <div className="text-[color:var(--text-muted)]">
+                  We will validate the connection before saving it to your workspace.
                 </div>
-
-                <div className="flex items-center justify-between gap-3 border-t border-[color:var(--panel-border)] pt-4">
-                  <div className="text-xs text-[color:var(--text-muted)]">
-                    We will validate the connection before saving it to your workspace.
-                  </div>
-                  <Button
-                    type="submit"
-                    isLoading={submitting}
-                    loadingText="Creating..."
-                    disabled={submitting || isSchemaLoading || !selectedSchema}
-                  >
-                    Create connector
-                  </Button>
-                </div>
-              </form>
-            </section>
-          ) : null
-        ) : (
-          <section className="rounded-xl border border-dashed border-[color:var(--panel-border)] bg-[color:var(--panel-bg)] p-6 text-center text-sm text-[color:var(--text-secondary)] shadow-soft">
-            Select a connector card above to generate its form.
+                <Button
+                  type="submit"
+                  isLoading={submitting}
+                  loadingText="Creating..."
+                  disabled={submitting || isSchemaLoading || !selectedSchema}
+                >
+                  Create connector
+                </Button>
+              </div>
+            </form>
           </section>
-        )}
+        ) : null
+      ) : (
+        <section className="rounded-xl border border-dashed border-[color:var(--panel-border)] bg-[color:var(--panel-bg)] p-6 text-center text-sm shadow-soft">
+          Select a connector card above to generate its form.
+        </section>
+      )}
 
-        {createdConnector ? (
-          <section className="rounded-xl border border-[color:var(--panel-border)] bg-[color:var(--panel-bg)] p-6 shadow-soft">
-            <h3 className="text-base font-semibold text-[color:var(--text-primary)]">
-              Connector ready to use
-            </h3>
-            <p className="mt-1 text-sm text-[color:var(--text-secondary)]">
-              We saved {createdConnector.name}. Keep the identifiers handy in case you need to update this connector
-              later.
-            </p>
-            <dl className="mt-4 grid gap-3 text-sm text-[color:var(--text-secondary)] sm:grid-cols-2">
-              <div>
-                <dt className="font-medium text-[color:var(--text-primary)]">Connector ID</dt>
-                <dd className="mt-1 font-mono text-xs">{createdConnector.id ?? 'Not returned'}</dd>
-              </div>
-              <div>
-                <dt className="font-medium text-[color:var(--text-primary)]">Connector type</dt>
-                <dd className="mt-1 font-mono text-xs uppercase">
-                  {createdConnector.connectorType ?? selectedType}
-                </dd>
-              </div>
-              <div>
-                <dt className="font-medium text-[color:var(--text-primary)]">Organization</dt>
-                <dd className="mt-1 font-mono text-xs">{createdConnector.organizationId ?? 'Not provided'}</dd>
-              </div>
-              <div>
-                <dt className="font-medium text-[color:var(--text-primary)]">Project</dt>
-                <dd className="mt-1 font-mono text-xs">{createdConnector.projectId ?? 'Not provided'}</dd>
-              </div>
-            </dl>
-          </section>
-        ) : null}
-      </main>
+      {createdConnector ? (
+        <section className="rounded-xl border border-[color:var(--panel-border)] bg-[color:var(--panel-bg)] p-6 shadow-soft">
+          <h3 className="text-base font-semibold text-[color:var(--text-primary)]">Connector ready to use</h3>
+          <p className="mt-1 text-sm">
+            We saved {createdConnector.name}. Keep the identifiers handy in case you need to update this connector later.
+          </p>
+          <dl className="mt-4 grid gap-3 text-sm sm:grid-cols-2">
+            <div>
+              <dt className="font-medium text-[color:var(--text-primary)]">Connector ID</dt>
+              <dd className="mt-1 font-mono text-xs">{createdConnector.id ?? 'Not returned'}</dd>
+            </div>
+            <div>
+              <dt className="font-medium text-[color:var(--text-primary)]">Connector type</dt>
+              <dd className="mt-1 font-mono text-xs uppercase">
+                {createdConnector.connectorType ?? selectedType}
+              </dd>
+            </div>
+            <div>
+              <dt className="font-medium text-[color:var(--text-primary)]">Organization</dt>
+              <dd className="mt-1 font-mono text-xs">{createdConnector.organizationId ?? 'Not provided'}</dd>
+            </div>
+            <div>
+              <dt className="font-medium text-[color:var(--text-primary)]">Project</dt>
+              <dd className="mt-1 font-mono text-xs">{createdConnector.projectId ?? 'Not provided'}</dd>
+            </div>
+          </dl>
+        </section>
+      ) : null}
     </div>
   );
 }

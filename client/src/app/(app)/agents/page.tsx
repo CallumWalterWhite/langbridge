@@ -1,12 +1,9 @@
 'use client';
 
-import Link from 'next/link';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { LucideIcon } from 'lucide-react';
 import { Bot, BrainCircuit, Sparkles } from 'lucide-react';
 
-import { LogoutButton } from '@/components/LogoutButton';
-import { ThemeToggle } from '@/components/ThemeToggle';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -21,7 +18,7 @@ import {
   type LLMConnection,
   type LLMProvider,
 } from '@/orchestration/agents';
-import { fetchOrganizations, type Organization } from '@/orchestration/organizations';
+import { useWorkspaceScope } from '@/context/workspaceScope';
 
 type FeedbackTone = 'positive' | 'negative';
 
@@ -88,8 +85,6 @@ function resolveErrorMessage(error: unknown): string {
 
 export default function AgentsPage(): JSX.Element {
   const [selectedProvider, setSelectedProvider] = useState<LLMProvider | null>(null);
-  const [organizations, setOrganizations] = useState<Organization[]>([]);
-  const [organizationsLoading, setOrganizationsLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [feedback, setFeedback] = useState<FeedbackState | null>(null);
   const [createdConnection, setCreatedConnection] = useState<LLMConnection | null>(null);
@@ -106,6 +101,9 @@ export default function AgentsPage(): JSX.Element {
 
   const organizationId = formState.organizationId;
   const projectId = formState.projectId;
+
+  const { organizations, loading: organizationsLoading, selectedOrganizationId: activeOrganizationId, selectedProjectId: activeProjectId } =
+    useWorkspaceScope();
 
   const projectOptions = useMemo<ProjectOption[]>(() => {
     if (organizationId) {
@@ -135,26 +133,27 @@ export default function AgentsPage(): JSX.Element {
   }, []);
 
   useEffect(() => {
-    async function loadOrganizations() {
-      try {
-        setOrganizationsLoading(true);
-        const data = await fetchOrganizations();
-        setOrganizations(data);
-      } catch (error) {
-        showFeedback(resolveErrorMessage(error), 'negative');
-      } finally {
-        setOrganizationsLoading(false);
-      }
-    }
-
-    void loadOrganizations();
-
     return () => {
       if (feedbackTimeout.current) {
         window.clearTimeout(feedbackTimeout.current);
       }
     };
-  }, [showFeedback]);
+  }, []);
+
+  useEffect(() => {
+    setFormState((current) => {
+      const nextOrganization = activeOrganizationId ?? '';
+      const nextProject = activeProjectId ?? '';
+      if (current.organizationId === nextOrganization && current.projectId === nextProject) {
+        return current;
+      }
+      return {
+        ...current,
+        organizationId: nextOrganization,
+        projectId: nextProject,
+      };
+    });
+  }, [activeOrganizationId, activeProjectId]);
 
   useEffect(() => {
     if (!organizationId || !projectId) {
@@ -255,290 +254,232 @@ export default function AgentsPage(): JSX.Element {
   }
 
   return (
-    <div className="flex min-h-screen bg-[color:var(--shell-bg)] text-[color:var(--text-primary)] transition-colors">
-      <aside className="hidden w-72 flex-col border-r border-[color:var(--panel-border)] bg-[color:var(--panel-bg)] p-6 text-[color:var(--text-secondary)] shadow-soft lg:flex">
-        <nav className="space-y-1 text-sm">
-          <Link
-            className="block rounded-lg px-3 py-2 text-[color:var(--text-secondary)] transition hover:bg-[color:var(--panel-alt)] hover:text-[color:var(--text-primary)]"
-            href="/dashboard"
-          >
-            Agentic workspace
-          </Link>
-          <Link
-            className="block rounded-lg px-3 py-2 text-[color:var(--text-secondary)] transition hover:bg-[color:var(--panel-alt)] hover:text-[color:var(--text-primary)]"
-            href="/datasources"
-          >
-            Data connections
-          </Link>
-          <Link
-            className="block rounded-lg border border-[color:var(--border-strong)] bg-[color:var(--panel-alt)] px-3 py-2 font-medium text-[color:var(--text-primary)]"
-            href="/agents"
-          >
-            Agents & connections
-          </Link>
-          <Link
-            className="block rounded-lg px-3 py-2 text-[color:var(--text-secondary)] transition hover:bg-[color:var(--panel-alt)] hover:text-[color:var(--text-primary)]"
-            href="/organizations"
-          >
-            Organizations & projects
-          </Link>
-          <Link
-            className="block rounded-lg px-3 py-2 text-[color:var(--text-secondary)] transition hover:bg-[color:var(--panel-alt)] hover:text-[color:var(--text-primary)]"
-            href="/chat"
-          >
-            Conversations
-          </Link>
-        </nav>
-      </aside>
+    <div className="space-y-8 text-[color:var(--text-secondary)]">
+      {feedback ? (
+        <div
+          role="alert"
+          className={cn(
+            'rounded-lg border px-4 py-3 text-sm shadow-soft',
+            feedback.tone === 'positive'
+              ? 'border-emerald-400/60 bg-emerald-500/10 text-emerald-800'
+              : 'border-rose-400/60 bg-rose-500/10 text-rose-800',
+          )}
+        >
+          {feedback.message}
+        </div>
+      ) : null}
 
-      <main className="flex flex-1 flex-col">
-        <header className="flex flex-wrap items-center justify-between gap-4 border-b border-[color:var(--panel-border)] bg-[color:var(--panel-bg)] px-6 py-4 text-[color:var(--text-secondary)] shadow-soft backdrop-blur">
+      <section className="space-y-4">
+        <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
-            <h1 className="text-lg font-semibold text-[color:var(--text-primary)]">LLM connections</h1>
+            <h2 className="text-xl font-semibold text-[color:var(--text-primary)]">Choose a provider</h2>
             <p className="text-sm">
-              Create provider connections that power your agents and orchestrations.
+              We will pre-wire the connection so you can plug it into agents and orchestrations later.
             </p>
           </div>
-          <div className="inline-flex items-center gap-3">
-            <ThemeToggle size="sm" />
-            <LogoutButton />
-          </div>
+          <Badge variant="secondary" className="text-xs uppercase tracking-wide text-[color:var(--text-secondary)]">
+            Agent builder soon
+          </Badge>
+        </div>
+
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          {PROVIDER_CARDS.map((card) => (
+            <ProviderCard
+              key={card.id}
+              card={card}
+              isSelected={selectedProvider === card.id}
+              onSelect={handleProviderSelect}
+            />
+          ))}
+        </div>
+      </section>
+
+      <section className="space-y-6">
+        <header className="space-y-2">
+          <h2 className="text-xl font-semibold text-[color:var(--text-primary)]">Connection details</h2>
+          <p className="text-sm">
+            Fill in the provider credentials and scope. We test the connection before saving it.
+          </p>
         </header>
 
-        {feedback ? (
-          <div
-            role="alert"
-            className={cn(
-              'mx-6 mt-6 rounded-lg border px-4 py-3 text-sm shadow-soft sm:mx-auto sm:w-[720px]',
-              feedback.tone === 'positive'
-                ? 'border-emerald-200 bg-emerald-50 text-emerald-800'
-                : 'border-rose-200 bg-rose-50 text-rose-800',
-            )}
-          >
-            {feedback.message}
+        <form
+          className="space-y-8 rounded-xl border border-[color:var(--panel-border)] bg-[color:var(--panel-bg)] p-6 shadow-soft"
+          onSubmit={(event) => void handleSubmit(event)}
+        >
+          <div className="grid gap-6 md:grid-cols-2">
+            <div className="space-y-3">
+              <Label htmlFor="connection-name" className="text-[color:var(--text-secondary)]">
+                Connection name
+              </Label>
+              <Input
+                id="connection-name"
+                value={formState.name}
+                disabled={formIsDisabled}
+                placeholder="Ops copilot connection"
+                onChange={(event) => handleFieldChange('name', event.target.value)}
+              />
+            </div>
+
+            <div className="space-y-3">
+              <Label htmlFor="connection-model" className="text-[color:var(--text-secondary)]">
+                Default model
+              </Label>
+              <Input
+                id="connection-model"
+                value={formState.model}
+                disabled={formIsDisabled}
+                placeholder={
+                  selectedProvider === 'openai'
+                    ? 'gpt-4o-mini'
+                    : selectedProvider === 'anthropic'
+                      ? 'claude-3-haiku'
+                      : 'gpt-4o'
+                }
+                onChange={(event) => handleFieldChange('model', event.target.value)}
+              />
+            </div>
+
+            <div className="space-y-3">
+              <Label htmlFor="connection-api-key" className="text-[color:var(--text-secondary)]">
+                API key
+              </Label>
+              <Input
+                id="connection-api-key"
+                type="password"
+                value={formState.apiKey}
+                disabled={formIsDisabled}
+                placeholder="sk-..."
+                onChange={(event) => handleFieldChange('apiKey', event.target.value)}
+              />
+            </div>
+
+            <div className="space-y-3">
+              <Label htmlFor="connection-description" className="text-[color:var(--text-secondary)]">
+                Description
+              </Label>
+              <Textarea
+                id="connection-description"
+                value={formState.description}
+                disabled={formIsDisabled}
+                placeholder="Describe the use case or neighboring teams."
+                onChange={(event) => handleFieldChange('description', event.target.value)}
+              />
+            </div>
           </div>
-        ) : null}
 
-        <div className="flex-1 overflow-y-auto">
-          <main className="mx-auto flex w-full max-w-5xl flex-col gap-8 px-6 py-10">
-            <section className="space-y-4">
-              <div className="flex flex-wrap items-start justify-between gap-3">
-                <div>
-                  <h2 className="text-xl font-semibold text-[color:var(--text-primary)]">
-                    Choose a provider
-                  </h2>
-                  <p className="text-sm text-[color:var(--text-secondary)]">
-                    We will pre-wire the connection so you can plug it into agents and orchestrations later.
-                  </p>
-                </div>
-                <Badge variant="secondary" className="text-xs uppercase tracking-wide text-[color:var(--text-secondary)]">
-                  Agent builder soon
-                </Badge>
-              </div>
-
-              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-                {PROVIDER_CARDS.map((card) => (
-                  <ProviderCard
-                    key={card.id}
-                    card={card}
-                    isSelected={selectedProvider === card.id}
-                    onSelect={handleProviderSelect}
-                  />
-                ))}
-              </div>
-            </section>
-
-            <section className="space-y-6">
-              <header>
-                <h2 className="text-xl font-semibold text-[color:var(--text-primary)]">
-                  Connection details
-                </h2>
-                <p className="text-sm text-[color:var(--text-secondary)]">
-                  Fill in the provider credentials and scope. We test the connection before saving it.
-                </p>
-              </header>
-
-              <form
-                className="space-y-8 rounded-xl border border-[color:var(--panel-border)] bg-[color:var(--panel-bg)] p-6 shadow-soft"
-                onSubmit={(event) => void handleSubmit(event)}
-              >
-                <div className="grid gap-6 md:grid-cols-2">
-                  <div className="space-y-3">
-                    <Label htmlFor="connection-name" className="text-[color:var(--text-secondary)]">
-                      Connection name
-                    </Label>
-                    <Input
-                      id="connection-name"
-                      value={formState.name}
-                      disabled={formIsDisabled}
-                      placeholder="Ops copilot connection"
-                      onChange={(event) => handleFieldChange('name', event.target.value)}
-                    />
-                  </div>
-
-                  <div className="space-y-3">
-                    <Label htmlFor="connection-model" className="text-[color:var(--text-secondary)]">
-                      Default model
-                    </Label>
-                    <Input
-                      id="connection-model"
-                      value={formState.model}
-                      disabled={formIsDisabled}
-                      placeholder={selectedProvider === 'openai' ? 'gpt-4o-mini' : selectedProvider === 'anthropic' ? 'claude-3-haiku' : 'gpt-4o'}
-                      onChange={(event) => handleFieldChange('model', event.target.value)}
-                    />
-                  </div>
-
-                  <div className="space-y-3">
-                    <Label htmlFor="connection-api-key" className="text-[color:var(--text-secondary)]">
-                      API key
-                    </Label>
-                    <Input
-                      id="connection-api-key"
-                      type="password"
-                      value={formState.apiKey}
-                      disabled={formIsDisabled}
-                      placeholder="sk-..."
-                      onChange={(event) => handleFieldChange('apiKey', event.target.value)}
-                    />
-                  </div>
-
-                  <div className="space-y-3">
-                    <Label htmlFor="connection-description" className="text-[color:var(--text-secondary)]">
-                      Description
-                    </Label>
-                    <Textarea
-                      id="connection-description"
-                      value={formState.description}
-                      disabled={formIsDisabled}
-                      placeholder="Describe the use case or neighboring teams."
-                      onChange={(event) => handleFieldChange('description', event.target.value)}
-                    />
-                  </div>
-                </div>
-
-                <div className="space-y-4">
-                  <div>
-                    <h3 className="text-base font-semibold text-[color:var(--text-primary)]">Connection scope</h3>
-                    <p className="text-sm text-[color:var(--text-secondary)]">
-                      Add the organization or project that should own this connection. Provide at least one ID.
-                    </p>
-                  </div>
-                  <div className="grid gap-4 sm:grid-cols-2">
-                    <div className="space-y-2">
-                      <Label htmlFor="organization-id" className="text-[color:var(--text-secondary)]">
-                        Organization
-                      </Label>
-                      <Select
-                        id="organization-id"
-                        value={organizationId}
-                        disabled={organizationsLoading || organizations.length === 0}
-                        placeholder={
-                          organizationsLoading ? 'Loading organizations...' : 'Select an organization'
-                        }
-                        onChange={(event) => handleFieldChange('organizationId', event.target.value)}
-                      >
-                        {organizations.map((organization) => (
-                          <option key={organization.id} value={organization.id}>
-                            {organization.name}
-                          </option>
-                        ))}
-                      </Select>
-                      {organizations.length === 0 && !organizationsLoading ? (
-                        <p className="text-xs text-[color:var(--text-muted)]">
-                          You do not have any organizations yet. Create one to continue.
-                        </p>
-                      ) : null}
-                    </div>
-
-                    <div className="space-y-2">
-                      <Label htmlFor="project-id" className="text-[color:var(--text-secondary)]">
-                        Project
-                      </Label>
-                      <Select
-                        id="project-id"
-                        value={projectId}
-                        disabled={projectOptions.length === 0}
-                        placeholder={
-                          organizationId
-                            ? projectOptions.length > 0
-                              ? 'Select a project'
-                              : 'No projects found for this organization'
-                            : 'Select a project'
-                        }
-                        onChange={(event) => handleFieldChange('projectId', event.target.value)}
-                      >
-                        {projectOptions.map((project) => (
-                          <option key={project.id} value={project.id}>
-                            {organizationId ? project.name : `${project.organizationName} - ${project.name}`}
-                          </option>
-                        ))}
-                      </Select>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="space-y-3">
-                  <Label htmlFor="connection-configuration" className="text-[color:var(--text-secondary)]">
-                    Provider configuration (JSON)
-                  </Label>
-                  <Textarea
-                    id="connection-configuration"
-                    value={formState.configuration}
-                    disabled={formIsDisabled}
-                    className="min-h-[160px] font-mono text-sm"
-                    placeholder='{"temperature": 0.2, "timeout": 30}'
-                    onChange={(event) => handleFieldChange('configuration', event.target.value)}
-                  />
+          <div className="space-y-4">
+            <div>
+              <h3 className="text-base font-semibold text-[color:var(--text-primary)]">Connection scope</h3>
+              <p className="text-sm">
+                Add the organization or project that should own this connection. Provide at least one ID.
+              </p>
+            </div>
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div className="space-y-2">
+                <Label htmlFor="organization-id" className="text-[color:var(--text-secondary)]">
+                  Organization
+                </Label>
+                <Select
+                  id="organization-id"
+                  value={organizationId}
+                  disabled={organizationsLoading || organizations.length === 0}
+                  placeholder={organizationsLoading ? 'Loading organizations...' : 'Select an organization'}
+                  onChange={(event) => handleFieldChange('organizationId', event.target.value)}
+                >
+                  {organizations.map((organization) => (
+                    <option key={organization.id} value={organization.id}>
+                      {organization.name}
+                    </option>
+                  ))}
+                </Select>
+                {organizations.length === 0 && !organizationsLoading ? (
                   <p className="text-xs text-[color:var(--text-muted)]">
-                    Include deployment IDs, base URLs, or model-specific overrides. Leave blank to use provider defaults.
+                    You do not have any organizations yet. Create one to continue.
                   </p>
-                </div>
+                ) : null}
+              </div>
 
-                <div className="flex items-center justify-between gap-3 border-t border-[color:var(--panel-border)] pt-4">
-                  <div className="text-xs text-[color:var(--text-muted)]">
-                    We validate the connection before adding it to your workspace.
-                  </div>
-                  <Button type="submit" disabled={formIsDisabled} isLoading={submitting} loadingText="Creating...">
-                    Create connection
-                  </Button>
-                </div>
-              </form>
-            </section>
+              <div className="space-y-2">
+                <Label htmlFor="project-id" className="text-[color:var(--text-secondary)]">
+                  Project
+                </Label>
+                <Select
+                  id="project-id"
+                  value={projectId}
+                  disabled={projectOptions.length === 0}
+                  placeholder={
+                    organizationId
+                      ? projectOptions.length > 0
+                        ? 'Select a project'
+                        : 'No projects found for this organization'
+                      : 'Select a project'
+                  }
+                  onChange={(event) => handleFieldChange('projectId', event.target.value)}
+                >
+                  {projectOptions.map((project) => (
+                    <option key={project.id} value={project.id}>
+                      {organizationId ? project.name : `${project.organizationName} - ${project.name}`}
+                    </option>
+                  ))}
+                </Select>
+              </div>
+            </div>
+          </div>
 
-            {createdConnection ? (
-              <section className="rounded-xl border border-[color:var(--panel-border)] bg-[color:var(--panel-bg)] p-6 shadow-soft">
-                <h3 className="text-base font-semibold text-[color:var(--text-primary)]">
-                  Connection ready to use
-                </h3>
-                <p className="mt-1 text-sm text-[color:var(--text-secondary)]">
-                  We saved {createdConnection.name}. Keep these identifiers handy while we build the agent editor.
-                </p>
-                <dl className="mt-4 grid gap-3 text-sm text-[color:var(--text-secondary)] sm:grid-cols-2">
-                  <div>
-                    <dt className="font-medium text-[color:var(--text-primary)]">Connection ID</dt>
-                    <dd className="mt-1 font-mono text-xs">{createdConnection.id ?? 'Not returned'}</dd>
-                  </div>
-                  <div>
-                    <dt className="font-medium text-[color:var(--text-primary)]">Provider</dt>
-                    <dd className="mt-1 font-mono text-xs uppercase">{createdConnection.provider}</dd>
-                  </div>
-                  <div>
-                    <dt className="font-medium text-[color:var(--text-primary)]">Organization</dt>
-                    <dd className="mt-1 font-mono text-xs">
-                      {createdConnection.organizationId ?? 'Not provided'}
-                    </dd>
-                  </div>
-                  <div>
-                    <dt className="font-medium text-[color:var(--text-primary)]">Project</dt>
-                    <dd className="mt-1 font-mono text-xs">{createdConnection.projectId ?? 'Not provided'}</dd>
-                  </div>
-                </dl>
-              </section>
-            ) : null}
-          </main>
-        </div>
-      </main>
+          <div className="space-y-3">
+            <Label htmlFor="connection-configuration" className="text-[color:var(--text-secondary)]">
+              Provider configuration (JSON)
+            </Label>
+            <Textarea
+              id="connection-configuration"
+              value={formState.configuration}
+              disabled={formIsDisabled}
+              className="min-h-[160px] font-mono text-sm"
+              placeholder='{"temperature": 0.2, "timeout": 30}'
+              onChange={(event) => handleFieldChange('configuration', event.target.value)}
+            />
+            <p className="text-xs text-[color:var(--text-muted)]">
+              Include deployment IDs, base URLs, or model-specific overrides. Leave blank to use provider defaults.
+            </p>
+          </div>
+
+          <div className="flex items-center justify-between gap-3 border-t border-[color:var(--panel-border)] pt-4 text-xs">
+            <div className="text-[color:var(--text-muted)]">
+              We validate the connection before adding it to your workspace.
+            </div>
+            <Button type="submit" disabled={formIsDisabled} isLoading={submitting} loadingText="Creating...">
+              Create connection
+            </Button>
+          </div>
+        </form>
+      </section>
+
+      {createdConnection ? (
+        <section className="rounded-xl border border-[color:var(--panel-border)] bg-[color:var(--panel-bg)] p-6 shadow-soft">
+          <h3 className="text-base font-semibold text-[color:var(--text-primary)]">Connection ready to use</h3>
+          <p className="mt-1 text-sm">
+            We saved {createdConnection.name}. Keep these identifiers handy while we build the agent editor.
+          </p>
+          <dl className="mt-4 grid gap-3 text-sm sm:grid-cols-2">
+            <div>
+              <dt className="font-medium text-[color:var(--text-primary)]">Connection ID</dt>
+              <dd className="mt-1 font-mono text-xs">{createdConnection.id ?? 'Not returned'}</dd>
+            </div>
+            <div>
+              <dt className="font-medium text-[color:var(--text-primary)]">Provider</dt>
+              <dd className="mt-1 font-mono text-xs uppercase">{createdConnection.provider}</dd>
+            </div>
+            <div>
+              <dt className="font-medium text-[color:var(--text-primary)]">Organization</dt>
+              <dd className="mt-1 font-mono text-xs">{createdConnection.organizationId ?? 'Not provided'}</dd>
+            </div>
+            <div>
+              <dt className="font-medium text-[color:var(--text-primary)]">Project</dt>
+              <dd className="mt-1 font-mono text-xs">{createdConnection.projectId ?? 'Not provided'}</dd>
+            </div>
+          </dl>
+        </section>
+      ) : null}
     </div>
   );
 }
@@ -588,8 +529,11 @@ function ProviderCard({
       </div>
       <div className="flex items-center justify-between text-xs text-[color:var(--text-secondary)]">
         <span className="uppercase tracking-wide">Select</span>
-        <span aria-hidden>{isSelected ? '✓' : '>'}</span>
+          <span aria-hidden>{isSelected ? '>>' : '>'}</span>
       </div>
     </button>
   );
 }
+
+
+
