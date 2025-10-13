@@ -12,9 +12,9 @@ class SnowflakeConnectorConfig(BaseConnectorConfig):
     user: str
     password: str
     database: str
-    warehouse: str | None = None
-    schema: str | None = None
-    role: str | None = None
+    warehouse: str
+    schema: str 
+    role: str
 
     @classmethod
     def create_from_dict(cls, data: dict) -> "SnowflakeConnectorConfig":
@@ -81,21 +81,21 @@ class SnowflakeConnectorConfigSchemaFactory(BaseConnectorConfigSchemaFactory):
                     label="Warehouse",
                     description="Snowflake Warehouse",
                     type="string",
-                    required=False,
+                    required=True,
                 ),
                 ConnectorConfigEntrySchema(
                     field="schema",
                     label="Schema",
                     description="Snowflake Schema",
                     type="string",
-                    required=False,
+                    required=True,
                 ),
                 ConnectorConfigEntrySchema(
                     field="role",
                     label="Role",
                     description="Snowflake Role",
                     type="string",
-                    required=False,
+                    required=True,
                 ),
             ],
         )

@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { JSX, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { LucideIcon } from 'lucide-react';
 import {
   Atom,
@@ -597,7 +597,11 @@ export default function DataConnectionsPage(): JSX.Element {
                       Give the connector a friendly name and optional metadata that appears in dashboards.
                     </p>
                   </div>
-                  {schemaSummary ? <div className="text-xs text-[color:var(--text-muted)]">{schemaSummary}</div> : null}
+                  {selectedSchema.name ? (
+                    <Badge variant="secondary" className="text-xs">
+                      Default name: {selectedSchema.name}
+                    </Badge>
+                  ) : null}
                 </div>
 
                 <div className="grid gap-4 sm:grid-cols-2">
@@ -611,42 +615,6 @@ export default function DataConnectionsPage(): JSX.Element {
                       onChange={(event) => handleFieldChange('name', event.target.value)}
                       placeholder={selectedSchema.name}
                       required
-                    />
-                  </div>
-
-                  <div className="space-y-2">
-                    <Label htmlFor="connector-label" className="text-[color:var(--text-secondary)]">
-                      Label
-                    </Label>
-                    <Input
-                      id="connector-label"
-                      value={formFields.label}
-                      onChange={(event) => handleFieldChange('label', event.target.value)}
-                      placeholder={selectedSchema.label}
-                    />
-                  </div>
-
-                  <div className="space-y-2">
-                    <Label htmlFor="connector-version" className="text-[color:var(--text-secondary)]">
-                      Version
-                    </Label>
-                    <Input
-                      id="connector-version"
-                      value={formFields.version}
-                      onChange={(event) => handleFieldChange('version', event.target.value)}
-                      placeholder={selectedSchema.version}
-                    />
-                  </div>
-
-                  <div className="space-y-2">
-                    <Label htmlFor="connector-icon" className="text-[color:var(--text-secondary)]">
-                      Icon
-                    </Label>
-                    <Input
-                      id="connector-icon"
-                      value={formFields.icon}
-                      onChange={(event) => handleFieldChange('icon', event.target.value)}
-                      placeholder={selectedSchema.icon}
                     />
                   </div>
                 </div>
@@ -713,6 +681,7 @@ export default function DataConnectionsPage(): JSX.Element {
                       disabled={projectOptions.length === 0}
                       onChange={(event) => handleProjectSelect(event.target.value)}
                     >
+                      <option value="">-- No project (workspace) --</option>
                       {projectOptions.map((project) => (
                         <option key={project.id} value={project.id}>
                           {organizationId ? project.name : `${project.organizationName} - ${project.name}`}

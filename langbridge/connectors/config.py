@@ -13,12 +13,6 @@ class ConnectorType(Enum):
     BIGQUERY = "BIGQUERY"
     SQLSERVER = "SQLSERVER"
     ORACLE = "ORACLE"
-    ELASTICSEARCH = "ELASTICSEARCH"
-    RESTAPI = "RESTAPI"
-    GRAPHQL = "GRAPHQL"
-    SALESFORCE = "SALESFORCE"
-    ZAPIER = "ZAPIER"
-    GENERIC = "GENERIC"
 
 class ConnectorConfigEntrySchema(_Base):
     field: str

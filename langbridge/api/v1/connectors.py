@@ -15,7 +15,14 @@ def create_connector(
     connector_service: ConnectorService = Depends(Provide[Container.connector_service]),
 ) -> ConnectorResponse:
     connector = connector_service.create_connector(request)
-    return ConnectorResponse.model_validate(connector)
+    return ConnectorResponse(
+        id=connector.id,
+        name=connector.name,
+        connector_type=connector.connector_type,
+        config=request.config,
+        organization_id=request.organization_id,
+        project_id=request.project_id
+    )
 
 @router.get("/{connector_id}", response_model=ConnectorResponse)
 @inject

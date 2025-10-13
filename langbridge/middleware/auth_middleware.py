@@ -36,8 +36,8 @@ class AuthMiddleware(BaseHTTPMiddleware):
         if settings.IS_LOCAL:
             token = request.headers.get("Authorization")
             if token == settings.LOCAL_TOKEN:
-                request.state.username = "CallumWalterWhite"
-                request.state.user = self.auth_service.get_user_by_username("CallumWalterWhite")
+                request.state.username = "callumwalterwhite"
+                request.state.user = self.auth_service.get_user_by_username("callumwalterwhite")
                 return await call_next(request)
         
         if any(request.url.path.startswith(path) for path in PATHS_TO_EXCLUDE):

@@ -8,8 +8,8 @@ from collections import defaultdict
 from typing import Dict, List, Optional, Sequence, Tuple
 from uuid import UUID
 
-from connectors.config import ConnectorType
-from connectors.metadata import (
+from connectors import (
+    ConnectorType,
     TableMetadata,
     build_connector_config,
     get_metadata_extractor,

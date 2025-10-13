@@ -29,7 +29,6 @@ def preview_semantic_model(
             detail=str(exc),
         ) from exc
 
-
 @router.get("/preview/yaml")
 @inject
 def preview_semantic_model_yaml(
