@@ -1,6 +1,6 @@
 from abc import ABC
 from enum import Enum
-from typing import TYPE_CHECKING, Any, List, Optional
+from typing import TYPE_CHECKING, Any, List, Optional, Type
 
 from schemas.base import _Base
 
@@ -13,6 +13,7 @@ class ConnectorType(Enum):
     BIGQUERY = "BIGQUERY"
     SQLSERVER = "SQLSERVER"
     ORACLE = "ORACLE"
+    SQLITE = "SQLITE"
 
 class ConnectorConfigEntrySchema(_Base):
     field: str
@@ -51,14 +52,14 @@ class BaseConnectorConfigSchemaFactory(ABC):
     def create(cls, config: dict) -> ConnectorConfigSchema:
         return ConnectorConfigSchema(**config)
     
-def get_connector_config_factory(type_s: ConnectorType) -> BaseConnectorConfigFactory:
+def get_connector_config_factory(type_s: ConnectorType) -> Type[BaseConnectorConfigFactory]:
     subclasses = BaseConnectorConfigFactory.__subclasses__()
     for subclass in subclasses:
         if subclass.type.value == type_s.value:
             return subclass
     raise ValueError(f"No factory found for type: {type_s}")
 
-def get_connector_config_schema_factory(type_s: ConnectorType) -> BaseConnectorConfigSchemaFactory:
+def get_connector_config_schema_factory(type_s: ConnectorType) -> Type[BaseConnectorConfigSchemaFactory]:
     subclasses = BaseConnectorConfigSchemaFactory.__subclasses__()
     for subclass in subclasses:
         if subclass.type.value == type_s.value:

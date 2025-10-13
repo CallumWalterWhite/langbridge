@@ -3,8 +3,19 @@ from dependency_injector.wiring import Provide, inject
 from ioc import Container
 from connectors.config import ConnectorConfigSchema
 from errors.application_errors import BusinessValidationError
-from schemas.connectors import ConnectorResponse, CreateConnectorRequest, UpdateConnectorRequest
+from schemas.connectors import (
+    ConnectorResponse, 
+    CreateConnectorRequest, 
+    UpdateConnectorRequest,
+    ConnectorListResponse,
+    ConnectorSourceSchemasResponse,
+    ConnectorSourceSchemaResponse,
+    ConnectorSourceSchemaColumnResponse,
+    ConnectorSourceSchemaTableResponse,
+    ConnectorSourceSchemaViewResponse
+)
 from services.connector_service import ConnectorService
+from services.connector_schema_service import ConnectorSchemaService
 
 router = APIRouter(prefix="/connectors", tags=["connectors"])
 
@@ -32,6 +43,38 @@ def get_connector(
 ) -> ConnectorResponse:
     connector = connector_service.get_connector(connector_id)
     return ConnectorResponse.model_validate(connector)
+
+@router.get("/{connector_id}/source/schemas", response_model=ConnectorResponse)
+@inject
+def get_connector_schemas(
+    connector_id: str,
+    connector_schema_service: ConnectorSchemaService = Depends(Provide[Container.connector_schema_service]),
+) -> ConnectorSourceSchemasResponse:
+    schemas = connector_schema_service.get_schemas(connector_id)
+    return ConnectorSourceSchemasResponse(schemas=schemas)
+
+@router.get("/{connector_id}/source/schema/{schema}", response_model=ConnectorSourceSchemaResponse)
+@inject
+def get_connector_tables(
+    connector_id: str,
+    schema: str,
+    connector_schema_service: ConnectorSchemaService = Depends(Provide[Container.connector_schema_service]),
+) -> ConnectorSourceSchemaResponse:
+    tables = connector_schema_service.get_tables(connector_id, schema)
+    return ConnectorSourceSchemaResponse(schema=schema, tables=tables)
+
+@router.get("/{connector_id}/source/schema/{schema}/table/{table}/columns", response_model=ConnectorSourceSchemaColumnResponse)
+@inject
+def get_connector_table(
+    connector_id: str,
+    schema: str,
+    table: str,
+    connector_schema_service: ConnectorSchemaService = Depends(Provide[Container.connector_schema_service]),
+) -> ConnectorSourceSchemaColumnResponse:
+    columns = connector_schema_service.get_columns(connector_id, schema, table)
+    return ConnectorSourceSchemaTableResponse(columns=[
+        ConnectorSourceSchemaColumnResponse(name=col.name, data_type=col.data_type) for col in columns
+    ])
 
 @router.get("/schemas/type", response_model=list[str])
 @inject

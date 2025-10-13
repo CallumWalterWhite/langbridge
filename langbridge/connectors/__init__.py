@@ -23,6 +23,7 @@ from .redshift import *  # required for subclass registration
 from .bigquery import *  # required for subclass registration
 from .sqlserver import *  # required for subclass registration
 from .oracle import *  # required for subclass registration
+from .sqlite import *  # required for subclass registration
 
 __all__ = [
     "BaseConnectorConfigFactory",

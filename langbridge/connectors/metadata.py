@@ -1,7 +1,7 @@
 import logging
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import List
+from typing import List, Type
 
 from errors.application_errors import BusinessValidationError
 
@@ -28,8 +28,10 @@ class ColumnMetadata:
 class TableMetadata:
     schema: str
     name: str
-    columns: List[ColumnMetadata]
 
+@dataclass
+class SchemaMetadata:
+    name: str
 
 class BaseMetadataExtractor(ABC):
     type: ConnectorType
@@ -62,5 +64,5 @@ def get_metadata_extractor(connector_type: ConnectorType) -> BaseMetadataExtract
     raise BusinessValidationError(f"No metadata extractor found for connector type '{connector_type.value}'.")
 
 def build_connector_config(connector_type: ConnectorType, config_payload: dict) -> BaseConnectorConfig:
-    factory: BaseConnectorConfigFactory = get_connector_config_factory(connector_type)
+    factory: Type[BaseConnectorConfigFactory] = get_connector_config_factory(connector_type)
     return factory.create(config_payload)

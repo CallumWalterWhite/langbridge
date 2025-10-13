@@ -8,6 +8,7 @@ from db import (
 from auth.register import create_oauth_client
 from repositories.connector_repository import ConnectorRepository
 from services.connector_service import ConnectorService
+from services.connector_schema_service import ConnectorSchemaService
 from repositories.user_repository import UserRepository, OAuthAccountRepository
 from repositories.organization_repository import (
     OrganizationInviteRepository,
@@ -79,6 +80,11 @@ class Container(containers.DeclarativeContainer):
         connector_repository=connector_repository,
         organization_repository=organization_repository,
         project_repository=project_repository
+    )
+
+    connector_schema_service = providers.Factory(
+        ConnectorSchemaService,
+        connector_repository=connector_repository
     )
 
     agent_service = providers.Factory(

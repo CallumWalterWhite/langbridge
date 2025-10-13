@@ -36,3 +36,28 @@ class UpdateConnectorRequest(_Base):
     organization_id: UUID
     project_id: Optional[UUID] = None
     config: Optional[Dict[str, Any]] = None
+
+class ConnectorListResponse(_Base):
+    connectors: list[ConnectorResponse] = []
+
+class ConnectorSourceSchemasResponse(_Base):
+    schemas: list[str] = []
+
+class ConnectorSourceSchemaResponse(_Base):
+    schema: str
+    tables: list[str]
+
+class ConnectorSourceSchemaColumnResponse(_Base):
+    name: str
+    type: str
+    nullable: bool
+    primary_key: bool
+
+class ConnectorSourceSchemaTableResponse(_Base):
+    name: str
+    columns: Dict[str, ConnectorSourceSchemaColumnResponse] = {}
+    
+class ConnectorSourceSchemaViewResponse(_Base):
+    name: str
+    columns: Dict[str, ConnectorSourceSchemaColumnResponse] = {}
+    definition: str

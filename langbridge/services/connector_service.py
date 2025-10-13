@@ -1,5 +1,5 @@
 import json
-from typing import Optional, Union
+from typing import Optional, Type, Union
 from sqlalchemy.orm import Session
 from db.auth import Organization, Project
 from db.connector import Connector, DatabaseConnector
@@ -43,7 +43,7 @@ class ConnectorService:
     def get_connector_config_schema(self, connector_type: str) -> ConnectorConfigSchema:
         try:
             connector_type_enum: ConnectorType = ConnectorType(connector_type.upper())
-            config_schema_factory: BaseConnectorConfigSchemaFactory = get_connector_config_schema_factory(connector_type_enum)
+            config_schema_factory: Type[BaseConnectorConfigSchemaFactory] = get_connector_config_schema_factory(connector_type_enum)
             return config_schema_factory.create({})
         except ValueError as e:
             raise BusinessValidationError(str(e))
@@ -59,9 +59,9 @@ class ConnectorService:
             raise BusinessValidationError("Connector config must be provided")
         
         try:
-            config_factory: BaseConnectorConfigFactory = get_connector_config_factory(connector_type)
+            config_factory: Type[BaseConnectorConfigFactory] = get_connector_config_factory(connector_type)
             config_instance: BaseConnectorConfig = config_factory.create(create_request.config["config"])
-            connection_tester: BaseConnectorTester = get_connector_tester(connector_type)
+            connection_tester: BaseConnectorTester = get_connector_tester(connector_type)()
             connection_result: Union[bool, str] = connection_tester.test(config_instance)
             if connection_result is not True:
                 raise BusinessValidationError(f"Connection test failed: {connection_result}")
