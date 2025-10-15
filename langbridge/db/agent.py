@@ -1,6 +1,7 @@
 import enum
 from datetime import datetime
-from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Boolean, JSON, Enum as SqlEnum
+import uuid
+from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Boolean, JSON, Enum as SqlEnum, UUID
 from sqlalchemy.orm import relationship, Mapped, mapped_column
 from db.associations import organization_llm_connections, project_llm_connections
 from db.auth import Organization, Project
@@ -15,7 +16,7 @@ class LLMConnection(Base):
     """SQLAlchemy model for LLM connection configurations"""
     __tablename__ = 'llm_connections'
 
-    id = Column(Integer, primary_key=True)
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
     name = Column(String(100), nullable=False)
     description = Column(String(1024))
     provider: Mapped[LLMProvider] = mapped_column(SqlEnum(LLMProvider, name="llm_provider"), nullable=False)

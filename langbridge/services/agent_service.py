@@ -34,6 +34,7 @@ class AgentService:
             provider=connection.provider,
             api_key=connection.api_key,
             model=connection.model,
+            is_active=True,
             configuration=connection.configuration,
             name=connection.name,
             description=connection.description

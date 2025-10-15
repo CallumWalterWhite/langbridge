@@ -11,7 +11,7 @@ router = APIRouter(prefix='/agents', tags=['agents'])
 @inject
 def create_llm_connection(
     request: LLMConnectionCreate,
-    agent_service: AgentService = Depends(Provide[Container.connector_service])
+    agent_service: AgentService = Depends(Provide[Container.agent_service])
 ) -> LLMConnectionResponse:
     connection = agent_service.create_llm_connection(request)
     return LLMConnectionResponse.model_validate(connection)

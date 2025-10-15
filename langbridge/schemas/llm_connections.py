@@ -31,10 +31,10 @@ class LLMConnectionUpdate(BaseModel):
     project_id: Optional[UUID] = None
 
 class LLMConnectionResponse(LLMConnectionBase):
-    id: int
+    id: UUID
     is_active: bool
-    created_at: datetime
-    updated_at: datetime
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
     organization_id: Optional[UUID] = None
     project_id: Optional[UUID] = None
 
