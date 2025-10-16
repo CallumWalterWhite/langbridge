@@ -1,4 +1,4 @@
-from __future__ import annotations
+
 
 from collections.abc import Generator
 from typing import Any
@@ -6,12 +6,8 @@ from typing import Any
 from sqlalchemy import create_engine
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
-
 from sqlalchemy.ext.asyncio import AsyncSession
-
 from .base import Base
-from . import auth  # noqa: F401 - ensure models are registered with metadata
-from . import semantic  # noqa: F401 - ensure semantic models are registered
 
 
 def create_engine_for_url(database_url: str, echo: bool = False) -> Engine:

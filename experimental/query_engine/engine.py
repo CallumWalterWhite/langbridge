@@ -1,6 +1,6 @@
 """High-level facade for the LangBridge experimental query engine."""
 
-from __future__ import annotations
+
 
 from .datasource import DataSource, DataSourceRegistry, InMemoryDataSource
 from .exceptions import QueryEngineError

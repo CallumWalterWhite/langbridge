@@ -56,6 +56,13 @@ export async function fetchSemanticModel(
   return apiFetch<SemanticModelRecord>(`${BASE_PATH}/${modelId}?${params.toString()}`);
 }
 
+export async function fetchSemanticModels(
+  organizationId: string,
+): Promise<SemanticModelRecord[]> {
+  const params = new URLSearchParams({ organization_id: organizationId });
+  return apiFetch<SemanticModelRecord[]>(`${BASE_PATH}/all?${params.toString()}`);
+}
+
 export async function previewSemanticModelYaml(
   organizationId: string,
   projectId?: string,

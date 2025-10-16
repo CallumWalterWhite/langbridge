@@ -1,6 +1,6 @@
 """Example usage of the LangBridge experimental query engine."""
 
-from __future__ import annotations
+
 
 import os
 import sys

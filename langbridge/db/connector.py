@@ -8,7 +8,7 @@ from db.auth import Organization, Project
 class Connector(Base):
     __tablename__ = "connectors"
 
-    id = Column(UUID(as_uuid=True), primary_key=True, index=True, default=uuid.uuid4)
+    id = Column(UUID(as_uuid=True), primary_key=True, index=True)
     name = Column(String(255), unique=True, nullable=False, index=True)
     description = Column(String(1024))
     connector_type = Column(String(50), nullable=False)

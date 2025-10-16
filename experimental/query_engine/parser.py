@@ -1,6 +1,6 @@
 """Tokenizer and parser for the LangBridge SQL-inspired query language."""
 
-from __future__ import annotations
+
 
 import re
 from dataclasses import dataclass

@@ -3,16 +3,15 @@ from dependency_injector.wiring import Provide, inject
 from ioc import Container
 from connectors.config import ConnectorConfigSchema
 from errors.application_errors import BusinessValidationError
+from db.connector import Connector
 from schemas.connectors import (
     ConnectorResponse, 
     CreateConnectorRequest, 
     UpdateConnectorRequest,
-    ConnectorListResponse,
     ConnectorSourceSchemasResponse,
     ConnectorSourceSchemaResponse,
     ConnectorSourceSchemaColumnResponse,
-    ConnectorSourceSchemaTableResponse,
-    ConnectorSourceSchemaViewResponse
+    ConnectorSourceSchemaTableResponse
 )
 from services.connector_service import ConnectorService
 from services.connector_schema_service import ConnectorSchemaService
@@ -25,7 +24,7 @@ def create_connector(
     request: CreateConnectorRequest,
     connector_service: ConnectorService = Depends(Provide[Container.connector_service]),
 ) -> ConnectorResponse:
-    connector = connector_service.create_connector(request)
+    connector: Connector = connector_service.create_connector(request)
     return ConnectorResponse(
         id=connector.id,
         name=connector.name,
@@ -74,7 +73,7 @@ def get_connector_table(
     columns = connector_schema_service.get_columns(connector_id, schema, table)
     return ConnectorSourceSchemaTableResponse(columns=[
         ConnectorSourceSchemaColumnResponse(name=col.name, data_type=col.data_type) for col in columns
-    ])
+    ]) # type: ignore
 
 @router.get("/schemas/type", response_model=list[str])
 @inject

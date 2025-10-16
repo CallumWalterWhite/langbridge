@@ -1,6 +1,6 @@
 """Exception hierarchy for the LangBridge experimental query engine."""
 
-from __future__ import annotations
+
 
 
 class QueryEngineError(RuntimeError):

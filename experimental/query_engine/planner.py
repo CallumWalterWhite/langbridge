@@ -1,6 +1,6 @@
 """Logical plan construction for the LangBridge experimental query engine."""
 
-from __future__ import annotations
+
 
 from dataclasses import dataclass
 from typing import Sequence

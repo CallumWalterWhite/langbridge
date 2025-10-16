@@ -1,6 +1,6 @@
 """Data source abstractions for the LangBridge experimental query engine."""
 
-from __future__ import annotations
+
 
 from dataclasses import dataclass
 from typing import Any, Dict, List, Mapping, Optional, Protocol, Sequence, runtime_checkable

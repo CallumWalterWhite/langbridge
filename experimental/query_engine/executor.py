@@ -1,6 +1,6 @@
 """Physical execution of query plans for the LangBridge experimental engine."""
 
-from __future__ import annotations
+
 
 from typing import Any, Dict, List, Mapping, Sequence, Tuple
 

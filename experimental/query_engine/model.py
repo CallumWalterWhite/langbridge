@@ -1,6 +1,6 @@
 """Core data structures for the LangBridge experimental query engine."""
 
-from __future__ import annotations
+
 
 from dataclasses import dataclass
 from typing import Any, Optional, Sequence, Tuple, Union
