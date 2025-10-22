@@ -1,9 +1,6 @@
 """
 Analyst agent that orchestrates NL->SQL generation using connector abstractions.
 """
-
-from __future__ import annotations
-
 import asyncio
 import logging
 import time
@@ -14,8 +11,8 @@ from langchain_core.language_models import BaseChatModel
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import StrOutputParser
 
-from ...connectors.base import QueryResult, SchemaInfo, SqlConnector
-from ...connectors.registry import ConnectorRegistry, DataSource
+from connectors.base import QueryResult, SchemaInfo, SqlConnector
+from connectors.registry import ConnectorRegistry, DataSource
 from .sql_tool import SqlAnalystTool, SqlGuidance
 
 

@@ -8,7 +8,9 @@ import json
 import logging
 import time
 from dataclasses import dataclass, field
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
+
+from langbridge.connectors.connector import Connector
 
 from .analyst_agent import AnalystAgent, AnalystAgentConfig, AnalystAgentResultPayload
 from .visual_agent import VisualAgent
@@ -20,7 +22,7 @@ class OrchestrationContext:
     """Context passed into the supervisor to capture routing metadata."""
 
     workspace_id: Optional[str]
-    datasource: DataSource
+    avaliable_connectors: List[Connector]
     analyst_config: Optional[AnalystAgentConfig] = None
     trace_metadata: Dict[str, Any] = field(default_factory=dict)
 

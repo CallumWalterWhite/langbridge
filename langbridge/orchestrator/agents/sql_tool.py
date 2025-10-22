@@ -13,14 +13,14 @@ from langchain_core.language_models import BaseChatModel
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import StrOutputParser
 
-from ...connectors.base import (
+from semantic.model import SemanticModel
+from connectors.base import (
     QueryResult,
     QueryValidationError,
     SchemaInfo,
     SqlConnector,
     ensure_select_statement,
 )
-
 
 TABLE_NAME_RE = re.compile(r"\bfrom\s+([^\s,;]+)", re.IGNORECASE)
 JOIN_RE = re.compile(r"\bjoin\s+([^\s,;]+)", re.IGNORECASE)
@@ -39,7 +39,10 @@ class SqlGuidance:
     dialect: Optional[str] = None
     max_rows: Optional[int] = 5000
 
-
+#TODO: bind the semantic config to this tool
+# Allows us to initalize all the tools for each purpose of the semantic model
+# Question: single binding doesn't allow for cross binded queries across multiple connectors
+# Maybe we need a multi-tool that can handle multiple connectors?
 class SqlAnalystTool:
     """
     Helper responsible for generating, validating and executing SQL queries.
@@ -49,29 +52,30 @@ class SqlAnalystTool:
         self,
         *,
         connector: SqlConnector,
+        semantic_model: SemanticModel,
         llm: Optional[BaseChatModel] = None,
         logger: Optional[logging.Logger] = None,
     ) -> None:
         self.connector = connector
         self.llm = llm
+        self.semantic_model = semantic_model
         self.logger = logger or logging.getLogger(__name__)
         self._prompt = None
         if llm:
-            self._prompt = ChatPromptTemplate.from_messages(
-                [
-                    (
-                        "system",
-                        "You are an analytics engineer. Convert questions into read-only SQL queries. "
-                        "Use only the provided schema. Never use DML/DDL. Respond with a single SQL query.",
-                    ),
-                    (
-                        "human",
-                        "Dialect: {dialect}\nGoal: {goal}\nTables:\n{schema}\nQuestion: {question}\n"
-                        "Additional instructions: {instructions}",
-                    ),
-                ]
-            )
-            self._chain = self._prompt | llm | StrOutputParser()
+                semantic_yaml = self.semantic_model.yml_dump()
+                self._prompt = ChatPromptTemplate.from_messages(
+                    [
+                        (
+                            "system",
+                            f"You are an expert SQL analyst. Use the following semantic model YAML to understand the database structure, relationships, metrics, and filters.\n---\n{semantic_yaml}\n---\nGenerate SQL queries that match the user's intent, using the model's relationships, metrics, and filters where appropriate. Always return a single SELECT statement unless otherwise instructed."
+                        ),
+                        (
+                            "human",
+                            "Dialect: {dialect}\nGoal: {goal}\nQuestion: {question}\nAdditional instructions: {instructions}",
+                        ),
+                    ]
+                )
+                self._chain = self._prompt | llm | StrOutputParser()
         else:
             self._chain = None
 
@@ -88,10 +92,7 @@ class SqlAnalystTool:
         if not self._chain:
             raise RuntimeError("No LLM configured for natural language to SQL generation.")
 
-        schema_text = "\n".join(
-            f"- {table.name}: {', '.join(column.name for column in table.columns)}"
-            for table in schema.tables
-        )
+        # The semantic YAML is now included in the system prompt, so schema_text is not needed
         instructions = guidance.extra_instructions or ""
         if guidance.allow_tables:
             instructions += f"\nUse only these tables: {', '.join(guidance.allow_tables)}."
@@ -102,7 +103,6 @@ class SqlAnalystTool:
             {
                 "dialect": guidance.dialect or self.connector.dialect,
                 "goal": guidance.goal or question,
-                "schema": schema_text or "No tables available.",
                 "question": question,
                 "instructions": instructions.strip() or "Return a single SELECT statement.",
             }

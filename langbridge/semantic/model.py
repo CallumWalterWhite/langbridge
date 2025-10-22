@@ -1,5 +1,5 @@
 from typing import Dict, List, Optional, Literal
-
+import yaml
 from pydantic import BaseModel, Field
 
 
@@ -53,3 +53,8 @@ class SemanticModel(BaseModel):
     tables: Dict[str, Table]
     relationships: Optional[List[Relationship]] = None
     metrics: Optional[Dict[str, Metric]] = None
+    
+    def yml_dump(self) -> str:
+        """Dump the semantic model to a YAML string."""
+
+        return yaml.dump(self.dict(by_alias=True), sort_keys=False)
