@@ -4,7 +4,7 @@ from connectors.config import (
     BaseConnectorConfigSchemaFactory,
     ConnectorConfigEntrySchema,
     ConnectorConfigSchema,
-    ConnectorType,
+    ConnectorRuntimeType,
 )
 
 
@@ -19,7 +19,7 @@ class SQLServerConnectorConfig(BaseConnectorConfig):
 
 
 class SQLServerConnectorConfigFactory(BaseConnectorConfigFactory):
-    type = ConnectorType.SQLSERVER
+    type = ConnectorRuntimeType.SQLSERVER
 
     @classmethod
     def create(cls, config: dict) -> BaseConnectorConfig:
@@ -27,7 +27,7 @@ class SQLServerConnectorConfigFactory(BaseConnectorConfigFactory):
 
 
 class SQLServerConnectorConfigSchemaFactory(BaseConnectorConfigSchemaFactory):
-    type = ConnectorType.SQLSERVER
+    type = ConnectorRuntimeType.SQLSERVER
 
     @classmethod
     def create(cls, _: dict) -> ConnectorConfigSchema:

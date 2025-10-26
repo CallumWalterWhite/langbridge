@@ -1,10 +1,9 @@
 import logging
-from typing import Optional
-from connectors.base import SqlConnector
-from connectors.config import BaseConnectorConfig
+from typing import Any, Dict, Optional
+from connectors.connector import SqlConnector
 from connectors import SqlDialetcs
 from errors.connector_errors import ConnectorError
-from connectors.metadata import ColumnMetadata
+from connectors.metadata import ColumnMetadata, ForeignKeyMetadata, TableMetadata
 from .config import SqliteConnectorConfig
 from sqlite3 import connect, OperationalError, DatabaseError, ProgrammingError
 
@@ -12,9 +11,8 @@ class SqliteConnector(SqlConnector):
     """
     SQLite connector implementation.
     """
+    DIALECT = SqlDialetcs.SQLITE
     
-    SQL_DIALECT: SqlDialetcs = SqlDialetcs.SQLITE
-
     def __init__(
         self,
         config: SqliteConnectorConfig,
@@ -24,7 +22,7 @@ class SqliteConnector(SqlConnector):
         self.database_path = config.location
         
         
-    def test_connection(self) -> None:
+    async def test_connection(self) -> None:
         try:
             conn = connect(self.database_path)
             conn.close()
@@ -32,14 +30,14 @@ class SqliteConnector(SqlConnector):
             self.logger.error("Connection test failed: %s", exc)
             raise ConnectorError(f"Unable to connect to SQLite database: {exc}") from exc
         
-    def fetch_schemas(self) -> list[str]:
+    async def fetch_schemas(self) -> list[str]:
         return ["main"]
     
-    def fetch_tables(self) -> list[str]:
+    async def fetch_tables(self, _:str) -> list[str]:
         try:
             conn = connect(self.database_path)
             cursor = conn.cursor()
-            cursor.execute("SELECT name FROM sqlite_master WHERE type='table'")
+            cursor.execute("SELECT name FROM sqlite_master WHERE type='table';")
             tables = [row[0] for row in cursor.fetchall()]
             cursor.close()
             conn.close()
@@ -48,24 +46,73 @@ class SqliteConnector(SqlConnector):
             self.logger.error("Failed to fetch tables: %s", exc)
             raise ConnectorError(f"Unable to fetch tables from SQLite database: {exc}") from exc
         
-    def fetch_columns(self) -> list[ColumnMetadata]:
+    async def fetch_table_metadata(self, schema:str, table:str) -> TableMetadata:
         try:
             conn = connect(self.database_path)
             cursor = conn.cursor()
-            cursor.execute("PRAGMA table_info(main)")
-            columns = [ColumnMetadata(name=row[1], data_type=row[2]) for row in cursor.fetchall()]
+            cursor.execute(f"PRAGMA table_info('{table}');")
+            columns = []
+            for row in cursor.fetchall():
+                column = ColumnMetadata(
+                    name=row[1],
+                    data_type=row[2],
+                    is_nullable=not bool(row[3]),
+                    is_primary_key=bool(row[5]),
+                )
+                columns.append(column)
+            cursor.close()
+            conn.close()
+            return TableMetadata(schema=schema, name=table)
+        except (ProgrammingError, OperationalError, DatabaseError) as exc:
+            self.logger.error("Failed to fetch table metadata: %s", exc)
+            raise ConnectorError(f"Unable to fetch table metadata from SQLite database: {exc}") from exc
+        
+    async def fetch_columns(self, _:str, table:str) -> list[ColumnMetadata]:
+        try:
+            conn = connect(self.database_path)
+            cursor = conn.cursor()
+            cursor.execute(f"PRAGMA table_info('{table}');")
+            columns = []
+            for row in cursor.fetchall():
+                column = ColumnMetadata(
+                    name=row[1],
+                    data_type=row[2],
+                    is_nullable=not bool(row[3]),
+                    is_primary_key=bool(row[5]),
+                )
+                columns.append(column)
             cursor.close()
             conn.close()
             return columns
         except (ProgrammingError, OperationalError, DatabaseError) as exc:
             self.logger.error("Failed to fetch columns: %s", exc)
             raise ConnectorError(f"Unable to fetch columns from SQLite database: {exc}") from exc
-        
+    
+    async def fetch_foreign_keys(self, _:str, table:str) -> list[ForeignKeyMetadata]:
+        try:
+            conn = connect(self.database_path)
+            cursor = conn.cursor()
+            cursor.execute(f"PRAGMA foreign_key_list({table})")
+            foreign_keys = []
+            for row in cursor.fetchall():
+                foreign_key = ForeignKeyMetadata(
+                    name=row[3],
+                    column=row[4],
+                    primary_key=row[5],
+                    foreign_key=row[6],
+                )
+                foreign_keys.append(foreign_key)
+            cursor.close()
+            conn.close()
+            return foreign_keys
+        except (ProgrammingError, OperationalError, DatabaseError) as exc:
+            self.logger.error("Failed to fetch foreign keys: %s", exc)
+            raise ConnectorError(f"Unable to fetch foreign keys from SQLite database: {exc}") from exc
         
     async def _execute_select(
         self,
         sql: str,
-        params: dict[str, any],
+        params: Dict[str, Any],
         *,
         timeout_s: Optional[int] = 30,
     ) -> tuple[list[str], list[tuple]]:

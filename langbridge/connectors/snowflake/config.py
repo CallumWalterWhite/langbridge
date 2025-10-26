@@ -4,7 +4,7 @@ from connectors.config import (
     ConnectorConfigSchema, 
     ConnectorConfigEntrySchema, 
     BaseConnectorConfig,
-    ConnectorType
+    ConnectorRuntimeType
 )
 
 class SnowflakeConnectorConfig(BaseConnectorConfig):
@@ -17,26 +17,26 @@ class SnowflakeConnectorConfig(BaseConnectorConfig):
     role: str
 
     @classmethod
-    def create_from_dict(cls, data: dict) -> "SnowflakeConnectorConfig":
+    def create_from_dict(cls, data: dict[str, str]) -> "SnowflakeConnectorConfig":
         return cls(
-            account=data.get("account"),
-            user=data.get("user"),
-            password=data.get("password"),
-            database=data.get("database"),
-            warehouse=data.get("warehouse"),
-            schema=data.get("schema"),
-            role=data.get("role"),
+            account=data.get("account", ""),
+            user=data.get("user", ""),
+            password=data.get("password", ""),
+            database=data.get("database", ""),
+            warehouse=data.get("warehouse", ""),
+            schema=data.get("schema", ""),
+            role=data.get("role", ""),
         )
         
 class SnowflakeConnectorConfigFactory(BaseConnectorConfigFactory):
-    type = ConnectorType.SNOWFLAKE
+    type = ConnectorRuntimeType.SNOWFLAKE
 
     @classmethod
     def create(cls, config: dict) -> BaseConnectorConfig:
         return SnowflakeConnectorConfig.create_from_dict(config)
 
 class SnowflakeConnectorConfigSchemaFactory(BaseConnectorConfigSchemaFactory):
-    type = ConnectorType.SNOWFLAKE
+    type = ConnectorRuntimeType.SNOWFLAKE
 
     @classmethod
     def create(cls, config: dict) -> ConnectorConfigSchema:

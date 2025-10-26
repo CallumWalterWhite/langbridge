@@ -1,7 +1,14 @@
+from enum import Enum
 from typing import Dict, List, Optional, Literal
 import yaml
 from pydantic import BaseModel, Field
 
+class MeasureAggregation(str, Enum):
+    sum = "sum"
+    avg = "avg"
+    min = "min"
+    max = "max"
+    _count = "count" 
 
 class Dimension(BaseModel):
     name: str
@@ -17,7 +24,7 @@ class Measure(BaseModel):
     type: str
     description: Optional[str] = None
     aggregation: Optional[str] = None
-
+    synonyms: Optional[List[str]] = None
 
 class TableFilter(BaseModel):
     condition: str
@@ -26,6 +33,8 @@ class TableFilter(BaseModel):
 
 
 class Table(BaseModel):
+    schema: str
+    name: str
     description: Optional[str] = None
     synonyms: Optional[List[str]] = None
     dimensions: Optional[List[Dimension]] = None
@@ -35,7 +44,7 @@ class Table(BaseModel):
 
 class Relationship(BaseModel):
     name: str
-    from_: str = Field(alias="from")
+    from_: str = Field(alias="from_")
     to: str
     type: Literal["one_to_many", "many_to_one", "one_to_one", "many_to_many"]
     join_on: str

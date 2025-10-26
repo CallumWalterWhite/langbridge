@@ -1,5 +1,8 @@
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, cast
 from uuid import UUID
+import json
+
+from db.connector import Connector
 
 from .base import _Base
 
@@ -15,6 +18,30 @@ class ConnectorResponse(_Base):
     organization_id: UUID
     project_id: Optional[UUID] = None
     config: Optional[Dict[str, Any]] = None
+    @staticmethod
+    def from_connector(connector: Connector) -> "ConnectorResponse":
+        raw_config = connector.config_json
+        config: Optional[Dict[str, Any]] = None
+        if isinstance(raw_config, (str, bytes)):
+            try:
+                config = json.loads(raw_config)
+            except Exception:
+                config = None
+        elif isinstance(raw_config, dict):
+            config = raw_config
+
+        return ConnectorResponse(
+            id=cast(Optional[UUID], connector.id),
+            name=cast(str, connector.name),
+            description=cast(Optional[str], connector.description),
+            version="", # TODO: implement
+            label=cast(Optional[str], connector.name),
+            icon="", # TODO: implement
+            connector_type=cast(Optional[str], connector.connector_type),
+            organization_id=cast(UUID, connector.organizations[0].id),
+            project_id=None,
+            config=config,
+        )
     
 class CreateConnectorRequest(_Base):
     name: str
@@ -50,8 +77,8 @@ class ConnectorSourceSchemaResponse(_Base):
 class ConnectorSourceSchemaColumnResponse(_Base):
     name: str
     type: str
-    nullable: bool
-    primary_key: bool
+    nullable: Optional[bool] = None
+    primary_key: Optional[bool] = False
 
 class ConnectorSourceSchemaTableResponse(_Base):
     name: str

@@ -4,7 +4,7 @@ from connectors.config import (
     BaseConnectorConfigSchemaFactory,
     ConnectorConfigEntrySchema,
     ConnectorConfigSchema,
-    ConnectorType,
+    ConnectorRuntimeType,
 )
 
 
@@ -18,7 +18,7 @@ class OracleConnectorConfig(BaseConnectorConfig):
 
 
 class OracleConnectorConfigFactory(BaseConnectorConfigFactory):
-    type = ConnectorType.ORACLE
+    type = ConnectorRuntimeType.ORACLE
 
     @classmethod
     def create(cls, config: dict) -> BaseConnectorConfig:
@@ -26,7 +26,7 @@ class OracleConnectorConfigFactory(BaseConnectorConfigFactory):
 
 
 class OracleConnectorConfigSchemaFactory(BaseConnectorConfigSchemaFactory):
-    type = ConnectorType.ORACLE
+    type = ConnectorRuntimeType.ORACLE
 
     @classmethod
     def create(cls, _: dict) -> ConnectorConfigSchema:

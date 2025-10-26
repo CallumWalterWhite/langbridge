@@ -13,31 +13,14 @@ from ioc import Container
 
 router = APIRouter(prefix="/semantic-model", tags=["semantic-model"])
 
-
-@router.get("/preview", response_model=SemanticModel)
-@inject
-def preview_semantic_model(
-    organization_id: UUID,
-    project_id: Optional[UUID] = None,
-    service: SemanticModelService = Depends(Provide[Container.semantic_model_service]),
-) -> SemanticModel:
-    try:
-        return service.preview_model(organization_id=organization_id, project_id=project_id)
-    except Exception as exc:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(exc),
-        ) from exc
-
-@router.get("/preview/yaml")
+@router.get("/generate/yaml")
 @inject
 def preview_semantic_model_yaml(
-    organization_id: UUID,
-    project_id: Optional[UUID] = None,
+    connector_id: UUID,
     service: SemanticModelService = Depends(Provide[Container.semantic_model_service]),
 ):
     try:
-        yaml_text = service.preview_yaml(organization_id=organization_id, project_id=project_id)
+        yaml_text = service.generate_model_yaml(connector_id)
         return PlainTextResponse(yaml_text, media_type="text/yaml")
     except Exception as exc:
         raise HTTPException(

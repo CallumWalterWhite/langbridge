@@ -4,7 +4,7 @@ from connectors.config import (
     BaseConnectorConfigSchemaFactory,
     ConnectorConfigEntrySchema,
     ConnectorConfigSchema,
-    ConnectorType,
+    ConnectorRuntimeType,
 )
 
 
@@ -18,7 +18,7 @@ class MySQLConnectorConfig(BaseConnectorConfig):
 
 
 class MySQLConnectorConfigFactory(BaseConnectorConfigFactory):
-    type = ConnectorType.MYSQL
+    type = ConnectorRuntimeType.MYSQL
 
     @classmethod
     def create(cls, config: dict) -> BaseConnectorConfig:
@@ -26,7 +26,7 @@ class MySQLConnectorConfigFactory(BaseConnectorConfigFactory):
 
 
 class MySQLConnectorConfigSchemaFactory(BaseConnectorConfigSchemaFactory):
-    type = ConnectorType.MYSQL
+    type = ConnectorRuntimeType.MYSQL
 
     @classmethod
     def create(cls, _: dict) -> ConnectorConfigSchema:

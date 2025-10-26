@@ -4,7 +4,7 @@ from connectors.config import (
     BaseConnectorConfigSchemaFactory,
     ConnectorConfigEntrySchema,
     ConnectorConfigSchema,
-    ConnectorType,
+    ConnectorRuntimeType,
 )
 
 
@@ -18,7 +18,7 @@ class PostgresConnectorConfig(BaseConnectorConfig):
 
 
 class PostgresConnectorConfigFactory(BaseConnectorConfigFactory):
-    type = ConnectorType.POSTGRES
+    type = ConnectorRuntimeType.POSTGRES
 
     @classmethod
     def create(cls, config: dict) -> BaseConnectorConfig:
@@ -26,7 +26,7 @@ class PostgresConnectorConfigFactory(BaseConnectorConfigFactory):
 
 
 class PostgresConnectorConfigSchemaFactory(BaseConnectorConfigSchemaFactory):
-    type = ConnectorType.POSTGRES
+    type = ConnectorRuntimeType.POSTGRES
 
     @classmethod
     def create(cls, _: dict) -> ConnectorConfigSchema:

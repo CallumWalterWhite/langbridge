@@ -12,6 +12,7 @@ from .base import _Base
 
 
 class SemanticModelCreateRequest(_Base):
+    connector_id: UUID
     organization_id: UUID
     project_id: Optional[UUID] = None
     name: str

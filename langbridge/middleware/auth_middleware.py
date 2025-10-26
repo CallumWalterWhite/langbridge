@@ -34,8 +34,10 @@ class AuthMiddleware(BaseHTTPMiddleware):
         self.logger.debug(f"AuthMiddleware: Processing request {request.method} {request.url.path}")
         
         if settings.IS_LOCAL:
+            self.logger.debug("AuthMiddleware: Skipping auth for local environment")
             token = request.headers.get("Authorization")
             if token == settings.LOCAL_TOKEN:
+                self.logger.debug("AuthMiddleware: Local token matched, setting test user")
                 request.state.username = "callumwalterwhite"
                 request.state.user = self.auth_service.get_user_by_username("callumwalterwhite")
                 return await call_next(request)

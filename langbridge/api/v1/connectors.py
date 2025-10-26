@@ -25,14 +25,7 @@ def create_connector(
     connector_service: ConnectorService = Depends(Provide[Container.connector_service]),
 ) -> ConnectorResponse:
     connector: Connector = connector_service.create_connector(request)
-    return ConnectorResponse(
-        id=connector.id,
-        name=connector.name,
-        connector_type=connector.connector_type,
-        config=request.config,
-        organization_id=request.organization_id,
-        project_id=request.project_id
-    )
+    return ConnectorResponse.from_connector(connector)
 
 @router.get("/{connector_id}", response_model=ConnectorResponse)
 @inject
@@ -41,7 +34,7 @@ def get_connector(
     connector_service: ConnectorService = Depends(Provide[Container.connector_service]),
 ) -> ConnectorResponse:
     connector = connector_service.get_connector(connector_id)
-    return ConnectorResponse.model_validate(connector)
+    return ConnectorResponse.from_connector(connector)
 
 @router.get("/{connector_id}/source/schemas", response_model=ConnectorResponse)
 @inject
@@ -72,7 +65,7 @@ def get_connector_table(
 ) -> ConnectorSourceSchemaColumnResponse:
     columns = connector_schema_service.get_columns(connector_id, schema, table)
     return ConnectorSourceSchemaTableResponse(columns=[
-        ConnectorSourceSchemaColumnResponse(name=col.name, data_type=col.data_type) for col in columns
+        ConnectorSourceSchemaColumnResponse(name=col.name, type=col.data_type) for col in columns
     ]) # type: ignore
 
 @router.get("/schemas/type", response_model=list[str])
@@ -103,7 +96,7 @@ def update_connector(
     connector_service: ConnectorService = Depends(Provide[Container.connector_service]),
 ):
     connector = connector_service.update_connector(connector_id, request)
-    return ConnectorResponse.model_validate(connector)
+    return ConnectorResponse.from_connector(connector)
 
 @router.delete("/{connector_id}", status_code=status.HTTP_204_NO_CONTENT)
 @inject
@@ -120,4 +113,4 @@ def list_connectors(
     connector_service: ConnectorService = Depends(Provide[Container.connector_service]),
 ) -> list[ConnectorResponse]:
     connectors = connector_service._connector_repository.get_all()
-    return [ConnectorResponse.model_validate(conn) for conn in connectors]
+    return [ConnectorResponse.from_connector(conn) for conn in connectors]

@@ -4,7 +4,7 @@ from connectors.config import (
     BaseConnectorConfigSchemaFactory,
     ConnectorConfigEntrySchema,
     ConnectorConfigSchema,
-    ConnectorType,
+    ConnectorRuntimeType,
 )
 
 
@@ -19,7 +19,7 @@ class RedshiftConnectorConfig(BaseConnectorConfig):
 
 
 class RedshiftConnectorConfigFactory(BaseConnectorConfigFactory):
-    type = ConnectorType.REDSHIFT
+    type = ConnectorRuntimeType.REDSHIFT
 
     @classmethod
     def create(cls, config: dict) -> BaseConnectorConfig:
@@ -27,7 +27,7 @@ class RedshiftConnectorConfigFactory(BaseConnectorConfigFactory):
 
 
 class RedshiftConnectorConfigSchemaFactory(BaseConnectorConfigSchemaFactory):
-    type = ConnectorType.REDSHIFT
+    type = ConnectorRuntimeType.REDSHIFT
 
     @classmethod
     def create(cls, _: dict) -> ConnectorConfigSchema:

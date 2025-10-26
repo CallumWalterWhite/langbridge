@@ -1,7 +1,7 @@
 
 from typing import Dict, List
 from connectors.config import (
-    BaseConnectorConfig, ConnectorType
+    BaseConnectorConfig, ConnectorRuntimeType
 )
 from connectors.metadata import (
     BaseMetadataExtractor, 
@@ -15,7 +15,7 @@ from .config import SnowflakeConnectorConfig
 from snowflake.connector import ProgrammingError, OperationalError, DatabaseError, connect
 
 class SnowflakeMetadataExtractor(BaseMetadataExtractor):
-    type = ConnectorType.SNOWFLAKE
+    type = ConnectorRuntimeType.SNOWFLAKE
 
     def fetch_metadata(self, config: BaseConnectorConfig) -> List[TableMetadata]:
         if not isinstance(config, SnowflakeConnectorConfig):
@@ -58,6 +58,6 @@ class SnowflakeMetadataExtractor(BaseMetadataExtractor):
             conn.close()
 
         return [
-            TableMetadata(schema=schema, name=table, columns=columns)
+            TableMetadata(schema=schema, name=table)
             for (schema, table), columns in tables.items()
         ]

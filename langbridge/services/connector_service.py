@@ -1,5 +1,7 @@
 import json
-from typing import Optional, Type, Union
+from typing import Any, Dict, Optional, Type, Union
+import logging
+import uuid
 from sqlalchemy.orm import Session
 from db.auth import Organization, Project
 from db.connector import Connector, DatabaseConnector
@@ -7,15 +9,18 @@ from errors.application_errors import BusinessValidationError
 from repositories.connector_repository import ConnectorRepository
 from repositories.organization_repository import OrganizationRepository, ProjectRepository
 from schemas.connectors import CreateConnectorRequest, UpdateConnectorRequest
-from connectors.connection_tester import get_connector_tester, BaseConnectorTester
-from connectors.config import (
-    BaseConnectorConfig,
-    ConnectorType,
-    get_connector_config_factory, 
+
+from connectors import (
+    SqlConnectorFactory, 
+    SqlConnector,
+    ConnectorRuntimeType,
     get_connector_config_schema_factory, 
+    get_connector_config_factory,
     ConnectorConfigSchema, 
+    BaseConnectorConfig,
     BaseConnectorConfigFactory, 
-    BaseConnectorConfigSchemaFactory
+    BaseConnectorConfigSchemaFactory,
+    ConnectorRuntimeTypeSqlDialectMap
 )
 
 class ConnectorService:
@@ -30,6 +35,8 @@ class ConnectorService:
         self._connector_repository = connector_repository
         self._organization_repository = organization_repository
         self._project_repository = project_repository
+        self._sql_connector_factory = SqlConnectorFactory()
+        self._logger = logging.getLogger(__name__)
 
     def list_organization_connectors(self, organization: Organization) -> list[Connector]:
         return organization.connectors
@@ -38,11 +45,11 @@ class ConnectorService:
         return project.connectors
     
     def list_connector_types(self) -> list[str]:
-        return [ct.value for ct in ConnectorType]
+        return [ct.value for ct in ConnectorRuntimeType]
     
     def get_connector_config_schema(self, connector_type: str) -> ConnectorConfigSchema:
         try:
-            connector_type_enum: ConnectorType = ConnectorType(connector_type.upper())
+            connector_type_enum: ConnectorRuntimeType = ConnectorRuntimeType(connector_type.upper())
             config_schema_factory: Type[BaseConnectorConfigSchemaFactory] = get_connector_config_schema_factory(connector_type_enum)
             return config_schema_factory.create({})
         except ValueError as e:
@@ -51,24 +58,24 @@ class ConnectorService:
     def create_connector(
         self, create_request: CreateConnectorRequest
     ) -> Connector:
-        connector_type: ConnectorType = ConnectorType(create_request.connector_type.upper())
+        connector_type: ConnectorRuntimeType = ConnectorRuntimeType(create_request.connector_type.upper())
         config_json: str
+        connector_config: Dict[str, Any]
         if hasattr(create_request, "config") and create_request.config is not None:
-            config_json = json.dumps(create_request.config)
+            connector_config = create_request.config
+            config_json = json.dumps(connector_config)
         else:
             raise BusinessValidationError("Connector config must be provided")
         
+        # TOOD: handle other connector types
+        # Currently only database connectors are supported
         try:
-            config_factory: Type[BaseConnectorConfigFactory] = get_connector_config_factory(connector_type)
-            config_instance: BaseConnectorConfig = config_factory.create(create_request.config["config"])
-            connection_tester: BaseConnectorTester = get_connector_tester(connector_type)()
-            connection_result: Union[bool, str] = connection_tester.test(config_instance)
-            if connection_result is not True:
-                raise BusinessValidationError(f"Connection test failed: {connection_result}")
-        except ValueError as e:
+            _ = self.__create_sql_connector(connector_type, connector_config)
+        except Exception as e:
             raise BusinessValidationError(str(e))
         
-        connector = DatabaseConnector( #TODO: handle other connector types
+        connector: DatabaseConnector = DatabaseConnector( #TODO: handle other connector types
+            id=uuid.uuid4(),
             name=create_request.name,
             type="database_connector",
             connector_type=connector_type.value,
@@ -117,3 +124,17 @@ class ConnectorService:
         connector: Connector = self.get_connector(connector_id)
         self._connector_repository.delete(connector)
     
+    
+    def __create_sql_connector(self, 
+                                connector_type: ConnectorRuntimeType,
+                                connector_config: Dict[str, Any]) -> SqlConnector:
+        
+        config_factory: Type[BaseConnectorConfigFactory] = get_connector_config_factory(connector_type)
+        config_instance: BaseConnectorConfig = config_factory.create(connector_config["config"])
+        sql_connector: SqlConnector = self._sql_connector_factory.create_sql_connector(
+            ConnectorRuntimeTypeSqlDialectMap[connector_type],
+            config_instance,
+            logger=self._logger
+        )
+        sql_connector.test_connection_sync()
+        return sql_connector

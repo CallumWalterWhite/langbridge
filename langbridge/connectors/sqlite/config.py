@@ -4,7 +4,7 @@ from connectors.config import (
     ConnectorConfigSchema, 
     ConnectorConfigEntrySchema, 
     BaseConnectorConfig,
-    ConnectorType
+    ConnectorRuntimeType
 )
 
 class SqliteConnectorConfig(BaseConnectorConfig):
@@ -20,14 +20,14 @@ class SqliteConnectorConfig(BaseConnectorConfig):
         )
         
 class SqliteConnectorConfigFactory(BaseConnectorConfigFactory):
-    type = ConnectorType.SQLITE
+    type = ConnectorRuntimeType.SQLITE
 
     @classmethod
     def create(cls, config: dict) -> BaseConnectorConfig:
         return SqliteConnectorConfig.create_from_dict(config)
 
 class SqliteConnectorConfigSchemaFactory(BaseConnectorConfigSchemaFactory):
-    type = ConnectorType.SQLITE
+    type = ConnectorRuntimeType.SQLITE
 
     @classmethod
     def create(cls, config: dict) -> ConnectorConfigSchema:
@@ -37,7 +37,7 @@ class SqliteConnectorConfigSchemaFactory(BaseConnectorConfigSchemaFactory):
             version="1.0",
             label="SQLite",
             icon="sqlite.png",
-            connector_type=ConnectorType.SQLITE.value,
+            connector_type=ConnectorRuntimeType.SQLITE.value,
             config=[
                 ConnectorConfigEntrySchema(field="location", label="Location", description="Sqlite Location", type="string", required=True)
             ]

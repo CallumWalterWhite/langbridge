@@ -136,7 +136,7 @@ class AuthService:
     def get_user_by_username(self, username: str) -> User:
         user = self._user_repository.get_by_username(username)
         if not user:
-            raise RecursionError("User not found")
+            raise BusinessValidationError("User not found")
         return user
 
     async def authorize_redirect(

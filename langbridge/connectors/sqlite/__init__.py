@@ -1,10 +1,10 @@
 from .config import SqliteConnectorConfigFactory, SqliteConnectorConfigSchemaFactory
-from .connection_tester import SqliteConnectorTester
+from .connector import SqliteConnector
 from .metadata import SqliteMetadataExtractor
 
 __all__ = [
     "SqliteConnectorConfigFactory",
     "SqliteConnectorConfigSchemaFactory",
-    "SqliteConnectorTester",
+    "SqliteConnector",
     "SqliteMetadataExtractor",
 ]

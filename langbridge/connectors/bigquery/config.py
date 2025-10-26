@@ -4,7 +4,7 @@ from connectors.config import (
     BaseConnectorConfigSchemaFactory,
     ConnectorConfigEntrySchema,
     ConnectorConfigSchema,
-    ConnectorType,
+    ConnectorRuntimeType,
 )
 
 
@@ -16,7 +16,7 @@ class BigQueryConnectorConfig(BaseConnectorConfig):
 
 
 class BigQueryConnectorConfigFactory(BaseConnectorConfigFactory):
-    type = ConnectorType.BIGQUERY
+    type = ConnectorRuntimeType.BIGQUERY
 
     @classmethod
     def create(cls, config: dict) -> BaseConnectorConfig:
@@ -24,7 +24,7 @@ class BigQueryConnectorConfigFactory(BaseConnectorConfigFactory):
 
 
 class BigQueryConnectorConfigSchemaFactory(BaseConnectorConfigSchemaFactory):
-    type = ConnectorType.BIGQUERY
+    type = ConnectorRuntimeType.BIGQUERY
 
     @classmethod
     def create(cls, _: dict) -> ConnectorConfigSchema:

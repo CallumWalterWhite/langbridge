@@ -1,17 +1,46 @@
 from abc import ABC, abstractmethod
-from ast import Tuple
+import asyncio
 from dataclasses import dataclass
+from enum import Enum
+import json
 import logging
 import time
 from typing import Any, Dict, List, Optional
-import json
+from typing import Any, Dict, List, Optional, Tuple
 import re
 
-from connectors.base import QueryValidationError
-from errors.connector_errors import AuthError, ConnectorError
-from connectors.config import BaseConnectorConfig
-from connectors.metadata import ColumnMetadata
-from connectors import SqlDialetcs, ConnectorType
+from errors.connector_errors import AuthError, ConnectorError, QueryValidationError
+from connectors.config import BaseConnectorConfig, ConnectorRuntimeType
+from connectors.metadata import TableMetadata, ColumnMetadata, ForeignKeyMetadata
+
+
+class ConnectorType(Enum):
+    SQL = "SQL"
+    NO_SQL = "NO_SQL"
+
+class SqlDialetcs(Enum):
+    POSTGRES = "POSTGRES"
+    MYSQL = "MYSQL"
+    MONGODB = "MONGODB"
+    SNOWFLAKE = "SNOWFLAKE"
+    REDSHIFT = "REDSHIFT"
+    BIGQUERY = "BIGQUERY"
+    SQLSERVER = "SQLSERVER"
+    ORACLE = "ORACLE"
+    SQLITE = "SQLITE"
+
+# TODO: remove this mapping after refactoring ConnectorType to ConnectorRuntimeType
+ConnectorRuntimeTypeSqlDialectMap: Dict[ConnectorRuntimeType, SqlDialetcs] = {
+    ConnectorRuntimeType.POSTGRES: SqlDialetcs.POSTGRES,
+    ConnectorRuntimeType.MYSQL: SqlDialetcs.MYSQL,
+    ConnectorRuntimeType.MONGODB: SqlDialetcs.MONGODB,
+    ConnectorRuntimeType.SNOWFLAKE: SqlDialetcs.SNOWFLAKE,
+    ConnectorRuntimeType.REDSHIFT: SqlDialetcs.REDSHIFT,
+    ConnectorRuntimeType.BIGQUERY: SqlDialetcs.BIGQUERY,
+    ConnectorRuntimeType.SQLSERVER: SqlDialetcs.SQLSERVER,
+    ConnectorRuntimeType.ORACLE: SqlDialetcs.ORACLE,
+    ConnectorRuntimeType.SQLITE: SqlDialetcs.SQLITE,
+}
 
 @dataclass(slots=True)
 class QueryResult:
@@ -127,24 +156,75 @@ class SqlConnector(Connector):
     )
 
     @abstractmethod
-    def test_connection(self) -> None:
+    async def test_connection(self) -> None:
         """
         Test the database connection.
         Raises ConnectorError if the connection fails.
         """
         raise NotImplementedError
+    
+    def test_connection_sync(self) -> None:
+        """
+        Test the database connection.
+        Raises ConnectorError if the connection fails.
+        """
+        try:
+            # Run the async test_connection in a fresh event loop
+            asyncio.run(self.test_connection())
+        except ConnectorError as e:
+            raise e
+        except Exception as e:
+            raise ConnectorError(f"Connection test failed: {e}") from e
 
     @abstractmethod
-    def fetch_schemas(self) -> List[str]:
-        raise NotImplementedError
-
-    @abstractmethod
-    def fetch_tables(self) -> List[str]:
+    async def fetch_schemas(self) -> List[str]:
         raise NotImplementedError
     
+    def fetch_schemas_sync(self) -> List[str]:
+        try:
+            return asyncio.run(self.fetch_schemas())
+        except Exception as e:
+            raise ConnectorError(f"Fetch schemas failed: {e}") from e
+
     @abstractmethod
-    def fetch_columns(self) -> List[ColumnMetadata]:
+    async def fetch_tables(self, schema:str) -> List[str]:
         raise NotImplementedError
+    
+    def fetch_tables_sync(self, schema:str) -> List[str]:
+        try:
+            return asyncio.run(self.fetch_tables(schema))
+        except Exception as e:
+            raise ConnectorError(f"Fetch tables failed: {e}") from e
+        
+    @abstractmethod
+    async def fetch_table_metadata(self, schema:str, table:str) -> TableMetadata:
+        raise NotImplementedError
+    
+    def fetch_table_metadata_sync(self, schema:str, table:str) -> TableMetadata:
+        try:
+            return asyncio.run(self.fetch_table_metadata(schema, table))
+        except Exception as e:
+            raise ConnectorError(f"Fetch table metadata failed: {e}") from e
+    
+    @abstractmethod
+    async def fetch_columns(self, schema:str, table:str) -> List[ColumnMetadata]:
+        raise NotImplementedError
+    
+    def fetch_columns_sync(self, schema:str, table:str) -> List[ColumnMetadata]:
+        try:
+            return asyncio.run(self.fetch_columns(schema, table))
+        except Exception as e:
+            raise ConnectorError(f"Fetch columns failed: {e}") from e
+        
+    @abstractmethod
+    async def fetch_foreign_keys(self, schema:str, table:str) -> List[ForeignKeyMetadata]:
+        raise NotImplementedError
+    
+    def fetch_foreign_keys_sync(self, schema:str, table:str) -> List[ForeignKeyMetadata]:
+        try:
+            return asyncio.run(self.fetch_foreign_keys(schema, table))
+        except Exception as e:
+            raise ConnectorError(f"Fetch foreign keys failed: {e}") from e
 
     
     async def execute(
@@ -205,3 +285,10 @@ class SqlConnector(Connector):
         Must be implemented by subclasses.
         """
         raise NotImplementedError
+
+async def run_sync(fn, *args, **kwargs):
+    """
+    Run blocking call in default thread pool.
+    """
+
+    return await asyncio.to_thread(fn, *args, **kwargs)

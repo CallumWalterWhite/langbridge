@@ -21,7 +21,7 @@ from repositories.semantic_model_repository import SemanticModelRepository
 from services.auth_service import AuthService
 from services.organization_service import OrganizationService
 from services.agent_service import AgentService
-from services.semantic_model_builder import SemanticModelBuilder
+from semantic.semantic_model_builder import SemanticModelBuilder
 from services.semantic_model_service import SemanticModelService
 from config import settings
 

@@ -1,7 +1,7 @@
 
 from typing import Dict, List
 from connectors.config import (
-    BaseConnectorConfig, ConnectorType
+    BaseConnectorConfig, ConnectorRuntimeType
 )
 from connectors.metadata import (
     BaseMetadataExtractor, 
@@ -15,7 +15,7 @@ from .config import SqliteConnectorConfig
 from sqlite3 import Cursor, connect, OperationalError, DatabaseError, ProgrammingError
 
 class SqliteMetadataExtractor(BaseMetadataExtractor):
-    type = ConnectorType.SQLITE
+    type = ConnectorRuntimeType.SQLITE
 
     def __create_cursor(self, config: SqliteConnectorConfig) -> Cursor:
         try:

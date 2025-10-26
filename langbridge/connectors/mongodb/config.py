@@ -4,7 +4,7 @@ from connectors.config import (
     BaseConnectorConfigSchemaFactory,
     ConnectorConfigEntrySchema,
     ConnectorConfigSchema,
-    ConnectorType,
+    ConnectorRuntimeType,
 )
 
 
@@ -17,7 +17,7 @@ class MongoDBConnectorConfig(BaseConnectorConfig):
 
 
 class MongoDBConnectorConfigFactory(BaseConnectorConfigFactory):
-    type = ConnectorType.MONGODB
+    type = ConnectorRuntimeType.MONGODB
 
     @classmethod
     def create(cls, config: dict) -> BaseConnectorConfig:
@@ -25,7 +25,7 @@ class MongoDBConnectorConfigFactory(BaseConnectorConfigFactory):
 
 
 class MongoDBConnectorConfigSchemaFactory(BaseConnectorConfigSchemaFactory):
-    type = ConnectorType.MONGODB
+    type = ConnectorRuntimeType.MONGODB
 
     @classmethod
     def create(cls, _: dict) -> ConnectorConfigSchema:

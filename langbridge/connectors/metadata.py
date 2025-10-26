@@ -23,6 +23,12 @@ class ColumnMetadata:
     is_primary_key: bool = False
     is_foreign_key: bool = False
 
+@dataclass
+class ForeignKeyMetadata:
+    name: str
+    column: str
+    primary_key: str
+    foreign_key: str
 
 @dataclass
 class TableMetadata:

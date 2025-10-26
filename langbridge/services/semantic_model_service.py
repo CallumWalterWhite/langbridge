@@ -1,17 +1,21 @@
 
 
+from datetime import datetime, timezone
 import json
+from typing import Optional
 from uuid import UUID
+import uuid
 
 import yaml
 
+from db.auth import Project
 from db.semantic import SemanticModelEntry
 from errors.application_errors import BusinessValidationError
 from repositories.semantic_model_repository import SemanticModelRepository
 from repositories.organization_repository import OrganizationRepository, ProjectRepository
 from semantic import SemanticModel
 from schemas.semantic_models import SemanticModelCreateRequest
-from .semantic_model_builder import SemanticModelBuilder
+from semantic.semantic_model_builder import SemanticModelBuilder
 
 
 class SemanticModelService:
@@ -27,11 +31,11 @@ class SemanticModelService:
         self._organization_repository = organization_repository
         self._project_repository = project_repository
 
-    def preview_model(self, organization_id: UUID, project_id: UUID | None = None) -> SemanticModel:
-        return self._builder.build_for_scope(organization_id=organization_id, project_id=project_id)
-
-    def preview_yaml(self, organization_id: UUID, project_id: UUID | None = None) -> str:
-        return self._builder.build_yaml_for_scope(organization_id=organization_id, project_id=project_id)
+    def generate_model_yaml(
+            self,
+            connector_id: UUID,
+    ) -> str:
+        return self._builder.build_yaml_for_scope(connector_id)
 
     def list_models(self, organization_id: UUID, project_id: UUID | None = None) -> list[SemanticModelEntry]:
         return self._repository.list_for_scope(organization_id=organization_id, project_id=project_id)
@@ -51,7 +55,7 @@ class SemanticModelService:
         if not organization:
             raise BusinessValidationError("Organization not found")
 
-        project = None
+        project: Optional[Project] = None
         if request.project_id:
             project = self._project_repository.get_by_id(request.project_id)
             if not project:
@@ -61,25 +65,28 @@ class SemanticModelService:
 
         semantic_model: SemanticModel
         if request.auto_generate or not request.model_yaml:
-            semantic_model = self._builder.build_for_scope(organization_id=request.organization_id, project_id=request.project_id)
-            model_yaml = self._builder.build_yaml_for_scope(organization_id=request.organization_id, project_id=request.project_id)
+            semantic_model = self._builder.build_for_scope(connector_id=request.connector_id)
         else:
             try:
                 raw = yaml.safe_load(request.model_yaml)
                 semantic_model = SemanticModel.model_validate(raw)
-                model_yaml = yaml.safe_dump(semantic_model.model_dump(by_alias=True, exclude_none=True), sort_keys=False)
             except yaml.YAMLError as exc:
                 raise BusinessValidationError(f"Invalid semantic model YAML: {exc}") from exc
-
+            
+        model_yaml = yaml.safe_dump(semantic_model.model_dump(by_alias=True, exclude_none=True), sort_keys=False)
         content_json = json.dumps(semantic_model.model_dump(by_alias=True, exclude_none=True))
 
-        entry = SemanticModelEntry(
+        entry: SemanticModelEntry = SemanticModelEntry(
+            id=uuid.uuid4(),
+            connector_id=request.connector_id,
             organization_id=request.organization_id,
             project_id=request.project_id,
             name=request.name,
             description=request.description,
             content_yaml=model_yaml,
             content_json=content_json,
+            created_at=datetime.now(timezone.utc),
+            updated_at=datetime.now(timezone.utc),
         )
 
         self._repository.add(entry)
