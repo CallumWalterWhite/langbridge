@@ -2,8 +2,6 @@
 SQL analyst tool built on top of connector abstractions.
 """
 
-from __future__ import annotations
-
 import logging
 import re
 from dataclasses import dataclass, field
@@ -14,10 +12,9 @@ from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import StrOutputParser
 
 from semantic.model import SemanticModel
-from connectors.base import (
+from connectors.connector import (
     QueryResult,
     QueryValidationError,
-    SchemaInfo,
     SqlConnector,
     ensure_select_statement,
 )
@@ -86,7 +83,6 @@ class SqlAnalystTool:
     async def build_sql_from_nl(
         self,
         question: str,
-        schema: SchemaInfo,
         guidance: SqlGuidance,
     ) -> str:
         if not self._chain:

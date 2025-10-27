@@ -104,7 +104,7 @@ class SemanticModelBuilder:
 
         return SemanticModel(
             version="1.0",
-            database=connector.name if isinstance(connector.name, str) else connector.name.value,
+            connector=connector.name if isinstance(connector.name, str) else connector.name.value,
             description=f"Semantic Model generated from {connector.name}",
             tables=tables,
             relationships=relationships or None,

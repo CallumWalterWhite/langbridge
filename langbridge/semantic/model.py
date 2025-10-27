@@ -57,7 +57,7 @@ class Metric(BaseModel):
 
 class SemanticModel(BaseModel):
     version: str
-    database: Optional[str] = None
+    connector: Optional[str] = None
     description: Optional[str] = None
     tables: Dict[str, Table]
     relationships: Optional[List[Relationship]] = None
