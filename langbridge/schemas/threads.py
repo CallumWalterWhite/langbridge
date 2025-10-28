@@ -25,3 +25,6 @@ class ThreadUpdateRequest(_Base):
     title: Optional[str] = None
     metadata_json: Optional[Dict[str, Any]] = None
 
+#Test
+class ThreadChatRequest(_Base):
+    message: str

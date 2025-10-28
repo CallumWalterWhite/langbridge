@@ -14,7 +14,7 @@ class SemanticModelRepository(BaseRepository):
         super().__init__(session, SemanticModelEntry)
 
     def list_for_scope(self, organization_id: UUID, project_id: Optional[UUID] = None) -> List[SemanticModelEntry]:
-        query = self._session.query(SemanticModelEntry).filter(SemanticModelEntry.organization_id == organization_id)
+        query = self._session.query(SemanticModelEntry).filter(SemanticModelEntry.organization_id == str(organization_id))
         if project_id:
             query = query.filter(SemanticModelEntry.project_id == project_id)
         return query.order_by(SemanticModelEntry.created_at.desc()).all()

@@ -53,18 +53,25 @@ class SupervisorOrchestrator:
             config=context.analyst_config,
         )
 
-        visualization = self.visual_agent.run(
-            analyst_result.data,
-            title=f"Visualization for '{user_query}'",
-        )
+        # visualization = self.visual_agent.run(
+        #     analyst_result.data,
+        #     title=f"Visualization for '{user_query}'",
+        # )
 
         elapsed_ms = int((time.perf_counter() - start) * 1000)
+
+        self.logger.info(
+            f"Orchestration completed in {elapsed_ms}ms for workspace {context.workspace_id}"
+        )
+        
+        #print result
+        self.logger.info(f"Analyst Result: {analyst_result.summary}")
 
         return {
             "answer": analyst_result.summary,
             "sql": analyst_result.sql,
             "data": analyst_result.data,
-            "visualization": visualization,
+            # "visualization": visualization,
             "diagnostics": {
                 **analyst_result.diagnostics,
                 "total_elapsed_ms": elapsed_ms,

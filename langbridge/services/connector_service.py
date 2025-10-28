@@ -40,6 +40,9 @@ class ConnectorService:
 
     def list_organization_connectors(self, organization: Organization) -> list[Connector]:
         return organization.connectors
+    
+    def list_all_connectors(self) -> list[Connector]:
+        return self._connector_repository.get_all()
 
     def list_project_connectors(self, project: Project) -> list[Connector]:
         return project.connectors
@@ -70,7 +73,7 @@ class ConnectorService:
         # TOOD: handle other connector types
         # Currently only database connectors are supported
         try:
-            _ = self.__create_sql_connector(connector_type, connector_config)
+            _ = self.create_sql_connector(connector_type, connector_config)
         except Exception as e:
             raise BusinessValidationError(str(e))
         
@@ -125,7 +128,7 @@ class ConnectorService:
         self._connector_repository.delete(connector)
     
     
-    def __create_sql_connector(self, 
+    def create_sql_connector(self, 
                                 connector_type: ConnectorRuntimeType,
                                 connector_config: Dict[str, Any]) -> SqlConnector:
         
@@ -137,4 +140,19 @@ class ConnectorService:
             logger=self._logger
         )
         sql_connector.test_connection_sync()
+        return sql_connector
+    
+    
+    async def async_create_sql_connector(self, 
+                                connector_type: ConnectorRuntimeType,
+                                connector_config: Dict[str, Any]) -> SqlConnector:
+        
+        config_factory: Type[BaseConnectorConfigFactory] = get_connector_config_factory(connector_type)
+        config_instance: BaseConnectorConfig = config_factory.create(connector_config["config"])
+        sql_connector: SqlConnector = self._sql_connector_factory.create_sql_connector(
+            ConnectorRuntimeTypeSqlDialectMap[connector_type],
+            config_instance,
+            logger=self._logger
+        )
+        await sql_connector.test_connection()
         return sql_connector

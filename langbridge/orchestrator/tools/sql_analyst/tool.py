@@ -3,8 +3,8 @@ LangChain tool surface for the SQL analyst.
 """
 from typing import Any, Optional
 
-from langchain.callbacks.manager import AsyncCallbackManagerForToolRun, CallbackManagerForToolRun
 from langchain.tools import BaseTool
+from langchain_core.tools.base import ArgsSchema
 
 from .llm_adapter import LangChainLLMAdapter
 from .schemas import SQLAnalystToolInput, SQLAnalystToolResult
@@ -16,11 +16,11 @@ class SQLAnalystTool(BaseTool):
     LangChain tool that exposes SQL synthesis capabilities.
     """
 
-    name = "sql_analyst"
-    description = (
+    name:str = "sql_analyst"
+    description:str = (
         "Translate a natural language analytics question into SQL using a semantic model YAML definition."
     )
-    args_schema = SQLAnalystToolInput
+    args_schema: Optional[ArgsSchema]  = SQLAnalystToolInput
 
     def __init__(self, service: SQLAnalystService):
         super().__init__()
@@ -32,7 +32,6 @@ class SQLAnalystTool(BaseTool):
         semantic_model_yaml: str,
         dialect: Optional[str] = None,
         model_name: Optional[str] = None,
-        run_manager: Optional[CallbackManagerForToolRun] = None,
         **_: Any,
     ) -> str:
         result = self._service.generate_sql(
@@ -49,7 +48,6 @@ class SQLAnalystTool(BaseTool):
         semantic_model_yaml: str,
         dialect: Optional[str] = None,
         model_name: Optional[str] = None,
-        run_manager: Optional[AsyncCallbackManagerForToolRun] = None,
         **_: Any,
     ) -> str:
         result = await self._service.agenerate_sql(

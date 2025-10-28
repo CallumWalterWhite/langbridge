@@ -119,6 +119,10 @@ class SemanticModelBuilder:
             semantic_model.model_dump(by_alias=True, exclude_none=True),
             sort_keys=False,
         )
+        
+    def parse_yaml_to_model(self, yaml_content: str) -> SemanticModel:
+        parsed_dict = yaml.safe_load(yaml_content)
+        return SemanticModel.model_validate(parsed_dict)
     
     def _build_semantic_tables(
         self,

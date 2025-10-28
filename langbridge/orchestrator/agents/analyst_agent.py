@@ -2,8 +2,7 @@
 Analyst agent that orchestrates NL->SQL generation using semantic models.
 """
 
-from __future__ import annotations
-
+import json
 import logging
 import re
 import time
@@ -80,6 +79,30 @@ class AnalystAgent:
             | summarizer
             | StrOutputParser()
             if summarizer
+            else None
+        )
+        self._selection_chain = (
+            ChatPromptTemplate.from_messages(
+                [
+                    (
+                        "system",
+                        "You route analytics questions to the most appropriate semantic model. "
+                        "Pick the model that exposes the correct tables, measures, or filters. "
+                        "Respond in JSON with keys 'selected_model_id' and 'candidates'. "
+                        "Each candidate must include 'model_id', 'reason', and optional 'confidence' or 'score'. "
+                        "Always choose exactly one model from the supplied list.",
+                    ),
+                    (
+                        "human",
+                        "User query:\n{query}\n\n"
+                        "Semantic models (JSON array):\n{models_json}\n\n"
+                        "Return only JSON.",
+                    ),
+                ]
+            )
+            | llm
+            | StrOutputParser()
+            if llm
             else None
         )
 
@@ -181,14 +204,154 @@ class AnalystAgent:
             return f"{descriptor} [{model.connector}]"
         return descriptor
 
-    def _select_semantic_model(
+    def _prepare_model_payload(
+        self,
+        models: Sequence[SemanticModel],
+    ) -> Tuple[List[Dict[str, Any]], Dict[str, SemanticModel]]:
+        payload: List[Dict[str, Any]] = []
+        model_map: Dict[str, SemanticModel] = {}
+
+        for model in models:
+            model_id = self._model_cache_key(model)
+            model_map[model_id] = model
+            resolved = self._resolve_model(model)
+
+            keyword_tokens: set[str] = set()
+            keyword_tokens.update(resolved.table_by_token.keys())
+            keyword_tokens.update(resolved.column_by_token.keys())
+            keyword_tokens.update(resolved.metric_by_token.keys())
+            keyword_tokens.update(resolved.filter_by_token.keys())
+            keywords = sorted(token for token in keyword_tokens if token)[:20]
+
+            tables = list(model.tables.keys())[:5]
+            metrics = list((model.metrics or {}).keys())[:5] if model.metrics else []
+            dimensions: List[str] = []
+            for table in model.tables.values():
+                for dimension in table.dimensions or []:
+                    dimensions.append(dimension.name)
+                    if len(dimensions) >= 5:
+                        break
+                if len(dimensions) >= 5:
+                    break
+
+            payload.append(
+                {
+                    "model_id": model_id,
+                    "label": self._describe_model(model),
+                    "description": model.description or "",
+                    "connector": model.connector,
+                    "tables": tables,
+                    "metrics": metrics,
+                    "dimensions": dimensions,
+                    "keywords": keywords,
+                }
+            )
+
+        return payload, model_map
+
+    def _coerce_score(self, value: Any) -> Optional[float]:
+        if isinstance(value, (int, float)):
+            return float(value)
+        if isinstance(value, str):
+            try:
+                return float(value)
+            except ValueError:
+                return None
+        return None
+
+    def _normalise_llm_candidates(
+        self,
+        *,
+        selected_id: str,
+        candidates: Any,
+        model_map: Dict[str, SemanticModel],
+    ) -> List[Dict[str, Any]]:
+        ranking: List[Dict[str, Any]] = []
+        seen: set[str] = set()
+
+        if isinstance(candidates, list):
+            for entry in candidates:
+                if not isinstance(entry, dict):
+                    continue
+                raw_id = entry.get("model_id") or entry.get("id") or entry.get("model")
+                if not raw_id:
+                    continue
+                model_id = str(raw_id)
+                if model_id in seen or model_id not in model_map:
+                    continue
+                seen.add(model_id)
+                label = self._describe_model(model_map[model_id])
+                reason = entry.get("reason") or entry.get("rationale") or ""
+                confidence = entry.get("confidence")
+                score = self._coerce_score(entry.get("score"))
+                ranking.append(
+                    {
+                        "model": label,
+                        "selected": model_id == selected_id,
+                        "score": score,
+                        "confidence": confidence,
+                        "reason": reason,
+                    }
+                )
+
+        if selected_id not in seen and selected_id in model_map:
+            ranking.insert(
+                0,
+                {
+                    "model": self._describe_model(model_map[selected_id]),
+                    "selected": True,
+                    "score": None,
+                    "confidence": None,
+                    "reason": "",
+                },
+            )
+
+        return ranking[:3]
+
+    async def _select_model_via_llm(
+        self,
+        query: str,
+        models: Sequence[SemanticModel],
+    ) -> Optional[Tuple[SemanticModel, List[Dict[str, Any]]]]:
+        if not self._selection_chain:
+            return None
+
+        model_payload, model_map = self._prepare_model_payload(models)
+        try:
+            raw = await self._selection_chain.ainvoke(
+                {
+                    "query": query,
+                    "models_json": json.dumps(model_payload, ensure_ascii=True),
+                }
+            )
+        except Exception as exc:  # pragma: no cover - defensive logging
+            self.logger.warning("Model selection LLM call failed: %s", exc)
+            return None
+
+        try:
+            parsed = json.loads(raw)
+        except json.JSONDecodeError:
+            self.logger.warning("Model selection LLM returned invalid JSON: %s", raw)
+            return None
+
+        selected_id = parsed.get("selected_model_id")
+        if not selected_id or selected_id not in model_map:
+            self.logger.warning("Model selection LLM chose unknown model id: %s", selected_id)
+            return None
+
+        ranking = self._normalise_llm_candidates(
+            selected_id=str(selected_id),
+            candidates=parsed.get("candidates"),
+            model_map=model_map,
+        )
+
+        return model_map[str(selected_id)], ranking
+
+    def _select_model_via_scoring(
         self,
         query: str,
         models: Sequence[SemanticModel],
     ) -> Tuple[SemanticModel, List[Dict[str, Any]]]:
-        if not models:
-            raise RuntimeError("No semantic models available for AnalystAgent.")
-
         candidates: List[Dict[str, Any]] = []
         for model in models:
             resolved = self._resolve_model(model)
@@ -207,13 +370,28 @@ class AnalystAgent:
             ranking.append(
                 {
                     "model": self._describe_model(entry["model"]),
-                    "score": entry["score"],
-                    "matches": entry["matches"][:5],
                     "selected": idx == 0,
+                    "score": entry["score"],
+                    "confidence": None,
+                    "reason": ", ".join(entry["matches"][:3]),
                 }
             )
 
-        return candidates[0]["model"], ranking
+        return candidates[0]["model"], ranking[:3]
+
+    async def _select_semantic_model(
+        self,
+        query: str,
+        models: Sequence[SemanticModel],
+    ) -> Tuple[SemanticModel, List[Dict[str, Any]]]:
+        if not models:
+            raise RuntimeError("No semantic models available for AnalystAgent.")
+
+        agentic = await self._select_model_via_llm(query, models)
+        if agentic:
+            return agentic
+
+        return self._select_model_via_scoring(query, models)
 
     # ------------------------------------------------------------------ #
     # Connector/tool helpers
@@ -281,7 +459,7 @@ class AnalystAgent:
         models = list(available_semantic_models or [])
         config = config or AnalystAgentConfig()
 
-        selected_model, ranking = self._select_semantic_model(query, models)
+        selected_model, ranking = await self._select_semantic_model(query, models)
         connector = self._get_connector_for_model(selected_model)
         tool = self._get_tool(selected_model, connector)
 
@@ -309,8 +487,6 @@ class AnalystAgent:
 
         summary = await self._generate_summary(query, sql, result)
 
-        selection_diag = ranking[: min(len(ranking), 3)]
-
         payload = AnalystAgentResultPayload(
             summary=summary.strip(),
             sql=sql,
@@ -318,13 +494,13 @@ class AnalystAgent:
             diagnostics={
                 "elapsed_ms": elapsed_ms,
                 "rowcount": result.rowcount,
-                "dialect": tool.connector.dialect,
+                "dialect": tool.connector.DIALECT,
                 "semantic_model": {
                     "name": self._describe_model(selected_model),
                     "connector": selected_model.connector,
                     "tables": list(selected_model.tables.keys()),
                 },
-                "model_candidates": selection_diag,
+                "model_candidates": ranking,
             },
         )
         return payload

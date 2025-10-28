@@ -23,6 +23,7 @@ from services.organization_service import OrganizationService
 from services.agent_service import AgentService
 from semantic.semantic_model_builder import SemanticModelBuilder
 from services.semantic_model_service import SemanticModelService
+from services.orchestrator_service import OrchestratorService
 from config import settings
 
 
@@ -105,4 +106,12 @@ class Container(containers.DeclarativeContainer):
         builder=semantic_model_builder,
         organization_repository=organization_repository,
         project_repository=project_repository,
+    )
+
+    orchestrator_service = providers.Factory(
+        OrchestratorService,
+        organization_service=organization_service,
+        semantic_model_service=semantic_model_service,
+        connector_service=connector_service,
+        agent_service=agent_service
     )

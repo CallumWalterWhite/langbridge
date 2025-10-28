@@ -11,6 +11,7 @@ class LLMProvider(enum.Enum):
     OPENAI = "openai"
     ANTHROPIC = "anthropic"
     AZURE = "azure"
+    openai = "openai"  # for backward compatibility
 
 class LLMConnection(Base):
     """SQLAlchemy model for LLM connection configurations"""
@@ -19,7 +20,8 @@ class LLMConnection(Base):
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
     name = Column(String(100), nullable=False)
     description = Column(String(1024))
-    provider: Mapped[LLMProvider] = mapped_column(SqlEnum(LLMProvider, name="llm_provider"), nullable=False)
+    # provider: Mapped[LLMProvider] = mapped_column(SqlEnum(LLMProvider, name="llm_provider"), nullable=False)
+    provider = Column(String(50), nullable=False)  # e.g., 'openai', 'anthropic', etc.
     api_key = Column(String(255), nullable=False) # encrypted in production
     model = Column(String(50))  # e.g., 'gpt-4', 'claude-3', etc.
     configuration = Column(JSON) 

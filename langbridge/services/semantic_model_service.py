@@ -39,6 +39,9 @@ class SemanticModelService:
 
     def list_models(self, organization_id: UUID, project_id: UUID | None = None) -> list[SemanticModelEntry]:
         return self._repository.list_for_scope(organization_id=organization_id, project_id=project_id)
+    
+    def list_all_models(self) -> list[SemanticModelEntry]:
+        return self._repository.get_all()
 
     def get_model(self, model_id: UUID, organization_id: UUID) -> SemanticModelEntry:
         model = self._repository.get_for_scope(model_id=model_id, organization_id=organization_id)
