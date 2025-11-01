@@ -57,39 +57,39 @@ class SemanticModelBuilder:
         self._sql_connector_factory = SqlConnectorFactory()
         self._logger = logging.getLogger(__name__)
 
-    def build_for_scope(
+    async def build_for_scope(
         self,
         connector_id: UUID,
         scope_schemas: Optional[List[str]] = None, # schema scope
         scope_tables: Optional[List[Tuple[str, str]]] = None, # schema, table scope
         scope_columns: Optional[List[Tuple[str, str, str]]] = None, # schema, table, column scope
     ) -> SemanticModel:
-        connector: Optional[Connector] = self.__get_connector(connector_id)
+        connector: Optional[Connector] = await self.__get_connector(connector_id)
         if not connector:
             raise BusinessValidationError("Connector not found")
-        sql_connector = self._get_sql_connector(connector)
+        sql_connector: SqlConnector = await self._get_sql_connector(connector)
 
         scope_metadata: List[ScopedTableMetadata] = []
 
         if not scope_schemas:
-            schemas = sql_connector.fetch_schemas_sync()
+            schemas = await sql_connector.fetch_schemas()
         for schema in schemas:
             if not scope_tables:
                 scope_tables = [
                     (schema, table)
-                    for table in sql_connector.fetch_tables_sync(schema)
+                    for table in await sql_connector.fetch_tables(schema)
                 ]
             for table in scope_tables:
                 columns_metadata: List[ColumnMetadata] = []
                 table_metadata = TableMetadata(schema=schema, name=table[1])
-                columns_metadata = sql_connector.fetch_columns_sync(schema, table[1])
+                columns_metadata = await sql_connector.fetch_columns(schema, table[1])
                 if scope_columns:
                     columns_metadata = [
                         column
                         for column in columns_metadata
                         if (column.name) in [col[2] for col in scope_columns]
                     ]
-                foreign_keys_metadata = sql_connector.fetch_foreign_keys_sync(schema, table[1])
+                foreign_keys_metadata = await sql_connector.fetch_foreign_keys(schema, table[1])
                 scope_metadata.append(
                     ScopedTableMetadata(
                         schema=schema,
@@ -110,11 +110,11 @@ class SemanticModelBuilder:
             relationships=relationships or None,
         )
 
-    def build_yaml_for_scope(
+    async def build_yaml_for_scope(
         self,
         connector_id: UUID,
     ) -> str:
-        semantic_model = self.build_for_scope(connector_id)
+        semantic_model = await self.build_for_scope(connector_id)
         return yaml.safe_dump(
             semantic_model.model_dump(by_alias=True, exclude_none=True),
             sort_keys=False,
@@ -236,8 +236,8 @@ class SemanticModelBuilder:
                     )
         return relationships
     
-    def __get_connector(self, connector_id: UUID) -> Connector:
-        connector: Connector | None = self._connector_repository.get_by_id(connector_id)
+    async def __get_connector(self, connector_id: UUID) -> Connector:
+        connector: Connector | None = await self._connector_repository.get_by_id(connector_id)
         if not connector:
             raise BusinessValidationError("Connector not found")
         return connector
@@ -250,7 +250,7 @@ class SemanticModelBuilder:
         config: BaseConnectorConfig = build_connector_config(connector_runtime, config_payload['config'])
         return config
     
-    def _get_sql_connector(self, connector: Connector) -> SqlConnector:
+    async def _get_sql_connector(self, connector: Connector) -> SqlConnector:
         connector_config: BaseConnectorConfig = self.__get_connector_config(connector)
         runtime_type = ConnectorRuntimeType(connector.connector_type.upper())
         sql_connector: SqlConnector = self._sql_connector_factory.create_sql_connector(
@@ -258,7 +258,7 @@ class SemanticModelBuilder:
             connector_config,
             logger=self._logger
         )
-        sql_connector.test_connection_sync()
+        await sql_connector.test_connection()
         return sql_connector
 
     @staticmethod

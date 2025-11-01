@@ -20,7 +20,7 @@ def custom_generate_unique_id(route: APIRoute) -> str:
 container = Container()
 wire_packages(
     container,
-    package_names=["api", "services", "repositories", "auth"],  # add more roots as needed
+    package_names=["api", "services", "repositories", "auth", "middleware"],  # add more roots as needed
     extra_modules=["main"],  # optional: single modules to wire
 )
 

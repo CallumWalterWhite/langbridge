@@ -1,32 +1,32 @@
-from fastapi import Depends
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import Response
-from sqlalchemy.orm import Session, sessionmaker
-from dependency_injector.wiring import Provide
+from sqlalchemy.ext.asyncio import AsyncSession
+from dependency_injector.wiring import Provide, inject
 from ioc import Container
-from errors.application_errors import BusinessValidationError
 import logging
 
+
 class UnitOfWorkMiddleware(BaseHTTPMiddleware):
-    def __init__(self, app, 
-                 session: Session = Depends(Provide[Container.session])):
+    def __init__(self, app):
         super().__init__(app)
         self.logger = logging.getLogger(__name__)
-        self.session = session
 
-    async def dispatch(self, request: Request, call_next) -> Response:
-        self.session.autoflush = False
+    @inject
+    async def dispatch(
+        self,
+        request: Request,
+        call_next,
+        session: AsyncSession = Provide[Container.async_session],
+    ) -> Response:
         try:
-            self.session.begin_nested()
-            self.logger.debug("Starting a new database session.")
+            self.logger.debug("UnitOfWork: starting async DB session")
             response = await call_next(request)
-            self.session.commit()
-            self.session.flush()
+            await session.commit()
             return response
-        except Exception as e:
-            self.logger.error("Rolling back due to exception: %s", e)
-            self.session.rollback()
-            raise e
+        except Exception as exc:
+            self.logger.error("UnitOfWork: rolling back due to exception: %s", exc)
+            await session.rollback()
+            raise
         finally:
-            self.session.close()
+            await session.close()

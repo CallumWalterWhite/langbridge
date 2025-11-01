@@ -1,20 +1,37 @@
-from sqlalchemy.orm import Session
 from sqlalchemy import select
-from db.auth import Organization, Project
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
+
 from db.connector import Connector
-from db.associations import organization_connectors, project_connectors
-from .base import BaseRepository
+from .base import AsyncBaseRepository
 
 
-class ConnectorRepository(BaseRepository):
+class ConnectorRepository(AsyncBaseRepository):
     """Data access helper for connector entities."""
 
-    def __init__(self, session: Session):
+    def __init__(self, session: AsyncSession):
         super().__init__(session, Connector)
 
-    def get_by_name(self, name: str) -> Connector | None:
-        return (
-            self._session.query(Connector)
-            .filter(Connector.name == name)
-            .one_or_none()
-        )
+    def _with_relationships(self):
+        return [
+            selectinload(Connector.organizations),
+            selectinload(Connector.projects),
+        ]
+
+    def _select_with_relationships(self):
+        return select(Connector).options(*self._with_relationships())
+
+    async def get_by_name(self, name: str) -> Connector | None:
+        stmt = self._select_with_relationships().filter(Connector.name == name)
+        result = await self._session.scalars(stmt)
+        return result.one_or_none()
+
+    async def get_by_id(self, id_: object) -> Connector | None:
+        stmt = self._select_with_relationships().filter(Connector.id == id_)
+        result = await self._session.scalars(stmt)
+        return result.one_or_none()
+
+    async def get_all(self) -> list[Connector]:
+        stmt = self._select_with_relationships()
+        result = await self._session.scalars(stmt)
+        return list(result.all())

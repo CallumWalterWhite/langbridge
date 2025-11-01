@@ -117,6 +117,7 @@ class SqliteConnector(SqlConnector):
         timeout_s: Optional[int] = 30,
     ) -> tuple[list[str], list[tuple]]:
         try:
+            sql = sql.replace("sqlite_main_", "main.")
             conn = connect(self.database_path)
             cursor = conn.cursor()
             cursor.execute(sql, params)

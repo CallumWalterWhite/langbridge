@@ -63,16 +63,16 @@ class Container(containers.DeclarativeContainer):
         session_factory=async_session_factory,
     )
 
-    user_repository = providers.Factory(UserRepository, session=session)
+    user_repository = providers.Factory(UserRepository, session=async_session)
     
-    oauth_account_repository = providers.Factory(OAuthAccountRepository, session=session)
-    organization_repository = providers.Factory(OrganizationRepository, session=session)
-    project_repository = providers.Factory(ProjectRepository, session=session)
-    organization_invite_repository = providers.Factory(OrganizationInviteRepository, session=session)
-    project_invite_repository = providers.Factory(ProjectInviteRepository, session=session)
-    connector_repository = providers.Factory(ConnectorRepository, session=session)
-    llm_connection_repository = providers.Factory(LLMConnectionRepository, session=session)
-    semantic_model_repository = providers.Factory(SemanticModelRepository, session=session)
+    oauth_account_repository = providers.Factory(OAuthAccountRepository, session=async_session)
+    organization_repository = providers.Factory(OrganizationRepository, session=async_session)
+    project_repository = providers.Factory(ProjectRepository, session=async_session)
+    organization_invite_repository = providers.Factory(OrganizationInviteRepository, session=async_session)
+    project_invite_repository = providers.Factory(ProjectInviteRepository, session=async_session)
+    connector_repository = providers.Factory(ConnectorRepository, session=async_session)
+    llm_connection_repository = providers.Factory(LLMConnectionRepository, session=async_session)
+    semantic_model_repository = providers.Factory(SemanticModelRepository, session=async_session)
     
 
     organization_service = providers.Factory(
@@ -82,7 +82,6 @@ class Container(containers.DeclarativeContainer):
         organization_invite_repository=organization_invite_repository,
         project_invite_repository=project_invite_repository,
         user_repository=user_repository,
-        session=session,
     )
 
     auth_service = providers.Factory(

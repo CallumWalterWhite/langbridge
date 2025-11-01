@@ -1,3 +1,4 @@
+import json
 from typing import Optional
 from uuid import UUID
 
@@ -25,6 +26,7 @@ async def chat_thread(
         response = await orchestrator_service.chat(
             msg=request.message,
         )
-        return PlainTextResponse(content=response, status_code=status.HTTP_201_CREATED)
+        
+        return PlainTextResponse(content=response['answer'], status_code=status.HTTP_201_CREATED)
     except BusinessValidationError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e

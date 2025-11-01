@@ -1,116 +1,147 @@
-from fastapi import APIRouter, Depends, HTTPException, status
 from dependency_injector.wiring import Provide, inject
-from ioc import Container
+from fastapi import APIRouter, Depends, HTTPException, status
+
 from connectors.config import ConnectorConfigSchema
 from errors.application_errors import BusinessValidationError
-from db.connector import Connector
+from ioc import Container
 from schemas.connectors import (
-    ConnectorResponse, 
-    CreateConnectorRequest, 
-    UpdateConnectorRequest,
-    ConnectorSourceSchemasResponse,
-    ConnectorSourceSchemaResponse,
+    ConnectorResponse,
     ConnectorSourceSchemaColumnResponse,
-    ConnectorSourceSchemaTableResponse
+    ConnectorSourceSchemaResponse,
+    ConnectorSourceSchemaTableResponse,
+    ConnectorSourceSchemasResponse,
+    CreateConnectorRequest,
+    UpdateConnectorRequest,
 )
-from services.connector_service import ConnectorService
 from services.connector_schema_service import ConnectorSchemaService
+from services.connector_service import ConnectorService
 
 router = APIRouter(prefix="/connectors", tags=["connectors"])
 
+
 @router.post("/", response_model=ConnectorResponse)
 @inject
-def create_connector(
+async def create_connector(
     request: CreateConnectorRequest,
     connector_service: ConnectorService = Depends(Provide[Container.connector_service]),
 ) -> ConnectorResponse:
-    connector: Connector = connector_service.create_connector(request)
+    connector = await connector_service.create_connector(request)
     return ConnectorResponse.from_connector(connector)
+
 
 @router.get("/{connector_id}", response_model=ConnectorResponse)
 @inject
-def get_connector(
+async def get_connector(
     connector_id: str,
     connector_service: ConnectorService = Depends(Provide[Container.connector_service]),
 ) -> ConnectorResponse:
-    connector = connector_service.get_connector(connector_id)
+    connector = await connector_service.get_connector(connector_id)
     return ConnectorResponse.from_connector(connector)
 
-@router.get("/{connector_id}/source/schemas", response_model=ConnectorResponse)
+
+@router.get("/{connector_id}/source/schemas", response_model=ConnectorSourceSchemasResponse)
 @inject
-def get_connector_schemas(
+async def get_connector_schemas(
     connector_id: str,
-    connector_schema_service: ConnectorSchemaService = Depends(Provide[Container.connector_schema_service]),
+    connector_schema_service: ConnectorSchemaService = Depends(
+        Provide[Container.connector_schema_service]
+    ),
 ) -> ConnectorSourceSchemasResponse:
-    schemas = connector_schema_service.get_schemas(connector_id)
+    schemas = await connector_schema_service.get_schemas(connector_id)
     return ConnectorSourceSchemasResponse(schemas=schemas)
 
-@router.get("/{connector_id}/source/schema/{schema}", response_model=ConnectorSourceSchemaResponse)
+
+@router.get(
+    "/{connector_id}/source/schema/{schema}",
+    response_model=ConnectorSourceSchemaResponse,
+)
 @inject
-def get_connector_tables(
+async def get_connector_tables(
     connector_id: str,
     schema: str,
-    connector_schema_service: ConnectorSchemaService = Depends(Provide[Container.connector_schema_service]),
+    connector_schema_service: ConnectorSchemaService = Depends(
+        Provide[Container.connector_schema_service]
+    ),
 ) -> ConnectorSourceSchemaResponse:
-    tables = connector_schema_service.get_tables(connector_id, schema)
+    tables = await connector_schema_service.get_tables(connector_id, schema)
     return ConnectorSourceSchemaResponse(schema=schema, tables=tables)
 
-@router.get("/{connector_id}/source/schema/{schema}/table/{table}/columns", response_model=ConnectorSourceSchemaColumnResponse)
+
+@router.get(
+    "/{connector_id}/source/schema/{schema}/table/{table}/columns",
+    response_model=ConnectorSourceSchemaTableResponse,
+)
 @inject
-def get_connector_table(
+async def get_connector_table(
     connector_id: str,
     schema: str,
     table: str,
-    connector_schema_service: ConnectorSchemaService = Depends(Provide[Container.connector_schema_service]),
-) -> ConnectorSourceSchemaColumnResponse:
-    columns = connector_schema_service.get_columns(connector_id, schema, table)
-    return ConnectorSourceSchemaTableResponse(columns=[
-        ConnectorSourceSchemaColumnResponse(name=col.name, type=col.data_type) for col in columns
-    ]) # type: ignore
+    connector_schema_service: ConnectorSchemaService = Depends(
+        Provide[Container.connector_schema_service]
+    ),
+) -> ConnectorSourceSchemaTableResponse:
+    columns = await connector_schema_service.get_columns(connector_id, schema, table)
+    return ConnectorSourceSchemaTableResponse(
+        name=table,
+        columns={
+            column.name: ConnectorSourceSchemaColumnResponse(
+                name=column.name,
+                type=column.data_type,
+                nullable=getattr(column, "nullable", None),
+                primary_key=getattr(column, "primary_key", False),
+            )
+            for column in columns
+        },
+    )
+
 
 @router.get("/schemas/type", response_model=list[str])
 @inject
-def list_connector_types(
+async def list_connector_types(
     connector_service: ConnectorService = Depends(Provide[Container.connector_service]),
 ) -> list[str]:
-    types = connector_service.list_connector_types()
-    return types
+    return connector_service.list_connector_types()
+
 
 @router.get("/schema/{connector_type}", response_model=ConnectorConfigSchema)
 @inject
-def get_connector_schema(
+async def get_connector_schema(
     connector_type: str,
     connector_service: ConnectorService = Depends(Provide[Container.connector_service]),
 ) -> ConnectorConfigSchema:
     try:
-        schema = connector_service.get_connector_config_schema(connector_type)
-        return schema
-    except BusinessValidationError as e:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+        return connector_service.get_connector_config_schema(connector_type)
+    except BusinessValidationError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
+        ) from exc
+
 
 @router.put("/{connector_id}", response_model=ConnectorResponse)
 @inject
-def update_connector(
+async def update_connector(
     connector_id: str,
     request: UpdateConnectorRequest,
     connector_service: ConnectorService = Depends(Provide[Container.connector_service]),
-):
-    connector = connector_service.update_connector(connector_id, request)
+) -> ConnectorResponse:
+    connector = await connector_service.update_connector(connector_id, request)
     return ConnectorResponse.from_connector(connector)
+
 
 @router.delete("/{connector_id}", status_code=status.HTTP_204_NO_CONTENT)
 @inject
-def delete_connector(
+async def delete_connector(
     connector_id: str,
     connector_service: ConnectorService = Depends(Provide[Container.connector_service]),
 ) -> None:
-    connector_service.delete_connector(connector_id)
+    await connector_service.delete_connector(connector_id)
     return None
+
 
 @router.get("/", response_model=list[ConnectorResponse])
 @inject
-def list_connectors(
+async def list_connectors(
     connector_service: ConnectorService = Depends(Provide[Container.connector_service]),
 ) -> list[ConnectorResponse]:
-    connectors = connector_service._connector_repository.get_all()
+    connectors = await connector_service.list_all_connectors()
     return [ConnectorResponse.from_connector(conn) for conn in connectors]

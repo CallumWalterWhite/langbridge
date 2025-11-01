@@ -1,50 +1,85 @@
+from __future__ import annotations
+
 import uuid
 
-from sqlalchemy.orm import Session
+from sqlalchemy import exists, select
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
-from db.auth import Organization, Project, OrganizationInvite, ProjectInvite, User, OrganizationUser, ProjectUser, ProjectRole, OrganizationRole
-from db.connector import Connector
-from .base import BaseRepository
-import uuid
-from sqlalchemy.orm import Session
-from sqlalchemy import select, exists
+from db.auth import (
+    Organization,
+    OrganizationInvite,
+    OrganizationRole,
+    OrganizationUser,
+    Project,
+    ProjectInvite,
+    ProjectRole,
+    ProjectUser,
+    User,
+)
+from .base import AsyncBaseRepository
 
-class OrganizationRepository(BaseRepository):
+
+class OrganizationRepository(AsyncBaseRepository):
     """Data access helper for organization entities."""
 
-    def __init__(self, session: Session):
+    def __init__(self, session: AsyncSession):
         super().__init__(session, Organization)
 
-    def get_by_name(self, name: str) -> Organization | None:
-        return (
-            self._session.query(Organization)
+    async def get_by_id(self, id_: uuid.UUID) -> Organization | None:
+        result = await self._session.scalars(
+            select(Organization)
+            .options(
+                selectinload(Organization.connectors),
+                selectinload(Organization.projects),
+                selectinload(Organization.user_links),
+            )
+            .filter(Organization.id == id_)
+        )
+        return result.one_or_none()
+
+    async def get_by_name(self, name: str) -> Organization | None:
+        result = await self._session.scalars(
+            select(Organization)
+            .options(
+                selectinload(Organization.projects),
+                selectinload(Organization.user_links),
+            )
             .filter(Organization.name == name)
-            .one_or_none()
         )
+        return result.one_or_none()
 
-    def list_for_user(self, user: User) -> list[Organization]:
-        return (
-            self._session.query(Organization)
-            .join(OrganizationUser, OrganizationUser.organization_id == Organization.id)
-            .filter(OrganizationUser.user_id == user.id)
-            .order_by(Organization.name)
-            .all()
+    async def list_for_user(self, user: User) -> list[Organization]:
+        result = await self._session.scalars(
+            select(Organization)
+                .options(
+                    selectinload(Organization.projects),
+                    selectinload(Organization.user_links),
+                )
+                .join(
+                    OrganizationUser,
+                    OrganizationUser.organization_id == Organization.id,
+                )
+                .filter(OrganizationUser.user_id == user.id)
+                .order_by(Organization.name)
         )
+        return list(result.all())
 
-    def add_member(self, organization: Organization, user: User, role: OrganizationRole = OrganizationRole.MEMBER) -> OrganizationUser:
-        """
-        Upsert membership with role. Returns the OrganizationUser link.
-        """
-        link = (
-            self._session.query(OrganizationUser)
-            .filter(
+    async def add_member(
+        self,
+        organization: Organization,
+        user: User,
+        role: OrganizationRole = OrganizationRole.MEMBER,
+    ) -> OrganizationUser:
+        """Upsert membership with role. Returns the OrganizationUser link."""
+        result = await self._session.scalars(
+            select(OrganizationUser).filter(
                 OrganizationUser.organization_id == organization.id,
                 OrganizationUser.user_id == user.id,
             )
-            .one_or_none()
         )
+        link = result.one_or_none()
         if link:
-            # update role if changed
             if link.role != role:
                 link.role = role
             return link
@@ -53,83 +88,98 @@ class OrganizationRepository(BaseRepository):
         self._session.add(link)
         return link
 
-    def remove_member(self, organization: Organization, user: User) -> None:
-        link = (
-            self._session.query(OrganizationUser)
-            .filter(
+    async def remove_member(self, organization: Organization, user: User) -> None:
+        result = await self._session.scalars(
+            select(OrganizationUser).filter(
                 OrganizationUser.organization_id == organization.id,
                 OrganizationUser.user_id == user.id,
             )
-            .one_or_none()
         )
+        link = result.one_or_none()
         if link:
-            self._session.delete(link)
+            await self._session.delete(link)
 
-    def is_member(self, organization: Organization, user: User) -> bool:
-        return self._session.query(
-            exists().where(
-                (OrganizationUser.organization_id == organization.id)
-                & (OrganizationUser.user_id == user.id)
+    async def is_member(self, organization: Organization, user: User) -> bool:
+        result = await self._session.scalar(
+            select(
+                exists().where(
+                    (OrganizationUser.organization_id == organization.id)
+                    & (OrganizationUser.user_id == user.id)
+                )
             )
-        ).scalar()
-
-    def get_member_role(self, organization: Organization, user: User) -> str | None:
-        link = (
-            self._session.query(OrganizationUser.role)
-            .filter(
-                OrganizationUser.organization_id == organization.id,
-                OrganizationUser.user_id == user.id,
-            )
-            .one_or_none()
         )
-        return link[0] if link else None
+        return bool(result)
+
+    async def get_member_role(self, organization: Organization, user: User) -> str | None:
+        result = (
+            await self._session.scalars(
+                select(OrganizationUser.role).filter(
+                    OrganizationUser.organization_id == organization.id,
+                    OrganizationUser.user_id == user.id,
+                )
+            )
+        ).one_or_none()
+        return result.value if result else None
 
 
-class ProjectRepository(BaseRepository):
+class ProjectRepository(AsyncBaseRepository):
     """Data access helper for project entities."""
 
-    def __init__(self, session: Session):
+    def __init__(self, session: AsyncSession):
         super().__init__(session, Project)
 
-    def list_for_organization(self, organization_id: uuid.UUID) -> list[Project]:
-        return (
-            self._session.query(Project)
-            .filter(Project.organization_id == organization_id)
-            .order_by(Project.name)
-            .all()
+    async def get_by_id(self, id_: uuid.UUID) -> Project | None:
+        result = await self._session.scalars(
+            select(Project)
+            .options(
+                selectinload(Project.connectors),
+            )
+            .filter(Project.id == id_)
         )
+        return result.one_or_none()
 
-    def get_by_name_within_org(self, organization_id: uuid.UUID, name: str) -> Project | None:
-        return (
-            self._session.query(Project)
-            .filter(
+    async def list_for_organization(self, organization_id: uuid.UUID) -> list[Project]:
+        result = await self._session.scalars(
+            select(Project)
+                .filter(Project.organization_id == organization_id)
+                .order_by(Project.name)
+        )
+        return list(result.all())
+
+    async def get_by_name_within_org(
+        self, organization_id: uuid.UUID, name: str
+    ) -> Project | None:
+        result = await self._session.scalars(
+            select(Project).filter(
                 Project.organization_id == organization_id,
                 Project.name == name,
             )
-            .one_or_none()
         )
+        return result.one_or_none()
 
-    def list_for_user(self, user: User) -> list[Project]:
-        return (
-            self._session.query(Project)
-            .join(ProjectUser, ProjectUser.project_id == Project.id)
-            .filter(ProjectUser.user_id == user.id)
-            .order_by(Project.name)
-            .all()
+    async def list_for_user(self, user: User) -> list[Project]:
+        result = await self._session.scalars(
+            select(Project)
+                .join(ProjectUser, ProjectUser.project_id == Project.id)
+                .filter(ProjectUser.user_id == user.id)
+                .order_by(Project.name)
         )
+        return list(result.all())
 
-    def add_member(self, project: Project, user: User, role: ProjectRole = ProjectRole.MEMBER) -> ProjectUser:
-        """
-        Upsert membership with role. Returns the ProjectUser link.
-        """
-        link = (
-            self._session.query(ProjectUser)
-            .filter(
+    async def add_member(
+        self,
+        project: Project,
+        user: User,
+        role: ProjectRole = ProjectRole.MEMBER,
+    ) -> ProjectUser:
+        """Upsert membership with role. Returns the ProjectUser link."""
+        result = await self._session.scalars(
+            select(ProjectUser).filter(
                 ProjectUser.project_id == project.id,
                 ProjectUser.user_id == user.id,
             )
-            .one_or_none()
         )
+        link = result.one_or_none()
         if link:
             if link.role != role:
                 link.role = role
@@ -139,67 +189,71 @@ class ProjectRepository(BaseRepository):
         self._session.add(link)
         return link
 
-    def remove_member(self, project: Project, user: User) -> None:
-        link = (
-            self._session.query(ProjectUser)
-            .filter(
+    async def remove_member(self, project: Project, user: User) -> None:
+        result = await self._session.scalars(
+            select(ProjectUser).filter(
                 ProjectUser.project_id == project.id,
                 ProjectUser.user_id == user.id,
             )
-            .one_or_none()
         )
+        link = result.one_or_none()
         if link:
-            self._session.delete(link)
+            await self._session.delete(link)
 
-    def is_member(self, project: Project, user: User) -> bool:
-        return self._session.query(
-            exists().where(
-                (ProjectUser.project_id == project.id)
-                & (ProjectUser.user_id == user.id)
+    async def is_member(self, project: Project, user: User) -> bool:
+        result = await self._session.scalar(
+            select(
+                exists().where(
+                    (ProjectUser.project_id == project.id)
+                    & (ProjectUser.user_id == user.id)
+                )
             )
-        ).scalar()
-
-    def get_member_role(self, project: Project, user: User) -> str | None:
-        link = (
-            self._session.query(ProjectUser.role)
-            .filter(
-                ProjectUser.project_id == project.id,
-                ProjectUser.user_id == user.id,
-            )
-            .one_or_none()
         )
-        return link[0] if link else None
+        return bool(result)
+
+    async def get_member_role(self, project: Project, user: User) -> str | None:
+        result = (
+            await self._session.scalars(
+                select(ProjectUser.role).filter(
+                    ProjectUser.project_id == project.id,
+                    ProjectUser.user_id == user.id,
+                )
+            )
+        ).one_or_none()
+        return result.value if result else None
 
 
-class OrganizationInviteRepository(BaseRepository):
+class OrganizationInviteRepository(AsyncBaseRepository):
     """Data access helper for organization invite entities."""
 
-    def __init__(self, session: Session):
+    def __init__(self, session: AsyncSession):
         super().__init__(session, OrganizationInvite)
 
-    def get_by_invitee(self, organization_id: uuid.UUID, invitee_username: str) -> OrganizationInvite | None:
-        return (
-            self._session.query(OrganizationInvite)
-            .filter(
+    async def get_by_invitee(
+        self, organization_id: uuid.UUID, invitee_username: str
+    ) -> OrganizationInvite | None:
+        result = await self._session.scalars(
+            select(OrganizationInvite).filter(
                 OrganizationInvite.organization_id == organization_id,
                 OrganizationInvite.invitee_username == invitee_username,
             )
-            .one_or_none()
         )
+        return result.one_or_none()
 
 
-class ProjectInviteRepository(BaseRepository):
+class ProjectInviteRepository(AsyncBaseRepository):
     """Data access helper for project invite entities."""
 
-    def __init__(self, session: Session):
+    def __init__(self, session: AsyncSession):
         super().__init__(session, ProjectInvite)
 
-    def get_by_invitee(self, project_id: uuid.UUID, invitee_id: uuid.UUID) -> ProjectInvite | None:
-        return (
-            self._session.query(ProjectInvite)
-            .filter(
+    async def get_by_invitee(
+        self, project_id: uuid.UUID, invitee_id: uuid.UUID
+    ) -> ProjectInvite | None:
+        result = await self._session.scalars(
+            select(ProjectInvite).filter(
                 ProjectInvite.project_id == project_id,
                 ProjectInvite.invitee_id == invitee_id,
             )
-            .one_or_none()
         )
+        return result.one_or_none()

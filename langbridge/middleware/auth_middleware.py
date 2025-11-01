@@ -1,11 +1,10 @@
 
-from fastapi import Depends, HTTPException, Request, status
+from fastapi import HTTPException, Request, status
 from jose import JWTError
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import Response
-from sqlalchemy.orm import Session
-from dependency_injector.wiring import Provide
+from dependency_injector.wiring import Provide, inject
 from ioc import Container
 from config import settings
 import logging
@@ -24,13 +23,17 @@ PATHS_TO_EXCLUDE = [
 ]
 
 class AuthMiddleware(BaseHTTPMiddleware):
-    def __init__(self, app, 
-                 auth_service: AuthService = Depends(Provide[Container.auth_service]),):
+    def __init__(self, app):
         super().__init__(app)
         self.logger = logging.getLogger(__name__)
-        self.auth_service = auth_service
 
-    async def dispatch(self, request: Request, call_next) -> Response:
+    @inject
+    async def dispatch(
+        self,
+        request: Request,
+        call_next,
+        auth_service: AuthService = Provide[Container.auth_service],
+    ) -> Response:
         self.logger.debug(f"AuthMiddleware: Processing request {request.method} {request.url.path}")
         
         if settings.IS_LOCAL:
@@ -39,7 +42,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
             if token == settings.LOCAL_TOKEN:
                 self.logger.debug("AuthMiddleware: Local token matched, setting test user")
                 request.state.username = "callumwalterwhite"
-                request.state.user = self.auth_service.get_user_by_username("callumwalterwhite")
+                request.state.user = await auth_service.get_user_by_username("callumwalterwhite")
                 return await call_next(request)
         
         if any(request.url.path.startswith(path) for path in PATHS_TO_EXCLUDE):
@@ -59,6 +62,6 @@ class AuthMiddleware(BaseHTTPMiddleware):
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid session payload")
 
         request.state.username = username
-        user = self.auth_service.get_user_by_username(username)
+        user = await auth_service.get_user_by_username(username)
         request.state.user = user
         return await call_next(request)

@@ -1,7 +1,7 @@
 
 
 from abc import ABC
-from typing import List, Literal, Optional
+from typing import List, Literal, Optional, Tuple
 import uuid
 import re
 
@@ -133,8 +133,8 @@ class AuthService:
         self._organization_service = organization_service
         self._oauth = oauth
 
-    def get_user_by_username(self, username: str) -> User:
-        user = self._user_repository.get_by_username(username)
+    async def get_user_by_username(self, username: str) -> User:
+        user = await self._user_repository.get_by_username(username)
         if not user:
             raise BusinessValidationError("User not found")
         return user
@@ -154,7 +154,7 @@ class AuthService:
         self,
         request: Request,
         provider: ProviderLiteral,
-    ) -> User:
+    ) -> Tuple[User, OAuthAccount]:
         if provider not in self.__provider_property_map:
             raise BusinessValidationError(f"Unsupported provider: {provider}")
         try:
@@ -170,27 +170,42 @@ class AuthService:
         user_info_provider = self.__provider_userinfo_map[provider](self._oauth)  # type: ignore[arg-type]
         user_info: OAuthProviderUserInfo = await user_info_provider.fetch_user_info(token)
 
-        existing_oauth_account: Optional[OAuthAccount] = None
+        oauth_account: Optional[OAuthAccount] = None
         if user_info.sub:
-            existing_oauth_account = self._oauth_account_repository.get_by_provider_account(provider, user_info.sub)
-
-        user: Optional[User] = existing_oauth_account.user if existing_oauth_account else None
-        if not user:
-            user = self._user_repository.get_by_username(user_info.username)
-
-        if not user:
-            user = self.create_user(user_info, provider)
-        elif not existing_oauth_account and not (
-            user.oauth_accounts
-            and any(
-                oa.provider == provider and oa.provider_account_id == user_info.sub
-                for oa in user.oauth_accounts
+            oauth_account = await self._oauth_account_repository.get_by_provider_account(
+                provider,
+                user_info.sub,
             )
-        ):
-            self.create_oauth_account(user, user_info, provider)
 
-        self._organization_service.ensure_default_workspace_for_user(user)
-        return user
+        user: Optional[User] = oauth_account.user if oauth_account else None
+        if not user:
+            user = await self._user_repository.get_by_username(user_info.username)
+
+        created_user = False
+        created_oauth_account = False
+
+        if not user:
+            user, oauth_account = await self.create_user(user_info, provider)
+            created_user = True
+            created_oauth_account = True
+        elif not oauth_account:
+            oauth_account = self.create_oauth_account(user, user_info, provider)
+            created_oauth_account = True
+
+        if created_user:
+            await self._user_repository.commit()
+        if created_oauth_account:
+            await self._oauth_account_repository.commit()
+
+        await self._organization_service.ensure_default_workspace_for_user(user)
+        if not oauth_account and user_info.sub:
+            oauth_account = await self._oauth_account_repository.get_by_provider_account(
+                provider,
+                user_info.sub,
+            )
+        if not oauth_account:
+            raise BusinessValidationError("OAuth account not found for user")
+        return user, oauth_account
 
     def create_oauth_account(
         self,
@@ -215,15 +230,15 @@ class AuthService:
 
         return oauth_account
 
-    def create_user(
+    async def create_user(
         self,
         user_info: OAuthProviderUserInfo,
         oauth_provider: ProviderLiteral,
-    ) -> User:
+    ) -> Tuple[User, OAuthAccount]:
         if oauth_provider not in PROVIDERS:
             raise BusinessValidationError(f"Unsupported provider: {oauth_provider}")
 
-        username = self._resolve_unique_username(user_info)
+        username = await self._resolve_unique_username(user_info)
         user_info.username = username
 
         user = User(
@@ -231,10 +246,10 @@ class AuthService:
             username=username,
         )
         self._user_repository.add(user)
-        self.create_oauth_account(user, user_info, oauth_provider)
-        return user
+        oauth_account = self.create_oauth_account(user, user_info, oauth_provider)
+        return user, oauth_account
 
-    def _resolve_unique_username(self, user_info: OAuthProviderUserInfo) -> str:
+    async def _resolve_unique_username(self, user_info: OAuthProviderUserInfo) -> str:
         base_username = user_info.username or ""
 
         if user_info.email and not base_username:
@@ -249,7 +264,7 @@ class AuthService:
 
         candidate = sanitized
         suffix = 1
-        while self._user_repository.get_by_username(candidate):
+        while await self._user_repository.get_by_username(candidate):
             candidate = f"{sanitized}{suffix}"
             suffix += 1
 

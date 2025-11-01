@@ -1,37 +1,38 @@
-import uuid
-
-from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from db.auth import OAuthAccount, User
-from .base import BaseRepository
+from .base import AsyncBaseRepository
 
 
-class UserRepository(BaseRepository):
+class UserRepository(AsyncBaseRepository):
     """Data access helper for user entities."""
 
-    def __init__(self, session: Session):
+    def __init__(self, session: AsyncSession):
         super().__init__(session, User)
 
-    def get_by_username(self, username: str) -> User | None:
-        return (
-            self._session.query(User)
+    async def get_by_username(self, username: str) -> User | None:
+        stmt = (
+            select(User)
+            .options(selectinload(User.oauth_accounts))
             .filter(User.username == username)
-            .one_or_none()
         )
+        return (await self._session.scalars(stmt)).one_or_none()
     
-class OAuthAccountRepository(BaseRepository):
+class OAuthAccountRepository(AsyncBaseRepository):
     """Data access helper for OAuth account entities."""
 
-    def __init__(self, session: Session):
+    def __init__(self, session: AsyncSession):
         super().__init__(session, OAuthAccount)
 
-    def get_by_provider_account(self, provider: str, provider_account_id: str) -> OAuthAccount | None:
-        return (
-            self._session.query(OAuthAccount)
+    async def get_by_provider_account(self, provider: str, provider_account_id: str) -> OAuthAccount | None:
+        stmt = (
+            select(OAuthAccount)
+            .options(selectinload(OAuthAccount.user))
             .filter(
                 OAuthAccount.provider == provider,
                 OAuthAccount.provider_account_id == provider_account_id,
             )
-            .one_or_none()
         )
+        return (await self._session.scalars(stmt)).one_or_none()

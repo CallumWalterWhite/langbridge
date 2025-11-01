@@ -1,4 +1,6 @@
+import asyncio
 import json
+
 from connectors.config import ConnectorRuntimeType
 
 from services.agent_service import AgentService
@@ -9,15 +11,17 @@ from services.organization_service import OrganizationService
 from db.agent import LLMConnection
 
 from orchestrator.agents.analyst_agent import AnalystAgent
-from orchestrator.agents.sql_tool import SqlAnalystTool
 from orchestrator.agents.visual_agent import VisualAgent
-from orchestrator.agents.supervisor_orchestrator import SupervisorOrchestrator, OrchestrationContext
+from orchestrator.agents.supervisor_orchestrator import (
+    OrchestrationContext,
+    SupervisorOrchestrator,
+)
 
 from connectors.registry import ConnectorInstanceRegistry
 
 from langchain_core.language_models import BaseChatModel
 from langchain_openai import ChatOpenAI
-import asyncio
+from errors.application_errors import BusinessValidationError
 
 class OrchestratorService:
     def __init__(
@@ -37,22 +41,25 @@ class OrchestratorService:
         self,
         msg: str,
     ):
-        llm_connection: LLMConnection = self._agent_service.list_llm_connections()[0]  # For simplicity, pick the first connection
+        llm_connections = await self._agent_service.list_llm_connections()
+        if not llm_connections:
+            raise BusinessValidationError("No LLM connections configured")
+        llm_connection: LLMConnection = llm_connections[0]  # For simplicity, pick the first connection
         llm: BaseChatModel = ChatOpenAI(
             model=llm_connection.model,
             temperature=0.2, # set from llm connection?
-            openai_api_key=llm_connection.api_key,
+            api_key=llm_connection.api_key,
         )
         
         
-        semantic_models = self._semantic_model_service.list_all_models()
+        semantic_models = await self._semantic_model_service.list_all_models()
         
         available_semantic_models = []
         
         for model in semantic_models:
             available_semantic_models.append(self._semantic_model_builder.parse_yaml_to_model(model.content_yaml))
         
-        available_connectors = self._connector_service.list_all_connectors()
+        available_connectors = await self._connector_service.list_all_connectors()
         
         connector_registry = ConnectorInstanceRegistry()
         

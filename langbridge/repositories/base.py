@@ -28,7 +28,7 @@ class BaseRepository(Generic[ModelT]):
         return self._session.get(self._model, id_)
 
     def get_all(self) -> list[ModelT]:
-        return self._session.scalars(select(self._model)).all()
+        return list(self._session.scalars(select(self._model)).all())
 
 
 class AsyncBaseRepository(Generic[ModelT]):
@@ -36,9 +36,9 @@ class AsyncBaseRepository(Generic[ModelT]):
         self._session = session
         self._model = model
 
-    async def add(self, instance: ModelT) -> ModelT:
+    def add(self, instance: ModelT) -> ModelT:
         """Add instance to the session; caller manages flush/commit."""
-        await self._session.add(instance)
+        self._session.add(instance)
         return instance
 
     async def delete(self, instance: ModelT) -> None:
@@ -49,4 +49,10 @@ class AsyncBaseRepository(Generic[ModelT]):
 
     async def get_all(self) -> list[ModelT]:
         result = await self._session.scalars(select(self._model))
-        return result.all()
+        return list(result.all())
+
+    async def commit(self) -> None:
+        await self._session.commit()
+
+    async def flush(self) -> None:
+        await self._session.flush()

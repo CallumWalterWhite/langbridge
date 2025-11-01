@@ -42,15 +42,7 @@ async def _handle_oauth_callback(
     auth_service: AuthService,
 ):
     normalized = _normalize_provider(provider)
-    user: User = await auth_service.authenticate_callback(request, normalized)  # type: ignore[arg-type]
-
-    oauth_account: Optional[OAuthAccount] = next(
-        (oa for oa in user.oauth_accounts if oa.provider == normalized),
-        None,
-    )
-
-    if not oauth_account:
-        raise HTTPException(status_code=400, detail="OAuth account not found for user")
+    user, oauth_account = await auth_service.authenticate_callback(request, normalized)  # type: ignore[arg-type]
 
     session_claims = {
         "sub": oauth_account.sub,
@@ -127,9 +119,14 @@ async def logout():
 
 @router.get("/me")
 @inject
-async def me(request: Request):
+async def me(
+    request: Request,
+    auth_service: AuthService = Depends(Provide[Container.auth_service])):
     token: Optional[str] = request.cookies.get(settings.COOKIE_NAME)
     if not token:
         raise HTTPException(status_code=401, detail="Unauthenticated")
     claims = verify_jwt(token)
+    user:User = await auth_service.get_user_by_username(claims["username"])
+    if not user:
+        raise HTTPException(status_code=401, detail="Unauthenticated")
     return {"user": claims}
