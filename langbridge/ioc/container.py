@@ -1,6 +1,9 @@
 from dependency_injector import containers, providers
 
 from db import (
+    async_session_scope,
+    create_async_engine_for_url,
+    create_async_session_factory,
     create_engine_for_url,
     create_session_factory,
     session_scope,
@@ -40,11 +43,25 @@ class Container(containers.DeclarativeContainer):
         echo=settings.IS_LOCAL,
     )
 
+    async_engine = providers.Singleton(
+        create_async_engine_for_url,
+        database_url=settings.SQLALCHEMY_ASYNC_DATABASE_URI,
+        echo=settings.IS_LOCAL,
+    )
+
     oauth = providers.Singleton(create_oauth_client)
 
     session_factory = providers.Singleton(create_session_factory, engine=engine)
+    async_session_factory = providers.Singleton(
+        create_async_session_factory,
+        engine=async_engine,
+    )
 
     session = providers.Resource(session_scope, session_factory=session_factory)
+    async_session = providers.Resource(
+        async_session_scope,
+        session_factory=async_session_factory,
+    )
 
     user_repository = providers.Factory(UserRepository, session=session)
     

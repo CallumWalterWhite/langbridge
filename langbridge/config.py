@@ -46,6 +46,20 @@ class Settings(BaseSettings):
         else:
             return f"postgresql://{self.POSTGRES_USER}:{self.POSTGRES_PASSWORD}@{self.POSTGRES_SERVER}:{self.POSTGRES_PORT}/{self.POSTGRES_DB}"
 
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def SQLALCHEMY_ASYNC_DATABASE_URI(self) -> str:
+        uri = self.SQLALCHEMY_DATABASE_URI
+        if uri.startswith("sqlite+"):
+            return uri
+        if uri.startswith("sqlite"):
+            return uri.replace("sqlite", "sqlite+aiosqlite", 1)
+        if uri.startswith("postgresql+"):
+            return uri
+        if uri.startswith("postgresql"):
+            return uri.replace("postgresql", "postgresql+asyncpg", 1)
+        return uri
+
     PROJECT_NAME: str = "FastAPI app"
     SENTRY_DSN: HttpUrl | None = None
     POSTGRES_SERVER: str = "localhost"
@@ -110,5 +124,4 @@ class Settings(BaseSettings):
     CONFIG_ACTIVE_KEY: str = "default"  # key ID of the active key in the keyring
 
 settings = Settings()  # type: ignore
-
 
