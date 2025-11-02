@@ -28,7 +28,7 @@ async def chat_thread(
         )
 
         content = {
-            "answer": response['answer'],
+            "result": response['result'],
             "visualization": response['visualization']
         }
         content_json = json.dumps(content)

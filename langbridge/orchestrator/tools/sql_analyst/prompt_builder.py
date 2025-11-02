@@ -22,6 +22,9 @@ Rules:
 - Group only by non-aggregated selected dimensions.
 - Prefer a single query; CTEs allowed: base_fact -> joined -> final.
 - Do NOT invent columns/joins. If something is missing, omit it safely.
+- Use ANSI-friendly constructs (CAST, COALESCE, CASE, DATE_PART, standard aggregates) that transpile cleanly.
+- Avoid Postgres-only syntax such as :: type casts, EXTRACT(... FROM ...), DATE_TRUNC, ILIKE, array operators, or JSON-specific features.
+- For date extracts, use datepart function instead.
 """
 
 

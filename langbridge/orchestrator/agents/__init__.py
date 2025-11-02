@@ -1,16 +1,17 @@
-from .analyst_agent import AnalystAgent, AnalystAgentConfig, AnalystAgentResultPayload
-from .sql_tool import SqlAnalystTool, SqlGuidance
-from .visual_agent import VisualAgent, VisualizationSpec
-from .supervisor_orchestrator import OrchestrationContext, SupervisorOrchestrator
+from .analyst import AnalystAgent, SemanticToolSelector, ToolSelectionError
+from .supervisor import OrchestrationContext, SupervisorOrchestrator
+try:
+    from .visual import VisualAgent, VisualizationSpec
+except ImportError:  # pragma: no cover - optional dependency
+    VisualAgent = None
+    VisualizationSpec = None
 
 __all__ = [
-    "AnalystAgent",
-    "AnalystAgentConfig",
-    "AnalystAgentResultPayload",
-    "SqlAnalystTool",
-    "SqlGuidance",
-    "VisualAgent",
-    "VisualizationSpec",
-    "OrchestrationContext",
-    "SupervisorOrchestrator",
+    'AnalystAgent',
+    'SemanticToolSelector',
+    'ToolSelectionError',
+    'VisualAgent',
+    'VisualizationSpec',
+    'OrchestrationContext',
+    'SupervisorOrchestrator',
 ]

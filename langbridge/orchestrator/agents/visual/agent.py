@@ -5,6 +5,7 @@ Visualization agent that converts tabular data into declarative chart specificat
 import logging
 from dataclasses import dataclass
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Union
+
 import pandas as pd
 
 TabularInput = Union[Dict[str, Any], List[Dict[str, Any]], "pd.DataFrame"]  # type: ignore[name-defined]
@@ -37,7 +38,7 @@ class VisualizationSpec:
     y: Optional[Union[str, Sequence[str]]] = None
     group_by: Optional[str] = None
     title: Optional[str] = None
-    options: Dict[str, Any] = None
+    options: Optional[Dict[str, Any]] = None
 
     def to_dict(self) -> Dict[str, Any]:
         payload = {
@@ -122,14 +123,5 @@ class VisualAgent:
         return spec.to_dict()
 
 
-if __name__ == "__main__":  # pragma: no cover - demonstration only
-    sample_data = [
-        {"month": "2024-01", "revenue": 12000, "region": "North"},
-        {"month": "2024-01", "revenue": 15000, "region": "South"},
-        {"month": "2024-02", "revenue": 18000, "region": "North"},
-        {"month": "2024-02", "revenue": 17000, "region": "South"},
-    ]
+__all__ = ["VisualAgent", "VisualizationSpec"]
 
-    agent = VisualAgent()
-    spec = agent.run(sample_data, title="Monthly revenue by region")
-    print(spec)

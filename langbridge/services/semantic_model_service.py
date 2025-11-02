@@ -89,18 +89,28 @@ class SemanticModelService:
             semantic_model = await self._builder.build_for_scope(
                 connector_id=request.connector_id
             )
+            payload = self._builder.build_sql_analyst_payload(semantic_model)
         else:
             try:
                 raw = yaml.safe_load(request.model_yaml)
-                semantic_model = SemanticModel.model_validate(raw)
+                if not isinstance(raw, dict):
+                    raise BusinessValidationError("Semantic model YAML must represent a mapping.")
+                if "entities" in raw:
+                    payload = raw
+                else:
+                    semantic_model = SemanticModel.model_validate(raw)
+                    payload = self._builder.build_sql_analyst_payload(semantic_model)
             except yaml.YAMLError as exc:
                 raise BusinessValidationError(
                     f"Invalid semantic model YAML: {exc}"
                 ) from exc
+            except ValueError as exc:
+                raise BusinessValidationError(
+                    f"Semantic model failed validation: {exc}"
+                ) from exc
 
-        serialized = semantic_model.model_dump(by_alias=True, exclude_none=True)
-        model_yaml = yaml.safe_dump(serialized, sort_keys=False)
-        content_json = json.dumps(serialized)
+        model_yaml = yaml.safe_dump(payload, sort_keys=False)
+        content_json = json.dumps(payload)
 
         entry = SemanticModelEntry(
             id=uuid.uuid4(),
