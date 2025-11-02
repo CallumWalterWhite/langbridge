@@ -97,7 +97,7 @@ class SqlAnalystTool:
 
         sql = await self._chain.ainvoke(
             {
-                "dialect": guidance.dialect or self.connector.dialect,
+                "dialect": guidance.dialect or self.connector.DIALECT,
                 "goal": guidance.goal or question,
                 "question": question,
                 "instructions": instructions.strip() or "Return a single SELECT statement.",
@@ -152,6 +152,6 @@ class SqlAnalystTool:
         return {
             "sql": sql,
             "tables": tables,
-            "dialect": self.connector.dialect,
+            "dialect": self.connector.DIALECT,
         }
 

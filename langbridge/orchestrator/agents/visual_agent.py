@@ -2,17 +2,10 @@
 Visualization agent that converts tabular data into declarative chart specifications.
 """
 
-from __future__ import annotations
-
 import logging
 from dataclasses import dataclass
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Union
-
-try:  # pragma: no cover - optional dependency
-    import pandas as pd  # type: ignore
-except Exception:  # pragma: no cover - optional dependency
-    pd = None  # type: ignore
-
+import pandas as pd
 
 TabularInput = Union[Dict[str, Any], List[Dict[str, Any]], "pd.DataFrame"]  # type: ignore[name-defined]
 
