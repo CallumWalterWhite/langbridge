@@ -192,10 +192,10 @@ class AuthService:
             oauth_account = self.create_oauth_account(user, user_info, provider)
             created_oauth_account = True
 
-        if created_user:
-            await self._user_repository.commit()
-        if created_oauth_account:
-            await self._oauth_account_repository.commit()
+        # if created_user:
+        #     await self._user_repository.commit()
+        # if created_oauth_account:
+        #     await self._oauth_account_repository.commit()
 
         await self._organization_service.ensure_default_workspace_for_user(user)
         if not oauth_account and user_info.sub:

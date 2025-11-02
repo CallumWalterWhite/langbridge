@@ -81,8 +81,8 @@ class OrganizationService:
                 project, user, ProjectRole.OWNER
             )
 
-        await self._organization_repository.commit()
-        await self._project_repository.commit()
+        # await self._organization_repository.commit()
+        # await self._project_repository.commit()
         return organization, project
 
     async def create_organization(self, owner: User, name: str) -> Organization:
@@ -99,7 +99,7 @@ class OrganizationService:
         organization = Organization(name=normalized_name)
         self._organization_repository.add(organization)
         await self._organization_repository.add_member(organization, owner)
-        await self._organization_repository.commit()
+        # await self._organization_repository.commit()
         return organization
 
     async def create_project(
@@ -131,7 +131,7 @@ class OrganizationService:
         project = Project(name=normalized_name, organization=organization)
         self._project_repository.add(project)
         await self._project_repository.add_member(project, requester)
-        await self._project_repository.commit()
+        # await self._project_repository.commit()
         return project
 
     async def invite_user_to_organization(
@@ -182,8 +182,8 @@ class OrganizationService:
         )
         self._organization_invite_repository.add(invite)
         await self._organization_repository.add_member(organization, invitee)
-        await self._organization_invite_repository.commit()
-        await self._organization_repository.commit()
+        # await self._organization_invite_repository.commit()
+        # await self._organization_repository.commit()
         return invite
 
     async def invite_user_to_project(
@@ -244,8 +244,8 @@ class OrganizationService:
         )
         self._project_invite_repository.add(invite)
         await self._project_repository.add_member(project, invitee)
-        await self._project_invite_repository.commit()
-        await self._project_repository.commit()
+        # await self._project_invite_repository.commit()
+        # await self._project_repository.commit()
         return invite
 
     async def list_projects_for_organization(

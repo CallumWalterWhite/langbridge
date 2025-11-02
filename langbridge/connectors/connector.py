@@ -104,6 +104,8 @@ FORBIDDEN_KEYWORDS = (
     "replace",
 )
 
+from utils.logger import get_root_logger
+root_logger = get_root_logger()
 
 def ensure_select_statement(sql: str) -> None:
     """Raise QueryValidationError if the SQL statement is not a SELECT."""
@@ -114,8 +116,9 @@ def ensure_select_statement(sql: str) -> None:
     if not match:
         raise QueryValidationError("Unable to determine SQL command.")
     command = match.group(1).lower()
+    root_logger.debug("SQL command detected: %s", command)
     if command != "select" and not stripped.lower().startswith("with "):
-        raise QueryValidationError("Only SELECT queries are permitted.")
+        raise QueryValidationError(f"Only SELECT queries are permitted {sql}.")
     lowered = stripped.lower()
     if any(keyword in lowered for keyword in FORBIDDEN_KEYWORDS):
         raise QueryValidationError("Query contains prohibited keywords for read-only access.")
