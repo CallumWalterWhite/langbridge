@@ -36,20 +36,19 @@ def load_semantic_model(source: str | Path | Mapping[str, Any]) -> SemanticModel
     """
     Load a semantic model definition from a path, raw text, or mapping.
     """
-
     if isinstance(source, Mapping):
         return _parse_semantic_payload(source)
 
     text: str
-    path_candidate = Path(str(source))
-    if isinstance(source, Path) or path_candidate.exists():
-        text = path_candidate.read_text(encoding="utf-8")
+    if isinstance(source, Path):
+        text = source.read_text(encoding="utf-8")
     else:
         text = source
 
     try:
-        if path_candidate.suffix.lower() in {".json"}:
-            payload = json.loads(text)
+        if isinstance(source, Path):
+            if source.suffix.lower() in {".json"}:
+                payload = json.loads(text)
         else:
             payload = yaml.safe_load(text)
     except (json.JSONDecodeError, yaml.YAMLError) as exc:

@@ -26,6 +26,11 @@ export async function createConnector(payload: CreateConnectorPayload): Promise<
   });
 }
 
+export async function fetchConnectors(organizationId: string): Promise<ConnectorResponse[]> {
+  const params = new URLSearchParams({ organization_id: organizationId });
+  return apiFetch<ConnectorResponse[]>(`${BASE_PATH}?${params.toString()}`);
+}
+
 export type {
   ConnectorConfigEntry,
   ConnectorConfigSchema,

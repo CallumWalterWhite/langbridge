@@ -15,6 +15,12 @@ import {
   listSemanticModels,
   previewSemanticModel,
 } from '@/orchestration/semanticModels';
+import {
+  fetchConnectors
+} from '@/orchestration/connectors';
+import type {
+  ConnectorResponse,
+} from '@/orchestration/connectors/types';
 import type {
   SemanticModel,
   SemanticModelRecord,
@@ -43,6 +49,7 @@ export default function SemanticModelPage(): JSX.Element {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isClient, setIsClient] = useState(false);
+  const [connectors, setConnectors] = useState<ConnectorResponse[]>([]);
 
   const organizationAvailable = Boolean(selectedOrganizationId);
 
@@ -54,6 +61,18 @@ export default function SemanticModelPage(): JSX.Element {
       organizations.find((org) => org.id === selectedOrganizationId)?.name ?? 'Unknown organization'
     );
   }, [organizations, selectedOrganizationId]);
+
+  const loadConnectors = useCallback(async () => {
+    if (!selectedOrganizationId) {
+      return;
+    }
+    try {
+      const data = await fetchConnectors(selectedOrganizationId);
+      setConnectors(data);
+    } catch (err) {
+      // Handle error silently for connectors loading
+    }
+  }, [selectedOrganizationId]);
 
   const refreshPreview = useCallback(async () => {
     if (!selectedOrganizationId) {
