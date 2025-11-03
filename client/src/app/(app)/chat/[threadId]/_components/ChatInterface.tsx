@@ -42,17 +42,17 @@ type ConversationTurn = {
 };
 
 type ChatInterfaceProps = {
-  sessionId: string;
+  threadId: string;
 };
 
-export function ChatInterface({ sessionId }: ChatInterfaceProps) {
+export function ChatInterface({ threadId }: ChatInterfaceProps) {
   const { toast } = useToast();
   const [composer, setComposer] = useState('');
   const [turns, setTurns] = useState<ConversationTurn[]>([]);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
 
   const sendMessageMutation = useMutation<ThreadChatResponse, Error, { content: string; turnId: string }>({
-    mutationFn: ({ content }) => runThreadChat(content),
+    mutationFn: ({ content }) => runThreadChat(threadId, content),
     onSuccess: (data, variables) => {
       setTurns((previous) =>
         previous.map((turn) =>
@@ -88,6 +88,11 @@ export function ChatInterface({ sessionId }: ChatInterfaceProps) {
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
   }, [turns.length, sendMessageMutation.isPending]);
+
+  useEffect(() => {
+    setTurns([]);
+    setComposer('');
+  }, [threadId]);
 
   const lastUpdated = useMemo(() => {
     const readyTurns = turns.filter((turn) => turn.status === 'ready');
@@ -173,10 +178,10 @@ export function ChatInterface({ sessionId }: ChatInterfaceProps) {
               variant="secondary"
               className="border border-[color:var(--panel-border)] bg-[color:var(--chip-bg)] text-[color:var(--text-secondary)]"
             >
-              Session
+              Thread
             </Badge>
-            <span className="truncate text-sm text-[color:var(--text-muted)]" title={sessionId}>
-              {sessionId}
+            <span className="truncate text-sm text-[color:var(--text-muted)]" title={threadId}>
+              {threadId}
             </span>
           </div>
           <h1 className="text-2xl font-semibold text-[color:var(--text-primary)] md:text-3xl">Conversation workspace</h1>
@@ -367,4 +372,3 @@ export function ChatInterface({ sessionId }: ChatInterfaceProps) {
     </section>
   );
 }
-

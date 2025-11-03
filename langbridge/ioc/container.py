@@ -21,12 +21,14 @@ from repositories.organization_repository import (
 )
 from repositories.llm_connection_repository import LLMConnectionRepository
 from repositories.semantic_model_repository import SemanticModelRepository
+from repositories.thread_repository import ThreadRepository
 from services.auth_service import AuthService
 from services.organization_service import OrganizationService
 from services.agent_service import AgentService
 from semantic.semantic_model_builder import SemanticModelBuilder
 from services.semantic_model_service import SemanticModelService
 from services.orchestrator_service import OrchestratorService
+from services.thread_service import ThreadService
 from config import settings
 
 
@@ -73,6 +75,7 @@ class Container(containers.DeclarativeContainer):
     connector_repository = providers.Factory(ConnectorRepository, session=async_session)
     llm_connection_repository = providers.Factory(LLMConnectionRepository, session=async_session)
     semantic_model_repository = providers.Factory(SemanticModelRepository, session=async_session)
+    thread_repository = providers.Factory(ThreadRepository, session=async_session)
     
 
     organization_service = providers.Factory(
@@ -130,4 +133,11 @@ class Container(containers.DeclarativeContainer):
         semantic_model_service=semantic_model_service,
         connector_service=connector_service,
         agent_service=agent_service
+    )
+
+    thread_service = providers.Factory(
+        ThreadService,
+        thread_repository=thread_repository,
+        project_repository=project_repository,
+        organization_service=organization_service,
     )

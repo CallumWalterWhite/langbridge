@@ -1,1 +1,1 @@
-export * from '@/orchestration/chat/types';
+export * from '@/orchestration/threads';

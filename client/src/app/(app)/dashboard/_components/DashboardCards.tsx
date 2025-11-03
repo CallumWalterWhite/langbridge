@@ -12,8 +12,8 @@ import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useToast } from '@/components/ui/toast';
 import { cn, formatRelativeDate } from '@/lib/utils';
-import { createChatSession } from '@/orchestration/chat';
-import type { ChatSessionResponse } from '@/orchestration/chat';
+import { createThread } from '@/orchestration/threads';
+import type { Thread } from '@/orchestration/threads';
 
 import { AddSourceDialog } from './AddSourceDialog';
 import { QuickAgentCreateDrawer } from './QuickAgentCreateDrawer';
@@ -144,8 +144,8 @@ export function DashboardCards() {
     },
   });
 
-  const startChatMutation = useMutation<ChatSessionResponse, Error>({
-    mutationFn: () => createChatSession(),
+  const startChatMutation = useMutation<Thread, Error>({
+    mutationFn: () => createThread(),
     onError: (error) => {
       toast({ title: 'Something went wrong', description: error.message, variant: 'destructive' });
     },
@@ -184,9 +184,12 @@ export function DashboardCards() {
       }
 
       try {
-        const { sessionId } = await startChatMutation.mutateAsync();
-        toast({ title: 'Chat session ready', description: 'Opening the workspace.' });
-        const href = prompt && prompt.trim().length > 0 ? `/chat/${sessionId}?prompt=${encodeURIComponent(prompt.trim())}` : `/chat/${sessionId}`;
+        const thread = await startChatMutation.mutateAsync();
+        toast({ title: 'Thread ready', description: 'Opening the workspace.' });
+        const href =
+          prompt && prompt.trim().length > 0
+            ? `/chat/${thread.id}?prompt=${encodeURIComponent(prompt.trim())}`
+            : `/chat/${thread.id}`;
         router.push(href);
       } catch (error) {
         // Error toast already handled by onError.
