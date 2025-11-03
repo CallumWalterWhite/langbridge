@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import json
+import logging
 from typing import Any
 
-from langchain_core.messages import BaseMessage
+from langchain_core.messages import BaseMessage, HumanMessage
 from langchain_core.language_models import BaseChatModel
 from langchain_openai import ChatOpenAI
 
@@ -57,6 +58,7 @@ class OrchestratorService:
         self._semantic_model_service = semantic_model_service
         self._connector_service = connector_service
         self._agent_service = agent_service
+        self._logger = logging.getLogger(__name__)
 
     async def chat(self, msg: str) -> dict[str, Any]:
         llm_connections = await self._agent_service.list_llm_connections()
@@ -119,4 +121,118 @@ class OrchestratorService:
             visual_agent=visual_agent,
         )
 
-        return await supervisor.handle(user_query=msg)
+        response = await supervisor.handle(user_query=msg)
+        summary = await self._summarize_response(base_llm, msg, response)
+        response["summary"] = summary
+        return response
+
+    async def _summarize_response(
+        self,
+        chat_model: BaseChatModel,
+        question: str,
+        response_payload: dict[str, Any],
+    ) -> str:
+        """
+        Generate a concise natural language summary of the orchestrated response.
+        """
+
+        preview = self._render_tabular_preview(response_payload.get("result"))
+        viz_summary = self._summarise_visualization(response_payload.get("visualization"))
+
+        prompt_sections = [
+            "You are a senior analytics assistant. Summarize the findings for a business stakeholder in 2-3 sentences.",
+            f"Original question:\n{question.strip()}",
+            f"Tabular result preview:\n{preview}",
+        ]
+        if viz_summary:
+            prompt_sections.append(f"Visualization guidance:\n{viz_summary}")
+        prompt_sections.append(
+            "Highlight the most important metric, call out notable changes or trends, and mention if the dataset is empty."
+        )
+
+        prompt = "\n\n".join(prompt_sections)
+
+        try:
+            llm_response = await chat_model.ainvoke([HumanMessage(content=prompt)])
+        except Exception as exc:  # pragma: no cover - defensive guard against transient LLM failures
+            self._logger.warning("Failed to generate summary: %s", exc, exc_info=True)
+            return "Summary unavailable due to temporary AI service issues."
+
+        if isinstance(llm_response, BaseMessage):
+            summary_text = str(llm_response.content).strip()
+        else:
+            summary_text = str(llm_response).strip()
+
+        if not summary_text:
+            return "No summary produced."
+        return summary_text
+
+    @staticmethod
+    def _summarise_visualization(visualization: Any) -> str:
+        if not isinstance(visualization, dict) or not visualization:
+            return ""
+
+        parts: list[str] = []
+        chart_type = visualization.get("chart_type")
+        if chart_type:
+            parts.append(f"type={chart_type}")
+        x_axis = visualization.get("x")
+        if x_axis:
+            parts.append(f"x={x_axis}")
+        y_axis = visualization.get("y")
+        if isinstance(y_axis, (list, tuple)):
+            if y_axis:
+                parts.append(f"y={', '.join(map(str, y_axis))}")
+        elif y_axis:
+            parts.append(f"y={y_axis}")
+        group_by = visualization.get("group_by")
+        if group_by:
+            parts.append(f"group_by={group_by}")
+        return ", ".join(parts)
+
+    @staticmethod
+    def _render_tabular_preview(result: Any, *, max_rows: int = 8) -> str:
+        if not isinstance(result, dict) or not result:
+            return "No tabular result was returned."
+
+        columns = result.get("columns") or []
+        rows = result.get("rows") or []
+        if not columns:
+            return "Result did not include column metadata."
+        if not rows:
+            return "No rows matched the query."
+
+        header = " | ".join(str(column) for column in columns)
+        separator = "-+-".join("-" * max(len(str(column)), 3) for column in columns)
+
+        preview_lines: list[str] = []
+        for index, raw_row in enumerate(rows[:max_rows]):
+            row_values = OrchestratorService._coerce_row_values(columns, raw_row)
+            formatted = " | ".join(OrchestratorService._format_cell(value) for value in row_values)
+            preview_lines.append(formatted)
+
+        if len(rows) > max_rows:
+            preview_lines.append(f"... ({len(rows) - max_rows} additional rows truncated)")
+
+        return "\n".join([header, separator, *preview_lines])
+
+    @staticmethod
+    def _coerce_row_values(columns: list[str], row: Any) -> list[Any]:
+        if isinstance(row, dict):
+            return [row.get(column) for column in columns]
+        if isinstance(row, (list, tuple)):
+            values = list(row)
+            if len(values) >= len(columns):
+                return values[: len(columns)]
+            values.extend([None] * (len(columns) - len(values)))
+            return values
+        return [row] + [None] * (len(columns) - 1)
+
+    @staticmethod
+    def _format_cell(value: Any) -> str:
+        if value is None:
+            return "null"
+        if isinstance(value, float):
+            formatted = f"{value:.4f}".rstrip("0").rstrip(".")
+            return formatted or "0"
+        return str(value)
