@@ -6,7 +6,7 @@ from db.auth import OAuthAccount, User
 from .base import AsyncBaseRepository
 
 
-class UserRepository(AsyncBaseRepository):
+class UserRepository(AsyncBaseRepository[User]):
     """Data access helper for user entities."""
 
     def __init__(self, session: AsyncSession):
@@ -20,7 +20,7 @@ class UserRepository(AsyncBaseRepository):
         )
         return (await self._session.scalars(stmt)).one_or_none()
     
-class OAuthAccountRepository(AsyncBaseRepository):
+class OAuthAccountRepository(AsyncBaseRepository[OAuthAccount]):
     """Data access helper for OAuth account entities."""
 
     def __init__(self, session: AsyncSession):

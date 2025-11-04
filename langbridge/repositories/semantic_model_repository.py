@@ -10,7 +10,7 @@ from db.semantic import SemanticModelEntry
 from .base import AsyncBaseRepository
 
 
-class SemanticModelRepository(AsyncBaseRepository):
+class SemanticModelRepository(AsyncBaseRepository[SemanticModelEntry]):
     def __init__(self, session: AsyncSession):
         super().__init__(session, SemanticModelEntry)
 

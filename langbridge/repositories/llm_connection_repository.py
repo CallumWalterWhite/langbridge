@@ -6,7 +6,7 @@ from db.agent import LLMConnection
 from .base import AsyncBaseRepository
 
 
-class LLMConnectionRepository(AsyncBaseRepository):
+class LLMConnectionRepository(AsyncBaseRepository[LLMConnection]):
     def __init__(self, session: AsyncSession):
         super().__init__(session, LLMConnection)
 

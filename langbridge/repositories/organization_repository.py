@@ -20,7 +20,7 @@ from db.auth import (
 from .base import AsyncBaseRepository
 
 
-class OrganizationRepository(AsyncBaseRepository):
+class OrganizationRepository(AsyncBaseRepository[Organization]):
     """Data access helper for organization entities."""
 
     def __init__(self, session: AsyncSession):
@@ -122,7 +122,7 @@ class OrganizationRepository(AsyncBaseRepository):
         return result.value if result else None
 
 
-class ProjectRepository(AsyncBaseRepository):
+class ProjectRepository(AsyncBaseRepository[Project]):
     """Data access helper for project entities."""
 
     def __init__(self, session: AsyncSession):

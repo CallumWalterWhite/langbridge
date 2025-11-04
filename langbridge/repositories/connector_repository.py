@@ -6,7 +6,7 @@ from db.connector import Connector
 from .base import AsyncBaseRepository
 
 
-class ConnectorRepository(AsyncBaseRepository):
+class ConnectorRepository(AsyncBaseRepository[Connector]):
     """Data access helper for connector entities."""
 
     def __init__(self, session: AsyncSession):
