@@ -48,3 +48,15 @@ export interface CreateConnectorPayload {
   projectId?: string;
   config: ConnectorConfigPayload;
 }
+
+export interface UpdateConnectorPayload {
+  name?: string;
+  description?: string;
+  version?: string;
+  label?: string;
+  icon?: string;
+  connectorType?: string;
+  organizationId: string;
+  projectId?: string;
+  config?: ConnectorConfigPayload;
+}

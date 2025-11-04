@@ -3,6 +3,7 @@ import type {
   ConnectorConfigSchema,
   ConnectorResponse,
   CreateConnectorPayload,
+  UpdateConnectorPayload,
 } from './types';
 
 const BASE_PATH = '/api/v1/connectors';
@@ -31,9 +32,30 @@ export async function fetchConnectors(organizationId: string): Promise<Connector
   return apiFetch<ConnectorResponse[]>(`${BASE_PATH}?${params.toString()}`);
 }
 
+export async function fetchConnector(connectorId: string): Promise<ConnectorResponse> {
+  if (!connectorId) {
+    throw new Error('Connector id is required.');
+  }
+  return apiFetch<ConnectorResponse>(`${BASE_PATH}/${encodeURIComponent(connectorId)}`);
+}
+
+export async function updateConnector(
+  connectorId: string,
+  payload: UpdateConnectorPayload,
+): Promise<ConnectorResponse> {
+  if (!connectorId) {
+    throw new Error('Connector id is required.');
+  }
+  return apiFetch<ConnectorResponse>(`${BASE_PATH}/${encodeURIComponent(connectorId)}`, {
+    method: 'PUT',
+    body: JSON.stringify(payload),
+  });
+}
+
 export type {
   ConnectorConfigEntry,
   ConnectorConfigSchema,
   ConnectorResponse,
   CreateConnectorPayload,
+  UpdateConnectorPayload,
 } from './types';

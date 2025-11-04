@@ -5,6 +5,7 @@ import type {
   LLMConnectionApiResponse,
   LLMConnectionTestResult,
   TestLLMConnectionPayload,
+  UpdateLLMConnectionPayload,
 } from './types';
 
 const BASE_PATH = '/api/v1/agents/llm-connections';
@@ -61,6 +62,36 @@ export async function createLLMConnection(payload: CreateLLMConnectionPayload): 
   return normalizeConnection(response);
 }
 
+export async function updateLLMConnection(
+  connectionId: number,
+  payload: UpdateLLMConnectionPayload,
+): Promise<LLMConnection> {
+  const body: Record<string, unknown> = {
+    name: payload.name,
+    api_key: payload.apiKey,
+    model: payload.model,
+    configuration: payload.configuration ?? {},
+    is_active: payload.isActive,
+  };
+
+  if (typeof payload.description === 'string') {
+    body.description = payload.description;
+  }
+  if (payload.organizationId) {
+    body.organization_id = payload.organizationId;
+  }
+  if (payload.projectId) {
+    body.project_id = payload.projectId;
+  }
+
+  const response = await apiFetch<LLMConnectionApiResponse>(`${BASE_PATH}/${connectionId}`, {
+    method: 'PUT',
+    body: JSON.stringify(body),
+  });
+
+  return normalizeConnection(response);
+}
+
 export async function testLLMConnection(payload: TestLLMConnectionPayload): Promise<LLMConnectionTestResult> {
   return apiFetch<LLMConnectionTestResult>(`${BASE_PATH}/test`, {
     method: 'POST',
@@ -79,4 +110,5 @@ export type {
   LLMConnectionApiResponse,
   LLMConnectionTestResult,
   TestLLMConnectionPayload,
+  UpdateLLMConnectionPayload,
 } from './types';

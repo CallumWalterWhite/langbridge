@@ -51,3 +51,14 @@ export interface LLMConnectionTestResult {
   message?: string;
   [key: string]: unknown;
 }
+
+export interface UpdateLLMConnectionPayload {
+  name: string;
+  apiKey: string;
+  model: string;
+  configuration: Record<string, unknown>;
+  isActive: boolean;
+  description?: string;
+  organizationId?: string | null;
+  projectId?: string | null;
+}
