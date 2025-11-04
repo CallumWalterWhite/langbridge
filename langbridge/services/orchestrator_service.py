@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import logging
 from typing import Any
 
@@ -20,7 +19,8 @@ from services.connector_service import ConnectorService
 from services.organization_service import OrganizationService
 from services.semantic_model_service import SemanticModelService
 
-from db.agent import LLMConnection
+from models.llm_connections import LLMConnectionSecretResponse
+from models.connectors import ConnectorResponse
 
 
 class _ChatModelLLMClient(LLMClient):
@@ -61,10 +61,10 @@ class OrchestratorService:
         self._logger = logging.getLogger(__name__)
 
     async def chat(self, msg: str) -> dict[str, Any]:
-        llm_connections = await self._agent_service.list_llm_connections()
+        llm_connections = await self._agent_service.list_llm_connection_secrets()
         if not llm_connections:
             raise BusinessValidationError("No LLM connections configured")
-        llm_connection: LLMConnection = llm_connections[0]
+        llm_connection: LLMConnectionSecretResponse = llm_connections[0]
         base_llm: BaseChatModel = ChatOpenAI(
             model=llm_connection.model,
             temperature=0.1,
@@ -73,7 +73,7 @@ class OrchestratorService:
         llm_client = _ChatModelLLMClient(base_llm)
 
         semantic_entries = await self._semantic_model_service.list_all_models()
-        connectors = await self._connector_service.list_all_connectors()
+        connectors: list[ConnectorResponse] = await self._connector_service.list_all_connectors()
         connector_lookup = {str(connector.id): connector for connector in connectors}
 
         connector_instances: dict[str, Any] = {}
@@ -86,7 +86,7 @@ class OrchestratorService:
                 continue
 
             connector_type = ConnectorRuntimeType(connector_entry.connector_type.upper())
-            config = json.loads(connector_entry.config_json)
+            config = connector_entry.config or {}
 
             if connector_id not in connector_instances:
                 connector_instances[connector_id] = await self._connector_service.async_create_sql_connector(

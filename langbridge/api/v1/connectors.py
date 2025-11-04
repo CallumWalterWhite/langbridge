@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from connectors.config import ConnectorConfigSchema
 from errors.application_errors import BusinessValidationError
 from ioc import Container
-from schemas.connectors import (
+from models.connectors import (
     ConnectorResponse,
     ConnectorSourceSchemaColumnResponse,
     ConnectorSourceSchemaResponse,
@@ -25,8 +25,7 @@ async def create_connector(
     request: CreateConnectorRequest,
     connector_service: ConnectorService = Depends(Provide[Container.connector_service]),
 ) -> ConnectorResponse:
-    connector = await connector_service.create_connector(request)
-    return ConnectorResponse.from_connector(connector)
+    return await connector_service.create_connector(request)
 
 
 @router.get("/{connector_id}", response_model=ConnectorResponse)
@@ -35,8 +34,7 @@ async def get_connector(
     connector_id: str,
     connector_service: ConnectorService = Depends(Provide[Container.connector_service]),
 ) -> ConnectorResponse:
-    connector = await connector_service.get_connector(connector_id)
-    return ConnectorResponse.from_connector(connector)
+    return await connector_service.get_connector(connector_id)
 
 
 @router.get("/{connector_id}/source/schemas", response_model=ConnectorSourceSchemasResponse)
@@ -124,8 +122,7 @@ async def update_connector(
     request: UpdateConnectorRequest,
     connector_service: ConnectorService = Depends(Provide[Container.connector_service]),
 ) -> ConnectorResponse:
-    connector = await connector_service.update_connector(connector_id, request)
-    return ConnectorResponse.from_connector(connector)
+    return await connector_service.update_connector(connector_id, request)
 
 
 @router.delete("/{connector_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -143,5 +140,4 @@ async def delete_connector(
 async def list_connectors(
     connector_service: ConnectorService = Depends(Provide[Container.connector_service]),
 ) -> list[ConnectorResponse]:
-    connectors = await connector_service.list_all_connectors()
-    return [ConnectorResponse.from_connector(conn) for conn in connectors]
+    return await connector_service.list_all_connectors()

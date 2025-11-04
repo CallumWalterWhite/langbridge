@@ -7,7 +7,7 @@ from fastapi.responses import PlainTextResponse
 
 from errors.application_errors import BusinessValidationError
 from ioc import Container
-from schemas.semantic_models import (
+from models.semantic_models import (
     SemanticModelCreateRequest,
     SemanticModelRecordResponse,
 )
@@ -43,8 +43,7 @@ async def create_semantic_model(
     service: SemanticModelService = Depends(Provide[Container.semantic_model_service]),
 ) -> SemanticModelRecordResponse:
     try:
-        entry = await service.create_model(request)
-        return SemanticModelRecordResponse.model_validate(entry)
+        return await service.create_model(request)
     except BusinessValidationError as exc:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
@@ -62,7 +61,7 @@ async def list_semantic_models(
         organization_id=organization_id,
         project_id=project_id,
     )
-    return [SemanticModelRecordResponse.model_validate(model) for model in models]
+    return models
 
 
 @router.get("/{model_id}", response_model=SemanticModelRecordResponse)
@@ -73,8 +72,7 @@ async def get_semantic_model(
     service: SemanticModelService = Depends(Provide[Container.semantic_model_service]),
 ) -> SemanticModelRecordResponse:
     try:
-        model = await service.get_model(model_id=model_id, organization_id=organization_id)
-        return SemanticModelRecordResponse.model_validate(model)
+        return await service.get_model(model_id=model_id, organization_id=organization_id)
     except BusinessValidationError as exc:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)

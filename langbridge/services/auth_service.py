@@ -1,18 +1,17 @@
-
-
 from abc import ABC
-from typing import List, Literal, Optional, Tuple
-import uuid
 import re
+import uuid
+from typing import List, Literal, Optional, Tuple
 
 from authlib.integrations.starlette_client import OAuth, OAuthError
 from fastapi import Request
 import httpx
 
-from db.auth import User, OAuthAccount
+from db.auth import OAuthAccount, User
 from errors.application_errors import AuthenticationError, BusinessValidationError
-from schemas.base import _Base
-from repositories.user_repository import UserRepository, OAuthAccountRepository
+from models.auth import OAuthAccountResponse, UserResponse
+from models.base import _Base
+from repositories.user_repository import OAuthAccountRepository, UserRepository
 from services.organization_service import OrganizationService
 
 ProviderLiteral = Literal['github', 'google']
@@ -133,11 +132,11 @@ class AuthService:
         self._organization_service = organization_service
         self._oauth = oauth
 
-    async def get_user_by_username(self, username: str) -> User:
+    async def get_user_by_username(self, username: str) -> UserResponse:
         user = await self._user_repository.get_by_username(username)
         if not user:
             raise BusinessValidationError("User not found")
-        return user
+        return UserResponse.model_validate(user)
 
     async def authorize_redirect(
         self,
@@ -154,7 +153,7 @@ class AuthService:
         self,
         request: Request,
         provider: ProviderLiteral,
-    ) -> Tuple[User, OAuthAccount]:
+    ) -> Tuple[UserResponse, OAuthAccountResponse]:
         if provider not in self.__provider_property_map:
             raise BusinessValidationError(f"Unsupported provider: {provider}")
         try:
@@ -181,21 +180,10 @@ class AuthService:
         if not user:
             user = await self._user_repository.get_by_username(user_info.username)
 
-        created_user = False
-        created_oauth_account = False
-
         if not user:
             user, oauth_account = await self.create_user(user_info, provider)
-            created_user = True
-            created_oauth_account = True
         elif not oauth_account:
             oauth_account = self.create_oauth_account(user, user_info, provider)
-            created_oauth_account = True
-
-        # if created_user:
-        #     await self._user_repository.commit()
-        # if created_oauth_account:
-        #     await self._oauth_account_repository.commit()
 
         await self._organization_service.ensure_default_workspace_for_user(user)
         if not oauth_account and user_info.sub:
@@ -205,7 +193,7 @@ class AuthService:
             )
         if not oauth_account:
             raise BusinessValidationError("OAuth account not found for user")
-        return user, oauth_account
+        return UserResponse.model_validate(user), OAuthAccountResponse.model_validate(oauth_account)
 
     def create_oauth_account(
         self,
@@ -244,6 +232,7 @@ class AuthService:
         user = User(
             id=uuid.uuid4(),
             username=username,
+            is_active=True,
         )
         self._user_repository.add(user)
         oauth_account = self.create_oauth_account(user, user_info, oauth_provider)

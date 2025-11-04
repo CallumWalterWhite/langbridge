@@ -16,6 +16,13 @@ from errors.application_errors import (
     PermissionDeniedBusinessValidationError,
     ResourceNotFound,
 )
+from models.auth import UserResponse
+from models.organizations import (
+    OrganizationInviteResponse,
+    OrganizationResponse,
+    ProjectInviteResponse,
+    ProjectResponse,
+)
 from repositories.organization_repository import (
     OrganizationInviteRepository,
     OrganizationRepository,
@@ -42,14 +49,17 @@ class OrganizationService:
         self._project_invite_repository = project_invite_repository
         self._user_repository = user_repository
 
-    async def list_user_organizations(self, user: User) -> list[Organization]:
-        return await self._organization_repository.list_for_user(user)
+    async def list_user_organizations(self, user: UserResponse) -> list[OrganizationResponse]:
+        db_user = await self._resolve_user(user)
+        organizations = await self._organization_repository.list_for_user(db_user)
+        return [self._serialize_organization(org) for org in organizations]
 
     async def ensure_default_workspace_for_user(
         self,
-        user: User,
+        user: User | UserResponse,
     ) -> tuple[Organization, Project]:
-        default_name = user.username.strip()
+        db_user = await self._resolve_user(user)
+        default_name = getattr(user, "username", db_user.username).strip()
         if not default_name:
             raise BusinessValidationError(
                 "User username cannot be empty for workspace creation"
@@ -64,9 +74,9 @@ class OrganizationService:
             organization = Organization(name=default_name)
             self._organization_repository.add(organization)
 
-        if not await self._organization_repository.is_member(organization, user):
+        if not await self._organization_repository.is_member(organization, db_user):
             await self._organization_repository.add_member(
-                organization, user, OrganizationRole.OWNER
+                organization, db_user, OrganizationRole.OWNER
             )
 
         project = await self._project_repository.get_by_name_within_org(
@@ -76,16 +86,17 @@ class OrganizationService:
             project = Project(name=default_name, organization=organization)
             self._project_repository.add(project)
 
-        if not await self._project_repository.is_member(project, user):
+        if not await self._project_repository.is_member(project, db_user):
             await self._project_repository.add_member(
-                project, user, ProjectRole.OWNER
+                project, db_user, ProjectRole.OWNER
             )
 
         # await self._organization_repository.commit()
         # await self._project_repository.commit()
         return organization, project
 
-    async def create_organization(self, owner: User, name: str) -> Organization:
+    async def create_organization(self, owner: UserResponse, name: str) -> OrganizationResponse:
+        db_owner = await self._resolve_user(owner)
         normalized_name = name.strip()
         if not normalized_name:
             raise BusinessValidationError("Organization name is required")
@@ -98,21 +109,22 @@ class OrganizationService:
 
         organization = Organization(name=normalized_name)
         self._organization_repository.add(organization)
-        await self._organization_repository.add_member(organization, owner)
+        await self._organization_repository.add_member(organization, db_owner)
         # await self._organization_repository.commit()
-        return organization
+        return self._serialize_organization(organization)
 
     async def create_project(
         self,
         organization_id: uuid.UUID,
-        requester: User,
+        requester: UserResponse,
         name: str,
-    ) -> Project:
+    ) -> ProjectResponse:
+        db_requester = await self._resolve_user(requester)
         organization = await self._organization_repository.get_by_id(organization_id)
         if organization is None:
             raise ResourceNotFound("Organization not found")
 
-        if not await self._organization_repository.is_member(organization, requester):
+        if not await self._organization_repository.is_member(organization, db_requester):
             raise PermissionDeniedBusinessValidationError(
                 "You are not a member of this organization"
             )
@@ -130,21 +142,22 @@ class OrganizationService:
 
         project = Project(name=normalized_name, organization=organization)
         self._project_repository.add(project)
-        await self._project_repository.add_member(project, requester)
+        await self._project_repository.add_member(project, db_requester)
         # await self._project_repository.commit()
-        return project
+        return self._serialize_project(project)
 
     async def invite_user_to_organization(
         self,
         organization_id: uuid.UUID,
-        inviter: User,
+        inviter: UserResponse,
         invitee_username: str,
-    ) -> OrganizationInvite:
+    ) -> OrganizationInviteResponse:
+        db_inviter = await self._resolve_user(inviter)
         organization = await self._organization_repository.get_by_id(organization_id)
         if organization is None:
             raise ResourceNotFound("Organization not found")
 
-        if not await self._organization_repository.is_member(organization, inviter):
+        if not await self._organization_repository.is_member(organization, db_inviter):
             raise PermissionDeniedBusinessValidationError(
                 "You are not a member of this organization"
             )
@@ -171,11 +184,11 @@ class OrganizationService:
             existing.status = InviteStatus.ACCEPTED
             existing.responded_at = timestamp
             await self._organization_repository.add_member(organization, invitee)
-            return existing
+            return OrganizationInviteResponse.model_validate(existing)
 
         invite = OrganizationInvite(
             organization=organization,
-            inviter=inviter,
+            inviter=db_inviter,
             invitee_username=normalized_username,
             status=InviteStatus.ACCEPTED,
             responded_at=timestamp,
@@ -184,15 +197,16 @@ class OrganizationService:
         await self._organization_repository.add_member(organization, invitee)
         # await self._organization_invite_repository.commit()
         # await self._organization_repository.commit()
-        return invite
+        return OrganizationInviteResponse.model_validate(invite)
 
     async def invite_user_to_project(
         self,
         organization_id: uuid.UUID,
         project_id: uuid.UUID,
-        inviter: User,
+        inviter: UserResponse,
         invitee_username: str,
-    ) -> ProjectInvite:
+    ) -> ProjectInviteResponse:
+        db_inviter = await self._resolve_user(inviter)
         organization = await self._organization_repository.get_by_id(organization_id)
         if organization is None:
             raise ResourceNotFound("Organization not found")
@@ -201,7 +215,7 @@ class OrganizationService:
         if project is None or project.organization_id != organization.id:
             raise ResourceNotFound("Project not found in this organization")
 
-        if not await self._organization_repository.is_member(organization, inviter):
+        if not await self._organization_repository.is_member(organization, db_inviter):
             raise PermissionDeniedBusinessValidationError(
                 "You are not a member of this organization"
             )
@@ -233,11 +247,11 @@ class OrganizationService:
             existing.status = InviteStatus.ACCEPTED
             existing.responded_at = timestamp
             await self._project_repository.add_member(project, invitee)
-            return existing
+            return ProjectInviteResponse.model_validate(existing)
 
         invite = ProjectInvite(
             project=project,
-            inviter=inviter,
+            inviter=db_inviter,
             invitee=invitee,
             status=InviteStatus.ACCEPTED,
             responded_at=timestamp,
@@ -246,20 +260,43 @@ class OrganizationService:
         await self._project_repository.add_member(project, invitee)
         # await self._project_invite_repository.commit()
         # await self._project_repository.commit()
-        return invite
+        return ProjectInviteResponse.model_validate(invite)
 
     async def list_projects_for_organization(
         self,
         organization_id: uuid.UUID,
-        user: User,
-    ) -> list[Project]:
+        user: UserResponse,
+    ) -> list[ProjectResponse]:
+        db_user = await self._resolve_user(user)
         organization = await self._organization_repository.get_by_id(organization_id)
         if organization is None:
             raise ResourceNotFound("Organization not found")
 
-        if not await self._organization_repository.is_member(organization, user):
+        if not await self._organization_repository.is_member(organization, db_user):
             raise PermissionDeniedBusinessValidationError(
                 "You are not a member of this organization"
             )
 
-        return await self._project_repository.list_for_organization(organization_id)
+        projects = await self._project_repository.list_for_organization(organization_id)
+        return [self._serialize_project(project) for project in projects]
+
+    async def _resolve_user(self, user: User | UserResponse) -> User:
+        if isinstance(user, User):
+            return user
+        resolved = await self._user_repository.get_by_username(user.username)
+        if not resolved:
+            raise BusinessValidationError("User not found")
+        return resolved
+
+    def _serialize_project(self, project: Project) -> ProjectResponse:
+        return ProjectResponse.model_validate(project)
+
+    def _serialize_organization(self, organization: Organization) -> OrganizationResponse:
+        projects = [self._serialize_project(project) for project in organization.projects]
+        member_links = list(organization.user_links or [])
+        return OrganizationResponse(
+            id=organization.id,
+            name=organization.name,
+            member_count=len(member_links),
+            projects=projects,
+        )

@@ -1,8 +1,9 @@
-
-from .base import _Base
 import uuid
+from typing import Optional
 
 from pydantic import ConfigDict, Field
+
+from .base import _Base
 
 
 class LoginRequest(_Base):
@@ -26,6 +27,19 @@ class UserResponse(_Base):
 
     model_config = ConfigDict(from_attributes=True)
 
+
+class OAuthAccountResponse(_Base):
+    id: uuid.UUID
+    provider: str
+    provider_account_id: Optional[str] = None
+    name: Optional[str] = None
+    email: Optional[str] = None
+    avatar_url: Optional[str] = None
+    sub: Optional[str] = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
 class AuthRegistry(_Base):
     type: str
     client_id: str
@@ -35,8 +49,10 @@ class AuthRegistry(_Base):
     api_base_url: str
     scopes: list[str] = Field(default_factory=list)
 
+
 class AuthManifest(_Base):
     registries: list[AuthRegistry] = Field(default_factory=list)
+
 
 class CurrentUser(_Base):
     username: str

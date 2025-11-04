@@ -4,7 +4,7 @@ from dependency_injector.wiring import Provide, inject
 from fastapi import APIRouter, Depends, HTTPException, status
 
 from ioc import Container
-from schemas.llm_connections import (
+from models.llm_connections import (
     LLMConnectionCreate,
     LLMConnectionResponse,
     LLMConnectionTest,
@@ -21,8 +21,7 @@ async def create_llm_connection(
     request: LLMConnectionCreate,
     agent_service: AgentService = Depends(Provide[Container.agent_service]),
 ) -> LLMConnectionResponse:
-    connection = await agent_service.create_llm_connection(request)
-    return LLMConnectionResponse.model_validate(connection)
+    return await agent_service.create_llm_connection(request)
 
 
 @router.get("/llm-connections", response_model=List[LLMConnectionResponse])
@@ -30,8 +29,7 @@ async def create_llm_connection(
 async def list_llm_connections(
     agent_service: AgentService = Depends(Provide[Container.agent_service]),
 ) -> List[LLMConnectionResponse]:
-    connections = await agent_service.list_llm_connections()
-    return [LLMConnectionResponse.model_validate(conn) for conn in connections]
+    return await agent_service.list_llm_connections()
 
 
 @router.get("/llm-connections/{connection_id}", response_model=LLMConnectionResponse)
@@ -46,7 +44,7 @@ async def get_llm_connection(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="LLM Connection not found",
         )
-    return LLMConnectionResponse.model_validate(connection)
+    return connection
 
 
 @router.put("/llm-connections/{connection_id}", response_model=LLMConnectionResponse)
@@ -62,7 +60,7 @@ async def update_llm_connection(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="LLM Connection not found",
         )
-    return LLMConnectionResponse.model_validate(connection)
+    return connection
 
 
 @router.post("/llm-connections/test", response_model=dict)

@@ -4,14 +4,14 @@ from dependency_injector.wiring import Provide, inject
 from fastapi import APIRouter, Depends, HTTPException, status
 
 from auth.dependencies import get_current_user
-from db.auth import User
+from models.auth import UserResponse
 from errors.application_errors import (
     BusinessValidationError,
     PermissionDeniedBusinessValidationError,
     ResourceNotFound,
 )
 from ioc import Container
-from schemas.threads import (
+from models.threads import (
     ThreadChatRequest,
     ThreadChatResponse,
     ThreadCreateRequest,
@@ -27,21 +27,18 @@ router = APIRouter(prefix="/thread", tags=["threads"])
 @router.get("/", response_model=ThreadListResponse)
 @inject
 async def list_threads(
-    current_user: User = Depends(get_current_user),
+    current_user: UserResponse = Depends(get_current_user),
     thread_service: ThreadService = Depends(Provide[Container.thread_service]),
 ) -> ThreadListResponse:
     threads = await thread_service.list_threads_for_user(current_user)
-    response_threads = [
-        ThreadResponse.model_validate(thread, from_attributes=True) for thread in threads
-    ]
-    return ThreadListResponse(threads=response_threads)
+    return ThreadListResponse(threads=threads)
 
 
 @router.post("/", response_model=ThreadResponse, status_code=status.HTTP_201_CREATED)
 @inject
 async def create_thread(
     request: ThreadCreateRequest,
-    current_user: User = Depends(get_current_user),
+    current_user: UserResponse = Depends(get_current_user),
     thread_service: ThreadService = Depends(Provide[Container.thread_service]),
 ) -> ThreadResponse:
     try:
@@ -51,14 +48,14 @@ async def create_thread(
     except BusinessValidationError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
-    return ThreadResponse.model_validate(thread, from_attributes=True)
+    return thread
 
 
 @router.delete("/{thread_id}", status_code=status.HTTP_204_NO_CONTENT)
 @inject
 async def delete_thread(
     thread_id: uuid.UUID,
-    current_user: User = Depends(get_current_user),
+    current_user: UserResponse = Depends(get_current_user),
     thread_service: ThreadService = Depends(Provide[Container.thread_service]),
 ) -> None:
     try:
@@ -75,7 +72,7 @@ async def delete_thread(
 async def chat_thread(
     thread_id: uuid.UUID,
     request: ThreadChatRequest,
-    current_user: User = Depends(get_current_user),
+    current_user: UserResponse = Depends(get_current_user),
     thread_service: ThreadService = Depends(Provide[Container.thread_service]),
     orchestrator_service: OrchestratorService = Depends(Provide[Container.orchestrator_service]),
 ) -> ThreadChatResponse:

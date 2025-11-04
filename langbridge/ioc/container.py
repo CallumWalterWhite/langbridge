@@ -114,9 +114,7 @@ class Container(containers.DeclarativeContainer):
 
     semantic_model_builder = providers.Factory(
         SemanticModelBuilder,
-        connector_repository=connector_repository,
-        organization_repository=organization_repository,
-        project_repository=project_repository,
+        connector_service=connector_service,
     )
 
     semantic_model_service = providers.Factory(

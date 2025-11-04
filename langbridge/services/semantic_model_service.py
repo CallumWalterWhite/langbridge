@@ -14,7 +14,7 @@ from repositories.organization_repository import (
     ProjectRepository,
 )
 from repositories.semantic_model_repository import SemanticModelRepository
-from schemas.semantic_models import SemanticModelCreateRequest
+from models.semantic_models import SemanticModelCreateRequest, SemanticModelRecordResponse
 from semantic import SemanticModel
 from semantic.semantic_model_builder import SemanticModelBuilder
 
@@ -39,36 +39,33 @@ class SemanticModelService:
         self,
         organization_id: UUID,
         project_id: UUID | None = None,
-    ) -> list[SemanticModelEntry]:
-        return await self._repository.list_for_scope(
+    ) -> list[SemanticModelRecordResponse]:
+        models = await self._repository.list_for_scope(
             organization_id=organization_id,
             project_id=project_id,
         )
+        return [SemanticModelRecordResponse.model_validate(model) for model in models]
 
-    async def list_all_models(self) -> list[SemanticModelEntry]:
-        return await self._repository.get_all()
+    async def list_all_models(self) -> list[SemanticModelRecordResponse]:
+        models = await self._repository.get_all()
+        return [SemanticModelRecordResponse.model_validate(model) for model in models]
 
     async def get_model(
         self,
         model_id: UUID,
         organization_id: UUID,
-    ) -> SemanticModelEntry:
-        model = await self._repository.get_for_scope(
-            model_id=model_id,
-            organization_id=organization_id,
-        )
-        if not model:
-            raise BusinessValidationError("Semantic model not found")
-        return model
+    ) -> SemanticModelRecordResponse:
+        model = await self._get_model_entity(model_id=model_id, organization_id=organization_id)
+        return SemanticModelRecordResponse.model_validate(model)
 
     async def delete_model(self, model_id: UUID, organization_id: UUID) -> None:
-        model = await self.get_model(model_id=model_id, organization_id=organization_id)
+        model = await self._get_model_entity(model_id=model_id, organization_id=organization_id)
         await self._repository.delete(model)
 
     async def create_model(
         self,
         request: SemanticModelCreateRequest,
-    ) -> SemanticModelEntry:
+    ) -> SemanticModelRecordResponse:
         organization = await self._organization_repository.get_by_id(
             request.organization_id
         )
@@ -126,4 +123,13 @@ class SemanticModelService:
         )
 
         self._repository.add(entry)
-        return entry
+        return SemanticModelRecordResponse.model_validate(entry)
+
+    async def _get_model_entity(self, model_id: UUID, organization_id: UUID) -> SemanticModelEntry:
+        model = await self._repository.get_for_scope(
+            model_id=model_id,
+            organization_id=organization_id,
+        )
+        if not model:
+            raise BusinessValidationError("Semantic model not found")
+        return model

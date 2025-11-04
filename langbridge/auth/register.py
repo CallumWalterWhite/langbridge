@@ -1,7 +1,7 @@
 from authlib.integrations.starlette_client import OAuth
 import yaml
 
-from schemas.auth import AuthManifest
+from models.auth import AuthManifest
 from config import settings
     
 def __get_oauth_manifest() -> AuthManifest:

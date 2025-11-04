@@ -3,12 +3,15 @@ from typing import List, Optional
 
 from db.agent import LLMConnection
 from errors.application_errors import BusinessValidationError
-from repositories.llm_connection_repository import LLMConnectionRepository
-from schemas.llm_connections import (
+from models.llm_connections import (
     LLMConnectionCreate,
+    LLMConnectionResponse,
+    LLMConnectionSecretResponse,
     LLMConnectionTest,
     LLMConnectionUpdate,
+    LLMProvider,
 )
+from repositories.llm_connection_repository import LLMConnectionRepository
 from utils.llm.llm_tester import LLMConnectionTester
 
 
@@ -20,7 +23,7 @@ class AgentService:
     async def create_llm_connection(
         self,
         connection: LLMConnectionCreate,
-    ) -> LLMConnection:
+    ) -> LLMConnectionResponse:
         test_result = self._tester.test_connection(
             provider=connection.provider,
             api_key=connection.api_key,
@@ -45,32 +48,38 @@ class AgentService:
         )
 
         self._repository.add(new_connection)
-        return new_connection
+        return LLMConnectionResponse.model_validate(new_connection)
 
-    async def list_llm_connections(self) -> List[LLMConnection]:
-        return await self._repository.get_all()
+    async def list_llm_connections(self) -> List[LLMConnectionResponse]:
+        connections = await self._repository.get_all()
+        return [LLMConnectionResponse.model_validate(conn) for conn in connections]
 
-    async def get_llm_connection(self, connection_id: int) -> Optional[LLMConnection]:
-        return await self._repository.get_by_id(connection_id)
+    async def list_llm_connection_secrets(self) -> List[LLMConnectionSecretResponse]:
+        connections = await self._repository.get_all()
+        return [LLMConnectionSecretResponse.model_validate(conn) for conn in connections]
+
+    async def get_llm_connection(self, connection_id: int) -> Optional[LLMConnectionResponse]:
+        connection = await self._repository.get_by_id(connection_id)
+        if not connection:
+            return None
+        return LLMConnectionResponse.model_validate(connection)
 
     async def update_llm_connection(
         self,
         connection_id: int,
         connection_update: LLMConnectionUpdate,
-    ) -> Optional[LLMConnection]:
-        current_connection = await self._repository.get_by_id(connection_id)
+    ) -> Optional[LLMConnectionResponse]:
+        current_connection: Optional[LLMConnection] = await self._repository.get_by_id(connection_id)
         if not current_connection:
             return None
 
         if connection_update.api_key:
-            from schemas.llm_connections import LLMProvider as SchemaLLMProvider
-
             provider_value = (
                 current_connection.provider.value
                 if hasattr(current_connection.provider, "value")
                 else current_connection.provider
             )
-            schema_provider = SchemaLLMProvider(provider_value)
+            schema_provider = LLMProvider(provider_value)
 
             test_result = self._tester.test_connection(
                 provider=schema_provider,
@@ -97,7 +106,7 @@ class AgentService:
         setattr(current_connection, "configuration", connection_update.configuration)
         setattr(current_connection, "is_active", connection_update.is_active)
 
-        return current_connection
+        return LLMConnectionResponse.model_validate(current_connection)
 
     async def delete_llm_connection(self, connection_id: int) -> None:
         current_connection = await self._repository.get_by_id(connection_id)

@@ -5,10 +5,10 @@ from fastapi.security import HTTPBasic
 from dependency_injector.wiring import Provide, inject
 
 from ioc import Container
-from db.auth import OAuthAccount, User
 from auth.jwt import create_jwt, set_session_cookie, verify_jwt
 from services.auth_service import AuthService
 from config import settings
+from models.auth import UserResponse
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 security = HTTPBasic()
@@ -126,7 +126,7 @@ async def me(
     if not token:
         raise HTTPException(status_code=401, detail="Unauthenticated")
     claims = verify_jwt(token)
-    user:User = await auth_service.get_user_by_username(claims["username"])
+    user: UserResponse = await auth_service.get_user_by_username(claims["username"])
     if not user:
         raise HTTPException(status_code=401, detail="Unauthenticated")
     return {"user": claims}

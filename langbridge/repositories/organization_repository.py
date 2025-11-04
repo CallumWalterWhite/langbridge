@@ -157,11 +157,11 @@ class ProjectRepository(AsyncBaseRepository[Project]):
         )
         return result.one_or_none()
 
-    async def list_for_user(self, user: User) -> list[Project]:
+    async def list_for_user(self, user_id: uuid.UUID) -> list[Project]:
         result = await self._session.scalars(
             select(Project)
                 .join(ProjectUser, ProjectUser.project_id == Project.id)
-                .filter(ProjectUser.user_id == user.id)
+                .filter(ProjectUser.user_id == user_id)
                 .order_by(Project.name)
         )
         return list(result.all())

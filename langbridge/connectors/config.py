@@ -2,7 +2,7 @@ from abc import ABC
 from enum import Enum
 from typing import Any, List, Optional, Type
 
-from schemas.base import _Base
+from models.base import _Base
 
 class ConnectorRuntimeType(Enum):
     POSTGRES = "POSTGRES"

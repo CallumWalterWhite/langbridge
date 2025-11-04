@@ -1,6 +1,6 @@
 from typing import Dict, Any, Optional
 from openai import OpenAI, OpenAIError, AzureOpenAI
-from schemas.llm_connections import LLMProvider
+from models.llm_connections import LLMProvider
 
 try:  # pragma: no cover - optional dependency
     from anthropic import Anthropic

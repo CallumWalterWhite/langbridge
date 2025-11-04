@@ -18,12 +18,12 @@ from connectors import (
 from db.auth import Organization, Project
 from db.connector import Connector, DatabaseConnector
 from errors.application_errors import BusinessValidationError
+from models.connectors import ConnectorResponse, CreateConnectorRequest, UpdateConnectorRequest
 from repositories.connector_repository import ConnectorRepository
 from repositories.organization_repository import (
     OrganizationRepository,
     ProjectRepository,
 )
-from schemas.connectors import CreateConnectorRequest, UpdateConnectorRequest
 
 
 class ConnectorService:
@@ -41,14 +41,24 @@ class ConnectorService:
         self._sql_connector_factory = SqlConnectorFactory()
         self._logger = logging.getLogger(__name__)
 
-    def list_organization_connectors(self, organization: Organization) -> list[Connector]:
-        return organization.connectors
+    async def list_organization_connectors(
+        self,
+        organization_id: uuid.UUID,
+    ) -> list[ConnectorResponse]:
+        organization = await self._organization_repository.get_by_id(organization_id)
+        if not organization:
+            raise BusinessValidationError("Organization not found")
+        return [ConnectorResponse.from_connector(connector) for connector in organization.connectors]
 
-    async def list_all_connectors(self) -> list[Connector]:
-        return await self._connector_repository.get_all()
+    async def list_all_connectors(self) -> list[ConnectorResponse]:
+        connectors = await self._connector_repository.get_all()
+        return [ConnectorResponse.from_connector(connector) for connector in connectors]
 
-    def list_project_connectors(self, project: Project) -> list[Connector]:
-        return project.connectors
+    async def list_project_connectors(self, project_id: uuid.UUID) -> list[ConnectorResponse]:
+        project = await self._project_repository.get_by_id(project_id)
+        if not project:
+            raise BusinessValidationError("Project not found")
+        return [ConnectorResponse.from_connector(connector) for connector in project.connectors]
 
     def list_connector_types(self) -> list[str]:
         return [ct.value for ct in ConnectorRuntimeType]
@@ -63,7 +73,7 @@ class ConnectorService:
         except ValueError as exc:
             raise BusinessValidationError(str(exc)) from exc
 
-    async def create_connector(self, create_request: CreateConnectorRequest) -> Connector:
+    async def create_connector(self, create_request: CreateConnectorRequest) -> ConnectorResponse:
         connector_type = ConnectorRuntimeType(create_request.connector_type.upper())
 
         if not getattr(create_request, "config", None):
@@ -128,20 +138,22 @@ class ConnectorService:
                 organization.connectors.append(connector)
                 # await self._organization_repository.commit()
 
-        return connector
+        return ConnectorResponse.from_connector(connector)
 
-    async def get_connector(self, connector_id: str) -> Connector:
+    async def get_connector(self, connector_id: str) -> ConnectorResponse:
         connector = await self._connector_repository.get_by_id(connector_id)
         if not connector:
             raise BusinessValidationError("Connector not found")
-        return connector
+        return ConnectorResponse.from_connector(connector)
 
     async def update_connector(
         self,
         connector_id: str,
         update_request: UpdateConnectorRequest,
-    ) -> Connector:
-        connector = await self.get_connector(connector_id)
+    ) -> ConnectorResponse:
+        connector_entity = await self._connector_repository.get_by_id(connector_id)
+        if not connector_entity:
+            raise BusinessValidationError("Connector not found")
         for field in [
             "name",
             "description",
@@ -153,11 +165,13 @@ class ConnectorService:
         ]:
             value = getattr(update_request, field, None)
             if value is not None:
-                setattr(connector, field, value)
-        return connector
+                setattr(connector_entity, field, value)
+        return ConnectorResponse.from_connector(connector_entity)
 
     async def delete_connector(self, connector_id: str) -> None:
-        connector = await self.get_connector(connector_id)
+        connector = await self._connector_repository.get_by_id(connector_id)
+        if not connector:
+            raise BusinessValidationError("Connector not found")
         await self._connector_repository.delete(connector)
 
     async def create_sql_connector(

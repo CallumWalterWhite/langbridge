@@ -1,7 +1,6 @@
 
 
 from dataclasses import dataclass
-import json
 import logging
 import re
 import yaml
@@ -10,23 +9,17 @@ from typing import Any, Dict, List, Optional, Tuple
 from uuid import UUID
 
 from connectors import (
-    BaseConnectorConfig,
     ConnectorRuntimeType,
     TableMetadata,
     ColumnMetadata,
     ForeignKeyMetadata,
-    build_connector_config,
     SqlConnector,
-    SqlConnectorFactory,
-    ConnectorRuntimeTypeSqlDialectMap
 )
-from db.connector import Connector
 from errors.application_errors import BusinessValidationError
 from semantic.model import MeasureAggregation
-from repositories.connector_repository import ConnectorRepository
-from repositories.organization_repository import OrganizationRepository, ProjectRepository
-
 from semantic import Dimension, Measure, Relationship, SemanticModel, Table
+from services.connector_service import ConnectorService
+from models.connectors import ConnectorResponse
 
 logger = logging.getLogger(__name__)
 
@@ -47,14 +40,9 @@ class SemanticModelBuilder:
 
     def __init__(
         self,
-        connector_repository: ConnectorRepository,
-        organization_repository: OrganizationRepository,
-        project_repository: ProjectRepository,
+        connector_service: ConnectorService,
     ) -> None:
-        self._connector_repository = connector_repository
-        self._organization_repository = organization_repository
-        self._project_repository = project_repository
-        self._sql_connector_factory = SqlConnectorFactory()
+        self._connector_service = connector_service
         self._logger = logging.getLogger(__name__)
 
     async def build_for_scope(
@@ -64,9 +52,7 @@ class SemanticModelBuilder:
         scope_tables: Optional[List[Tuple[str, str]]] = None, # schema, table scope
         scope_columns: Optional[List[Tuple[str, str, str]]] = None, # schema, table, column scope
     ) -> SemanticModel:
-        connector: Optional[Connector] = await self.__get_connector(connector_id)
-        if not connector:
-            raise BusinessValidationError("Connector not found")
+        connector = await self.__get_connector(connector_id)
         sql_connector: SqlConnector = await self._get_sql_connector(connector)
 
         scope_metadata: List[ScopedTableMetadata] = []
@@ -234,7 +220,7 @@ class SemanticModelBuilder:
     
     def _build_semantic_tables(
         self,
-        connector: Connector,
+        connector: ConnectorResponse,
         scope_metadata: List[ScopedTableMetadata],
     ) -> Dict[str, Table]:
         tables: Dict[str, Table] = {}
@@ -344,30 +330,16 @@ class SemanticModelBuilder:
                     )
         return relationships
     
-    async def __get_connector(self, connector_id: UUID) -> Connector:
-        connector: Connector | None = await self._connector_repository.get_by_id(connector_id)
-        if not connector:
-            raise BusinessValidationError("Connector not found")
-        return connector
-    
-    def __get_connector_config(self, connector: Connector) -> BaseConnectorConfig:
-        config_payload = json.loads(connector.config_json if isinstance(connector.config_json, str) else connector.config_json.value)
-        if hasattr(config_payload, "to_dict"):
-            config_payload = config_payload.to_dict()
-        connector_runtime = ConnectorRuntimeType(connector.connector_type.upper())
-        config: BaseConnectorConfig = build_connector_config(connector_runtime, config_payload['config'])
-        return config
-    
-    async def _get_sql_connector(self, connector: Connector) -> SqlConnector:
-        connector_config: BaseConnectorConfig = self.__get_connector_config(connector)
+    async def __get_connector(self, connector_id: UUID) -> ConnectorResponse:
+        return await self._connector_service.get_connector(str(connector_id))
+
+    async def _get_sql_connector(self, connector: ConnectorResponse) -> SqlConnector:
         runtime_type = ConnectorRuntimeType(connector.connector_type.upper())
-        sql_connector: SqlConnector = self._sql_connector_factory.create_sql_connector(
-            ConnectorRuntimeTypeSqlDialectMap[runtime_type],
+        connector_config = connector.config or {}
+        return await self._connector_service.async_create_sql_connector(
+            runtime_type,
             connector_config,
-            logger=self._logger
         )
-        await sql_connector.test_connection()
-        return sql_connector
 
     @staticmethod
     def _make_table_key(connector_name: str, schema: str, table_name: str) -> str:
