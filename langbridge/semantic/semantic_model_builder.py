@@ -331,7 +331,7 @@ class SemanticModelBuilder:
         return relationships
     
     async def __get_connector(self, connector_id: UUID) -> ConnectorResponse:
-        return await self._connector_service.get_connector(str(connector_id))
+        return await self._connector_service.get_connector(connector_id)
 
     async def _get_sql_connector(self, connector: ConnectorResponse) -> SqlConnector:
         runtime_type = ConnectorRuntimeType(connector.connector_type.upper())

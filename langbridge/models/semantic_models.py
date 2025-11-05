@@ -30,5 +30,6 @@ class SemanticModelRecordResponse(_Base):
     content_yaml: str
     created_at: datetime
     updated_at: datetime
+    connector_id: UUID
 
     model_config = ConfigDict(from_attributes=True)

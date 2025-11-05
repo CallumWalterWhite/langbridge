@@ -1,7 +1,6 @@
 from dependency_injector import containers, providers
 
 from db import (
-    async_session_scope,
     create_async_engine_for_url,
     create_async_session_factory,
     create_engine_for_url,
@@ -60,8 +59,8 @@ class Container(containers.DeclarativeContainer):
     )
 
     session = providers.Resource(session_scope, session_factory=session_factory)
-    async_session = providers.Resource(
-        async_session_scope,
+    async_session = providers.Factory(
+        lambda session_factory: session_factory(),
         session_factory=async_session_factory,
     )
 

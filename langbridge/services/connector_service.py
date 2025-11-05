@@ -140,7 +140,7 @@ class ConnectorService:
 
         return ConnectorResponse.from_connector(connector)
 
-    async def get_connector(self, connector_id: str) -> ConnectorResponse:
+    async def get_connector(self, connector_id: uuid.UUID) -> ConnectorResponse:
         connector = await self._connector_repository.get_by_id(connector_id)
         if not connector:
             raise BusinessValidationError("Connector not found")
