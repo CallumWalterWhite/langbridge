@@ -42,12 +42,18 @@ class Container(containers.DeclarativeContainer):
         create_engine_for_url,
         database_url=settings.SQLALCHEMY_DATABASE_URI,
         echo=settings.IS_LOCAL,
+        pool_size=settings.SQLALCHEMY_POOL_SIZE,
+        max_overflow=settings.SQLALCHEMY_MAX_OVERFLOW,
+        pool_timeout=settings.SQLALCHEMY_POOL_TIMEOUT,
     )
 
     async_engine = providers.Singleton(
         create_async_engine_for_url,
         database_url=settings.SQLALCHEMY_ASYNC_DATABASE_URI,
         echo=settings.IS_LOCAL,
+        pool_size=settings.SQLALCHEMY_POOL_SIZE,
+        max_overflow=settings.SQLALCHEMY_MAX_OVERFLOW,
+        pool_timeout=settings.SQLALCHEMY_POOL_TIMEOUT,
     )
 
     oauth = providers.Singleton(create_oauth_client)

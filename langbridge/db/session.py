@@ -4,13 +4,14 @@ from typing import Any
 
 from sqlalchemy import create_engine
 from sqlalchemy.engine import Engine
-from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
     async_sessionmaker,
     create_async_engine,
 )
+from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.pool import NullPool
 
 from .base import Base
 
@@ -25,26 +26,55 @@ def _build_connect_args(database_url: str) -> dict[str, Any]:
     return connect_args
 
 
-def create_engine_for_url(database_url: str, echo: bool = False) -> Engine:
+def _engine_kwargs(
+    database_url: str,
+    echo: bool,
+    pool_size: int | None,
+    max_overflow: int | None,
+    pool_timeout: int | None,
+) -> dict[str, Any]:
+    kwargs: dict[str, Any] = {
+        "echo": echo,
+        "future": True,
+        "pool_pre_ping": True,
+        "connect_args": _build_connect_args(database_url),
+    }
+    if database_url.startswith("sqlite"):
+        kwargs["poolclass"] = NullPool
+    else:
+        if pool_size is not None:
+            kwargs["pool_size"] = pool_size
+        if max_overflow is not None:
+            kwargs["max_overflow"] = max_overflow
+        if pool_timeout is not None:
+            kwargs["pool_timeout"] = pool_timeout
+    return kwargs
+
+
+def create_engine_for_url(
+    database_url: str,
+    echo: bool = False,
+    *,
+    pool_size: int | None = None,
+    max_overflow: int | None = None,
+    pool_timeout: int | None = None,
+) -> Engine:
     """Create SQLAlchemy engine configured for SQLite or PostgreSQL."""
-    return create_engine(
-        database_url,
-        echo=echo,
-        future=True,
-        pool_pre_ping=True,
-        connect_args=_build_connect_args(database_url),
-    )
+    kwargs = _engine_kwargs(database_url, echo, pool_size, max_overflow, pool_timeout)
+    return create_engine(database_url, **kwargs)
 
 
-def create_async_engine_for_url(database_url: str, echo: bool = False) -> AsyncEngine:
+def create_async_engine_for_url(
+    database_url: str,
+    echo: bool = False,
+    *,
+    pool_size: int | None = None,
+    max_overflow: int | None = None,
+    pool_timeout: int | None = None,
+) -> AsyncEngine:
     """Create an async SQLAlchemy engine configured for SQLite or PostgreSQL."""
-    return create_async_engine(
-        database_url,
-        echo=echo,
-        future=True,
-        pool_pre_ping=True,
-        connect_args=_build_connect_args(database_url),
-    )
+    kwargs = _engine_kwargs(database_url, echo, pool_size, max_overflow, pool_timeout)
+    return create_async_engine(database_url, **kwargs)
 
 
 def create_session_factory(engine: Engine) -> sessionmaker[Session]:

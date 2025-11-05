@@ -68,6 +68,9 @@ class Settings(BaseSettings):
     POSTGRES_PASSWORD: str = ""
     POSTGRES_DB: str = ""
     LOCAL_DB: str = "local.db"
+    SQLALCHEMY_POOL_SIZE: int = 5
+    SQLALCHEMY_MAX_OVERFLOW: int = 10
+    SQLALCHEMY_POOL_TIMEOUT: int = 30
     
     REDIS_HOST: str = "localhost"
     REDIS_PORT: int = 6379
