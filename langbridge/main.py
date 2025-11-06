@@ -49,15 +49,15 @@ if settings.IS_LOCAL:
 
 # Order of middleware matters! UnitOfWork should be first to ensure DB session is available to all
 # subsequent middleware and route handlers.
-app.add_middleware(UnitOfWorkMiddleware)
-app.add_middleware(AuthMiddleware)
+app.add_middleware(ErrorMiddleware)
 app.add_middleware(
     SessionMiddleware,
     secret_key=settings.SESSION_SECRET,
     same_site="lax",
-    https_only=False, 
+    https_only=False,
 )
-app.add_middleware(ErrorMiddleware)
+app.add_middleware(AuthMiddleware)
+app.add_middleware(UnitOfWorkMiddleware)  
 
 if settings.CORS_ENABLED:
     app.add_middleware(

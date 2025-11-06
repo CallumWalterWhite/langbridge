@@ -20,10 +20,10 @@ import {
 } from '@/orchestration/agents';
 
 interface LLMConnectionUpdateProps {
-  connectionId: number;
+  connectionId: string;
 }
 
-const llmConnectionQueryKey = (connectionId: number) => ['llm-connection', connectionId] as const;
+const llmConnectionQueryKey = (connectionId: string) => ['llm-connection', connectionId] as const;
 
 function resolveError(error: unknown): string {
   if (error instanceof ApiError) {

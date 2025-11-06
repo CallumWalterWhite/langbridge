@@ -55,19 +55,19 @@ class ConnectorSchemaService:
         config = self._build_connector_config(connector)
         return await self._create_sql_connector(connector_type, config)
 
-    async def get_schemas(self, connector_id: str) -> list[str]:
-        sql_connector = await self._get_sql_connector(UUID(connector_id))
+    async def get_schemas(self, connector_id: UUID) -> list[str]:
+        sql_connector = await self._get_sql_connector(connector_id)
         return sql_connector.fetch_schemas_sync()
 
-    async def get_tables(self, connector_id: str, schema: str) -> list[str]:
-        sql_connector = await self._get_sql_connector(UUID(connector_id))
+    async def get_tables(self, connector_id: UUID, schema: str) -> list[str]:
+        sql_connector = await self._get_sql_connector(connector_id)
         return sql_connector.fetch_tables_sync(schema=schema)
 
     async def get_columns(
         self,
-        connector_id: str,
+        connector_id: UUID,
         schema: str,
         table: str,
     ) -> list[ColumnMetadata]:
-        sql_connector = await self._get_sql_connector(UUID(connector_id))
+        sql_connector = await self._get_sql_connector(connector_id)
         return sql_connector.fetch_columns_sync(schema=schema, table=table)

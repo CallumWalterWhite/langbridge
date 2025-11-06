@@ -1,4 +1,5 @@
 from typing import List
+import uuid
 
 from dependency_injector.wiring import Provide, inject
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -35,7 +36,7 @@ async def list_llm_connections(
 @router.get("/llm-connections/{connection_id}", response_model=LLMConnectionResponse)
 @inject
 async def get_llm_connection(
-    connection_id: int,
+    connection_id: uuid.UUID,
     agent_service: AgentService = Depends(Provide[Container.agent_service]),
 ) -> LLMConnectionResponse:
     connection = await agent_service.get_llm_connection(connection_id)
@@ -50,7 +51,7 @@ async def get_llm_connection(
 @router.put("/llm-connections/{connection_id}", response_model=LLMConnectionResponse)
 @inject
 async def update_llm_connection(
-    connection_id: int,
+    connection_id: uuid.UUID,
     request: LLMConnectionUpdate,
     agent_service: AgentService = Depends(Provide[Container.agent_service]),
 ) -> LLMConnectionResponse:

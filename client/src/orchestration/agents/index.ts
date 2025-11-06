@@ -31,7 +31,7 @@ export async function fetchLLMConnections(): Promise<LLMConnection[]> {
   return response.map(normalizeConnection);
 }
 
-export async function fetchLLMConnection(connectionId: number): Promise<LLMConnection> {
+export async function fetchLLMConnection(connectionId: string): Promise<LLMConnection> {
   const response = await apiFetch<LLMConnectionApiResponse>(`${BASE_PATH}/${connectionId}`);
   return normalizeConnection(response);
 }
@@ -63,7 +63,7 @@ export async function createLLMConnection(payload: CreateLLMConnectionPayload): 
 }
 
 export async function updateLLMConnection(
-  connectionId: number,
+  connectionId: string,
   payload: UpdateLLMConnectionPayload,
 ): Promise<LLMConnection> {
   const body: Record<string, unknown> = {

@@ -58,7 +58,7 @@ class AgentService:
         connections = await self._repository.get_all()
         return [LLMConnectionSecretResponse.model_validate(conn) for conn in connections]
 
-    async def get_llm_connection(self, connection_id: int) -> Optional[LLMConnectionResponse]:
+    async def get_llm_connection(self, connection_id: uuid.UUID) -> Optional[LLMConnectionResponse]:
         connection = await self._repository.get_by_id(connection_id)
         if not connection:
             return None
@@ -66,7 +66,7 @@ class AgentService:
 
     async def update_llm_connection(
         self,
-        connection_id: int,
+        connection_id: uuid.UUID,
         connection_update: LLMConnectionUpdate,
     ) -> Optional[LLMConnectionResponse]:
         current_connection: Optional[LLMConnection] = await self._repository.get_by_id(connection_id)
@@ -108,7 +108,7 @@ class AgentService:
 
         return LLMConnectionResponse.model_validate(current_connection)
 
-    async def delete_llm_connection(self, connection_id: int) -> None:
+    async def delete_llm_connection(self, connection_id: uuid.UUID) -> None:
         current_connection = await self._repository.get_by_id(connection_id)
         if not current_connection:
             raise BusinessValidationError("LLM connection not found")

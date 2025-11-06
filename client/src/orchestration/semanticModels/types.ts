@@ -12,6 +12,7 @@ export interface SemanticMeasure {
   type: string;
   description?: string | null;
   aggregation?: string | null;
+  synonyms?: string[] | null;
 }
 
 export interface SemanticFilter {
@@ -21,6 +22,8 @@ export interface SemanticFilter {
 }
 
 export interface SemanticTable {
+  schema: string;
+  name: string;
   description?: string | null;
   synonyms?: string[] | null;
   dimensions?: SemanticDimension[] | null;
@@ -43,7 +46,7 @@ export interface SemanticMetric {
 
 export interface SemanticModel {
   version: string;
-  database?: string | null;
+  connector?: string | null;
   description?: string | null;
   tables: Record<string, SemanticTable>;
   relationships?: SemanticRelationship[] | null;
@@ -54,6 +57,7 @@ export interface SemanticModelRecord {
   id: string;
   organizationId: string;
   projectId?: string | null;
+  connectorId: string;
   name: string;
   description?: string | null;
   contentYaml: string;
@@ -64,6 +68,7 @@ export interface SemanticModelRecord {
 export interface CreateSemanticModelPayload {
   organizationId: string;
   projectId?: string;
+  connectorId: string;
   name: string;
   description?: string;
   autoGenerate?: boolean;

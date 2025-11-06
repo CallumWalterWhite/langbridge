@@ -1,3 +1,4 @@
+from uuid import UUID
 from dependency_injector.wiring import Provide, inject
 from fastapi import APIRouter, Depends, HTTPException, status
 
@@ -31,7 +32,7 @@ async def create_connector(
 @router.get("/{connector_id}", response_model=ConnectorResponse)
 @inject
 async def get_connector(
-    connector_id: str,
+    connector_id: UUID,
     connector_service: ConnectorService = Depends(Provide[Container.connector_service]),
 ) -> ConnectorResponse:
     return await connector_service.get_connector(connector_id)
@@ -40,7 +41,7 @@ async def get_connector(
 @router.get("/{connector_id}/source/schemas", response_model=ConnectorSourceSchemasResponse)
 @inject
 async def get_connector_schemas(
-    connector_id: str,
+    connector_id: UUID,
     connector_schema_service: ConnectorSchemaService = Depends(
         Provide[Container.connector_schema_service]
     ),
@@ -55,7 +56,7 @@ async def get_connector_schemas(
 )
 @inject
 async def get_connector_tables(
-    connector_id: str,
+    connector_id: UUID,
     schema: str,
     connector_schema_service: ConnectorSchemaService = Depends(
         Provide[Container.connector_schema_service]
@@ -71,7 +72,7 @@ async def get_connector_tables(
 )
 @inject
 async def get_connector_table(
-    connector_id: str,
+    connector_id: UUID,
     schema: str,
     table: str,
     connector_schema_service: ConnectorSchemaService = Depends(
@@ -118,7 +119,7 @@ async def get_connector_schema(
 @router.put("/{connector_id}", response_model=ConnectorResponse)
 @inject
 async def update_connector(
-    connector_id: str,
+    connector_id: UUID,
     request: UpdateConnectorRequest,
     connector_service: ConnectorService = Depends(Provide[Container.connector_service]),
 ) -> ConnectorResponse:
@@ -128,7 +129,7 @@ async def update_connector(
 @router.delete("/{connector_id}", status_code=status.HTTP_204_NO_CONTENT)
 @inject
 async def delete_connector(
-    connector_id: str,
+    connector_id: UUID,
     connector_service: ConnectorService = Depends(Provide[Container.connector_service]),
 ) -> None:
     await connector_service.delete_connector(connector_id)

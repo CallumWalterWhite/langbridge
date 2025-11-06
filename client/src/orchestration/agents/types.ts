@@ -1,7 +1,7 @@
 export type LLMProvider = 'openai' | 'anthropic' | 'azure';
 
 export interface LLMConnection {
-  id: number;
+  id: string;
   name: string;
   provider: LLMProvider;
   model: string;
@@ -15,7 +15,7 @@ export interface LLMConnection {
 }
 
 export interface LLMConnectionApiResponse {
-  id: number;
+  id: string;
   name: string;
   provider: LLMProvider;
   model: string;

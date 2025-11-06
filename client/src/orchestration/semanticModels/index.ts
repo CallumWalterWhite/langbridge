@@ -93,3 +93,11 @@ export async function fetchSemanticModelYaml(
   }
   return response.text();
 }
+
+export async function generateSemanticModelYaml(connectorId: string): Promise<string> {
+  if (!connectorId) {
+    throw new Error('Connector id is required to generate a semantic model.');
+  }
+  const params = new URLSearchParams({ connector_id: connectorId });
+  return apiFetch<string>(`${BASE_PATH}/generate/yaml?${params.toString()}`);
+}

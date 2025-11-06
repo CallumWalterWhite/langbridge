@@ -168,7 +168,7 @@ class ConnectorService:
                 setattr(connector_entity, field, value)
         return ConnectorResponse.from_connector(connector_entity)
 
-    async def delete_connector(self, connector_id: str) -> None:
+    async def delete_connector(self, connector_id: uuid.UUID) -> None:
         connector = await self._connector_repository.get_by_id(connector_id)
         if not connector:
             raise BusinessValidationError("Connector not found")
