@@ -30,11 +30,8 @@ async def lifespan(app: FastAPI):
     container.init_resources()
     initialize_database(container.engine())
     app.state.container = container
-
     yield
-
     container.shutdown_resources()
-
 
 app = FastAPI(
     title=settings.PROJECT_NAME,
@@ -42,10 +39,8 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-
 if settings.IS_LOCAL:
     setup_file_logging()
-
 
 # Order of middleware matters! UnitOfWork should be first to ensure DB session is available to all
 # subsequent middleware and route handlers.
@@ -57,7 +52,7 @@ app.add_middleware(
     https_only=False,
 )
 app.add_middleware(AuthMiddleware)
-app.add_middleware(UnitOfWorkMiddleware)  
+app.add_middleware(UnitOfWorkMiddleware)
 
 if settings.CORS_ENABLED:
     app.add_middleware(
@@ -68,8 +63,25 @@ if settings.CORS_ENABLED:
         allow_headers=["Authorization", "Content-Type"],
     )
 
-
 app.include_router(
     api_router_v1,
     prefix=settings.API_V1_STR,
 )
+
+if __name__ == "__main__":
+    import uvicorn
+
+    host = getattr(settings, "HOST", "0.0.0.0")
+    port = int(getattr(settings, "PORT", 8000))
+    reload = bool(getattr(settings, "UVICORN_RELOAD", settings.IS_LOCAL))
+    log_level = getattr(settings, "UVICORN_LOG_LEVEL", "info")
+
+    # You can also set workers via env/CLI in production (e.g., `--workers 4`)
+    uvicorn.run(
+        "main:app",  # adjust module path if this file isn't named main.py
+        host=host,
+        port=port,
+        reload=reload,
+        log_level=log_level,
+        factory=False,
+    )
