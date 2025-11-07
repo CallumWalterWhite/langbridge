@@ -27,11 +27,11 @@ wire_packages(
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Lifespan context manager to handle startup and shutdown events."""
-    container.init_resources()
+    await container.init_resources()
     initialize_database(container.engine())
     app.state.container = container
     yield
-    container.shutdown_resources()
+    await container.shutdown_resources()
 
 app = FastAPI(
     title=settings.PROJECT_NAME,
