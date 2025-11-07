@@ -27,8 +27,9 @@ class ColumnMetadata:
 class ForeignKeyMetadata:
     name: str
     column: str
-    primary_key: str
     foreign_key: str
+    schema: str
+    table: str
 
 @dataclass
 class TableMetadata:

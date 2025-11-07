@@ -96,10 +96,11 @@ class SqliteConnector(SqlConnector):
             foreign_keys = []
             for row in cursor.fetchall():
                 foreign_key = ForeignKeyMetadata(
-                    name=row[3],
-                    column=row[4],
-                    primary_key=row[5],
-                    foreign_key=row[6],
+                    schema="main",
+                    table=row[2],
+                    name="fk_" + row[3],
+                    column=row[3],
+                    foreign_key=row[4],
                 )
                 foreign_keys.append(foreign_key)
             cursor.close()

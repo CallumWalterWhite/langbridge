@@ -7,6 +7,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Select } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
 import { useWorkspaceScope } from '@/context/workspaceScope';
 import {
@@ -895,6 +896,166 @@ export default function SemanticModelPage(): JSX.Element {
                     )}
                   </div>
                   <div className="space-y-4 rounded-2xl border border-[color:var(--panel-border)] bg-[color:var(--panel-alt)] p-4">
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <div>
+                        <h3 className="text-base font-semibold text-[color:var(--text-primary)]">4. Joins</h3>
+                        <p className="text-xs text-[color:var(--text-muted)]">
+                          Map how these entities relate so downstream tools can combine tables safely.
+                        </p>
+                      </div>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        disabled={builder.tables.length === 0}
+                        onClick={() =>
+                          setBuilder((current) => ({
+                            ...current,
+                            relationships: [
+                              ...current.relationships,
+                              createEmptyRelationship(current.relationships.length + 1),
+                            ],
+                          }))
+                        }
+                      >
+                        Add join
+                      </Button>
+                    </div>
+                    {builder.relationships.length === 0 ? (
+                      <div className="rounded-xl border border-dashed border-[color:var(--panel-border)] bg-white/5 p-4 text-sm">
+                        No joins configured yet. Add at least one join to describe how tables connect.
+                      </div>
+                    ) : (
+                      <div className="space-y-4">
+                        {builder.relationships.map((relationship, index) => (
+                          <div
+                            key={relationship.id}
+                            className="space-y-3 rounded-xl border border-[color:var(--panel-border)] bg-[color:var(--panel-bg)] p-4"
+                          >
+                            <div className="flex flex-wrap items-center justify-between gap-3">
+                              <div>
+                                <p className="text-sm font-semibold text-[color:var(--text-primary)]">
+                                  {relationship.name || `Join ${index + 1}`}
+                                </p>
+                                <p className="text-xs text-[color:var(--text-muted)]">
+                                  {relationship.from && relationship.to
+                                    ? `${relationship.from} → ${relationship.to}`
+                                    : 'Define the source and target entities'}
+                                </p>
+                              </div>
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="sm"
+                                onClick={() =>
+                                  setBuilder((current) => ({
+                                    ...current,
+                                    relationships: current.relationships.filter((entry) => entry.id !== relationship.id),
+                                  }))
+                                }
+                              >
+                                Remove
+                              </Button>
+                            </div>
+                            <div className="grid gap-3 md:grid-cols-2">
+                              <div className="space-y-1">
+                                <Label htmlFor={`join-name-${relationship.id}`}>Join name</Label>
+                                <Input
+                                  id={`join-name-${relationship.id}`}
+                                  value={relationship.name}
+                                  onChange={(event) =>
+                                    setBuilder((current) => ({
+                                      ...current,
+                                      relationships: current.relationships.map((entry) =>
+                                        entry.id === relationship.id ? { ...entry, name: event.target.value } : entry,
+                                      ),
+                                    }))
+                                  }
+                                  placeholder="sales_to_customers"
+                                />
+                              </div>
+                              <div className="space-y-1">
+                                <Label htmlFor={`join-type-${relationship.id}`}>Cardinality</Label>
+                                <Select
+                                  id={`join-type-${relationship.id}`}
+                                  placeholder="Select cardinality"
+                                  value={relationship.type}
+                                  onChange={(event) =>
+                                    setBuilder((current) => ({
+                                      ...current,
+                                      relationships: current.relationships.map((entry) =>
+                                        entry.id === relationship.id
+                                          ? { ...entry, type: event.target.value as RelationshipType }
+                                          : entry,
+                                      ),
+                                    }))
+                                  }
+                                >
+                                  {RELATIONSHIP_TYPES.map((type) => (
+                                    <option key={type} value={type}>
+                                      {type.replace(/_/g, ' ')}
+                                    </option>
+                                  ))}
+                                </Select>
+                              </div>
+                            </div>
+                            <div className="grid gap-3 md:grid-cols-2">
+                              <div className="space-y-1">
+                                <Label htmlFor={`join-from-${relationship.id}`}>From entity</Label>
+                                <Input
+                                  id={`join-from-${relationship.id}`}
+                                  value={relationship.from}
+                                  onChange={(event) =>
+                                    setBuilder((current) => ({
+                                      ...current,
+                                      relationships: current.relationships.map((entry) =>
+                                        entry.id === relationship.id ? { ...entry, from: event.target.value } : entry,
+                                      ),
+                                    }))
+                                  }
+                                  placeholder="_main_sales"
+                                />
+                              </div>
+                              <div className="space-y-1">
+                                <Label htmlFor={`join-to-${relationship.id}`}>To entity</Label>
+                                <Input
+                                  id={`join-to-${relationship.id}`}
+                                  value={relationship.to}
+                                  onChange={(event) =>
+                                    setBuilder((current) => ({
+                                      ...current,
+                                      relationships: current.relationships.map((entry) =>
+                                        entry.id === relationship.id ? { ...entry, to: event.target.value } : entry,
+                                      ),
+                                    }))
+                                  }
+                                  placeholder="_main_customers"
+                                />
+                              </div>
+                            </div>
+                            <div className="space-y-1">
+                              <Label htmlFor={`join-condition-${relationship.id}`}>Join condition</Label>
+                              <Textarea
+                                id={`join-condition-${relationship.id}`}
+                                rows={2}
+                                value={relationship.joinOn}
+                                onChange={(event) =>
+                                  setBuilder((current) => ({
+                                    ...current,
+                                    relationships: current.relationships.map((entry) =>
+                                      entry.id === relationship.id ? { ...entry, joinOn: event.target.value } : entry,
+                                    ),
+                                  }))
+                                }
+                                placeholder="_main_sales.customer_id = _main_customers.customer_id"
+                              />
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                  <div className="space-y-4 rounded-2xl border border-[color:var(--panel-border)] bg-[color:var(--panel-alt)] p-4">
                     <div className="flex items-center justify-between">
                       <h3 className="text-base font-semibold text-[color:var(--text-primary)]">5. Metrics</h3>
                       <Button
@@ -1081,6 +1242,17 @@ function createEmptyBuilderModel(): BuilderModel {
   };
 }
 
+function createEmptyRelationship(position: number): BuilderRelationship {
+  return {
+    id: createId('relationship'),
+    name: `join_${position}`,
+    from: '',
+    to: '',
+    type: 'many_to_one',
+    joinOn: '',
+  };
+}
+
 function createEmptyTable(position: number): BuilderTable {
   return {
     id: createId('table'),
@@ -1235,16 +1407,26 @@ function parseYamlToBuilderModel(yamlText: string): BuilderModel {
     };
   });
 
-  const relationships: BuilderRelationship[] = Array.isArray(candidate.relationships)
-    ? candidate.relationships.map((relationship: any) => ({
-        id: createId('relationship'),
-        name: relationship.name ?? '',
-        from: relationship.from_ ?? relationship.from ?? '',
-        to: relationship.to ?? '',
-        type: (relationship.type as RelationshipType) ?? 'many_to_one',
-        joinOn: relationship.join_on ?? relationship.joinOn ?? '',
-      }))
-    : [];
+  const relationshipSource = Array.isArray(candidate.relationships)
+    ? candidate.relationships
+    : Array.isArray(candidate.joins)
+      ? candidate.joins
+      : [];
+
+  const relationships: BuilderRelationship[] = relationshipSource.map((relationship: any) => {
+    const candidateType =
+      (relationship.type as RelationshipType | undefined) ??
+      (relationship.cardinality as RelationshipType | undefined);
+    const resolvedType = candidateType && RELATIONSHIP_TYPES.includes(candidateType) ? candidateType : 'many_to_one';
+    return {
+      id: createId('relationship'),
+      name: relationship.name ?? '',
+      from: relationship.from_ ?? relationship.from ?? relationship.left ?? '',
+      to: relationship.to ?? relationship.right ?? '',
+      type: resolvedType,
+      joinOn: relationship.join_on ?? relationship.joinOn ?? relationship.on ?? '',
+    };
+  });
 
   const metricsEntries = candidate.metrics ?? {};
   const metrics: BuilderMetric[] = Object.entries(metricsEntries as Record<string, any>).map(([metricName, metric]) => ({

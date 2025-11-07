@@ -280,54 +280,77 @@ class SemanticModelBuilder:
                 if dimension.primary_key:
                     pk_index[dimension.name.lower()].append((table_name, dimension))
 
-        for table_name, table in tables.items():
-            for dimension in table.dimensions or []:
-                if dimension.primary_key:
-                    continue
+        # for scoped in scope_metadata:
+        #     for foreign_key in scoped.foreign_keys:
+        #         # target_table = foreign_key.
+            
+        #     # for dimension in table.dimensions or []:
+        #     #     if dimension.primary_key:
+        #     #         continue
                 
-                # Use foregin metadata to infer relationships
 
-                scoped_metadata: ScopedTableMetadata | None = next(
-                    (sm for sm in scope_metadata if table.name == sm.table_metadata.name and sm.schema == table.schema),
-                    None
+
+        #         if scoped_metadata:
+        #             foreign_keys_metadata = scoped_metadata.columns
+        #             if foreign_keys_metadata:
+        #                 for col in foreign_keys_metadata:
+        #                     if foreign_key.column == dimension.name:
+        #                         target_table = foreign_key.foreign_key
+        #                         target_dimension = foreign_key.primary_key
+        #                         relationship_name = f"{table_name}_to_{target_table}"
+        #                         join_expression = f"{table_name}.{dimension.name} = {target_table}.{target_dimension}"
+        #                         relationships.append(
+        #                             Relationship(
+        #                                 name=relationship_name,
+        #                                 from_=table_name,
+        #                                 to=target_table,
+        #                                 type="many_to_one",
+        #                                 join_on=join_expression,
+        #                             )
+        #                         )
+        #         else:
+        #             fk_target = self._infer_foreign_key_target(dimension.name, pk_index, table_name)
+        #             if not fk_target:
+        #                 continue
+
+        #             target_table, target_dimension = fk_target
+        #             relationship_name = f"{table_name}_to_{target_table}"
+        #             join_expression = f"{table_name}.{dimension.name} = {target_table}.{target_dimension.name}"
+
+        #             relationships.append(
+        #                 Relationship(
+        #                     name=relationship_name,
+        #                     from_=table_name,
+        #                     to=target_table,
+        #                     type="many_to_one",
+        #                     join_on=join_expression,
+        #                 )
+        #             )
+        
+        for scoped in scope_metadata:
+            for foreign_key in scoped.foreign_keys:
+                source_table_key = self._make_table_key(
+                    connector_name="",
+                    schema=foreign_key.schema,
+                    table_name=scoped.table_metadata.name,
                 )
-
-                if scoped_metadata:
-                    foreign_keys_metadata = scoped_metadata.foreign_keys
-                    if foreign_keys_metadata:
-                        for foreign_key in foreign_keys_metadata:
-                            if foreign_key.column == dimension.name:
-                                target_table = foreign_key.foreign_key
-                                target_dimension = foreign_key.primary_key
-                                relationship_name = f"{table_name}_to_{target_table}"
-                                join_expression = f"{table_name}.{dimension.name} = {target_table}.{target_dimension}"
-                                relationships.append(
-                                    Relationship(
-                                        name=relationship_name,
-                                        from_=table_name,
-                                        to=target_table,
-                                        type="many_to_one",
-                                        join_on=join_expression,
-                                    )
-                                )
-                else:
-                    fk_target = self._infer_foreign_key_target(dimension.name, pk_index, table_name)
-                    if not fk_target:
-                        continue
-
-                    target_table, target_dimension = fk_target
-                    relationship_name = f"{table_name}_to_{target_table}"
-                    join_expression = f"{table_name}.{dimension.name} = {target_table}.{target_dimension.name}"
-
-                    relationships.append(
-                        Relationship(
-                            name=relationship_name,
-                            from_=table_name,
-                            to=target_table,
-                            type="many_to_one",
-                            join_on=join_expression,
-                        )
+                target_table_key = self._make_table_key(
+                    connector_name="",
+                    schema=foreign_key.schema,
+                    table_name=foreign_key.table,
+                )
+                relationship_name = f"{source_table_key}_to_{target_table_key}"
+                join_expression = f"{source_table_key}.{foreign_key.column} = {target_table_key}.{foreign_key.foreign_key}"
+                relationships.append(
+                    Relationship(
+                        name=relationship_name,
+                        from_=source_table_key,
+                        to=target_table_key,
+                        type="many_to_one",
+                        join_on=join_expression,
                     )
+                )
+        
         return relationships
     
     async def __get_connector(self, connector_id: UUID) -> ConnectorResponse:

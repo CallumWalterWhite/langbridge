@@ -58,8 +58,8 @@ class Container(containers.DeclarativeContainer):
 
     oauth = providers.Singleton(create_oauth_client)
 
-    session_factory = providers.Singleton(create_session_factory, engine=engine)
-    async_session_factory = providers.Singleton(
+    session_factory = providers.Resource(create_session_factory, engine=engine)
+    async_session_factory = providers.Resource(
         create_async_session_factory,
         engine=async_engine,
     )
