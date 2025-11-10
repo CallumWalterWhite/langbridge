@@ -30,7 +30,7 @@ class LLMConnection(Base):
     updated_at = Column(DateTime, default=datetime.now(), onupdate=datetime.now())
 
     # Relationship with agents
-    agents = relationship("Agent", back_populates="llm_connection")
+    # agents = relationship("Agent", back_populates="llm_connection")
 
     # backrefs to orgs/projects
     organizations: Mapped[list["Organization"]] = relationship(
@@ -43,20 +43,20 @@ class LLMConnection(Base):
     def __repr__(self):
         return f"<LLMConnection(name='{self.name}', provider='{self.provider}')>"
 
-class Agent(Base):
-    """SQLAlchemy model for AI agents"""
-    __tablename__ = 'agents'
+# class Agent(Base):
+#     """SQLAlchemy model for AI agents"""
+#     __tablename__ = 'agents'
 
-    id = Column(Integer, primary_key=True)
-    name = Column(String(100), nullable=False)
-    description = Column(String(500))
-    connection_id = Column(Integer, ForeignKey('llm_connections.id'), nullable=False)
-    parameters = Column(JSON) 
-    is_active = Column(Boolean, default=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+#     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
+#     name = Column(String(100), nullable=False)
+#     description = Column(String(500))
+#     connection_id = Column(Integer, ForeignKey('llm_connections.id'), nullable=False)
+#     parameters = Column(JSON) 
+#     is_active = Column(Boolean, default=True)
+#     created_at = Column(DateTime, default=datetime.utcnow)
+#     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
-    llm_connection = relationship("LLMConnection", back_populates="agents")
+#     llm_connection = relationship("LLMConnection", back_populates="agents")
 
-    def __repr__(self):
-        return f"<Agent(name='{self.name}', connection='{self.llm_connection.name}')>"
+#     def __repr__(self):
+#         return f"<Agent(name='{self.name}', connection='{self.llm_connection.name}')>"

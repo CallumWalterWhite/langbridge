@@ -1,5 +1,6 @@
 'use client';
 
+import { JSX } from 'react';
 import { SemanticModelDetail } from './_components/SemanticModelDetail';
 
 type SemanticModelPageProps = {

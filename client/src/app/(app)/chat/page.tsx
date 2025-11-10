@@ -142,7 +142,7 @@ export default function ChatIndexPage() {
             <ul className="space-y-3">
               {threadsQuery.data
                 ?.slice()
-                .sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1))
+                .sort((a, b) => (a.updatedAt != null && b.updatedAt != null ? a.updatedAt < b.updatedAt ? 1 : -1: 0))
                 .map((thread) => (
                   <li key={thread.id}>
                     <div className="group flex items-center justify-between rounded-2xl border border-[color:var(--panel-border)] bg-[color:var(--panel-bg)] px-4 py-4 transition hover:border-[color:var(--border-strong)] hover:bg-[color:var(--panel-alt)]">

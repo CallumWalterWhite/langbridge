@@ -12,6 +12,7 @@ import { useWorkspaceScope } from '@/context/workspaceScope';
 import { formatRelativeDate } from '@/lib/utils';
 import { fetchLLMConnections } from '@/orchestration/agents';
 import type { LLMConnection } from '@/orchestration/agents';
+import { JSX } from 'react';
 
 const llmConnectionsQueryKey = ['llm-connections'] as const;
 

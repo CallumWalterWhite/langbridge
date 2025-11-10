@@ -21,3 +21,5 @@ langchain-anthropic>=0.1.0
 langchain==0.3.27
 mcp==1.17.0
 pandas==2.3.3
+itsdangerous==2.2.0
+psycopg2==2.9.11

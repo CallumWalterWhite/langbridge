@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo } from 'react';
+import { JSX, useEffect, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ArrowLeft, Copy, Download, Loader2, RefreshCw, Trash2 } from 'lucide-react';
@@ -15,8 +15,11 @@ import {
   deleteSemanticModel,
   fetchSemanticModel,
   fetchSemanticModelYaml,
-  type SemanticModelRecord,
 } from '@/orchestration/semanticModels';
+
+import {
+  type SemanticModelRecord
+} from '@/orchestration/semanticModels/types';
 
 interface SemanticModelDetailProps {
   modelId: string;
@@ -226,7 +229,7 @@ export function SemanticModelDetail({ modelId }: SemanticModelDetailProps): JSX.
         </Button>
         <Button
           type="button"
-          variant="destructive"
+          variant="default"
           size="sm"
           className="gap-2"
           onClick={() => deleteMutation.mutate()}

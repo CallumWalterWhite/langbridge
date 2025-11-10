@@ -111,4 +111,5 @@ export type {
   LLMConnectionTestResult,
   TestLLMConnectionPayload,
   UpdateLLMConnectionPayload,
+  LLMProvider
 } from './types';

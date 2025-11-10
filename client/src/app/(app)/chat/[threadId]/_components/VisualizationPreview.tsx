@@ -165,7 +165,7 @@ export function VisualizationPreview({ visualization, result }: VisualizationPre
                 stroke={CHART_COLORS[index % CHART_COLORS.length]}
                 fill={CHART_COLORS[index % CHART_COLORS.length]}
                 strokeWidth={2}
-                radius={variant === 'bar' ? [4, 4, 0, 0] : 0}
+                radius={variant === 'bar' ? 4 : undefined}
                 type={variant === 'line' ? 'monotone' : undefined}
                 dot={variant === 'line'}
               />
@@ -200,7 +200,7 @@ export function VisualizationPreview({ visualization, result }: VisualizationPre
           label: record[groupBy ?? dimensionKey ?? 'label'],
         };
       })
-      .filter((entry): entry is Record<string, number | string> => entry !== null);
+      .filter((entry): entry is { [x: string]: number | string; label: string } => entry !== null);
 
     if (data.length === 0) {
       return <ChartPlaceholder message="Not enough numeric rows to render the scatter plot." />;

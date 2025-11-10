@@ -10,7 +10,8 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { useWorkspaceScope } from '@/context/workspaceScope';
 import { formatRelativeDate } from '@/lib/utils';
 import { listSemanticModels } from '@/orchestration/semanticModels';
-import type { SemanticModelRecord } from '@/orchestration/semanticModels';
+import type { SemanticModelRecord } from '@/orchestration/semanticModels/types';
+import { JSX } from 'react';
 
 const semanticModelsQueryKey = (organizationId: string | null | undefined, projectId: string | null | undefined) =>
   ['semantic-models', organizationId, projectId] as const;

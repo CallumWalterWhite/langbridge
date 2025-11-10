@@ -3,7 +3,7 @@ services:
   backend:
     build:
       context: ./langbridge
-      dockerfile: Dockerfile
+      dockerfile: DockerFile
     container_name: langbridge-backend
     env_file:
       - ./langbridge/.env

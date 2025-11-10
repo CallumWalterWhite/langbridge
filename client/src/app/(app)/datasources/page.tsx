@@ -10,6 +10,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { useWorkspaceScope } from '@/context/workspaceScope';
 import { fetchConnectors } from '@/orchestration/connectors';
 import type { ConnectorResponse } from '@/orchestration/connectors';
+import { JSX } from 'react';
 
 const connectorsQueryKey = (organizationId: string | null | undefined) =>
   ['connectors', organizationId] as const;
