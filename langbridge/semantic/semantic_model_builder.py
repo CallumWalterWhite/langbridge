@@ -15,7 +15,7 @@ from connectors import (
     ForeignKeyMetadata,
     SqlConnector,
 )
-from errors.application_errors import BusinessValidationError
+from orchestrator.tools.sql_analyst.interfaces import QueryResult
 from semantic.model import MeasureAggregation
 from semantic import Dimension, Measure, Relationship, SemanticModel, Table
 from services.connector_service import ConnectorService
@@ -75,6 +75,7 @@ class SemanticModelBuilder:
                         for column in columns_metadata
                         if (column.name) in [col[2] for col in scope_columns]
                     ]
+                    
                 foreign_keys_metadata = await sql_connector.fetch_foreign_keys(schema, table[1])
                 scope_metadata.append(
                     ScopedTableMetadata(
@@ -135,6 +136,8 @@ class SemanticModelBuilder:
                 if dimension.primary_key:
                     column_meta["role"] = "primary_key"
                     primary_keys.append(dimension.name)
+                if dimension.vectorized:
+                    column_meta["vectorized"] = True
                 table_columns[dimension.name] = column_meta
 
                 dimension_key = f"{entity_name}.{dimension.name}"
@@ -146,9 +149,11 @@ class SemanticModelBuilder:
                     }
                     if dimension.description:
                         dimension_entry["description"] = dimension.description
-                    if dimension.synonyms:
-                        dimension_entry["synonyms"] = dimension.synonyms
-                    dimensions[dimension_key] = dimension_entry
+                if dimension.synonyms:
+                    dimension_entry["synonyms"] = dimension.synonyms
+                if dimension.vectorized:
+                    dimension_entry["vectorized"] = True
+                dimensions[dimension_key] = dimension_entry
 
             for measure in table.measures or []:
                 column_meta = {
@@ -279,53 +284,6 @@ class SemanticModelBuilder:
             for dimension in table.dimensions or []:
                 if dimension.primary_key:
                     pk_index[dimension.name.lower()].append((table_name, dimension))
-
-        # for scoped in scope_metadata:
-        #     for foreign_key in scoped.foreign_keys:
-        #         # target_table = foreign_key.
-            
-        #     # for dimension in table.dimensions or []:
-        #     #     if dimension.primary_key:
-        #     #         continue
-                
-
-
-        #         if scoped_metadata:
-        #             foreign_keys_metadata = scoped_metadata.columns
-        #             if foreign_keys_metadata:
-        #                 for col in foreign_keys_metadata:
-        #                     if foreign_key.column == dimension.name:
-        #                         target_table = foreign_key.foreign_key
-        #                         target_dimension = foreign_key.primary_key
-        #                         relationship_name = f"{table_name}_to_{target_table}"
-        #                         join_expression = f"{table_name}.{dimension.name} = {target_table}.{target_dimension}"
-        #                         relationships.append(
-        #                             Relationship(
-        #                                 name=relationship_name,
-        #                                 from_=table_name,
-        #                                 to=target_table,
-        #                                 type="many_to_one",
-        #                                 join_on=join_expression,
-        #                             )
-        #                         )
-        #         else:
-        #             fk_target = self._infer_foreign_key_target(dimension.name, pk_index, table_name)
-        #             if not fk_target:
-        #                 continue
-
-        #             target_table, target_dimension = fk_target
-        #             relationship_name = f"{table_name}_to_{target_table}"
-        #             join_expression = f"{table_name}.{dimension.name} = {target_table}.{target_dimension.name}"
-
-        #             relationships.append(
-        #                 Relationship(
-        #                     name=relationship_name,
-        #                     from_=table_name,
-        #                     to=target_table,
-        #                     type="many_to_one",
-        #                     join_on=join_expression,
-        #                 )
-        #             )
         
         for scoped in scope_metadata:
             for foreign_key in scoped.foreign_keys:
@@ -352,6 +310,17 @@ class SemanticModelBuilder:
                 )
         
         return relationships
+    
+    async def __get_column_values_vector(
+        self,
+        sql_connector: SqlConnector,
+        schema: str,
+        table_name: str,
+        column_name: str,
+    ) -> List[Any]:
+        query = f"SELECT DISTINCT {column_name} FROM {schema}.{table_name} WHERE {column_name} IS NOT NULL"
+        result: QueryResult = await sql_connector.execute(query)
+        return [row[0] for row in result.rows]
     
     async def __get_connector(self, connector_id: UUID) -> ConnectorResponse:
         return await self._connector_service.get_connector(connector_id)

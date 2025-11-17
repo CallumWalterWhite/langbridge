@@ -588,6 +588,7 @@ export default function SemanticModelPage(): JSX.Element {
                                                   name: '',
                                                   type: '',
                                                   primaryKey: false,
+                                                  vectorized: false,
                                                 },
                                               ],
                                             }
@@ -725,6 +726,31 @@ export default function SemanticModelPage(): JSX.Element {
                                           }
                                         />
                                         Primary key
+                                      </label>
+                                      <label className="mt-2 flex items-center gap-2 text-xs font-medium text-[color:var(--text-primary)]">
+                                        <input
+                                          type="checkbox"
+                                          checked={Boolean(dimension.vectorized)}
+                                          onChange={(event) =>
+                                            setBuilder((current) => ({
+                                              ...current,
+                                              tables: current.tables.map((entry) => {
+                                                if (entry.id !== table.id) {
+                                                  return entry;
+                                                }
+                                                return {
+                                                  ...entry,
+                                                  dimensions: entry.dimensions.map((item) =>
+                                                    item.id === dimension.id
+                                                      ? { ...item, vectorized: event.target.checked }
+                                                      : item,
+                                                  ),
+                                                };
+                                              }),
+                                            }))
+                                          }
+                                        />
+                                        Vectorize values for semantic search
                                       </label>
                                     </div>
                                   ))}
@@ -1318,6 +1344,7 @@ function buildSemanticModelPayload(builder: BuilderModel, connectorName?: string
                   description: dimension.description || undefined,
                   primary_key: dimension.primaryKey || undefined,
                   synonyms: dimension.synonyms && dimension.synonyms.length > 0 ? dimension.synonyms : undefined,
+                  vectorized: dimension.vectorized ? true : undefined,
                 }))
             : undefined,
         measures:
@@ -1396,6 +1423,7 @@ function parseYamlToBuilderModel(yamlText: string): BuilderModel {
         type: dimension.type ?? '',
         description: dimension.description ?? '',
         primaryKey: Boolean(dimension.primary_key ?? dimension.primaryKey),
+        vectorized: Boolean(dimension.vectorized),
       })),
       measures: measures.map((measure: any) => ({
         id: createId('measure'),

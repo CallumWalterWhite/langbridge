@@ -1,4 +1,5 @@
 from .analyst import AnalystAgent, SemanticToolSelector, ToolSelectionError
+from .deep_research import DeepResearchAgent, DeepResearchFinding, DeepResearchResult
 from .planner import (
     PlanningAgent,
     PlannerRequest,
@@ -18,6 +19,9 @@ __all__ = [
     "AnalystAgent",
     "SemanticToolSelector",
     "ToolSelectionError",
+    "DeepResearchAgent",
+    "DeepResearchFinding",
+    "DeepResearchResult",
     "VisualAgent",
     "VisualizationSpec",
     "OrchestrationContext",

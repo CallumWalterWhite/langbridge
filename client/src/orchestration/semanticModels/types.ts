@@ -5,6 +5,7 @@ export interface SemanticDimension {
   alias?: string | null;
   description?: string | null;
   synonyms?: string[] | null;
+  vectorized?: boolean;
 }
 
 export interface SemanticMeasure {

@@ -20,7 +20,6 @@ class LLMConnection(Base):
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
     name = Column(String(100), nullable=False)
     description = Column(String(1024))
-    # provider: Mapped[LLMProvider] = mapped_column(SqlEnum(LLMProvider, name="llm_provider"), nullable=False)
     provider = Column(String(50), nullable=False)  # e.g., 'openai', 'anthropic', etc.
     api_key = Column(String(255), nullable=False) # encrypted in production
     model = Column(String(50))  # e.g., 'gpt-4', 'claude-3', etc.
@@ -43,20 +42,15 @@ class LLMConnection(Base):
     def __repr__(self):
         return f"<LLMConnection(name='{self.name}', provider='{self.provider}')>"
 
-# class Agent(Base):
-#     """SQLAlchemy model for AI agents"""
-#     __tablename__ = 'agents'
+class AgentDefinition(Base):
+    """SQLAlchemy model for AI agents"""
+    __tablename__ = 'agents'
 
-#     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
-#     name = Column(String(100), nullable=False)
-#     description = Column(String(500))
-#     connection_id = Column(Integer, ForeignKey('llm_connections.id'), nullable=False)
-#     parameters = Column(JSON) 
-#     is_active = Column(Boolean, default=True)
-#     created_at = Column(DateTime, default=datetime.utcnow)
-#     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
-
-#     llm_connection = relationship("LLMConnection", back_populates="agents")
-
-#     def __repr__(self):
-#         return f"<Agent(name='{self.name}', connection='{self.llm_connection.name}')>"
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
+    name = Column(String(100), nullable=False)
+    description = Column(String(500))
+    connection_id = Column(Integer, ForeignKey('llm_connections.id'), nullable=False)
+    definition = Column(JSON) 
+    is_active = Column(Boolean, default=True)
+    created_at = Column(DateTime, default=datetime.now())
+    updated_at = Column(DateTime, default=datetime.now(), onupdate=datetime.now())

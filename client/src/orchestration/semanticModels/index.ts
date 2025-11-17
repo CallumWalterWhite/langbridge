@@ -71,13 +71,7 @@ export async function previewSemanticModelYaml(
   if (projectId) {
     params.set('project_id', projectId);
   }
-  const response = await fetch(`${BASE_PATH}/preview/yaml?${params.toString()}`, {
-    credentials: 'include',
-  });
-  if (!response.ok) {
-    throw new Error(await response.text());
-  }
-  return response.text();
+  return await apiFetch<string>(`${BASE_PATH}/preview/yaml?${params.toString()}`);
 }
 
 export async function fetchSemanticModelYaml(
@@ -85,13 +79,7 @@ export async function fetchSemanticModelYaml(
   organizationId: string,
 ): Promise<string> {
   const params = new URLSearchParams({ organization_id: organizationId });
-  const response = await fetch(`${BASE_PATH}/${modelId}/yaml?${params.toString()}`, {
-    credentials: 'include',
-  });
-  if (!response.ok) {
-    throw new Error(await response.text());
-  }
-  return response.text();
+  return await apiFetch<string>(`${BASE_PATH}/${modelId}/yaml?${params.toString()}`);
 }
 
 export async function generateSemanticModelYaml(connectorId: string): Promise<string> {

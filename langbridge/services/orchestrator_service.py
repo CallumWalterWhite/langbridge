@@ -18,6 +18,7 @@ from services.agent_service import AgentService
 from services.connector_service import ConnectorService
 from services.organization_service import OrganizationService
 from services.semantic_model_service import SemanticModelService
+from utils.embedding_provider import EmbeddingProvider, EmbeddingProviderError
 
 from models.llm_connections import LLMConnectionSecretResponse
 from models.connectors import ConnectorResponse
@@ -71,6 +72,11 @@ class OrchestratorService:
             api_key=llm_connection.api_key,
         )
         llm_client = _ChatModelLLMClient(base_llm)
+        try:
+            embedding_provider: EmbeddingProvider | None = EmbeddingProvider.from_llm_connection(llm_connection)
+        except EmbeddingProviderError as exc:
+            embedding_provider = None
+            self._logger.warning("Embedding provider unavailable; skipping vector search: %s", exc)
 
         semantic_entries = await self._semantic_model_service.list_all_models()
         connectors: list[ConnectorResponse] = await self._connector_service.list_all_connectors()
@@ -107,6 +113,7 @@ class OrchestratorService:
                 semantic_model=semantic_model,
                 connector=sql_connector,
                 dialect=dialect,
+                embedder=embedding_provider,
             )
             tools.append(tool)
 

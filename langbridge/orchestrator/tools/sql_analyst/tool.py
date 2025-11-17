@@ -7,10 +7,11 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 import re
 import time
 from dataclasses import dataclass
-from typing import Any, Optional
+from typing import Any, Dict, List, Optional, Sequence
 
 import sqlglot
 
@@ -22,6 +23,7 @@ from .interfaces import (
     QueryResult,
     SemanticModel,
 )
+from utils.embedding_provider import EmbeddingProvider
 
 SQL_FENCE_RE = re.compile(r"```(?:sql)?\s*(.*?)```", re.IGNORECASE | re.DOTALL)
 
@@ -32,6 +34,31 @@ class ToolTelemetry:
 
     canonical_sql: str
     transpiled_sql: str
+
+
+@dataclass(slots=True)
+class VectorizedValue:
+    value: str
+    embedding: List[float]
+
+
+@dataclass(slots=True)
+class VectorizedColumn:
+    entity: str
+    column: str
+    values: List[VectorizedValue]
+
+
+@dataclass(slots=True)
+class VectorMatch:
+    entity: str
+    column: str
+    value: str
+    similarity: float
+    source_text: str
+
+
+VECTOR_SIMILARITY_THRESHOLD = 0.83
 
 
 class SqlAnalystTool:
@@ -50,6 +77,7 @@ class SqlAnalystTool:
         logger: Optional[logging.Logger] = None,
         llm_temperature: float = 0.0,
         priority: int = 0,
+        embedder: Optional[EmbeddingProvider] = None,
     ) -> None:
         self.llm = llm
         self.semantic_model = semantic_model
@@ -59,10 +87,47 @@ class SqlAnalystTool:
         self.llm_temperature = llm_temperature
         self.priority = priority
         self._model_summary = self._render_semantic_model()
+        self.embedder = embedder
+        self._vector_columns = self._extract_vector_columns()
 
     @property
     def name(self) -> str:
         return self.semantic_model.name
+
+    def _extract_vector_columns(self) -> List[VectorizedColumn]:
+        catalog: List[VectorizedColumn] = []
+        entities = self.semantic_model.entities or {}
+        for entity_name, entity_meta in entities.items():
+            if not isinstance(entity_meta, dict):
+                continue
+            columns = entity_meta.get("columns") or {}
+            for column_name, column_meta in columns.items():
+                if not isinstance(column_meta, dict):
+                    continue
+                if not column_meta.get("vectorized"):
+                    continue
+                index_meta = column_meta.get("vector_index") or {}
+                values_meta = index_meta.get("values") or []
+                vector_values: List[VectorizedValue] = []
+                for entry in values_meta:
+                    value = str((entry or {}).get("value", "")).strip()
+                    embedding = (entry or {}).get("embedding")
+                    if not value or not isinstance(embedding, list):
+                        continue
+                    try:
+                        vector = [float(component) for component in embedding]
+                    except (TypeError, ValueError):
+                        continue
+                    vector_values.append(VectorizedValue(value=value, embedding=vector))
+                if vector_values:
+                    catalog.append(
+                        VectorizedColumn(
+                            entity=entity_name,
+                            column=column_name,
+                            values=vector_values,
+                        )
+                    )
+        return catalog
 
     def run(self, query_request: AnalystQueryRequest) -> AnalystQueryResponse:
         """
@@ -85,9 +150,17 @@ class SqlAnalystTool:
         """
 
         start_ts = time.perf_counter()
+        active_request = query_request
+
+        if self.embedder and self._vector_columns:
+            try:
+                active_request = await self._maybe_augment_request_with_vectors(query_request)
+            except Exception as exc:  # pragma: no cover - defensive guard
+                self.logger.warning("Vector search failed; continuing without augmentation: %s", exc)
+                active_request = query_request
 
         try:
-            canonical_sql = self._generate_canonical_sql(query_request)
+            canonical_sql = self._generate_canonical_sql(active_request)
         except Exception as exc:  # pragma: no cover - defensive: LLM failure surfaces clean error
             self.logger.exception("LLM failed to generate SQL for model %s", self.name)
             return AnalystQueryResponse(
@@ -150,7 +223,7 @@ class SqlAnalystTool:
         try:
             connector_result = await self.connector.execute(
                 transpiled_sql,
-                max_rows=query_request.limit,
+                max_rows=active_request.limit,
             )
             result_payload = QueryResult.from_connector(connector_result)
         except Exception as exc:  # pragma: no cover - depends on connector implementation
@@ -209,6 +282,105 @@ class SqlAnalystTool:
         prompt = self._build_prompt(request)
         self.logger.debug("Invoking LLM for model %s", self.name)
         return self.llm.complete(prompt, temperature=self.llm_temperature)
+
+    async def _maybe_augment_request_with_vectors(self, request: AnalystQueryRequest) -> AnalystQueryRequest:
+        if not self.embedder or not self._vector_columns:
+            return request
+        matches = await self._resolve_vector_matches(request.question)
+        if not matches:
+            return request
+
+        augmented_question = self._augment_question_with_matches(request.question, matches)
+        filters: Dict[str, Any] = dict(request.filters or {})
+        for match in matches:
+            key = f"{match.entity}.{match.column}"
+            filters[key] = match.value
+
+        return request.model_copy(
+            update={
+                "question": augmented_question,
+                "filters": filters or request.filters,
+            }
+        )
+
+    async def _resolve_vector_matches(self, question: str) -> List[VectorMatch]:
+        phrases = self._extract_candidate_phrases(question)
+        if not phrases or not self.embedder:
+            return []
+
+        embeddings = await self.embedder.embed(phrases)
+        if not embeddings:
+            return []
+
+        phrase_vectors = list(zip(phrases, embeddings))
+        matches: List[VectorMatch] = []
+        for column in self._vector_columns:
+            best_match: Optional[VectorMatch] = None
+            for phrase, vector in phrase_vectors:
+                for candidate in column.values:
+                    similarity = _cosine_similarity(vector, candidate.embedding)
+                    if similarity is None:
+                        continue
+                    if not best_match or similarity > best_match.similarity:
+                        best_match = VectorMatch(
+                            entity=column.entity,
+                            column=column.column,
+                            value=candidate.value,
+                            similarity=similarity,
+                            source_text=phrase,
+                        )
+            if best_match and best_match.similarity >= VECTOR_SIMILARITY_THRESHOLD:
+                matches.append(best_match)
+        return sorted(matches, key=lambda match: match.similarity, reverse=True)[:3]
+
+    def _extract_candidate_phrases(self, question: str) -> List[str]:
+        base = question.strip()
+        candidates: List[str] = []
+        seen: set[str] = set()
+
+        def _add(text: str) -> None:
+            cleaned = text.strip()
+            if not cleaned:
+                return
+            lowered = cleaned.lower()
+            if lowered in seen:
+                return
+            seen.add(lowered)
+            candidates.append(cleaned)
+
+        if base:
+            _add(base)
+
+        for quoted in re.findall(r'"([^"]+)"', question):
+            _add(quoted)
+        for quoted in re.findall(r"'([^']+)'", question):
+            _add(quoted)
+        for keyword_match in re.findall(
+            r"\b(?:in|at|for|from|by|with)\s+([A-Za-z0-9][^,.;:]+)",
+            question,
+            flags=re.IGNORECASE,
+        ):
+            cleaned = re.split(r"[.,;:]", keyword_match, 1)[0]
+            _add(cleaned)
+        for capitalized in re.findall(r"\b([A-Z][\w-]*(?:\s+[A-Z][\w-]*)+)\b", question):
+            _add(capitalized)
+
+        return candidates[:8]
+
+    @staticmethod
+    def _augment_question_with_matches(question: str, matches: List[VectorMatch]) -> str:
+        hints = "\n".join(
+            f"- Use {match.entity}.{match.column} = '{match.value}' "
+            f"(matched phrase '{match.source_text}', similarity {match.similarity:.2f})"
+            for match in matches
+        )
+        prefix = question.strip() or question
+        if not hints:
+            return prefix
+        return (
+            f"{prefix}\n\nResolved entities from semantic vector search:\n"
+            f"{hints}\nApply these as explicit filters in the SQL."
+        )
 
     @staticmethod
     def _extract_sql(raw: str) -> str:
@@ -284,3 +456,18 @@ class SqlAnalystTool:
 
 
 __all__ = ["SqlAnalystTool"]
+
+
+def _cosine_similarity(vec_a: Sequence[float], vec_b: Sequence[float]) -> Optional[float]:
+    if not vec_a or not vec_b or len(vec_a) != len(vec_b):
+        return None
+    dot = 0.0
+    norm_a = 0.0
+    norm_b = 0.0
+    for component_a, component_b in zip(vec_a, vec_b):
+        dot += component_a * component_b
+        norm_a += component_a * component_a
+        norm_b += component_b * component_b
+    if norm_a == 0 or norm_b == 0:
+        return None
+    return dot / (math.sqrt(norm_a) * math.sqrt(norm_b))
