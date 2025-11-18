@@ -1,12 +1,17 @@
 import json
 import uuid
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Type
 from uuid import UUID
 
 import yaml
 
-from connectors.config import ConnectorRuntimeType
+from connectors import (
+    ConnectorRuntimeType, 
+    VectorDBConnectorFactory, 
+    VectorDBType, 
+    ManagedVectorDB
+)
 from db.auth import Project
 from db.semantic import SemanticModelEntry
 from errors.application_errors import BusinessValidationError
@@ -43,6 +48,8 @@ class SemanticModelService:
         self._project_repository = project_repository
         self._connector_service = connector_service
         self._agent_service = agent_service
+        
+        self._vector_factory = VectorDBConnectorFactory()
 
     async def generate_model_yaml(self, connector_id: UUID) -> str:
         return await self._builder.build_yaml_for_scope(connector_id)
@@ -166,32 +173,48 @@ class SemanticModelService:
         )
 
         embedder = await self._build_embedding_provider()
+        
+        vector_db_types: List[VectorDBType] = self._vector_factory.get_all_managed_vector_dbs()
+        
+        if len(vector_db_types) == 0:
+            raise BusinessValidationError("No managed vector databases are configured; cannot vectorize semantic model.")
+        
+        # For simplicity, use the first available managed vector DB type, will let user choose later
+        vector_db_type = vector_db_types[0]
+        vector_managed_class_ref: Type[ManagedVectorDB] = self._vector_factory.get_managed_vector_db_class_reference(vector_db_type)
+        vector_managed_instance: ManagedVectorDB = await vector_managed_class_ref.create_managed_instance()
+        
+        await vector_managed_instance.test_connection()
+        
+        vector_managed_instance.create_index(
+            dimension=embedder.embedding_dimension
+        )
 
-        for target in vector_targets:
-            raw_values = await self._fetch_distinct_values(
-                sql_connector,
-                target["schema"],
-                target["table"],
-                target["column"],
-            )
-            values = self._prepare_vector_values(raw_values)
-            if not values:
-                target["meta"].pop("vector_index", None)
-                continue
+        # for target in vector_targets:
+        #     raw_values = await self._fetch_distinct_values(
+        #         sql_connector,
+        #         target["schema"],
+        #         target["table"],
+        #         target["column"],
+        #     )
+        #     values = self._prepare_vector_values(raw_values)
+        #     if not values:
+        #         target["meta"].pop("vector_index", None)
+        #         continue
 
-            embeddings = await embedder.embed(values)
-            vector_entries = [
-                {"value": value, "embedding": vector}
-                for value, vector in zip(values, embeddings, strict=False)
-            ]
-            if not vector_entries:
-                target["meta"].pop("vector_index", None)
-                continue
+        #     embeddings = await embedder.embed(values)
+        #     vector_entries = [
+        #         {"value": value, "embedding": vector}
+        #         for value, vector in zip(values, embeddings, strict=False)
+        #     ]
+        #     if not vector_entries:
+        #         target["meta"].pop("vector_index", None)
+        #         continue
 
-            target["meta"]["vector_index"] = {
-                "model": embedder.embedding_model,
-                "values": vector_entries,
-            }
+        #     target["meta"]["vector_index"] = {
+        #         "model": embedder.embedding_model,
+        #         "values": vector_entries,
+        #     }
 
     def _discover_vectorized_columns(self, payload: Dict[str, Any]) -> List[Dict[str, Any]]:
         entities = payload.get("entities") or {}

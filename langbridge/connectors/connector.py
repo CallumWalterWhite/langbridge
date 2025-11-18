@@ -374,6 +374,36 @@ class SqlConnector(Connector):
         """
         raise NotImplementedError
 
+class ManagedVectorDB(VecotorDBConnector):
+    """
+    Base class for managed Vector DB connectors.
+    """
+    
+    @staticmethod
+    @abstractmethod
+    async def create_managed_instance(
+        logger: Optional[logging.Logger] = None,
+    ) -> "ManagedVectorDB":
+        """Create and return a new managed vector DB instance."""
+        raise NotImplementedError
+    
+    @abstractmethod
+    async def create_index(
+        self,
+        dimension: int,
+        *,
+        metric: str = "cosine",
+    ) -> None:
+        """Create a new vector index."""
+        raise NotImplementedError
+    
+    @abstractmethod
+    async def delete_index(self) -> None:
+        """Delete the vector index."""
+        raise NotImplementedError
+    
+    
+
 async def run_sync(fn, *args, **kwargs):
     """
     Run blocking call in default thread pool.

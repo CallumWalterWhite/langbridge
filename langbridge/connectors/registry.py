@@ -6,7 +6,7 @@ from logging import Logger
 from typing import Type
 
 from .config import BaseConnectorConfig
-from .connector import SqlDialetcs, SqlConnector, VecotorDBConnector, VectorDBType
+from .connector import SqlDialetcs, SqlConnector, VecotorDBConnector, VectorDBType, ManagedVectorDB
 
 class SqlConnectorFactory:
     """Factory for creating connectors."""
@@ -41,7 +41,23 @@ class VectorDBConnectorFactory:
             if subclass.VECTOR_DB_TYPE == vector_db:
                 return subclass
         raise ValueError(f"No vector connector found for type: {vector_db}")
-
+    
+    @staticmethod
+    def get_managed_vector_db_class_reference(vector_db: VectorDBType) -> Type[ManagedVectorDB]:
+        subclasses = ManagedVectorDB.__subclasses__()
+        for subclass in subclasses:
+            if subclass.VECTOR_DB_TYPE == vector_db:
+                return subclass
+        raise ValueError(f"No managed vector DB found for type: {vector_db}")
+    
+    @staticmethod
+    def get_all_managed_vector_dbs() -> list[VectorDBType]:
+        managed_vector_dbs = []
+        subclasses = ManagedVectorDB.__subclasses__()
+        for subclass in subclasses:
+            managed_vector_dbs.append(subclass.VECTOR_DB_TYPE)
+        return managed_vector_dbs
+    
     @staticmethod
     def create_vector_connector(
         vector_db: VectorDBType,

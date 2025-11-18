@@ -5,21 +5,21 @@ from typing import Any, Dict, List, Optional, Sequence
 
 import numpy as np
 
-from connectors.connector import VecotorDBConnector, VectorDBType
+from connectors.connector import ManagedVectorDB, VectorDBType
 from connectors.connector import run_sync
 from errors.connector_errors import ConnectorError
 from .config import FaissConnectorConfig
+from utils.logger import get_root_logger
 
-try:  # pragma: no cover - import guarded for environments without faiss installed
-    import faiss  # type: ignore
-except ImportError as exc:  # pragma: no cover - surfaced via _require_faiss
-    faiss = None  # type: ignore
+try: 
+    import faiss 
+except ImportError as exc:
+    faiss = None
     _FAISS_IMPORT_ERROR = exc
-else:  # pragma: no cover - trivial branch
+else:  
     _FAISS_IMPORT_ERROR = None
 
-
-class FaissConnector(VecotorDBConnector):
+class FaissConnector(ManagedVectorDB):
     """Lightweight FAISS connector that stores a persistent local index."""
 
     VECTOR_DB_TYPE = VectorDBType.FAISS
@@ -45,6 +45,39 @@ class FaissConnector(VecotorDBConnector):
         self._require_faiss()
         async with self._lock:
             await self._ensure_loaded()
+            
+    @staticmethod
+    async def create_managed_instance(logger = None):
+        if logger is None:
+            logger = get_root_logger()
+        config = FaissConnectorConfig(location="~/.langbridge/faiss")
+        return FaissConnector(config=config, logger=logger)
+    
+    async def create_index(self, dimension, *, metric = "cosine"):
+        self._require_faiss()
+        async with self._lock:
+            await self._ensure_loaded()
+            if self._index is not None:
+                raise ConnectorError("FAISS index already exists.")
+            if metric != "cosine":
+                raise ConnectorError("Only 'cosine' metric is supported in this FAISS connector.")
+            self._dimension = dimension
+            base_index = faiss.IndexFlatIP(self._dimension)
+            self._index = faiss.IndexIDMap(base_index)
+            await self._persist_state()
+            
+    async def delete_index(self):
+        self._require_faiss()
+        async with self._lock:
+            await self._ensure_loaded()
+            self._index = None
+            self._dimension = None
+            self._metadata = {}
+            self._next_id = 1
+            if self._index_path.exists():
+                self._index_path.unlink()
+            if self._metadata_path.exists():
+                self._metadata_path.unlink()
 
     async def upsert_vectors(
         self,
