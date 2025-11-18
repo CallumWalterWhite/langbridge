@@ -41,8 +41,13 @@ class ConnectorSchemaService:
         connector_type: ConnectorType,
         config: BaseConnectorConfig,
     ) -> SqlConnector:
+        dialect = ConnectorRuntimeTypeSqlDialectMap.get(connector_type)
+        if dialect is None:
+            raise BusinessValidationError(
+                f"Connector type {connector_type.value} does not support schema introspection."
+            )
         sql_connector = self._sql_connector_factory.create_sql_connector(
-            ConnectorRuntimeTypeSqlDialectMap[connector_type],
+            dialect,
             config,
             logger=self._logger,
         )

@@ -21,16 +21,20 @@ from .connector import (
     ConnectorError,
     AuthError,
     SqlDialetcs,
+    VectorDBType,
     Connector,
     ConnectorType,
     SqlConnector,
+    VecotorDBConnector,
     QueryResult,
     ConnectorRuntimeTypeSqlDialectMap,
+    ConnectorRuntimeTypeVectorDBMap,
     run_sync
 )
 from .registry import (
     ConnectorInstanceRegistry,
-    SqlConnectorFactory
+    SqlConnectorFactory,
+    VectorDBConnectorFactory,
 )
 
 from .snowflake import *  # required for subclass registration
@@ -42,6 +46,7 @@ from .bigquery import *  # required for subclass registration
 from .sqlserver import *  # required for subclass registration
 from .oracle import *  # required for subclass registration
 from .sqlite import *  # required for subclass registration
+from .faiss import *  # required for subclass registration
 
 __all__ = [
     "BaseConnectorConfig",
@@ -51,6 +56,7 @@ __all__ = [
     "ConnectorConfigSchema",
     "ConnectorRuntimeType",
     "ConnectorRuntimeTypeSqlDialectMap",
+    "ConnectorRuntimeTypeVectorDBMap",
     "get_connector_config_factory",
     "get_connector_config_schema_factory",
     "BaseMetadataExtractor",
@@ -63,11 +69,14 @@ __all__ = [
     "ConnectorType",
     "AuthError",
     "SqlDialetcs",
+    "VectorDBType",
     "Connector",
     "SqlConnector",
+    "VecotorDBConnector",
     "QueryResult",
     "run_sync",
     "ConnectorInstanceRegistry",
-    "SqlConnectorFactory"
+    "SqlConnectorFactory",
+    "VectorDBConnectorFactory"
     
 ]

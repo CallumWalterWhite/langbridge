@@ -5,8 +5,7 @@ from enum import Enum
 import json
 import logging
 import time
-from typing import Any, Dict, List, Optional
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 import re
 
 from errors.connector_errors import AuthError, ConnectorError, QueryValidationError
@@ -17,6 +16,7 @@ from connectors.metadata import TableMetadata, ColumnMetadata, ForeignKeyMetadat
 class ConnectorType(Enum):
     SQL = "SQL"
     NO_SQL = "NO_SQL"
+    VECTOR_DB = "VECTOR_DB"
 
 class SqlDialetcs(Enum):
     POSTGRES = "POSTGRES"
@@ -29,6 +29,20 @@ class SqlDialetcs(Enum):
     ORACLE = "ORACLE"
     SQLITE = "SQLITE"
 
+class VectorDBType(Enum):
+    FAISS = "FAISS"
+    PINECONE = "PINECONE"
+    WEAVIATE = "WEAVIATE"
+    MILVUS = "MILVUS"
+    QDRANT = "QDRANT"
+
+class VectorType(Enum):
+    EMBEDDING = "EMBEDDING"
+    IMAGE = "IMAGE"
+    AUDIO = "AUDIO"
+    VIDEO = "VIDEO"
+    
+    
 # TODO: remove this mapping after refactoring ConnectorType to ConnectorRuntimeType
 ConnectorRuntimeTypeSqlDialectMap: Dict[ConnectorRuntimeType, SqlDialetcs] = {
     ConnectorRuntimeType.POSTGRES: SqlDialetcs.POSTGRES,
@@ -40,6 +54,10 @@ ConnectorRuntimeTypeSqlDialectMap: Dict[ConnectorRuntimeType, SqlDialetcs] = {
     ConnectorRuntimeType.SQLSERVER: SqlDialetcs.SQLSERVER,
     ConnectorRuntimeType.ORACLE: SqlDialetcs.ORACLE,
     ConnectorRuntimeType.SQLITE: SqlDialetcs.SQLITE,
+}
+
+ConnectorRuntimeTypeVectorDBMap: Dict[ConnectorRuntimeType, VectorDBType] = {
+    ConnectorRuntimeType.FAISS: VectorDBType.FAISS,
 }
 
 @dataclass(slots=True)
@@ -140,6 +158,73 @@ class Connector(ABC):
     """
 
     pass
+
+class ApiConnector(Connector):
+    """
+    Base class for API connectors.
+    """
+    
+    CONNECTOR_TYPE: ConnectorType = ConnectorType.NO_SQL
+    
+    def __init__(
+        self,
+        config: BaseConnectorConfig,
+        logger: Optional[logging.Logger] = None,
+    ) -> None:
+        self.config = config
+        self.logger = logger or logging.getLogger(__name__)
+
+    @abstractmethod
+    async def test_connection(self) -> None:
+        """
+        Test the API connection.
+        Raises ConnectorError if the connection fails.
+        """
+        raise NotImplementedError
+    
+class VecotorDBConnector(Connector):
+    """
+    Base class for Vector DB connectors.
+    """
+        
+    CONNECTOR_TYPE: ConnectorType = ConnectorType.VECTOR_DB
+    VECTOR_DB_TYPE: VectorDBType
+    
+    def __init__(
+        self,
+        config: BaseConnectorConfig,
+        logger: Optional[logging.Logger] = None,
+    ) -> None:
+        self.config = config
+        self.logger = logger or logging.getLogger(__name__)
+
+    @abstractmethod
+    async def test_connection(self) -> None:
+        """
+        Test the Vector DB connection.
+        Raises ConnectorError if the connection fails.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    async def upsert_vectors(
+        self,
+        vectors: Sequence[Sequence[float]],
+        *,
+        metadata: Optional[Sequence[Any]] = None,
+    ) -> List[int]:
+        """Add or replace vector entries in the index and return their ids."""
+        raise NotImplementedError
+
+    @abstractmethod
+    async def search(
+        self,
+        vector: Sequence[float],
+        *,
+        top_k: int = 5,
+    ) -> List[Dict[str, Any]]:
+        """Search similar vectors and return match metadata payloads."""
+        raise NotImplementedError
 
 class SqlConnector(Connector):
     """

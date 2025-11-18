@@ -22,3 +22,5 @@ langchain==0.3.27
 mcp==1.17.0
 pandas==2.3.3
 itsdangerous==2.2.0
+numpy==1.26.4
+faiss-cpu==1.8.0

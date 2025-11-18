@@ -10,8 +10,11 @@ from connectors import (
     ConnectorConfigSchema,
     ConnectorRuntimeType,
     ConnectorRuntimeTypeSqlDialectMap,
+    ConnectorRuntimeTypeVectorDBMap,
     SqlConnector,
     SqlConnectorFactory,
+    VecotorDBConnector,
+    VectorDBConnectorFactory,
     get_connector_config_factory,
     get_connector_config_schema_factory,
 )
@@ -39,6 +42,7 @@ class ConnectorService:
         self._organization_repository = organization_repository
         self._project_repository = project_repository
         self._sql_connector_factory = SqlConnectorFactory()
+        self._vector_connector_factory = VectorDBConnectorFactory()
         self._logger = logging.getLogger(__name__)
 
     async def list_organization_connectors(
@@ -73,6 +77,29 @@ class ConnectorService:
         except ValueError as exc:
             raise BusinessValidationError(str(exc)) from exc
 
+    @staticmethod
+    def _build_config_instance(
+        connector_type: ConnectorRuntimeType,
+        connector_config: Dict[str, Any],
+    ) -> BaseConnectorConfig:
+        config_factory: Type[BaseConnectorConfigFactory] = get_connector_config_factory(
+            connector_type
+        )
+        return config_factory.create(connector_config["config"])
+
+    async def _validate_connector_config(
+        self,
+        connector_type: ConnectorRuntimeType,
+        connector_config: Dict[str, Any],
+    ) -> None:
+        if connector_type in ConnectorRuntimeTypeSqlDialectMap:
+            await self.async_create_sql_connector(connector_type, connector_config)
+            return
+        if connector_type in ConnectorRuntimeTypeVectorDBMap:
+            await self.async_create_vector_connector(connector_type, connector_config)
+            return
+        raise BusinessValidationError(f"Unsupported connector type: {connector_type.value}")
+
     async def create_connector(self, create_request: CreateConnectorRequest) -> ConnectorResponse:
         connector_type = ConnectorRuntimeType(create_request.connector_type.upper())
 
@@ -82,7 +109,7 @@ class ConnectorService:
         config_json = json.dumps(create_request.config)
 
         try:
-            _ = await self.create_sql_connector(connector_type, create_request.config)
+            await self._validate_connector_config(connector_type, create_request.config)
         except Exception as exc:  # pragma: no cover - defensive conversion
             raise BusinessValidationError(str(exc)) from exc
 
@@ -179,14 +206,14 @@ class ConnectorService:
         connector_type: ConnectorRuntimeType,
         connector_config: Dict[str, Any],
     ) -> SqlConnector:
-        config_factory: Type[BaseConnectorConfigFactory] = get_connector_config_factory(
-            connector_type
-        )
-        config_instance: BaseConnectorConfig = config_factory.create(
-            connector_config["config"]
-        )
+        dialect = ConnectorRuntimeTypeSqlDialectMap.get(connector_type)
+        if dialect is None:
+            raise BusinessValidationError(
+                f"Connector type {connector_type.value} does not support SQL operations."
+            )
+        config_instance = self._build_config_instance(connector_type, connector_config)
         sql_connector = self._sql_connector_factory.create_sql_connector(
-            ConnectorRuntimeTypeSqlDialectMap[connector_type],
+            dialect,
             config_instance,
             logger=self._logger,
         )
@@ -198,16 +225,42 @@ class ConnectorService:
         connector_type: ConnectorRuntimeType,
         connector_config: Dict[str, Any],
     ) -> SqlConnector:
-        config_factory: Type[BaseConnectorConfigFactory] = get_connector_config_factory(
-            connector_type
-        )
-        config_instance: BaseConnectorConfig = config_factory.create(
-            connector_config["config"]
-        )
+        dialect = ConnectorRuntimeTypeSqlDialectMap.get(connector_type)
+        if dialect is None:
+            raise BusinessValidationError(
+                f"Connector type {connector_type.value} does not support SQL operations."
+            )
+        config_instance = self._build_config_instance(connector_type, connector_config)
         sql_connector = self._sql_connector_factory.create_sql_connector(
-            ConnectorRuntimeTypeSqlDialectMap[connector_type],
+            dialect,
             config_instance,
             logger=self._logger,
         )
         await sql_connector.test_connection()
         return sql_connector
+
+    async def create_vector_connector(
+        self,
+        connector_type: ConnectorRuntimeType,
+        connector_config: Dict[str, Any],
+    ) -> VecotorDBConnector:
+        return await self.async_create_vector_connector(connector_type, connector_config)
+
+    async def async_create_vector_connector(
+        self,
+        connector_type: ConnectorRuntimeType,
+        connector_config: Dict[str, Any],
+    ) -> VecotorDBConnector:
+        vector_type = ConnectorRuntimeTypeVectorDBMap.get(connector_type)
+        if vector_type is None:
+            raise BusinessValidationError(
+                f"Connector type {connector_type.value} is not configured as a vector database."
+            )
+        config_instance = self._build_config_instance(connector_type, connector_config)
+        vector_connector = self._vector_connector_factory.create_vector_connector(
+            vector_type,
+            config_instance,
+            logger=self._logger,
+        )
+        await vector_connector.test_connection()
+        return vector_connector

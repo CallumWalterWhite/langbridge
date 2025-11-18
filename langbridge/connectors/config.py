@@ -14,6 +14,7 @@ class ConnectorRuntimeType(Enum):
     SQLSERVER = "SQLSERVER"
     ORACLE = "ORACLE"
     SQLITE = "SQLITE"
+    FAISS = "FAISS"
 
 ConnectorType = ConnectorRuntimeType
 
