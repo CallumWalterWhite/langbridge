@@ -102,7 +102,7 @@ class SemanticModelService:
                 )
 
         if request.auto_generate or not request.model_yaml:
-            semantic_model = await self._builder.build_for_scope(
+            semantic_model: SemanticModel = await self._builder.build_for_scope(
                 connector_id=request.connector_id
             )
             payload = self._builder.build_sql_analyst_payload(semantic_model)
@@ -173,48 +173,113 @@ class SemanticModelService:
         )
 
         embedder = await self._build_embedding_provider()
-        
+
         vector_db_types: List[VectorDBType] = self._vector_factory.get_all_managed_vector_dbs()
-        
-        if len(vector_db_types) == 0:
-            raise BusinessValidationError("No managed vector databases are configured; cannot vectorize semantic model.")
-        
-        # For simplicity, use the first available managed vector DB type, will let user choose later
+        if not vector_db_types:
+            raise BusinessValidationError(
+                "No managed vector databases are configured; cannot vectorize semantic model."
+            )
+
+        # For now pick the first available managed DB implementation. UI support for choosing one
+        # can be built later.
         vector_db_type = vector_db_types[0]
-        vector_managed_class_ref: Type[ManagedVectorDB] = self._vector_factory.get_managed_vector_db_class_reference(vector_db_type)
-        vector_managed_instance: ManagedVectorDB = await vector_managed_class_ref.create_managed_instance()
-        
-        await vector_managed_instance.test_connection()
-        
-        vector_managed_instance.create_index(
-            dimension=embedder.embedding_dimension
+        vector_managed_class_ref: Type[ManagedVectorDB] = (
+            self._vector_factory.get_managed_vector_db_class_reference(vector_db_type)
         )
+        vector_managed_instance: ManagedVectorDB = await vector_managed_class_ref.create_managed_instance(
+            index_name=f"semantic_model_{connector_id.hex}_vectors",
+        )
+        await vector_managed_instance.test_connection()
 
-        # for target in vector_targets:
-        #     raw_values = await self._fetch_distinct_values(
-        #         sql_connector,
-        #         target["schema"],
-        #         target["table"],
-        #         target["column"],
-        #     )
-        #     values = self._prepare_vector_values(raw_values)
-        #     if not values:
-        #         target["meta"].pop("vector_index", None)
-        #         continue
+        index_initialized = False
+        index_dimension: Optional[int] = None
 
-        #     embeddings = await embedder.embed(values)
-        #     vector_entries = [
-        #         {"value": value, "embedding": vector}
-        #         for value, vector in zip(values, embeddings, strict=False)
-        #     ]
-        #     if not vector_entries:
-        #         target["meta"].pop("vector_index", None)
-        #         continue
+        for target in vector_targets:
+            raw_values = await self._fetch_distinct_values(
+                sql_connector,
+                target["schema"],
+                target["table"],
+                target["column"],
+            )
+            values = self._prepare_vector_values(raw_values)
+            if not values:
+                target["meta"].pop("vector_index", None)
+                continue
 
-        #     target["meta"]["vector_index"] = {
-        #         "model": embedder.embedding_model,
-        #         "values": vector_entries,
-        #     }
+            embeddings = await embedder.embed(values)
+            if not embeddings:
+                target["meta"].pop("vector_index", None)
+                continue
+
+            vector_length = len(embeddings[0])
+            if not index_initialized:
+                await vector_managed_instance.create_index(dimension=vector_length)
+                index_initialized = True
+                index_dimension = vector_length
+            elif index_dimension and vector_length != index_dimension:
+                raise BusinessValidationError(
+                    "Embedding dimension mismatch while populating vector index."
+                )
+
+            metadata_entries = [
+                {
+                    "entity": target["entity"],
+                    "column": target["column"],
+                    "value": value,
+                }
+                for value in values
+            ]
+
+            try:
+                vector_ids = await vector_managed_instance.upsert_vectors(
+                    embeddings,
+                    metadata=metadata_entries,
+                )
+            except ConnectorError as exc:
+                raise BusinessValidationError(
+                    f"Failed to persist vectors for {target['entity']}.{target['column']}: {exc}"
+                ) from exc
+
+            vector_entries = []
+            for idx, (value, vector) in enumerate(zip(values, embeddings, strict=False)):
+                entry: Dict[str, Any] = {"value": value, "embedding": vector}
+                if idx < len(vector_ids):
+                    entry["vector_id"] = vector_ids[idx]
+                vector_entries.append(entry)
+
+            if not vector_entries:
+                target["meta"].pop("vector_index", None)
+                continue
+
+            vector_reference = self._build_vector_reference(
+                vector_db_type=vector_db_type,
+                connector_id=connector_id,
+                entity=target["entity"],
+                column=target["column"],
+                vector_db_config=getattr(vector_managed_instance, "config", None),
+            )
+
+            vector_index_meta: Dict[str, Any] = {
+                "model": embedder.embedding_model,
+                "values": vector_entries,
+            }
+            # Persist the backing vector store metadata so the orchestrator can evolve to read from it.
+            vector_index_meta["vector_store"] = {
+                "type": vector_db_type.value,
+            }
+            config_dict = getattr(vector_managed_instance, "config", None)
+            location = getattr(config_dict, "location", None)
+            if location:
+                vector_index_meta["vector_store"]["location"] = location
+            vector_index_meta["reference"] = {
+                "entity": target["entity"],
+                "column": target["column"],
+                "vector_reference": vector_reference,
+            }
+
+            target["meta"]["vector_index"] = vector_index_meta
+            target["meta"]["vector_reference"] = vector_reference
+            self._set_dimension_vector_reference(payload, target["entity"], target["column"], vector_reference)
 
     def _discover_vectorized_columns(self, payload: Dict[str, Any]) -> List[Dict[str, Any]]:
         entities = payload.get("entities") or {}
@@ -243,6 +308,38 @@ class SemanticModelService:
                     }
                 )
         return targets
+
+    def _build_vector_reference(
+        self,
+        *,
+        vector_db_type: VectorDBType,
+        connector_id: UUID,
+        entity: str,
+        column: str,
+        vector_db_config: Any | None,
+    ) -> str:
+        """
+        Build a stable reference string pointing to the managed vector index for a given entity/column pair.
+        """
+        location = getattr(vector_db_config, "location", None)
+        location_token = str(location).strip() if location else "managed"
+        entity_component = entity.replace(" ", "_")
+        column_component = column.replace(" ", "_")
+        return f"{vector_db_type.value}:{location_token}:{connector_id}:{entity_component}.{column_component}"
+
+    def _set_dimension_vector_reference(
+        self,
+        payload: Dict[str, Any],
+        entity: str,
+        column: str,
+        vector_reference: str,
+    ) -> None:
+        dimensions = payload.get("dimensions")
+        if not isinstance(dimensions, dict):
+            return
+        dimension_meta = dimensions.get(f"{entity}.{column}")
+        if isinstance(dimension_meta, dict):
+            dimension_meta["vector_reference"] = vector_reference
 
     async def _build_embedding_provider(self) -> EmbeddingProvider:
         connections = await self._agent_service.list_llm_connection_secrets()

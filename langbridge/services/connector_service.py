@@ -110,7 +110,7 @@ class ConnectorService:
 
         try:
             await self._validate_connector_config(connector_type, create_request.config)
-        except Exception as exc:  # pragma: no cover - defensive conversion
+        except Exception as exc:
             raise BusinessValidationError(str(exc)) from exc
 
         connector = DatabaseConnector(
@@ -123,7 +123,6 @@ class ConnectorService:
         )
 
         self._connector_repository.add(connector)
-        # await self._connector_repository.commit()
 
         if create_request.organization_id is None and create_request.project_id is None:
             raise BusinessValidationError(
