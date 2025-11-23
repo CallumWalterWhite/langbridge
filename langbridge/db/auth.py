@@ -22,13 +22,14 @@ from db.associations import (
     organization_connectors, 
     project_connectors,
     organization_llm_connections,
-    project_llm_connections
+    project_llm_connections,
+    vector_entry_semantic
 )
 
 if TYPE_CHECKING:
     from .connector import Connector
     from .agent import LLMConnection
-    from .semantic import SemanticModelEntry
+    from .semantic import SemanticModelEntry, SemanticVectorStoreEntry
 
 class InviteStatus(enum.Enum):
     PENDING = "pending"
@@ -71,6 +72,9 @@ class Organization(Base):
     semantic_models: Mapped[list["SemanticModelEntry"]] = relationship(
         "SemanticModelEntry", back_populates="organization", cascade="all, delete-orphan"
     )
+    semantic_vector_stores: Mapped[list["SemanticVectorStoreEntry"]] = relationship(
+        "SemanticVectorStoreEntry", back_populates="organization", cascade="all, delete-orphan"
+    )
 
     projects: Mapped[list["Project"]] = relationship("Project", back_populates="organization", cascade="all, delete-orphan")
     invites:  Mapped[list["OrganizationInvite"]] = relationship("OrganizationInvite", back_populates="organization", cascade="all, delete-orphan")
@@ -106,6 +110,9 @@ class Project(Base):
     )
     semantic_models: Mapped[list["SemanticModelEntry"]] = relationship(
         "SemanticModelEntry", back_populates="project", cascade="all, delete-orphan"
+    )
+    semantic_vector_stores: Mapped[list["SemanticVectorStoreEntry"]] = relationship(
+        "SemanticVectorStoreEntry", back_populates="project", cascade="all, delete-orphan"
     )
 
     invites: Mapped[list["ProjectInvite"]] = relationship("ProjectInvite", back_populates="project", cascade="all, delete-orphan")
