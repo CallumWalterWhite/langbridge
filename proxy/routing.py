@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from config import MYSQL_UPSTREAMS, POSTGRES_UPSTREAMS, UpstreamTarget
+from config import MYSQL_UPSTREAMS, POSTGRES_UPSTREAMS, SQLSERVER_UPSTREAMS, UpstreamTarget
 
 
 def route_database(db_name: str, db_type: str) -> UpstreamTarget:
@@ -18,6 +18,10 @@ def route_database(db_name: str, db_type: str) -> UpstreamTarget:
                 return upstream
     elif db_type == "mysql":
         for prefix, upstream in MYSQL_UPSTREAMS.items():
+            if lowered.startswith(prefix):
+                return upstream
+    elif db_type == "sqlserver":
+        for prefix, upstream in SQLSERVER_UPSTREAMS.items():
             if lowered.startswith(prefix):
                 return upstream
 

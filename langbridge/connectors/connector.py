@@ -55,6 +55,7 @@ ConnectorRuntimeTypeSqlDialectMap: Dict[ConnectorRuntimeType, SqlDialetcs] = {
     ConnectorRuntimeType.SQLSERVER: SqlDialetcs.SQLSERVER,
     ConnectorRuntimeType.ORACLE: SqlDialetcs.ORACLE,
     ConnectorRuntimeType.SQLITE: SqlDialetcs.SQLITE,
+    ConnectorRuntimeType.TRINO: SqlDialetcs.TRINO,
 }
 
 ConnectorRuntimeTypeVectorDBMap: Dict[ConnectorRuntimeType, VectorDBType] = {

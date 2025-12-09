@@ -26,6 +26,11 @@ MYSQL_UPSTREAMS: Dict[str, UpstreamTarget] = {
     "cw_tenant_123": UpstreamTarget(host="localhost", port=3306, database="ordersdb"),
 }
 
+# SQL Server upstreams (TDS protocol). Database override is optional.
+SQLSERVER_UPSTREAMS: Dict[str, UpstreamTarget] = {
+    "cw_tenant_123": UpstreamTarget(host="localhost", port=1433, database=None),
+}
+
 # Listen settings so containers on the host network can reach us.
 LISTEN_HOST = os.environ.get("PROXY_LISTEN_HOST", "0.0.0.0")
 PG_LISTEN_PORT = int(os.environ.get("PROXY_PG_PORT", "55432"))
