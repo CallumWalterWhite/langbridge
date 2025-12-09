@@ -19,6 +19,7 @@ class Dimension(BaseModel):
     synonyms: Optional[List[str]] = None
     # sample_data: Optional[List[str]] = None
     vectorized: bool = False
+    vector_reference: Optional[str] = None
 
 
 class Measure(BaseModel):

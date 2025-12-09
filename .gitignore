@@ -250,3 +250,15 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# SQLite database files
+*.db
+
+#faiss 
+faiss_data/
+*.faiss
+*.faiss.*
+
+#.log files with incremental logs
+*.log
+*.log.*

@@ -47,10 +47,12 @@ class FaissConnector(ManagedVectorDB):
             await self._ensure_loaded()
             
     @staticmethod
-    async def create_managed_instance(logger = None):
+    async def create_managed_instance(
+        index_name: str, # change to config param later
+        logger = None):
         if logger is None:
             logger = get_root_logger()
-        config = FaissConnectorConfig(location="~/.langbridge/faiss")
+        config = FaissConnectorConfig(location=f"~/langbridge/faiss_data/{index_name}")
         return FaissConnector(config=config, logger=logger)
     
     async def create_index(self, dimension, *, metric = "cosine"):

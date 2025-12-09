@@ -138,6 +138,8 @@ class SemanticModelBuilder:
                     primary_keys.append(dimension.name)
                 if dimension.vectorized:
                     column_meta["vectorized"] = True
+                    if dimension.vector_reference:
+                        column_meta["vector_reference"] = dimension.vector_reference
                 table_columns[dimension.name] = column_meta
 
                 dimension_key = f"{entity_name}.{dimension.name}"
@@ -146,13 +148,14 @@ class SemanticModelBuilder:
                         "entity": entity_name,
                         "column": dimension.name,
                         "type": dimension.type,
+                        "vectorized": dimension.vectorized,
                     }
                     if dimension.description:
                         dimension_entry["description"] = dimension.description
                 if dimension.synonyms:
                     dimension_entry["synonyms"] = dimension.synonyms
-                if dimension.vectorized:
-                    dimension_entry["vectorized"] = True
+                if dimension.vectorized and dimension.vector_reference:
+                    dimension_entry["vector_reference"] = dimension.vector_reference
                 dimensions[dimension_key] = dimension_entry
 
             for measure in table.measures or []:

@@ -30,3 +30,10 @@ project_llm_connections = Table(
     Column("project_id", UUID(as_uuid=True), ForeignKey("projects.id"), primary_key=True),
     Column("llm_connection_id", UUID(as_uuid=True), ForeignKey("llm_connections.id"), primary_key=True),
 )
+
+vector_entry_semantic = Table(
+    "vector_entry_semantic",
+    Base.metadata,
+    Column("vector_store_entry_id", UUID(as_uuid=True), ForeignKey("semantic_vector_stores.id"), primary_key=True),
+    Column("semantic_model_entry_id", UUID(as_uuid=True), ForeignKey("semantic_models.id"), primary_key=True),
+)
