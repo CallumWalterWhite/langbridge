@@ -28,6 +28,7 @@ class SqlDialetcs(Enum):
     SQLSERVER = "SQLSERVER"
     ORACLE = "ORACLE"
     SQLITE = "SQLITE"
+    TRINO = "TRINO"
 
 class VectorDBType(Enum):
     FAISS = "FAISS"
@@ -157,6 +158,13 @@ class Connector(ABC):
     Base class for all connectors.
     """
 
+    pass
+
+class ManagedConnector(Connector):
+    """
+    Base class for managed connectors.
+    """
+    
     pass
 
 class ApiConnector(Connector):

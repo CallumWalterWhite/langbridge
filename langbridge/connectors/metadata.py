@@ -35,6 +35,7 @@ class ForeignKeyMetadata:
 class TableMetadata:
     schema: str
     name: str
+    columns: List[ColumnMetadata] | None = None
 
 @dataclass
 class SchemaMetadata:
