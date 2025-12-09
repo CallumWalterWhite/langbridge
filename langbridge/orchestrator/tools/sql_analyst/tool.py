@@ -3,7 +3,6 @@ High-level SQL analyst tool that generates canonical SQL, transpiles it to a tar
 and executes the statement through the configured database connector.
 """
 
-from __future__ import annotations
 
 import asyncio
 import logging

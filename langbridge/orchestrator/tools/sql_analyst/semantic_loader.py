@@ -2,7 +2,6 @@
 Utilities for loading semantic model definitions from YAML or JSON sources.
 """
 
-from __future__ import annotations
 
 import json
 from pathlib import Path

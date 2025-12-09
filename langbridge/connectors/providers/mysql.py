@@ -2,7 +2,6 @@
 MySQL connector implementation using mysql-connector-python or PyMySQL.
 """
 
-from __future__ import annotations
 
 import logging
 from typing import Any, Dict, List, Optional, Sequence, Tuple

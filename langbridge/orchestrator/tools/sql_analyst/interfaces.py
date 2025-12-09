@@ -2,7 +2,6 @@
 Protocol and data model definitions for the SQL analyst tooling.
 """
 
-from __future__ import annotations
 
 from typing import Any, Optional, Protocol, Sequence
 

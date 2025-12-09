@@ -1,7 +1,6 @@
 """
 Utilities for building embedding clients backed by configured LLM connections.
 """
-from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass

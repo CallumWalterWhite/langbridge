@@ -63,6 +63,21 @@ services:
       - "6379:6379"
     volumes:
       - redis_data:/data
+  proxy:
+    build:
+      context: .
+      dockerfile: langbridge/proxy/Dockerfile
+    container_name: langbridge-proxy
+    environment:
+      PROXY_LISTEN_HOST: "0.0.0.0"
+      PROXY_PG_PORT: 55432
+      PROXY_MYSQL_PORT: 53306
+    ports:
+      - "55432:55432"
+      - "53306:53306"
+    depends_on:
+      - db
+      - redis
 volumes:
   pg_data:
   redis_data:

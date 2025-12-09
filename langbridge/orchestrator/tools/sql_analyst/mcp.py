@@ -4,7 +4,6 @@ Helpers for exposing the SQL analyst as an MCP server.
 The MCP surface is considered legacy and remains synchronous for backwards compatibility.
 """
 
-from __future__ import annotations
 
 from typing import Any, Callable, Optional
 

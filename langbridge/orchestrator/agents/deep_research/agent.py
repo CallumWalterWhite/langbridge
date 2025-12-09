@@ -1,7 +1,6 @@
 """
 Deep research agent that synthesizes document/contextual signals into insights.
 """
-from __future__ import annotations
 
 import asyncio
 import logging

@@ -1,7 +1,6 @@
 """
 Supervisor orchestrator that coordinates planner, analyst, research, and visual agents.
 """
-from __future__ import annotations
 
 import logging
 import time
