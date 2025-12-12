@@ -1,7 +1,7 @@
 import yaml
 from typing import Dict, List, Optional
 from pydantic import BaseModel
-from model import Metric, SemanticModel, Relationship
+from semantic.model import Metric, SemanticModel, Relationship
 
 class UnifiedSemanticModel(BaseModel):
     semantic_models: List[SemanticModel]

@@ -24,6 +24,7 @@ from repositories.semantic_model_repository import SemanticModelRepository
 from models.semantic_models import SemanticModelCreateRequest, SemanticModelRecordResponse
 from semantic import SemanticModel
 from semantic.semantic_model_builder import SemanticModelBuilder
+from semantic.unified_model import UnifiedSemanticModel
 from services.agent_service import AgentService
 from services.connector_service import ConnectorService
 from utils.embedding_provider import EmbeddingProvider, EmbeddingProviderError
@@ -111,7 +112,11 @@ class SemanticModelService:
                 raw = yaml.safe_load(request.model_yaml)
                 if not isinstance(raw, dict):
                     raise BusinessValidationError("Semantic model YAML must represent a mapping.")
-                if "entities" in raw:
+
+                if "semantic_models" in raw:
+                    unified_model = UnifiedSemanticModel.model_validate(raw)
+                    payload = unified_model.model_dump(by_alias=True)
+                elif "entities" in raw:
                     payload = raw
                 else:
                     semantic_model = SemanticModel.model_validate(raw)

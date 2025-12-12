@@ -1,6 +1,6 @@
 'use client';
 
-import { JSX, useMemo, type ReactNode } from 'react';
+import { JSX, useMemo, useState, type ReactNode } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 
@@ -15,6 +15,13 @@ interface NavItem {
   href: string;
   label: string;
   description: string;
+  children?: NavChild[];
+}
+
+interface NavChild {
+  href: string;
+  label: string;
+  description?: string;
 }
 
 const NAV_ITEMS: NavItem[] = [
@@ -32,6 +39,18 @@ const NAV_ITEMS: NavItem[] = [
     href: '/semantic-model',
     label: 'Semantic models',
     description: 'Build semantic layers and publish curated data models for agents.',
+    children: [
+      {
+        href: '/semantic-model',
+        label: 'Semantic models',
+        description: 'Build semantic layers and publish curated data models for agents.',
+      },
+      {
+        href: '/semantic-model/unified',
+        label: 'Unified semantic models',
+        description: 'Compose relationships across semantic models and query via Trino.',
+      },
+    ],
   },
   {
     href: '/agents',
@@ -60,8 +79,28 @@ export function AppShell({ children }: { children: ReactNode }): JSX.Element {
   const router = useRouter();
   const { selectedOrganization, selectedProject } = useWorkspaceScope();
 
-  const activeNav =
-    NAV_ITEMS.find((item) => pathname === item.href || pathname.startsWith(`${item.href}/`)) ?? NAV_ITEMS[0];
+  const [openParent, setOpenParent] = useState<string | null>(null);
+
+  const activeNav = useMemo(() => {
+    for (const item of NAV_ITEMS) {
+      if (pathname === item.href || pathname.startsWith(`${item.href}/`)) {
+        return { parent: item, label: item.label, description: item.description };
+      }
+      if (item.children) {
+        const child = item.children.find(
+          (childItem) => pathname === childItem.href || pathname.startsWith(`${childItem.href}/`),
+        );
+        if (child) {
+          return {
+            parent: item,
+            label: child.label,
+            description: child.description ?? item.description,
+          };
+        }
+      }
+    }
+    return { parent: NAV_ITEMS[0], label: NAV_ITEMS[0].label, description: NAV_ITEMS[0].description };
+  }, [pathname]);
 
   const scopeSummary = useMemo(() => {
     if (!selectedOrganization) {
@@ -85,20 +124,68 @@ export function AppShell({ children }: { children: ReactNode }): JSX.Element {
           </Link>
           <nav className="mt-8 space-y-1">
             {NAV_ITEMS.map((item) => {
-              const isActive = item.href === activeNav.href;
+              const hasChildren = Boolean(item.children && item.children.length > 0);
+              const isParentActive =
+                item.href === activeNav.parent.href ||
+                (item.children ?? []).some(
+                  (child) => pathname === child.href || pathname.startsWith(`${child.href}/`),
+                );
+              const isOpen = openParent === item.href || (hasChildren && isParentActive);
+
+              if (!hasChildren) {
+                return (
+                  <Link
+                    key={item.href}
+                    href={item.href}
+                    className={cn(
+                      'block rounded-lg px-3 py-2 transition hover:bg-[color:var(--panel-alt)] hover:text-[color:var(--text-primary)]',
+                      isParentActive
+                        ? 'border border-[color:var(--border-strong)] bg-[color:var(--panel-alt)] font-medium text-[color:var(--text-primary)]'
+                        : 'text-[color:var(--text-secondary)]',
+                    )}
+                  >
+                    {item.label}
+                  </Link>
+                );
+              }
+
               return (
-                <Link
-                  key={item.href}
-                  href={item.href}
-                  className={cn(
-                    'block rounded-lg px-3 py-2 transition hover:bg-[color:var(--panel-alt)] hover:text-[color:var(--text-primary)]',
-                    isActive
-                      ? 'border border-[color:var(--border-strong)] bg-[color:var(--panel-alt)] font-medium text-[color:var(--text-primary)]'
-                      : 'text-[color:var(--text-secondary)]',
-                  )}
-                >
-                  {item.label}
-                </Link>
+                <div key={item.href} className="space-y-1">
+                  <button
+                    type="button"
+                    onClick={() => setOpenParent((current) => (current === item.href ? null : item.href))}
+                    className={cn(
+                      'flex w-full items-center justify-between rounded-lg px-3 py-2 text-left transition hover:bg-[color:var(--panel-alt)] hover:text-[color:var(--text-primary)]',
+                      isParentActive
+                        ? 'border border-[color:var(--border-strong)] bg-[color:var(--panel-alt)] font-medium text-[color:var(--text-primary)]'
+                        : 'text-[color:var(--text-secondary)]',
+                    )}
+                  >
+                    <span>{item.label}</span>
+                    <span className="text-xs">{isOpen ? 'v' : '>'}</span>
+                  </button>
+                  {isOpen ? (
+                    <div className="ml-3 space-y-1 border-l border-[color:var(--panel-border)] pl-3">
+                      {item.children?.map((child) => {
+                        const childActive = pathname === child.href || pathname.startsWith(`${child.href}/`);
+                        return (
+                          <Link
+                            key={child.href}
+                            href={child.href}
+                            className={cn(
+                              'block rounded-lg px-3 py-2 text-sm transition hover:bg-[color:var(--panel-alt)] hover:text-[color:var(--text-primary)]',
+                              childActive
+                                ? 'border border-[color:var(--border-strong)] bg-[color:var(--panel-alt)] font-medium text-[color:var(--text-primary)]'
+                                : 'text-[color:var(--text-secondary)]',
+                            )}
+                          >
+                            {child.label}
+                          </Link>
+                        );
+                      })}
+                    </div>
+                  ) : null}
+                </div>
               );
             })}
           </nav>
@@ -138,8 +225,8 @@ export function AppShell({ children }: { children: ReactNode }): JSX.Element {
             </div>
 
             <nav className="mt-4 flex gap-2 overflow-x-auto text-sm lg:hidden">
-              {NAV_ITEMS.map((item) => {
-                const isActive = item.href === activeNav.href;
+              {[...NAV_ITEMS.flatMap((item) => item.children ?? [item])].map((item) => {
+                const isActive = pathname === item.href || pathname.startsWith(`${item.href}/`);
                 return (
                   <Link
                     key={item.href}
