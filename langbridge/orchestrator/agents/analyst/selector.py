@@ -86,9 +86,6 @@ class SemanticToolSelector:
     @staticmethod
     def _extract_keywords(semantic_model) -> set[str]:
         keywords: set[str] = set()
-        keywords.add(semantic_model.name.lower())
-        for tag in getattr(semantic_model, "tags", []) or []:
-            keywords.add(str(tag).lower())
 
         def _consume_values(values: Iterable[str]) -> None:
             for value in values:
@@ -96,31 +93,46 @@ class SemanticToolSelector:
                     continue
                 keywords.add(str(value).lower())
 
-        entities = getattr(semantic_model, "entities", {}) or {}
-        for entity_name, entity in entities.items():
-            keywords.add(str(entity_name).lower())
-            if isinstance(entity, dict):
-                _consume_values(entity.get("aliases", []) or [])
-                _consume_values(entity.get("synonyms", []) or [])
-                for column_name, column_meta in (entity.get("columns") or {}).items():
-                    keywords.add(str(column_name).lower())
-                    if isinstance(column_meta, dict):
-                        _consume_values(column_meta.get("synonyms", []) or [])
+        def _collect_from_model(model) -> None:
+            name = getattr(model, "name", None)
+            if name:
+                keywords.add(str(name).lower())
+            for tag in getattr(model, "tags", []) or []:
+                _consume_values([tag])
 
-        for metrics in (getattr(semantic_model, "metrics", {}) or {}).items():
-            metric_name, metric = metrics
-            keywords.add(str(metric_name).lower())
-            if isinstance(metric, dict):
-                _consume_values(metric.get("synonyms", []) or [])
+            entities = getattr(model, "entities", {}) or {}
+            for entity_name, entity in entities.items():
+                keywords.add(str(entity_name).lower())
+                if isinstance(entity, dict):
+                    _consume_values(entity.get("aliases", []) or [])
+                    _consume_values(entity.get("synonyms", []) or [])
+                    for column_name, column_meta in (entity.get("columns") or {}).items():
+                        keywords.add(str(column_name).lower())
+                        if isinstance(column_meta, dict):
+                            _consume_values(column_meta.get("synonyms", []) or [])
 
-        for dimensions in (getattr(semantic_model, "dimensions", {}) or {}).items():
-            dimension_name, dimension = dimensions
-            keywords.add(str(dimension_name).lower())
-            if isinstance(dimension, dict):
-                _consume_values(dimension.get("synonyms", []) or [])
+            for metrics in (getattr(model, "metrics", {}) or {}).items():
+                metric_name, metric = metrics
+                keywords.add(str(metric_name).lower())
+                if isinstance(metric, dict):
+                    _consume_values(metric.get("synonyms", []) or [])
+
+            for dimensions in (getattr(model, "dimensions", {}) or {}).items():
+                dimension_name, dimension = dimensions
+                keywords.add(str(dimension_name).lower())
+                if isinstance(dimension, dict):
+                    _consume_values(dimension.get("synonyms", []) or [])
+
+        if hasattr(semantic_model, "semantic_models"):
+            for model in getattr(semantic_model, "semantic_models") or []:
+                _collect_from_model(model)
+            relationships = getattr(semantic_model, "relationships", None) or []
+            for rel in relationships:
+                _consume_values([rel.get("name"), rel.get("from"), rel.get("to")])
+        else:
+            _collect_from_model(semantic_model)
 
         return keywords
 
 
 __all__ = ["SemanticToolSelector", "ToolSelectionError"]
-

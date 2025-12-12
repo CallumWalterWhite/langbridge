@@ -1,5 +1,7 @@
 
 import logging
+import time
+import uuid
 from typing import Any
 
 from langchain_core.messages import BaseMessage, HumanMessage
@@ -12,7 +14,7 @@ from orchestrator.agents.analyst import AnalystAgent
 from orchestrator.agents.visual import VisualAgent
 from orchestrator.agents.supervisor import SupervisorOrchestrator
 from orchestrator.tools.sql_analyst import SqlAnalystTool, load_semantic_model
-from orchestrator.tools.sql_analyst.interfaces import LLMClient
+from orchestrator.tools.sql_analyst.interfaces import LLMClient, SemanticModel, UnifiedSemanticModel
 from services.agent_service import AgentService
 from services.connector_service import ConnectorService
 from services.organization_service import OrganizationService
@@ -61,10 +63,19 @@ class OrchestratorService:
         self._logger = logging.getLogger(__name__)
 
     async def chat(self, msg: str) -> dict[str, Any]:
+        request_id = str(uuid.uuid4())
+        start_ts = time.perf_counter()
+        self._logger.info("orchestrator.chat start request_id=%s", request_id)
         llm_connections = await self._agent_service.list_llm_connection_secrets()
         if not llm_connections:
             raise BusinessValidationError("No LLM connections configured")
         llm_connection: LLMConnectionSecretResponse = llm_connections[0]
+        self._logger.debug(
+            "request_id=%s using llm_connection id=%s model=%s",
+            request_id,
+            llm_connection.id,
+            llm_connection.model,
+        )
         base_llm: BaseChatModel = ChatOpenAI(
             model=llm_connection.model,
             temperature=0.1,
@@ -75,11 +86,21 @@ class OrchestratorService:
             embedding_provider: EmbeddingProvider | None = EmbeddingProvider.from_llm_connection(llm_connection)
         except EmbeddingProviderError as exc:
             embedding_provider = None
-            self._logger.warning("Embedding provider unavailable; skipping vector search: %s", exc)
+            self._logger.warning(
+                "request_id=%s embedding provider unavailable; skipping vector search: %s",
+                request_id,
+                exc,
+            )
 
         semantic_entries = await self._semantic_model_service.list_all_models()
         connectors: list[ConnectorResponse] = await self._connector_service.list_all_connectors()
         connector_lookup = {str(connector.id): connector for connector in connectors}
+        self._logger.info(
+            "request_id=%s loaded %d semantic entries, %d connectors",
+            request_id,
+            len(semantic_entries),
+            len(connectors),
+        )
 
         connector_instances: dict[str, Any] = {}
         tools: list[SqlAnalystTool] = []
@@ -88,6 +109,12 @@ class OrchestratorService:
             connector_id = str(entry.connector_id)
             connector_entry = connector_lookup.get(connector_id)
             if not connector_entry:
+                self._logger.warning(
+                    "request_id=%s semantic model %s missing connector %s; skipping",
+                    request_id,
+                    entry.id,
+                    connector_id,
+                )
                 continue
 
             connector_type = ConnectorRuntimeType(connector_entry.connector_type.upper())
@@ -101,17 +128,35 @@ class OrchestratorService:
 
             sql_connector = connector_instances[connector_id]
             semantic_model = load_semantic_model(entry.content_yaml)
-            if not semantic_model.name:
-                semantic_model.name = entry.name or f"model_{entry.id}"
-            if not semantic_model.connector:
-                semantic_model.connector = connector_entry.name
-            dialect = (semantic_model.dialect or getattr(sql_connector.DIALECT, "name", "postgres")).lower()
+            base_dialect = None
+            if isinstance(semantic_model, UnifiedSemanticModel):
+                if not semantic_model.name:
+                    semantic_model.name = entry.name or f"model_{entry.id}"
+                if not semantic_model.connector:
+                    semantic_model.connector = connector_entry.name
+                base_dialect = semantic_model.dialect
+            elif isinstance(semantic_model, SemanticModel):
+                if not semantic_model.name:
+                    semantic_model.name = entry.name or f"model_{entry.id}"
+                if not semantic_model.connector:
+                    semantic_model.connector = connector_entry.name
+                base_dialect = semantic_model.dialect
+            dialect = (base_dialect or getattr(sql_connector.DIALECT, "name", "postgres")).lower()
+            self._logger.debug(
+                "request_id=%s configured tool model=%s connector=%s dialect=%s unified=%s",
+                request_id,
+                semantic_model.name if hasattr(semantic_model, "name") else str(entry.id),
+                connector_entry.name,
+                dialect,
+                isinstance(semantic_model, UnifiedSemanticModel),
+            )
 
             tool = SqlAnalystTool(
                 llm=llm_client,
                 semantic_model=semantic_model,
                 connector=sql_connector,
                 dialect=dialect,
+                priority=1 if isinstance(semantic_model, UnifiedSemanticModel) else 0,
                 embedder=embedding_provider,
             )
             tools.append(tool)
@@ -128,8 +173,10 @@ class OrchestratorService:
         )
 
         response = await supervisor.handle(user_query=msg)
-        summary = await self._summarize_response(base_llm, msg, response)
+        summary = await self._summarize_response(base_llm, msg, response, request_id=request_id)
         response["summary"] = summary
+        elapsed_ms = int((time.perf_counter() - start_ts) * 1000)
+        self._logger.info("orchestrator.chat complete request_id=%s elapsed_ms=%d", request_id, elapsed_ms)
         return response
 
     async def _summarize_response(
@@ -137,6 +184,8 @@ class OrchestratorService:
         chat_model: BaseChatModel,
         question: str,
         response_payload: dict[str, Any],
+        *,
+        request_id: str | None = None,
     ) -> str:
         """
         Generate a concise natural language summary of the orchestrated response.
@@ -161,7 +210,8 @@ class OrchestratorService:
         try:
             llm_response = await chat_model.ainvoke([HumanMessage(content=prompt)])
         except Exception as exc:  # pragma: no cover - defensive guard against transient LLM failures
-            self._logger.warning("Failed to generate summary: %s", exc, exc_info=True)
+            suffix = f" request_id={request_id}" if request_id else ""
+            self._logger.warning("Failed to generate summary%s: %s", suffix, exc, exc_info=True)
             return "Summary unavailable due to temporary AI service issues."
 
         if isinstance(llm_response, BaseMessage):

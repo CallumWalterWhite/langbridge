@@ -94,6 +94,21 @@ class SemanticModel(BaseModel):
     @classmethod
     def _normalise_entity_keys(cls, value: dict[str, dict[str, Any]]) -> dict[str, dict[str, Any]]:
         return {str(key): entity for key, entity in (value or {}).items()}
+    
+class UnifiedSemanticModel(BaseModel):
+    """
+    Wrapper that stitches multiple semantic models together for cross-model querying.
+    """
+
+    semantic_models: list[SemanticModel]
+    version: str
+    name: str | None = None
+    description: Optional[str] = None
+    dialect: str | None = None
+    connector: str | None = None
+    relationships: Optional[list[dict[str, Any]]] = None
+    metrics: Optional[dict[str, dict[str, Any]]] = None
+    tags: list[str] = Field(default_factory=list)
 
 
 class AnalystQueryRequest(BaseModel):

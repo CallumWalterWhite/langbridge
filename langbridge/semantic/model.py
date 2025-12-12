@@ -69,4 +69,4 @@ class SemanticModel(BaseModel):
     def yml_dump(self) -> str:
         """Dump the semantic model to a YAML string."""
 
-        return yaml.dump(self.dict(by_alias=True), sort_keys=False)
+        return yaml.dump(self.model_dump(by_alias=True), sort_keys=False)

@@ -21,6 +21,7 @@ from .interfaces import (
     LLMClient,
     QueryResult,
     SemanticModel,
+    UnifiedSemanticModel,
 )
 from utils.embedding_provider import EmbeddingProvider
 
@@ -60,6 +61,9 @@ class VectorMatch:
 VECTOR_SIMILARITY_THRESHOLD = 0.83
 
 
+SemanticModelLike = SemanticModel | UnifiedSemanticModel
+
+
 class SqlAnalystTool:
     """
     Generate SQL using an LLM with semantic guidance, transpile it to the target dialect,
@@ -70,7 +74,7 @@ class SqlAnalystTool:
         self,
         *,
         llm: LLMClient,
-        semantic_model: SemanticModel,
+        semantic_model: SemanticModelLike,
         connector: DatabaseConnector,
         dialect: str,
         logger: Optional[logging.Logger] = None,
@@ -91,41 +95,47 @@ class SqlAnalystTool:
 
     @property
     def name(self) -> str:
-        return self.semantic_model.name
+        name = getattr(self.semantic_model, "name", None)
+        if name:
+            return name
+        if isinstance(self.semantic_model, UnifiedSemanticModel) and self.semantic_model.semantic_models:
+            return self.semantic_model.semantic_models[0].name
+        return "semantic_model"
 
     def _extract_vector_columns(self) -> List[VectorizedColumn]:
         catalog: List[VectorizedColumn] = []
-        entities = self.semantic_model.entities or {}
-        for entity_name, entity_meta in entities.items():
-            if not isinstance(entity_meta, dict):
-                continue
-            columns = entity_meta.get("columns") or {}
-            for column_name, column_meta in columns.items():
-                if not isinstance(column_meta, dict):
+        for model in self._iter_semantic_models():
+            entities = model.entities or {}
+            for entity_name, entity_meta in entities.items():
+                if not isinstance(entity_meta, dict):
                     continue
-                if not column_meta.get("vectorized"):
-                    continue
-                index_meta = column_meta.get("vector_index") or {}
-                values_meta = index_meta.get("values") or []
-                vector_values: List[VectorizedValue] = []
-                for entry in values_meta:
-                    value = str((entry or {}).get("value", "")).strip()
-                    embedding = (entry or {}).get("embedding")
-                    if not value or not isinstance(embedding, list):
+                columns = entity_meta.get("columns") or {}
+                for column_name, column_meta in columns.items():
+                    if not isinstance(column_meta, dict):
                         continue
-                    try:
-                        vector = [float(component) for component in embedding]
-                    except (TypeError, ValueError):
+                    if not column_meta.get("vectorized"):
                         continue
-                    vector_values.append(VectorizedValue(value=value, embedding=vector))
-                if vector_values:
-                    catalog.append(
-                        VectorizedColumn(
-                            entity=entity_name,
-                            column=column_name,
-                            values=vector_values,
+                    index_meta = column_meta.get("vector_index") or {}
+                    values_meta = index_meta.get("values") or []
+                    vector_values: List[VectorizedValue] = []
+                    for entry in values_meta:
+                        value = str((entry or {}).get("value", "")).strip()
+                        embedding = (entry or {}).get("embedding")
+                        if not value or not isinstance(embedding, list):
+                            continue
+                        try:
+                            vector = [float(component) for component in embedding]
+                        except (TypeError, ValueError):
+                            continue
+                        vector_values.append(VectorizedValue(value=value, embedding=vector))
+                    if vector_values:
+                        catalog.append(
+                            VectorizedColumn(
+                                entity=entity_name,
+                                column=column_name,
+                                values=vector_values,
+                            )
                         )
-                    )
         return catalog
 
     def run(self, query_request: AnalystQueryRequest) -> AnalystQueryResponse:
@@ -389,22 +399,55 @@ class SqlAnalystTool:
         return raw.strip()
 
     def _render_semantic_model(self) -> str:
-        parts: list[str] = [f"Semantic model: {self.semantic_model.name}"]
-        if self.semantic_model.description:
-            parts.append(f"Description: {self.semantic_model.description}")
+        if isinstance(self.semantic_model, UnifiedSemanticModel):
+            parts: list[str] = [f"Unified semantic model: {self.name}"]
+            if self.semantic_model.description:
+                parts.append(f"Description: {self.semantic_model.description}")
+            parts.append("Models:")
+            for model in self._iter_semantic_models():
+                parts.append(self._render_single_model(model, indent="  "))
+            if self.semantic_model.relationships:
+                parts.append("Cross-model relationships:")
+                for rel in self.semantic_model.relationships:
+                    left = rel.get("from") or rel.get("left")
+                    right = rel.get("to") or rel.get("right")
+                    condition = rel.get("on") or rel.get("join_on") or rel.get("condition")
+                    rel_type = rel.get("type", "inner")
+                    parts.append(f"  - {rel_type} join {left} -> {right} on {condition}")
+            if self.semantic_model.metrics:
+                parts.append("Unified metrics:")
+                for metric_name, metric in self.semantic_model.metrics.items():
+                    expression = metric.get("expression") or metric.get("sql")
+                    aggregation = metric.get("aggregation") or metric.get("agg")
+                    bits = [metric_name]
+                    if aggregation:
+                        bits.append(f"aggregation={aggregation}")
+                    if expression:
+                        bits.append(f"expression={expression}")
+                    parts.append(f"  - {' | '.join(bits)}")
+            if self.semantic_model.tags:
+                parts.append(f"Tags: {', '.join(self.semantic_model.tags)}")
+            return "\n".join(parts)
 
-        if self.semantic_model.entities:
-            parts.append("Entities:")
-            for entity_name, entity in self.semantic_model.entities.items():
-                parts.append(f"  - {entity_name}")
+        return self._render_single_model(self.semantic_model)
+
+    def _render_single_model(self, model: SemanticModel, indent: str = "") -> str:
+        parts: list[str] = [f"{indent}Semantic model: {model.name}"]
+        if model.description:
+            parts.append(f"{indent}Description: {model.description}")
+
+        if model.entities:
+            parts.append(f"{indent}Entities:")
+            for entity_name, entity in model.entities.items():
+                parts.append(f"{indent}  - {entity_name}")
                 table_ref = entity.get("table") or entity.get("name")
                 if table_ref:
-                    parts.append(f"      table: {table_ref}")
+                    parts.append(f"{indent}      table: {table_ref}")
                 if "grain" in entity:
-                    parts.append(f"      grain: {entity['grain']}")
+                    parts.append(f"{indent}      grain: {entity['grain']}")
                 columns = entity.get("columns") or entity.get("fields")
                 if columns:
-                    parts.append("      columns:")
+                    parts.append(f"{indent}      columns:")
                     for column_name, column_meta in columns.items():
                         if isinstance(column_meta, dict):
                             dtype = column_meta.get("type") or column_meta.get("dtype") or ""
@@ -414,20 +457,20 @@ class SqlAnalystTool:
                                 descriptor += f" [{role}]"
                         else:
                             descriptor = str(column_meta)
-                        parts.append(f"        * {descriptor}")
+                        parts.append(f"{indent}        * {descriptor}")
 
-        if self.semantic_model.joins:
-            parts.append("Joins:")
-            for join in self.semantic_model.joins:
+        if model.joins:
+            parts.append(f"{indent}Joins:")
+            for join in model.joins:
                 lhs = join.get("left") or join.get("from")
                 rhs = join.get("right") or join.get("to")
                 condition = join.get("on") or join.get("condition")
                 join_type = join.get("type", "inner")
-                parts.append(f"  - {join_type} join {lhs} -> {rhs} on {condition}")
+                parts.append(f"{indent}  - {join_type} join {lhs} -> {rhs} on {condition}")
 
-        if self.semantic_model.metrics:
-            parts.append("Metrics:")
-            for metric_name, metric in self.semantic_model.metrics.items():
+        if model.metrics:
+            parts.append(f"{indent}Metrics:")
+            for metric_name, metric in model.metrics.items():
                 expression = metric.get("expression") or metric.get("sql")
                 aggregation = metric.get("aggregation") or metric.get("agg")
                 bits = [metric_name]
@@ -435,19 +478,24 @@ class SqlAnalystTool:
                     bits.append(f"aggregation={aggregation}")
                 if expression:
                     bits.append(f"expression={expression}")
-                parts.append(f"  - {' | '.join(bits)}")
+                parts.append(f"{indent}  - {' | '.join(bits)}")
 
-        if self.semantic_model.dimensions:
-            parts.append("Dimensions:")
-            for dimension_name, dimension in self.semantic_model.dimensions.items():
+        if model.dimensions:
+            parts.append(f"{indent}Dimensions:")
+            for dimension_name, dimension in model.dimensions.items():
                 dtype = dimension.get("type")
                 desc = f"{dimension_name} ({dtype})" if dtype else dimension_name
-                parts.append(f"  - {desc}")
+                parts.append(f"{indent}  - {desc}")
 
-        if self.semantic_model.tags:
-            parts.append(f"Tags: {', '.join(self.semantic_model.tags)}")
+        if model.tags:
+            parts.append(f"{indent}Tags: {', '.join(model.tags)}")
 
         return "\n".join(parts)
+
+    def _iter_semantic_models(self) -> List[SemanticModel]:
+        if isinstance(self.semantic_model, UnifiedSemanticModel):
+            return list(self.semantic_model.semantic_models or [])
+        return [self.semantic_model]
 
     def _log_sql(self, telemetry: ToolTelemetry) -> None:
         self.logger.debug("Canonical SQL [%s]: %s", self.name, telemetry.canonical_sql)

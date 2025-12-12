@@ -9,16 +9,16 @@ from typing import Any, Mapping
 
 import yaml
 
-from .interfaces import SemanticModel
+from .interfaces import SemanticModel, UnifiedSemanticModel
 
 
 class SemanticModelError(ValueError):
     """Raised when the semantic model definition is invalid."""
 
 
-def _parse_semantic_payload(payload: Mapping[str, Any]) -> SemanticModel:
+def _parse_semantic_payload(payload: Mapping[str, Any]) -> SemanticModel | UnifiedSemanticModel:
     if "entities" not in payload or not payload["entities"]:
-        raise SemanticModelError("Semantic model must define at least one entity.")
+        return _parse_unified_semantic_payload(payload)
     # Metrics or dimensions provide analytical knobs; require one of them to avoid empty models.
     has_metrics = bool(payload.get("metrics"))
     has_dimensions = bool(payload.get("dimensions"))
@@ -30,8 +30,17 @@ def _parse_semantic_payload(payload: Mapping[str, Any]) -> SemanticModel:
 
     return SemanticModel.model_validate(payload)
 
+def _parse_unified_semantic_payload(payload: Mapping[str, Any]) -> UnifiedSemanticModel:
+    if "semantic_models" not in payload or not payload["semantic_models"]:
+        raise SemanticModelError("Unified semantic model must define at least one semantic model.")
 
-def load_semantic_model(source: str | Path | Mapping[str, Any]) -> SemanticModel:
+    if "name" not in payload:
+        payload = {**payload, "name": payload.get("id", "unified_model")}
+
+    return UnifiedSemanticModel.model_validate(payload)
+
+
+def load_semantic_model(source: str | Path | Mapping[str, Any]) -> SemanticModel | UnifiedSemanticModel:
     """
     Load a semantic model definition from a path, raw text, or mapping.
     """
