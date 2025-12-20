@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from ioc import Container
 from auth.dependencies import get_current_user
 from models.auth import UserResponse
+from models.agents import AgentDefinitionCreate, AgentDefinitionResponse, AgentDefinitionUpdate
 from models.llm_connections import (
     LLMConnectionCreate,
     LLMConnectionResponse,
@@ -14,6 +15,7 @@ from models.llm_connections import (
     LLMConnectionUpdate,
 )
 from services.agent_service import AgentService
+from errors.application_errors import BusinessValidationError
 
 router = APIRouter(prefix="/agents", tags=["agents"])
 
@@ -52,7 +54,10 @@ async def get_llm_connection(
     current_user: UserResponse = Depends(get_current_user),
     agent_service: AgentService = Depends(Provide[Container.agent_service]),
 ) -> LLMConnectionResponse:
-    connection = await agent_service.get_llm_connection(current_user, connection_id)
+    connection = await agent_service.get_llm_connection(
+        connection_id=connection_id,
+        current_user=current_user,
+    )
     if not connection:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -85,3 +90,67 @@ async def test_llm_connection(
     agent_service: AgentService = Depends(Provide[Container.agent_service]),
 ) -> dict:
     return agent_service.test_llm_connection(request)
+
+
+# Agent definitions CRUD
+
+
+@router.post("/definitions", response_model=AgentDefinitionResponse, status_code=status.HTTP_201_CREATED)
+@inject
+async def create_agent_definition(
+    request: AgentDefinitionCreate,
+    current_user: UserResponse = Depends(get_current_user),
+    agent_service: AgentService = Depends(Provide[Container.agent_service]),
+) -> AgentDefinitionResponse:
+    # current_user available for future auth; service does not require it yet
+    return await agent_service.create_agent_definition(request)
+
+
+@router.get("/definitions", response_model=List[AgentDefinitionResponse])
+@inject
+async def list_agent_definitions(
+    current_user: UserResponse = Depends(get_current_user),
+    agent_service: AgentService = Depends(Provide[Container.agent_service]),
+) -> List[AgentDefinitionResponse]:
+    return await agent_service.list_agent_definitions()
+
+
+@router.get("/definitions/{agent_id}", response_model=AgentDefinitionResponse)
+@inject
+async def get_agent_definition(
+    agent_id: uuid.UUID,
+    current_user: UserResponse = Depends(get_current_user),
+    agent_service: AgentService = Depends(Provide[Container.agent_service]),
+) -> AgentDefinitionResponse:
+    agent = await agent_service.get_agent_definition(agent_id)
+    if not agent:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent definition not found")
+    return agent
+
+
+@router.put("/definitions/{agent_id}", response_model=AgentDefinitionResponse)
+@inject
+async def update_agent_definition(
+    agent_id: uuid.UUID,
+    request: AgentDefinitionUpdate,
+    current_user: UserResponse = Depends(get_current_user),
+    agent_service: AgentService = Depends(Provide[Container.agent_service]),
+) -> AgentDefinitionResponse:
+    updated = await agent_service.update_agent_definition(agent_id, request)
+    if not updated:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent definition not found")
+    return updated
+
+
+@router.delete("/definitions/{agent_id}", status_code=status.HTTP_204_NO_CONTENT)
+@inject
+async def delete_agent_definition(
+    agent_id: uuid.UUID,
+    current_user: UserResponse = Depends(get_current_user),
+    agent_service: AgentService = Depends(Provide[Container.agent_service]),
+) -> None:
+    try:
+        await agent_service.delete_agent_definition(agent_id)
+    except BusinessValidationError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    return None

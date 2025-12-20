@@ -3,7 +3,7 @@ from typing import List, Optional
 
 from db.agent import LLMConnection, AgentDefinition
 from errors.application_errors import AuthorizationError, BusinessValidationError
-from services.service_utils import internal_service
+from services.service_utils import internal_service, is_internal_service_call
 from models.auth import UserResponse
 from repositories.agent_repository import AgentRepository
 from models.llm_connections import (
@@ -102,13 +102,16 @@ class AgentService:
         return [LLMConnectionSecretResponse.model_validate(conn) for conn in connections]
 
     @internal_service
-    async def get_llm_connection(self,
-                                current_user: UserResponse,
-                                connection_id: uuid.UUID) -> Optional[LLMConnectionResponse]:
+    async def get_llm_connection(
+        self,
+        connection_id: uuid.UUID,
+        current_user: Optional[UserResponse] = None,
+    ) -> Optional[LLMConnectionResponse]:
         connection = await self._llm_repository.get_by_id(connection_id)
-        
+        if not connection:
+            return None
+
         self.__check_authorized(current_user, connection)
-        
         return LLMConnectionResponse.model_validate(connection)
 
     async def update_llm_connection(
@@ -118,9 +121,9 @@ class AgentService:
         connection_update: LLMConnectionUpdate,
     ) -> Optional[LLMConnectionResponse]:
         current_connection: Optional[LLMConnection] = await self._llm_repository.get_by_id(connection_id)
-        self.__check_authorized(current_user, current_connection)
         if not current_connection:
             return None
+        self.__check_authorized(current_user, current_connection)
 
         if connection_update.api_key:
             provider_value = (
@@ -161,9 +164,9 @@ class AgentService:
                                     current_user: UserResponse,
                                     connection_id: uuid.UUID) -> None:
         current_connection = await self._llm_repository.get_by_id(connection_id)
-        self.__check_authorized(current_user, current_connection)
         if not current_connection:
             raise BusinessValidationError("LLM connection not found")
+        self.__check_authorized(current_user, current_connection)
         await self._llm_repository.delete(current_connection)
 
     def test_llm_connection(self, test_config: LLMConnectionTest) -> dict:
@@ -174,7 +177,7 @@ class AgentService:
             configuration=test_config.configuration,
         )
 
-    async def get_agent_definition(self, agent_id: str) -> Optional[AgentDefinitionResponse]:
+    async def get_agent_definition(self, agent_id: uuid.UUID) -> Optional[AgentDefinitionResponse]:
         agent = await self._agent_definition_repository.get_by_id(agent_id)
         if not agent:
             return None
@@ -209,11 +212,16 @@ class AgentService:
         if not current_agent:
             return None
 
-        setattr(current_agent, "name", agent_update.name)
-        setattr(current_agent, "description", agent_update.description)
-        setattr(current_agent, "llm_connection_id", agent_update.llm_connection_id)
-        setattr(current_agent, "definition", agent_update.definition)
-        setattr(current_agent, "is_active", agent_update.is_active)
+        if agent_update.name is not None:
+            current_agent.name = agent_update.name
+        if agent_update.description is not None:
+            current_agent.description = agent_update.description
+        if agent_update.llm_connection_id is not None:
+            current_agent.llm_connection_id = agent_update.llm_connection_id
+        if agent_update.definition is not None:
+            current_agent.definition = agent_update.definition
+        if agent_update.is_active is not None:
+            current_agent.is_active = agent_update.is_active
 
         return AgentDefinitionResponse.model_validate(current_agent)
     
@@ -223,15 +231,20 @@ class AgentService:
             raise BusinessValidationError("Agent definition not found")
         await self._agent_definition_repository.delete(current_agent)
         
-    def __check_authorized(self,
-                             current_user: UserResponse,
-                             connection: LLMConnection) -> None:
+    def __check_authorized(
+        self,
+        current_user: Optional[UserResponse],
+        connection: LLMConnection,
+    ) -> None:
+        if is_internal_service_call():
+            return
+
         if current_user is None:
             raise BusinessValidationError("User must be authenticated to access LLM connections")
-        
+
         if not UserAuthorizedProvider.user_in_at_least_one_organization(current_user, connection.organizations):
             raise AuthorizationError("User does not have access to the specified LLM connection")
-        
+
         if connection.projects:
             if not UserAuthorizedProvider.user_in_at_least_one_project(current_user, connection.projects):
                 raise AuthorizationError("User does not have access to the specified LLM connection")

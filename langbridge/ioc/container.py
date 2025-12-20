@@ -10,7 +10,9 @@ from db import (
 )
 from auth.register import create_oauth_client
 from repositories.connector_repository import ConnectorRepository
+from repositories.environment_repository import OrganizationEnvironmentSettingRepository
 from services.connector_service import ConnectorService
+from services.environment_service import EnvironmentService
 from services.connector_schema_service import ConnectorSchemaService
 from repositories.user_repository import UserRepository, OAuthAccountRepository
 from repositories.organization_repository import (
@@ -80,6 +82,7 @@ class Container(containers.DeclarativeContainer):
     organization_invite_repository = providers.Factory(OrganizationInviteRepository, session=async_session)
     project_invite_repository = providers.Factory(ProjectInviteRepository, session=async_session)
     connector_repository = providers.Factory(ConnectorRepository, session=async_session)
+    environment_repository = providers.Factory(OrganizationEnvironmentSettingRepository, session=async_session)
     llm_connection_repository = providers.Factory(LLMConnectionRepository, session=async_session)
     semantic_model_repository = providers.Factory(SemanticModelRepository, session=async_session)
     thread_repository = providers.Factory(ThreadRepository, session=async_session)
@@ -100,6 +103,11 @@ class Container(containers.DeclarativeContainer):
         oauth_account_repository=oauth_account_repository,
         oauth=oauth,
         organization_service=organization_service,
+    )
+
+    environment_service = providers.Factory(
+        EnvironmentService,
+        repository=environment_repository,
     )
     
     connector_service = providers.Factory(
