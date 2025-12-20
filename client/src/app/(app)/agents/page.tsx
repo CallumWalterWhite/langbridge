@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useQuery } from '@tanstack/react-query';
-import { ArrowRight, Bot, Plus, RefreshCw } from 'lucide-react';
+import { ArrowRight, Bot, Plus, RefreshCw, Sparkles } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -74,6 +74,11 @@ export default function LLMConnectionsIndex(): JSX.Element {
             <Button onClick={handleCreate} size="sm" className="gap-2">
               <Plus className="h-4 w-4" aria-hidden="true" />
               New LLM connection
+            </Button>
+            <Button asChild variant="outline" size="sm" className="gap-2">
+              <Link href="/agents/definitions">
+                <Sparkles className="h-4 w-4" aria-hidden="true" /> Agent builder
+              </Link>
             </Button>
           </div>
         </div>

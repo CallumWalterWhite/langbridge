@@ -103,7 +103,7 @@ async def create_agent_definition(
     agent_service: AgentService = Depends(Provide[Container.agent_service]),
 ) -> AgentDefinitionResponse:
     # current_user available for future auth; service does not require it yet
-    return await agent_service.create_agent_definition(request)
+    return await agent_service.create_agent_definition(request, current_user)
 
 
 @router.get("/definitions", response_model=List[AgentDefinitionResponse])
@@ -112,7 +112,7 @@ async def list_agent_definitions(
     current_user: UserResponse = Depends(get_current_user),
     agent_service: AgentService = Depends(Provide[Container.agent_service]),
 ) -> List[AgentDefinitionResponse]:
-    return await agent_service.list_agent_definitions()
+    return await agent_service.list_agent_definitions(current_user)
 
 
 @router.get("/definitions/{agent_id}", response_model=AgentDefinitionResponse)
@@ -122,7 +122,7 @@ async def get_agent_definition(
     current_user: UserResponse = Depends(get_current_user),
     agent_service: AgentService = Depends(Provide[Container.agent_service]),
 ) -> AgentDefinitionResponse:
-    agent = await agent_service.get_agent_definition(agent_id)
+    agent = await agent_service.get_agent_definition(agent_id, current_user)
     if not agent:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent definition not found")
     return agent
@@ -136,7 +136,7 @@ async def update_agent_definition(
     current_user: UserResponse = Depends(get_current_user),
     agent_service: AgentService = Depends(Provide[Container.agent_service]),
 ) -> AgentDefinitionResponse:
-    updated = await agent_service.update_agent_definition(agent_id, request)
+    updated = await agent_service.update_agent_definition(current_user, agent_id, request)
     if not updated:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent definition not found")
     return updated
@@ -150,7 +150,7 @@ async def delete_agent_definition(
     agent_service: AgentService = Depends(Provide[Container.agent_service]),
 ) -> None:
     try:
-        await agent_service.delete_agent_definition(agent_id)
+        await agent_service.delete_agent_definition(current_user, agent_id)
     except BusinessValidationError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
     return None

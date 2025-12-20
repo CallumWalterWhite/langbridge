@@ -1,14 +1,19 @@
 import { apiFetch } from '../http';
 import type {
+  AgentDefinition,
+  AgentDefinitionApiResponse,
+  CreateAgentDefinitionPayload,
   CreateLLMConnectionPayload,
   LLMConnection,
   LLMConnectionApiResponse,
   LLMConnectionTestResult,
   TestLLMConnectionPayload,
+  UpdateAgentDefinitionPayload,
   UpdateLLMConnectionPayload,
 } from './types';
 
 const BASE_PATH = '/api/v1/agents/llm-connections';
+const DEF_BASE_PATH = '/api/v1/agents/definitions';
 
 function normalizeConnection(payload: LLMConnectionApiResponse): LLMConnection {
   return {
@@ -104,12 +109,100 @@ export async function testLLMConnection(payload: TestLLMConnectionPayload): Prom
   });
 }
 
+function normalizeDefinition(payload: AgentDefinitionApiResponse): AgentDefinition {
+  let parsedDefinition: unknown = payload.definition;
+  if (typeof parsedDefinition === 'string') {
+    try {
+      parsedDefinition = JSON.parse(parsedDefinition);
+    } catch {
+      parsedDefinition = payload.definition;
+    }
+  }
+
+  const asAny = payload as any;
+  return {
+    id: payload.id,
+    name: payload.name,
+    description: payload.description ?? null,
+    llmConnectionId: asAny.llm_connection_id ?? asAny.llmConnectionId ?? '',
+    definition: parsedDefinition,
+    isActive: asAny.is_active ?? asAny.isActive ?? true,
+    createdAt: asAny.created_at ?? asAny.createdAt ?? '',
+    updatedAt: asAny.updated_at ?? asAny.updatedAt ?? '',
+  };
+}
+
+function serializeDefinition(definition: unknown): string | unknown {
+  if (typeof definition === 'string') {
+    return definition;
+  }
+  try {
+    return JSON.stringify(definition);
+  } catch {
+    return definition;
+  }
+}
+
+export async function fetchAgentDefinitions(): Promise<AgentDefinition[]> {
+  const response = await apiFetch<AgentDefinitionApiResponse[]>(DEF_BASE_PATH);
+  return response.map(normalizeDefinition);
+}
+
+export async function fetchAgentDefinition(agentId: string): Promise<AgentDefinition> {
+  const response = await apiFetch<AgentDefinitionApiResponse>(`${DEF_BASE_PATH}/${agentId}`);
+  return normalizeDefinition(response);
+}
+
+export async function createAgentDefinition(payload: CreateAgentDefinitionPayload): Promise<AgentDefinition> {
+  const body: Record<string, unknown> = {
+    name: payload.name,
+    description: payload.description,
+    llm_connection_id: payload.llmConnectionId,
+    definition: serializeDefinition(payload.definition),
+    is_active: payload.isActive ?? true,
+  };
+
+  const response = await apiFetch<AgentDefinitionApiResponse>(DEF_BASE_PATH, {
+    method: 'POST',
+    body: JSON.stringify(body),
+  });
+
+  return normalizeDefinition(response);
+}
+
+export async function updateAgentDefinition(
+  agentId: string,
+  payload: UpdateAgentDefinitionPayload,
+): Promise<AgentDefinition> {
+  const body: Record<string, unknown> = {};
+  if (payload.name !== undefined) body.name = payload.name;
+  if (payload.description !== undefined) body.description = payload.description;
+  if (payload.llmConnectionId !== undefined) body.llm_connection_id = payload.llmConnectionId;
+  if (payload.definition !== undefined) body.definition = serializeDefinition(payload.definition);
+  if (payload.isActive !== undefined) body.is_active = payload.isActive;
+
+  const response = await apiFetch<AgentDefinitionApiResponse>(`${DEF_BASE_PATH}/${agentId}`, {
+    method: 'PUT',
+    body: JSON.stringify(body),
+  });
+
+  return normalizeDefinition(response);
+}
+
+export async function deleteAgentDefinition(agentId: string): Promise<void> {
+  await apiFetch<void>(`${DEF_BASE_PATH}/${agentId}`, { method: 'DELETE', skipJsonParse: true });
+}
+
 export type {
+  AgentDefinition,
+  AgentDefinitionApiResponse,
+  CreateAgentDefinitionPayload,
   CreateLLMConnectionPayload,
   LLMConnection,
   LLMConnectionApiResponse,
   LLMConnectionTestResult,
   TestLLMConnectionPayload,
+  UpdateAgentDefinitionPayload,
   UpdateLLMConnectionPayload,
-  LLMProvider
+  LLMProvider,
 } from './types';

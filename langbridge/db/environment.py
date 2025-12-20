@@ -1,8 +1,7 @@
-from sqlalchemy import String, Table, Column, ForeignKey, Boolean, UUID, text
-from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy import String, Column, ForeignKey, UUID
+from sqlalchemy.orm import Mapped, relationship
 
 from .base import Base
-from .auth import Organization
 
 class OrganisationEnvironmentSetting(Base):
     __tablename__ = "organisation_environment_settings"
@@ -12,4 +11,4 @@ class OrganisationEnvironmentSetting(Base):
     setting_key = Column(String(255), nullable=False)
     setting_value = Column(String(1024), nullable=False)
 
-    organization: Mapped["Organization"] = relationship("Organization", back_populates="projects")
+    organization: Mapped["Organization"] = relationship("Organization", back_populates="environment_settings")

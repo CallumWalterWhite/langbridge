@@ -62,3 +62,41 @@ export interface UpdateLLMConnectionPayload {
   organizationId?: string | null;
   projectId?: string | null;
 }
+
+export interface AgentDefinition {
+  id: string;
+  name: string;
+  description?: string | null;
+  llmConnectionId: string;
+  definition: unknown;
+  isActive: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AgentDefinitionApiResponse {
+  id: string;
+  name: string;
+  description?: string | null;
+  llm_connection_id: string;
+  definition: unknown;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CreateAgentDefinitionPayload {
+  name: string;
+  description?: string;
+  llmConnectionId: string;
+  definition: unknown;
+  isActive?: boolean;
+}
+
+export interface UpdateAgentDefinitionPayload {
+  name?: string;
+  description?: string;
+  llmConnectionId?: string;
+  definition?: unknown;
+  isActive?: boolean;
+}

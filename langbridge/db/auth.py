@@ -76,6 +76,12 @@ class Organization(Base):
         "SemanticVectorStoreEntry", back_populates="organization", cascade="all, delete-orphan"
     )
 
+    environment_settings: Mapped[list["OrganisationEnvironmentSetting"]] = relationship(
+        "OrganisationEnvironmentSetting",
+        back_populates="organization",
+        cascade="all, delete-orphan",
+    )
+
     projects: Mapped[list["Project"]] = relationship("Project", back_populates="organization", cascade="all, delete-orphan")
     invites:  Mapped[list["OrganizationInvite"]] = relationship("OrganizationInvite", back_populates="organization", cascade="all, delete-orphan")
 
@@ -263,4 +269,3 @@ class ProjectInvite(Base):
     )
 
     __table_args__ = (UniqueConstraint("project_id", "invitee_id", name="uq_project_invite_user"),)
-
