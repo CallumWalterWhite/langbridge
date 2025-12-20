@@ -24,6 +24,11 @@ class UserResponse(_Base):
     id: uuid.UUID
     username: str
     is_active: bool
+    
+    available_organizations: Optional[list[uuid.UUID]] = None
+    current_organization: Optional[uuid.UUID] = None
+    available_projects: Optional[list[uuid.UUID]] = None
+    current_project: Optional[uuid.UUID] = None
 
     model_config = ConfigDict(from_attributes=True)
 

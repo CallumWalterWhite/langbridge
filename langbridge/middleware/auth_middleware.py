@@ -9,6 +9,7 @@ from ioc import Container
 from config import settings
 import logging
 from auth.jwt import verify_jwt
+from models.auth import UserResponse
 from services.auth_service import AuthService
 
 PATHS_TO_EXCLUDE = [
@@ -62,6 +63,6 @@ class AuthMiddleware(BaseHTTPMiddleware):
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid session payload")
 
         request.state.username = username
-        user = await auth_service.get_user_by_username(username)
+        user: UserResponse = await auth_service.get_user_by_username(username)
         request.state.user = user
         return await call_next(request)

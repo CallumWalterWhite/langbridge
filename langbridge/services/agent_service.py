@@ -2,7 +2,9 @@ import uuid
 from typing import List, Optional
 
 from db.agent import LLMConnection, AgentDefinition
-from errors.application_errors import BusinessValidationError
+from errors.application_errors import AuthorizationError, BusinessValidationError
+from services.service_utils import internal_service
+from models.auth import UserResponse
 from repositories.agent_repository import AgentRepository
 from models.llm_connections import (
     LLMConnectionCreate,
@@ -12,6 +14,7 @@ from models.llm_connections import (
     LLMConnectionUpdate,
     LLMProvider,
 )
+from .user_auth_provider import UserAuthorizedProvider
 from models.agents import AgentDefinitionCreate, AgentDefinitionResponse, AgentDefinitionUpdate
 from repositories.llm_connection_repository import LLMConnectionRepository
 from utils.llm.llm_tester import LLMConnectionTester
@@ -29,7 +32,17 @@ class AgentService:
     async def create_llm_connection(
         self,
         connection: LLMConnectionCreate,
+        current_user: UserResponse
     ) -> LLMConnectionResponse:
+        if current_user is None:
+            raise BusinessValidationError("User must be authenticated to create LLM connections")
+        
+        if not UserAuthorizedProvider.organization_has_access(current_user, connection.organization_id):
+            raise AuthorizationError("User does not have access to the specified organization")
+        
+        if connection.project_id and not UserAuthorizedProvider.project_has_access(current_user, connection.project_id):
+            raise AuthorizationError("User does not have access to the specified project")
+        
         test_result = self._tester.test_connection(
             provider=connection.provider,
             api_key=connection.api_key,
@@ -54,28 +67,58 @@ class AgentService:
         )
 
         self._llm_repository.add(new_connection)
+        
+        if connection.organization_id is None:
+            raise BusinessValidationError("Organization ID must be provided")
+        
+        self._llm_repository.add_to_organization(connection.organization_id, new_connection.id)
+        
+        if connection.project_id:
+            self._llm_repository.add_to_project(connection.project_id, new_connection.id)
+        
         return LLMConnectionResponse.model_validate(new_connection)
 
-    async def list_llm_connections(self) -> List[LLMConnectionResponse]:
-        connections = await self._llm_repository.get_all()
+    async def list_llm_connections(self,
+                                   current_user: UserResponse,
+                                   organization_id: Optional[uuid.UUID] = None,
+                                   project_id: Optional[uuid.UUID] = None
+                                   ) -> List[LLMConnectionResponse]:
+        if current_user is None:
+            raise BusinessValidationError("User must be authenticated to list LLM connections")
+        if organization_id and not UserAuthorizedProvider.organization_has_access(current_user, organization_id):
+            raise AuthorizationError("User does not have access to the specified organization")
+        if project_id and not UserAuthorizedProvider.project_has_access(current_user, project_id):
+            raise AuthorizationError("User does not have access to the specified project")
+        
+        connections = await self._llm_repository.get_all(
+            organization_id=organization_id,
+            project_id=project_id
+        )
         return [LLMConnectionResponse.model_validate(conn) for conn in connections]
 
+    @internal_service
     async def list_llm_connection_secrets(self) -> List[LLMConnectionSecretResponse]:
         connections = await self._llm_repository.get_all()
         return [LLMConnectionSecretResponse.model_validate(conn) for conn in connections]
 
-    async def get_llm_connection(self, connection_id: uuid.UUID) -> Optional[LLMConnectionResponse]:
+    @internal_service
+    async def get_llm_connection(self,
+                                current_user: UserResponse,
+                                connection_id: uuid.UUID) -> Optional[LLMConnectionResponse]:
         connection = await self._llm_repository.get_by_id(connection_id)
-        if not connection:
-            return None
+        
+        self.__check_authorized(current_user, connection)
+        
         return LLMConnectionResponse.model_validate(connection)
 
     async def update_llm_connection(
         self,
+        current_user: UserResponse,
         connection_id: uuid.UUID,
         connection_update: LLMConnectionUpdate,
     ) -> Optional[LLMConnectionResponse]:
         current_connection: Optional[LLMConnection] = await self._llm_repository.get_by_id(connection_id)
+        self.__check_authorized(current_user, current_connection)
         if not current_connection:
             return None
 
@@ -114,8 +157,11 @@ class AgentService:
 
         return LLMConnectionResponse.model_validate(current_connection)
 
-    async def delete_llm_connection(self, connection_id: uuid.UUID) -> None:
+    async def delete_llm_connection(self, 
+                                    current_user: UserResponse,
+                                    connection_id: uuid.UUID) -> None:
         current_connection = await self._llm_repository.get_by_id(connection_id)
+        self.__check_authorized(current_user, current_connection)
         if not current_connection:
             raise BusinessValidationError("LLM connection not found")
         await self._llm_repository.delete(current_connection)
@@ -176,3 +222,16 @@ class AgentService:
         if not current_agent:
             raise BusinessValidationError("Agent definition not found")
         await self._agent_definition_repository.delete(current_agent)
+        
+    def __check_authorized(self,
+                             current_user: UserResponse,
+                             connection: LLMConnection) -> None:
+        if current_user is None:
+            raise BusinessValidationError("User must be authenticated to access LLM connections")
+        
+        if not UserAuthorizedProvider.user_in_at_least_one_organization(current_user, connection.organizations):
+            raise AuthorizationError("User does not have access to the specified LLM connection")
+        
+        if connection.projects:
+            if not UserAuthorizedProvider.user_in_at_least_one_project(current_user, connection.projects):
+                raise AuthorizationError("User does not have access to the specified LLM connection")

@@ -3,6 +3,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import Response
 from errors.application_errors import (
     AuthenticationError,
+    AuthorizationError,
     ResourceAlreadyExists, 
     ResourceNotFound, 
     InvalidRequest, 
@@ -37,6 +38,9 @@ class ErrorMiddleware(BaseHTTPMiddleware):
         except AuthenticationError as e:
             self.logger.error("Authentication error", exc_info=True)
             response = Response(content=str(e), status_code=401)
+        except AuthorizationError as e:
+            self.logger.error("Authorization error", exc_info=True)
+            response = Response(content=str(e), status_code=403)
         except Exception as e:
             self.logger.error("Unknown error", exc_info=True)
             response = Response(content=str(e), status_code=500)

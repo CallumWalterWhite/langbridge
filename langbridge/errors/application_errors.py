@@ -22,6 +22,9 @@ class JWTError(Exception):
 class AuthenticationError(Exception):
     pass
 
+class AuthorizationError(Exception):
+    pass
+
 class BusinessValidationError(Exception):
     def __init__(self, message: str, errors: Optional[Dict] = None):
         super().__init__(message)
