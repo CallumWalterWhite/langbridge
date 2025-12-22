@@ -136,7 +136,12 @@ class AuthService:
         user = await self._user_repository.get_by_username(username)
         if not user:
             raise BusinessValidationError("User not found")
-        return UserResponse.model_validate(user)
+        user = UserResponse.model_validate(user)
+        orgs = await self._organization_service.list_user_organizations(user)
+        user.available_organizations = list([org.id for org in orgs])
+        user.available_projects = [] #TODO: implement project listing
+        return user
+        
 
     async def authorize_redirect(
         self,

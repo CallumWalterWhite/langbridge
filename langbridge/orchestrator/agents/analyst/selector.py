@@ -7,8 +7,8 @@ import re
 from dataclasses import dataclass
 from typing import Iterable, Sequence
 
-from ...tools.sql_analyst.interfaces import AnalystQueryRequest
-from ...tools.sql_analyst.tool import SqlAnalystTool
+from orchestrator.tools.sql_analyst.interfaces import AnalystQueryRequest
+from orchestrator.tools.sql_analyst.tool import SqlAnalystTool
 
 TOKEN_RE = re.compile(r"\b\w+\b")
 

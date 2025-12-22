@@ -70,7 +70,7 @@ const NAV_ITEMS: NavItem[] = [
   {
     href: '/settings',
     label: 'Settings',
-    description: 'Adjust workspace preferences, tokens, and audit options.',
+    description: 'Update your personal preferences, notifications, and profile.',
   },
 ];
 

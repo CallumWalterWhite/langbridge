@@ -1,9 +1,9 @@
+from enum import Enum
 import hashlib
 import logging
 import uuid
 from typing import Any
 
-from sqlalchemy import Enum
 
 from config import settings
 from db.environment import OrganisationEnvironmentSetting
@@ -74,6 +74,7 @@ class EnvironmentService:
             return default
         return self._decrypt_value(organization_id, existing.setting_value)
 
+    #TODO: add decrypt flag to return encrypted values if needed
     async def list_settings(self, organization_id: uuid.UUID) -> dict[str, Any]:
         """Return all settings for an organization as a plain dict (decrypted)."""
 
@@ -82,3 +83,16 @@ class EnvironmentService:
             setting.setting_key: self._decrypt_value(organization_id, setting.setting_value)
             for setting in settings
         }
+
+    async def delete_setting(self, organization_id: uuid.UUID, key: str) -> None:
+        """Delete a setting for the organization if it exists."""
+
+        existing = await self._repository.get_by_key(organization_id, key)
+        if not existing:
+            return
+        await self._repository.delete(existing)
+        await self._repository.flush()
+
+    def get_available_keys(self) -> list[str]:
+        """Return a list of all available setting keys."""
+        return list([key.value for key in EnvironmentSettingKey])

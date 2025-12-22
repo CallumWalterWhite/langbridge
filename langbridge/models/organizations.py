@@ -50,3 +50,9 @@ class ProjectInviteResponse(_Base):
     invitee_id: uuid.UUID
 
     model_config = ConfigDict(from_attributes=True)
+
+class OrganizationEnvironmentSetting(_Base):
+    setting_key: str = Field(min_length=1, max_length=255)
+    setting_value: str  # Encrypted value
+
+    model_config = ConfigDict(from_attributes=True)

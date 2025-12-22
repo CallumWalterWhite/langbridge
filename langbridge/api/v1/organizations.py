@@ -4,7 +4,7 @@ from typing import List
 from dependency_injector.wiring import Provide, inject
 from fastapi import APIRouter, Depends, status
 
-from auth.dependencies import get_current_user
+from auth.dependencies import get_current_user, has_organization_access
 from models.auth import UserResponse
 from ioc import Container
 from models.organizations import (
@@ -15,6 +15,7 @@ from models.organizations import (
     ProjectCreateRequest,
     ProjectInviteResponse,
     ProjectResponse,
+    OrganizationEnvironmentSetting
 )
 from services.organization_service import OrganizationService
 
@@ -131,3 +132,76 @@ async def invite_to_project(
         payload.username,
     )
     return invite
+
+@router.get(
+    "/environment/keys",
+    response_model=List[str],
+    status_code=status.HTTP_200_OK,
+)
+@inject
+async def get_environment_setting_keys(
+    organization_service: OrganizationService = Depends(
+        Provide[Container.organization_service]
+    ),
+) -> List[str]:
+    keys = organization_service.get_available_keys()
+    return keys
+
+@router.get(
+    "/{organization_id}/environment",
+    response_model=List[OrganizationEnvironmentSetting],
+    status_code=status.HTTP_200_OK,
+)
+@inject
+async def get_organization_environment_settings(
+    organization_id: uuid.UUID,
+    current_user: UserResponse = Depends(has_organization_access),
+    organization_service: OrganizationService = Depends(
+        Provide[Container.organization_service]
+    ),
+) -> List[OrganizationEnvironmentSetting]:
+    settings = await organization_service.get_organization_environment_settings(
+        organization_id,
+    )
+    return settings
+
+@router.post(
+    "/{organization_id}/environment/{setting_key}",
+    response_model=OrganizationEnvironmentSetting,
+    status_code=status.HTTP_201_CREATED,
+)
+@inject
+async def set_organization_environment_setting(
+    organization_id: uuid.UUID,
+    setting_key: str,
+    payload: OrganizationEnvironmentSetting,
+    current_user: UserResponse = Depends(has_organization_access),
+    organization_service: OrganizationService = Depends(
+        Provide[Container.organization_service]
+    ),
+) -> OrganizationEnvironmentSetting:
+    setting = await organization_service.set_organization_environment_setting(
+        organization_id,
+        setting_key,
+        payload.setting_value,
+    )
+    return setting
+
+@router.delete(
+    "/{organization_id}/environment/{setting_key}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+@inject
+async def delete_organization_environment_setting(
+    organization_id: uuid.UUID,
+    setting_key: str,
+    current_user: UserResponse = Depends(has_organization_access),
+    organization_service: OrganizationService = Depends(
+        Provide[Container.organization_service]
+    ),
+) -> None:
+    await organization_service.delete_organization_environment_setting(
+        organization_id,
+        setting_key,
+    )
+    return None

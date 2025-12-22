@@ -88,6 +88,11 @@ class Container(containers.DeclarativeContainer):
     thread_repository = providers.Factory(ThreadRepository, session=async_session)
     agent_definition_repository = providers.Factory(AgentRepository, session=async_session)
 
+    environment_service = providers.Factory(
+        EnvironmentService,
+        repository=environment_repository,
+    )
+    
     organization_service = providers.Factory(
         OrganizationService,
         organization_repository=organization_repository,
@@ -95,6 +100,7 @@ class Container(containers.DeclarativeContainer):
         organization_invite_repository=organization_invite_repository,
         project_invite_repository=project_invite_repository,
         user_repository=user_repository,
+        environment_service=environment_service,
     )
 
     auth_service = providers.Factory(
@@ -103,11 +109,6 @@ class Container(containers.DeclarativeContainer):
         oauth_account_repository=oauth_account_repository,
         oauth=oauth,
         organization_service=organization_service,
-    )
-
-    environment_service = providers.Factory(
-        EnvironmentService,
-        repository=environment_repository,
     )
     
     connector_service = providers.Factory(

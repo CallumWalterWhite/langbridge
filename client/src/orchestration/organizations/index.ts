@@ -3,6 +3,7 @@ import type {
   OrganizationInvite,
   Project,
   ProjectInvite,
+  OrganizationEnvironmentSetting,
 } from './types';
 import { apiFetch } from '../http';
 
@@ -50,10 +51,45 @@ export async function inviteToProject(
   });
 }
 
+export async function fetchOrganizationEnvironmentKeys(): Promise<string[]> {
+  return apiFetch<string[]>(`${BASE_PATH}/environment/keys`);
+}
+
+export async function fetchOrganizationEnvironmentSettings(
+  organizationId: string,
+): Promise<OrganizationEnvironmentSetting[]> {
+  return apiFetch<OrganizationEnvironmentSetting[]>(`${BASE_PATH}/${organizationId}/environment`);
+}
+
+export async function setOrganizationEnvironmentSetting(
+  organizationId: string,
+  settingKey: string,
+  settingValue: string,
+): Promise<OrganizationEnvironmentSetting> {
+  return apiFetch<OrganizationEnvironmentSetting>(`${BASE_PATH}/${organizationId}/environment/${settingKey}`, {
+    method: 'POST',
+    body: JSON.stringify({
+      settingKey,
+      settingValue,
+    }),
+  });
+}
+
+export async function deleteOrganizationEnvironmentSetting(
+  organizationId: string,
+  settingKey: string,
+): Promise<void> {
+  await apiFetch<void>(`${BASE_PATH}/${organizationId}/environment/${settingKey}`, {
+    method: 'DELETE',
+    skipJsonParse: true,
+  });
+}
+
 export type {
   InviteStatus,
   Organization,
   OrganizationInvite,
+  OrganizationEnvironmentSetting,
   Project,
   ProjectInvite,
 } from './types';

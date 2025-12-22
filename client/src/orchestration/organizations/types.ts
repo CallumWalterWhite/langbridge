@@ -24,3 +24,8 @@ export interface ProjectInvite {
   status: InviteStatus;
   inviteeId: string;
 }
+
+export interface OrganizationEnvironmentSetting {
+  settingKey: string;
+  settingValue: string;
+}

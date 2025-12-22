@@ -1,3 +1,4 @@
+from typing import Any, List
 import uuid
 from datetime import datetime, timezone
 
@@ -16,12 +17,14 @@ from errors.application_errors import (
     PermissionDeniedBusinessValidationError,
     ResourceNotFound,
 )
+from services.environment_service import EnvironmentService
 from models.auth import UserResponse
 from models.organizations import (
     OrganizationInviteResponse,
     OrganizationResponse,
     ProjectInviteResponse,
     ProjectResponse,
+    OrganizationEnvironmentSetting
 )
 from repositories.organization_repository import (
     OrganizationInviteRepository,
@@ -42,12 +45,14 @@ class OrganizationService:
         organization_invite_repository: OrganizationInviteRepository,
         project_invite_repository: ProjectInviteRepository,
         user_repository: UserRepository,
+        environment_service:EnvironmentService
     ) -> None:
         self._organization_repository = organization_repository
         self._project_repository = project_repository
         self._organization_invite_repository = organization_invite_repository
         self._project_invite_repository = project_invite_repository
         self._user_repository = user_repository
+        self._environment_service = environment_service
 
     async def list_user_organizations(self, user: UserResponse) -> list[OrganizationResponse]:
         db_user = await self._resolve_user(user)
@@ -90,9 +95,6 @@ class OrganizationService:
             await self._project_repository.add_member(
                 project, db_user, ProjectRole.OWNER
             )
-
-        # await self._organization_repository.commit()
-        # await self._project_repository.commit()
         return organization, project
 
     async def create_organization(self, owner: UserResponse, name: str) -> OrganizationResponse:
@@ -110,7 +112,6 @@ class OrganizationService:
         organization = Organization(name=normalized_name)
         self._organization_repository.add(organization)
         await self._organization_repository.add_member(organization, db_owner)
-        # await self._organization_repository.commit()
         return self._serialize_organization(organization)
 
     async def create_project(
@@ -143,7 +144,6 @@ class OrganizationService:
         project = Project(name=normalized_name, organization=organization)
         self._project_repository.add(project)
         await self._project_repository.add_member(project, db_requester)
-        # await self._project_repository.commit()
         return self._serialize_project(project)
 
     async def invite_user_to_organization(
@@ -195,8 +195,6 @@ class OrganizationService:
         )
         self._organization_invite_repository.add(invite)
         await self._organization_repository.add_member(organization, invitee)
-        # await self._organization_invite_repository.commit()
-        # await self._organization_repository.commit()
         return OrganizationInviteResponse.model_validate(invite)
 
     async def invite_user_to_project(
@@ -258,8 +256,6 @@ class OrganizationService:
         )
         self._project_invite_repository.add(invite)
         await self._project_repository.add_member(project, invitee)
-        # await self._project_invite_repository.commit()
-        # await self._project_repository.commit()
         return ProjectInviteResponse.model_validate(invite)
 
     async def list_projects_for_organization(
@@ -280,6 +276,50 @@ class OrganizationService:
         projects = await self._project_repository.list_for_organization(organization_id)
         return [self._serialize_project(project) for project in projects]
 
+    def get_available_keys(self) -> list[str]:
+        """Return a list of all available setting keys."""
+        return self._environment_service.get_available_keys()
+    
+    async def get_organization_environment_settings(
+        self,
+        organization_id: uuid.UUID,
+    ) -> List[OrganizationEnvironmentSetting]:
+        settings_dict = await self._environment_service.list_settings(organization_id)
+        settings = [
+            OrganizationEnvironmentSetting(
+                setting_key=key,
+                setting_value=value
+            )
+            for key, value in settings_dict.items()
+        ]
+        return settings
+    
+    async def set_organization_environment_setting(
+        self,
+        organization_id: uuid.UUID,
+        setting_key: str,
+        setting_value: Any,
+    ) -> OrganizationEnvironmentSetting:
+        await self._environment_service.set_setting(
+            organization_id,
+            setting_key,
+            setting_value,
+        )
+        return OrganizationEnvironmentSetting(
+            setting_key=setting_key,
+            setting_value=setting_value,
+        )
+        
+    async def delete_organization_environment_setting(
+        self,
+        organization_id: uuid.UUID,
+        setting_key: str,
+    ) -> None:
+        await self._environment_service.delete_setting(
+            organization_id,
+            setting_key,
+        )
+    
     async def _resolve_user(self, user: User | UserResponse) -> User:
         if isinstance(user, User):
             return user

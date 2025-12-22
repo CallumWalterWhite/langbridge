@@ -4,6 +4,7 @@ import * as React from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { QueryClientConfig } from '@tanstack/react-query';
 
+import { AuthGuard } from '@/components/AuthGuard';
 import { ToastProvider } from '@/components/ui/toast';
 import { WorkspaceScopeProvider } from '@/context/workspaceScope';
 
@@ -25,10 +26,11 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
 
   return (
     <QueryClientProvider client={queryClient}>
-      <WorkspaceScopeProvider>
-        <ToastProvider>{children}</ToastProvider>
-      </WorkspaceScopeProvider>
+      <AuthGuard>
+        <WorkspaceScopeProvider>
+          <ToastProvider>{children}</ToastProvider>
+        </WorkspaceScopeProvider>
+      </AuthGuard>
     </QueryClientProvider>
   );
 }
-

@@ -11,6 +11,7 @@ class MeasureAggregation(str, Enum):
     _count = "count" 
 
 class Dimension(BaseModel):
+    _table: "Table" # forward reference
     name: str
     type: str
     primary_key: bool = False
@@ -23,6 +24,7 @@ class Dimension(BaseModel):
 
 
 class Measure(BaseModel):
+    _table: "Table" # forward reference
     name: str
     type: str
     description: Optional[str] = None
