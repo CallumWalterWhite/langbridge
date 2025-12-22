@@ -137,7 +137,6 @@ class ConnectorService:
             if not organization:
                 raise BusinessValidationError("Organization not found")
         organization.connectors.append(connector)
-        # await self._organization_repository.commit()
 
         if create_request.project_id:
             project = await self._project_repository.get_by_id(create_request.project_id)
@@ -153,7 +152,6 @@ class ConnectorService:
                 )
 
             project.connectors.append(connector)
-            # await self._project_repository.commit()
 
             if organization is None:
                 organization = await self._organization_repository.get_by_id(

@@ -2,6 +2,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.routing import APIRoute
+from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 from starlette.middleware.cors import CORSMiddleware
 from starlette.middleware.sessions import SessionMiddleware
 
@@ -10,7 +11,7 @@ from config import settings
 from db import initialize_database
 from ioc import Container
 from ioc.wiring import wire_packages
-from utils.logger import setup_file_logging
+from utils.logger import setup_logging
 
 from middleware import UnitOfWorkMiddleware, ErrorMiddleware, AuthMiddleware
 
@@ -33,14 +34,13 @@ async def lifespan(app: FastAPI):
     yield
     await container.shutdown_resources()
 
+setup_logging(service_name=settings.PROJECT_NAME)
+
 app = FastAPI(
     title=settings.PROJECT_NAME,
     generate_unique_id_function=custom_generate_unique_id,
     lifespan=lifespan,
 )
-
-if settings.IS_LOCAL:
-    setup_file_logging()
 
 # Order of middleware matters! UnitOfWork should be first to ensure DB session is available to all
 # subsequent middleware and route handlers.
@@ -67,6 +67,8 @@ app.include_router(
     api_router_v1,
     prefix=settings.API_V1_STR,
 )
+
+FastAPIInstrumentor.instrument_app(app)
 
 if __name__ == "__main__":
     import uvicorn

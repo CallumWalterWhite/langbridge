@@ -3,6 +3,8 @@ from typing import List, Optional
 
 from db.agent import LLMConnection, AgentDefinition
 from errors.application_errors import AuthorizationError, BusinessValidationError
+from db.auth import Organization
+from repositories.organization_repository import OrganizationRepository, ProjectRepository
 from services.service_utils import internal_service, is_internal_service_call
 from models.auth import UserResponse
 from repositories.agent_repository import AgentRepository
@@ -24,9 +26,13 @@ class AgentService:
     def __init__(self,
                  agent_definition_repository: AgentRepository, 
                  llm_repository: LLMConnectionRepository,
+                 organization_repository: OrganizationRepository,
+                 project_repository: ProjectRepository
                  ) -> None:
         self._llm_repository = llm_repository
         self._agent_definition_repository = agent_definition_repository
+        self._organization_repository = organization_repository
+        self._project_repository = project_repository
         self._tester = LLMConnectionTester()
 
     async def create_llm_connection(
@@ -70,11 +76,19 @@ class AgentService:
         
         if connection.organization_id is None:
             raise BusinessValidationError("Organization ID must be provided")
-        
-        self._llm_repository.add_to_organization(connection.organization_id, new_connection.id)
+            
+        organization = await self._organization_repository.get_by_id(
+            connection.organization_id
+        )
+        if not organization:
+            raise BusinessValidationError("Organization not found")
+        organization.llm_connections.append(new_connection)
         
         if connection.project_id:
-            self._llm_repository.add_to_project(connection.project_id, new_connection.id)
+            project = await self._project_repository.get_by_id(connection.project_id)
+            if not project:
+                raise BusinessValidationError("Project not found")
+            project.llm_connections.append(new_connection)
         
         return LLMConnectionResponse.model_validate(new_connection)
 
@@ -107,10 +121,10 @@ class AgentService:
         connection_id: uuid.UUID,
         current_user: Optional[UserResponse] = None,
     ) -> Optional[LLMConnectionResponse]:
-        connection = await self._llm_repository.get_by_id(connection_id)
+        connection: LLMConnection | None = await self._llm_repository.get_by_id(connection_id)
         if not connection:
             return None
-
+        
         self.__check_authorized(current_user, connection)
         return LLMConnectionResponse.model_validate(connection)
 
@@ -268,11 +282,11 @@ class AgentService:
         if connection is None:
             raise BusinessValidationError("LLM connection not found")
 
-        if not UserAuthorizedProvider.user_in_at_least_one_organization(current_user, connection.organizations):
+        if not UserAuthorizedProvider.user_in_at_least_one_organization(current_user, [org.id for org in connection.organizations]):
             raise AuthorizationError("User does not have access to the specified LLM connection")
 
         if connection.projects:
-            if not UserAuthorizedProvider.user_in_at_least_one_project(current_user, connection.projects):
+            if not UserAuthorizedProvider.user_in_at_least_one_project(current_user, [proj.id for proj in connection.projects]):
                 raise AuthorizationError("User does not have access to the specified LLM connection")
 
     async def _get_llm_connection(self, connection_id: uuid.UUID) -> LLMConnection:

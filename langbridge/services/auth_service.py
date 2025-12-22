@@ -138,8 +138,13 @@ class AuthService:
             raise BusinessValidationError("User not found")
         user = UserResponse.model_validate(user)
         orgs = await self._organization_service.list_user_organizations(user)
+        projects = [
+            await self._organization_service.list_projects_for_organization(org.id, user) for org in orgs
+        ]
         user.available_organizations = list([org.id for org in orgs])
-        user.available_projects = [] #TODO: implement project listing
+        user.available_projects = list(
+            proj.id for proj_list in projects for proj in proj_list
+        )
         return user
         
 

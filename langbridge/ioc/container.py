@@ -126,7 +126,9 @@ class Container(containers.DeclarativeContainer):
     agent_service = providers.Factory(
         AgentService,
         agent_definition_repository=agent_definition_repository,
-        llm_repository=llm_connection_repository
+        llm_repository=llm_connection_repository,
+        organization_repository=organization_repository,
+        project_repository=project_repository
     )
 
     semantic_model_builder = providers.Factory(

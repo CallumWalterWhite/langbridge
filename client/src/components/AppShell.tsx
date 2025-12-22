@@ -54,8 +54,20 @@ const NAV_ITEMS: NavItem[] = [
   },
   {
     href: '/agents',
-    label: 'LLM connections',
-    description: 'Register provider credentials for upcoming agent builders.',
+    label: 'Agents',
+    description: 'Build semantic layers and publish curated data models for agents.',
+    children: [
+      {
+        href: '/agents',
+        label: 'Agents',
+        description: 'Build semantic layers and publish curated data models for agents.',
+      },
+      {
+        href: '/agents/llm',
+        label: 'LLM connections',
+        description: 'Register provider credentials for upcoming agent builders.',
+      },
+    ],
   },
   {
     href: '/organizations',
@@ -167,7 +179,7 @@ export function AppShell({ children }: { children: ReactNode }): JSX.Element {
                   {isOpen ? (
                     <div className="ml-3 space-y-1 border-l border-[color:var(--panel-border)] pl-3">
                       {item.children?.map((child) => {
-                        const childActive = pathname === child.href || pathname.startsWith(`${child.href}/`);
+                        const childActive = pathname === child.href;
                         return (
                           <Link
                             key={child.href}
