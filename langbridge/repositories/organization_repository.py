@@ -30,6 +30,7 @@ class OrganizationRepository(AsyncBaseRepository[Organization]):
             select(Organization)
             .options(
                 selectinload(Organization.connectors),
+                selectinload(Organization.llm_connections),
                 selectinload(Organization.projects),
                 selectinload(Organization.user_links),
             )
@@ -41,6 +42,7 @@ class OrganizationRepository(AsyncBaseRepository[Organization]):
         result = await self._session.scalars(
             select(Organization)
             .options(
+                selectinload(Organization.llm_connections),
                 selectinload(Organization.projects),
                 selectinload(Organization.user_links),
             )
@@ -52,6 +54,7 @@ class OrganizationRepository(AsyncBaseRepository[Organization]):
         result = await self._session.scalars(
             select(Organization)
                 .options(
+                    selectinload(Organization.llm_connections),
                     selectinload(Organization.projects),
                     selectinload(Organization.user_links),
                 )
@@ -132,6 +135,7 @@ class ProjectRepository(AsyncBaseRepository[Project]):
             select(Project)
             .options(
                 selectinload(Project.connectors),
+                selectinload(Project.llm_connections),
             )
             .filter(Project.id == id_)
         )
