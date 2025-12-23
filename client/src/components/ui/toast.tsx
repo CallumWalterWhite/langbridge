@@ -52,24 +52,24 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
             key={toast.id}
             role="status"
             className={cn(
-              'pointer-events-auto overflow-hidden rounded-xl border border-slate-200 bg-white shadow-lg',
-              toast.variant === 'destructive' ? 'border-red-200 bg-red-50' : '',
+              'pointer-events-auto overflow-hidden rounded-2xl border border-[color:var(--panel-border)] bg-[color:var(--panel-bg)] shadow-soft',
+              toast.variant === 'destructive' ? 'border-rose-500/25 bg-rose-500/10' : '',
             )}
           >
             <div className="flex items-start justify-between gap-3 p-4">
               <div>
-                {toast.title ? <p className="text-sm font-semibold text-slate-900">{toast.title}</p> : null}
+                {toast.title ? <p className="text-sm font-semibold text-[color:var(--text-primary)]">{toast.title}</p> : null}
                 {toast.description ? (
-                  <p className="mt-1 text-sm text-slate-600">{toast.description}</p>
+                  <p className="mt-1 text-sm text-[color:var(--text-secondary)]">{toast.description}</p>
                 ) : null}
               </div>
               <button
                 type="button"
-                className="rounded-md p-1 text-slate-500 transition hover:bg-slate-100 hover:text-slate-900"
+                className="rounded-full p-1 text-[color:var(--text-muted)] transition hover:bg-[color:var(--panel-alt)] hover:text-[color:var(--text-primary)]"
                 onClick={() => dismiss(toast.id)}
                 aria-label="Close notification"
               >
-                ?
+                x
               </button>
             </div>
           </div>

@@ -10,7 +10,7 @@ type ButtonVariant = 'default' | 'secondary' | 'outline' | 'ghost';
 type ButtonSize = 'sm' | 'md' | 'lg' | 'icon';
 
 const VARIANT_CLASSES: Record<ButtonVariant, string> = {
-  default: 'bg-[color:var(--accent)] text-white hover:bg-[color:var(--accent-strong)] focus-visible:ring-[color:var(--accent)]',
+  default: 'bg-[color:var(--accent)] text-white shadow-sm hover:bg-[color:var(--accent-strong)] focus-visible:ring-[color:var(--accent)]',
   secondary: 'border border-[color:var(--panel-border)] bg-[color:var(--panel-bg)] text-[color:var(--text-primary)] hover:bg-[color:var(--panel-alt)] focus-visible:ring-[color:var(--border-strong)]',
   outline: 'border border-[color:var(--border-strong)] bg-transparent text-[color:var(--text-primary)] hover:bg-[color:var(--panel-alt)] focus-visible:ring-[color:var(--border-strong)]',
   ghost: 'bg-transparent text-[color:var(--text-secondary)] hover:bg-[color:var(--panel-alt)] focus-visible:ring-[color:var(--border-strong)]',
@@ -50,7 +50,7 @@ export const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
       <button
         ref={ref}
         className={cn(
-          'inline-flex items-center justify-center gap-2 rounded-md font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--app-bg)] disabled:pointer-events-none disabled:opacity-50',
+          'inline-flex items-center justify-center gap-2 rounded-full font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--app-bg)] disabled:pointer-events-none disabled:opacity-50',
           VARIANT_CLASSES[variant],
           SIZE_CLASSES[size],
           className,

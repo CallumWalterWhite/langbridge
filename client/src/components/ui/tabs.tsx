@@ -55,7 +55,10 @@ export const TabsList = React.forwardRef<HTMLDivElement, React.HTMLAttributes<HT
       <div
         ref={ref}
         role="tablist"
-        className={cn('inline-flex items-center rounded-lg border border-slate-200 bg-slate-50 p-1 text-sm', className)}
+        className={cn(
+          'inline-flex items-center rounded-full border border-[color:var(--panel-border)] bg-[color:var(--panel-bg)] p-1 text-sm shadow-soft',
+          className,
+        )}
         {...props}
       />
     );
@@ -79,8 +82,10 @@ export const TabsTrigger = React.forwardRef<HTMLButtonElement, TabsTriggerProps>
         aria-selected={isActive}
         onClick={() => tabs.setValue(value)}
         className={cn(
-          'inline-flex min-w-[120px] items-center justify-center rounded-md px-3 py-1.5 font-medium transition',
-          isActive ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-900',
+          'inline-flex min-w-[120px] items-center justify-center rounded-full px-3 py-1.5 font-medium transition',
+          isActive
+            ? 'bg-[color:var(--panel-alt)] text-[color:var(--text-primary)] shadow-sm'
+            : 'text-[color:var(--text-secondary)] hover:text-[color:var(--text-primary)]',
           className,
         )}
         {...props}

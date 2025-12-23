@@ -13,7 +13,7 @@ const AUTH_PROVIDERS = [
     label: 'Continue with GitHub',
     description: 'Use your GitHub identity to sync repos and automations.',
     className:
-      'bg-[color:var(--accent)] text-white shadow-lg shadow-[rgba(37,99,235,0.25)] hover:bg-[color:var(--accent-strong)]',
+      'bg-[color:var(--accent)] text-white shadow-soft hover:bg-[color:var(--accent-strong)]',
     iconClassName: 'text-white',
     Icon: GitHubMark,
   },
@@ -22,7 +22,7 @@ const AUTH_PROVIDERS = [
     label: 'Continue with Google',
     description: 'Sign in with Google Workspace or personal accounts.',
     className:
-      'border border-[color:var(--panel-border)] bg-white text-slate-900 shadow-sm hover:bg-slate-100 dark:bg-[color:var(--panel-alt)] dark:text-[color:var(--text-primary)]',
+      'border border-[color:var(--panel-border)] bg-[color:var(--panel-bg)] text-[color:var(--text-primary)] shadow-soft hover:bg-[color:var(--panel-alt)]',
     iconClassName: '',
     Icon: GoogleMark,
   },
@@ -38,7 +38,7 @@ export default function Page() {
 
       <section className="relative w-full max-w-2xl space-y-8 rounded-3xl border border-[color:var(--panel-border)] bg-[color:var(--panel-bg)] p-10 shadow-soft backdrop-blur">
         <div className="inline-flex items-center gap-2 rounded-full bg-[color:var(--chip-bg)] px-4 py-2 text-sm text-[color:var(--text-secondary)]">
-          <span className="flex h-2 w-2 items-center justify-center rounded-full bg-emerald-400" />
+          <span className="flex h-2 w-2 items-center justify-center rounded-full bg-[color:var(--accent)]" />
           <span>LangBridge access portal</span>
         </div>
 

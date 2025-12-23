@@ -114,7 +114,7 @@ export function DrawerContent({ className, children, side = 'right', ...props }:
 
   return createPortal(
     <div
-      className="fixed inset-0 z-50 flex bg-slate-950/40"
+      className="fixed inset-0 z-50 flex bg-black/35"
       role="presentation"
       onMouseDown={handleBackdropClick}
     >
@@ -125,7 +125,7 @@ export function DrawerContent({ className, children, side = 'right', ...props }:
         aria-modal="true"
         tabIndex={-1}
         className={cn(
-          'ml-auto flex h-full w-full max-w-md flex-col overflow-y-auto border-l border-slate-200 bg-white p-6 shadow-xl transition',
+          'ml-auto flex h-full w-full max-w-md flex-col overflow-y-auto border-l border-[color:var(--panel-border)] bg-[color:var(--panel-bg)] p-6 text-[color:var(--text-primary)] shadow-soft transition',
           side === 'left' ? 'ml-0 mr-auto border-l-0 border-r' : 'ml-auto',
           className,
         )}

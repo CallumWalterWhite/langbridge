@@ -1,56 +1,63 @@
+@import url("https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap");
 @import "tailwindcss";
 
 :root {
-  --app-bg: #f4f7fb;
-  --shell-bg: rgba(255, 255, 255, 0.88);
-  --panel-bg: rgba(255, 255, 255, 0.95);
-  --panel-alt: rgba(241, 245, 249, 0.78);
-  --panel-shadow: 0 24px 55px -28px rgba(15, 23, 42, 0.45);
-  --panel-border: rgba(148, 163, 184, 0.25);
-  --border-strong: rgba(148, 163, 184, 0.4);
-  --border-strong-hover: rgba(100, 116, 139, 0.55);
-  --chip-bg: rgba(226, 232, 240, 0.65);
-  --surface-card: rgba(255, 255, 255, 0.98);
-  --surface-muted: rgba(226, 232, 240, 0.6);
-  --text-primary: #0f172a;
-  --text-secondary: #475569;
-  --text-muted: #64748b;
-  --accent: #2563eb;
-  --accent-soft: rgba(37, 99, 235, 0.14);
-  --accent-strong: #1d4ed8;
+  --font-body: "Instrument Sans", "Segoe UI", system-ui, -apple-system, sans-serif;
+  --font-code: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  --app-bg: #f6f7f8;
+  --shell-bg: rgba(249, 250, 251, 0.92);
+  --panel-bg: #ffffff;
+  --panel-alt: #f3f4f6;
+  --panel-shadow: 0 1px 0 rgba(15, 23, 42, 0.04);
+  --panel-border: rgba(15, 23, 42, 0.08);
+  --border-strong: rgba(15, 23, 42, 0.14);
+  --border-strong-hover: rgba(15, 23, 42, 0.22);
+  --chip-bg: #eef2f6;
+  --surface-card: #ffffff;
+  --surface-muted: #f7f8fa;
+  --text-primary: #111827;
+  --text-secondary: #4b5563;
+  --text-muted: #6b7280;
+  --accent: #10a37f;
+  --accent-soft: rgba(16, 163, 127, 0.14);
+  --accent-strong: #0f8f6c;
   --success-soft: rgba(16, 185, 129, 0.12);
-  --danger-soft: rgba(248, 113, 113, 0.12);
-  --shadow-soft: 0 30px 70px -30px rgba(15, 23, 42, 0.35);
+  --danger-soft: rgba(239, 68, 68, 0.12);
+  --shadow-soft: 0 12px 30px -24px rgba(15, 23, 42, 0.35);
+  --app-gradient: radial-gradient(900px 520px at 8% 8%, rgba(16, 163, 127, 0.12), transparent 60%),
+    radial-gradient(760px 420px at 95% -10%, rgba(59, 130, 246, 0.08), transparent 65%);
 }
 
 [data-theme='dark'] {
-  --app-bg: #020617;
-  --shell-bg: rgba(2, 6, 23, 0.94);
-  --panel-bg: rgba(15, 23, 42, 0.82);
-  --panel-alt: rgba(30, 41, 59, 0.76);
-  --panel-shadow: 0 28px 80px -32px rgba(15, 23, 42, 0.85);
-  --panel-border: rgba(148, 163, 184, 0.22);
-  --border-strong: rgba(148, 163, 184, 0.4);
-  --border-strong-hover: rgba(148, 163, 184, 0.55);
+  --app-bg: #0c0f12;
+  --shell-bg: rgba(12, 15, 18, 0.96);
+  --panel-bg: #14181d;
+  --panel-alt: #1d232a;
+  --panel-shadow: 0 1px 0 rgba(255, 255, 255, 0.03);
+  --panel-border: rgba(148, 163, 184, 0.2);
+  --border-strong: rgba(148, 163, 184, 0.32);
+  --border-strong-hover: rgba(148, 163, 184, 0.45);
   --chip-bg: rgba(148, 163, 184, 0.18);
-  --surface-card: rgba(15, 23, 42, 0.86);
-  --surface-muted: rgba(15, 23, 42, 0.64);
-  --text-primary: #e2e8f0;
-  --text-secondary: #cbd5f5;
+  --surface-card: #151a20;
+  --surface-muted: #11151a;
+  --text-primary: #e5e7eb;
+  --text-secondary: #cbd5e1;
   --text-muted: #94a3b8;
-  --accent: #38bdf8;
-  --accent-soft: rgba(56, 189, 248, 0.2);
-  --accent-strong: #0ea5e9;
+  --accent: #10a37f;
+  --accent-soft: rgba(16, 163, 127, 0.2);
+  --accent-strong: #13b48a;
   --success-soft: rgba(34, 197, 94, 0.18);
-  --danger-soft: rgba(239, 68, 68, 0.2);
-  --shadow-soft: 0 30px 80px -40px rgba(15, 23, 42, 0.9);
+  --danger-soft: rgba(248, 113, 113, 0.2);
+  --shadow-soft: 0 18px 35px -28px rgba(0, 0, 0, 0.75);
+  --app-gradient: radial-gradient(900px 520px at 6% 8%, rgba(16, 163, 127, 0.16), transparent 60%),
+    radial-gradient(760px 420px at 95% -15%, rgba(56, 189, 248, 0.12), transparent 65%);
 }
 
 @theme inline {
   --color-background: var(--app-bg);
   --color-foreground: var(--text-primary);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  --font-sans: var(--font-body);
+  --font-mono: var(--font-code);
 }
 
 *,
@@ -62,9 +69,12 @@
 body {
   margin: 0;
   background: var(--app-bg);
+  background-image: var(--app-gradient);
+  background-repeat: no-repeat;
+  background-size: cover;
   color: var(--text-primary);
-  font-family: var(--font-sans), system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-  transition: background 0.3s ease, color 0.3s ease;
+  font-family: var(--font-sans);
+  transition: background-color 0.2s ease, color 0.2s ease;
 }
 
 ::selection {
@@ -76,6 +86,7 @@ body {
   background: var(--panel-bg);
   border: 1px solid var(--panel-border);
   box-shadow: var(--panel-shadow);
+  transition: border-color 0.2s ease, box-shadow 0.2s ease, background-color 0.2s ease;
 }
 
 .surface-card {
@@ -105,4 +116,25 @@ body {
 
 .shadow-soft {
   box-shadow: var(--shadow-soft);
+}
+
+@keyframes page-enter {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.page-enter {
+  animation: page-enter 0.28s ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .page-enter {
+    animation: none;
+  }
 }

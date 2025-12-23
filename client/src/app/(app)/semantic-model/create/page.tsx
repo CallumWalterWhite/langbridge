@@ -565,7 +565,7 @@ export default function SemanticModelPage(): JSX.Element {
                           </div>
 
                           <div className="grid gap-4 lg:grid-cols-2">
-                            <div className="rounded-xl border border-[color:var(--panel-border)] bg-white/5 p-4">
+                            <div className="rounded-xl border border-[color:var(--panel-border)] bg-[color:var(--surface-muted)] p-4">
                               <div className="mb-3 flex items-center justify-between">
                                 <h4 className="text-sm font-semibold text-[color:var(--text-primary)]">
                                   Dimensions ({table.dimensions.length})
@@ -757,7 +757,7 @@ export default function SemanticModelPage(): JSX.Element {
                                 </div>
                               )}
                             </div>
-                            <div className="rounded-xl border border-[color:var(--panel-border)] bg-white/5 p-4">
+                            <div className="rounded-xl border border-[color:var(--panel-border)] bg-[color:var(--surface-muted)] p-4">
                               <div className="mb-3 flex items-center justify-between">
                                 <h4 className="text-sm font-semibold text-[color:var(--text-primary)]">
                                   Measures ({table.measures.length})
@@ -948,7 +948,7 @@ export default function SemanticModelPage(): JSX.Element {
                       </Button>
                     </div>
                     {builder.relationships.length === 0 ? (
-                      <div className="rounded-xl border border-dashed border-[color:var(--panel-border)] bg-white/5 p-4 text-sm">
+                      <div className="rounded-xl border border-dashed border-[color:var(--panel-border)] bg-[color:var(--surface-muted)] p-4 text-sm">
                         No joins configured yet. Add at least one join to describe how tables connect.
                       </div>
                     ) : (

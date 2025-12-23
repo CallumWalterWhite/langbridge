@@ -127,7 +127,7 @@ export function AppShell({ children }: { children: ReactNode }): JSX.Element {
   return (
     <div className="min-h-screen bg-[color:var(--shell-bg)] text-[color:var(--text-primary)] transition-colors">
       <div className="flex min-h-screen flex-col lg:flex-row">
-        <aside className="hidden w-72 flex-shrink-0 flex-col border-r border-[color:var(--panel-border)] bg-[color:var(--panel-bg)] px-5 py-6 text-sm text-[color:var(--text-secondary)] shadow-soft lg:flex">
+        <aside className="hidden w-64 flex-shrink-0 flex-col border-r border-[color:var(--panel-border)] bg-[color:var(--panel-bg)] px-5 py-6 text-sm text-[color:var(--text-secondary)] shadow-soft lg:flex">
           <Link
             href="/dashboard"
             className="inline-flex items-center gap-2 rounded-full border border-[color:var(--border-strong)] bg-[color:var(--panel-alt)] px-4 py-2 text-sm font-semibold text-[color:var(--text-primary)] transition hover:border-[color:var(--border-strong-hover)] hover:text-[color:var(--text-primary)]"
@@ -150,9 +150,9 @@ export function AppShell({ children }: { children: ReactNode }): JSX.Element {
                     key={item.href}
                     href={item.href}
                     className={cn(
-                      'block rounded-lg px-3 py-2 transition hover:bg-[color:var(--panel-alt)] hover:text-[color:var(--text-primary)]',
+                      'block rounded-xl px-3 py-2 transition hover:bg-[color:var(--panel-alt)] hover:text-[color:var(--text-primary)]',
                       isParentActive
-                        ? 'border border-[color:var(--border-strong)] bg-[color:var(--panel-alt)] font-medium text-[color:var(--text-primary)]'
+                        ? 'bg-[color:var(--panel-alt)] font-semibold text-[color:var(--text-primary)]'
                         : 'text-[color:var(--text-secondary)]',
                     )}
                   >
@@ -167,9 +167,9 @@ export function AppShell({ children }: { children: ReactNode }): JSX.Element {
                     type="button"
                     onClick={() => setOpenParent((current) => (current === item.href ? null : item.href))}
                     className={cn(
-                      'flex w-full items-center justify-between rounded-lg px-3 py-2 text-left transition hover:bg-[color:var(--panel-alt)] hover:text-[color:var(--text-primary)]',
+                      'flex w-full items-center justify-between rounded-xl px-3 py-2 text-left transition hover:bg-[color:var(--panel-alt)] hover:text-[color:var(--text-primary)]',
                       isParentActive
-                        ? 'border border-[color:var(--border-strong)] bg-[color:var(--panel-alt)] font-medium text-[color:var(--text-primary)]'
+                        ? 'bg-[color:var(--panel-alt)] font-semibold text-[color:var(--text-primary)]'
                         : 'text-[color:var(--text-secondary)]',
                     )}
                   >
@@ -185,9 +185,9 @@ export function AppShell({ children }: { children: ReactNode }): JSX.Element {
                             key={child.href}
                             href={child.href}
                             className={cn(
-                              'block rounded-lg px-3 py-2 text-sm transition hover:bg-[color:var(--panel-alt)] hover:text-[color:var(--text-primary)]',
+                              'block rounded-xl px-3 py-2 text-sm transition hover:bg-[color:var(--panel-alt)] hover:text-[color:var(--text-primary)]',
                               childActive
-                                ? 'border border-[color:var(--border-strong)] bg-[color:var(--panel-alt)] font-medium text-[color:var(--text-primary)]'
+                                ? 'bg-[color:var(--panel-alt)] font-medium text-[color:var(--text-primary)]'
                                 : 'text-[color:var(--text-secondary)]',
                             )}
                           >
@@ -215,7 +215,7 @@ export function AppShell({ children }: { children: ReactNode }): JSX.Element {
         </aside>
 
         <div className="flex flex-1 flex-col">
-          <header className="border-b border-[color:var(--panel-border)] bg-[color:var(--panel-bg)] px-6 py-4 shadow-soft backdrop-blur">
+          <header className="border-b border-[color:var(--panel-border)] bg-[color:var(--panel-bg)] px-6 py-4 shadow-soft">
             <div className="flex flex-wrap items-start justify-between gap-4">
               <div className="space-y-1">
                 <h1 className="text-lg font-semibold text-[color:var(--text-primary)]">{activeNav.label}</h1>
@@ -246,8 +246,8 @@ export function AppShell({ children }: { children: ReactNode }): JSX.Element {
                     className={cn(
                       'whitespace-nowrap rounded-full px-3 py-1 transition',
                       isActive
-                        ? 'border border-[color:var(--border-strong)] bg-[color:var(--panel-alt)] text-[color:var(--text-primary)]'
-                        : 'border border-transparent text-[color:var(--text-secondary)] hover:border-[color:var(--panel-border)] hover:text-[color:var(--text-primary)]',
+                        ? 'bg-[color:var(--panel-alt)] text-[color:var(--text-primary)]'
+                        : 'text-[color:var(--text-secondary)] hover:bg-[color:var(--panel-alt)] hover:text-[color:var(--text-primary)]',
                     )}
                   >
                     {item.label}
@@ -258,7 +258,7 @@ export function AppShell({ children }: { children: ReactNode }): JSX.Element {
           </header>
 
           <div className="flex-1 overflow-y-auto">
-            <main className="mx-auto w-full max-w-6xl px-6 py-8">{children}</main>
+            <main className="mx-auto w-full max-w-[1200px] px-6 py-8 page-enter">{children}</main>
           </div>
         </div>
       </div>

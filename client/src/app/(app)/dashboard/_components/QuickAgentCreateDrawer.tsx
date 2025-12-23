@@ -142,7 +142,7 @@ export function QuickAgentCreateDrawer({ sources, onCreated }: QuickAgentCreateD
             </option>
           ))}
         </Select>
-        <p id="agent-template-description" className="mt-2 text-xs text-slate-500">
+        <p id="agent-template-description" className="mt-2 text-xs text-[color:var(--text-muted)]">
           Spin up a ready-to-use agent with recommended defaults.
         </p>
       </div>
@@ -152,7 +152,7 @@ export function QuickAgentCreateDrawer({ sources, onCreated }: QuickAgentCreateD
           <form onSubmit={handleSubmit} className="flex h-full flex-col gap-6">
             <div className="space-y-1">
               <h2 className="text-lg font-semibold">Create agent</h2>
-              <p className="text-sm text-slate-500">
+              <p className="text-sm text-[color:var(--text-muted)]">
                 Template: {template ? TEMPLATE_OPTIONS.find((item) => item.value === template)?.label : 'Select template'}
               </p>
             </div>
@@ -167,7 +167,7 @@ export function QuickAgentCreateDrawer({ sources, onCreated }: QuickAgentCreateD
                 <Label>Connect sources</Label>
                 <div className="mt-2 space-y-2">
                   {sources.length === 0 ? (
-                    <p className="rounded-lg border border-dashed border-slate-200 p-4 text-sm text-slate-500">
+                    <p className="rounded-xl border border-dashed border-[color:var(--panel-border)] bg-[color:var(--panel-alt)] p-4 text-sm text-[color:var(--text-muted)]">
                       No sources available yet. Add a source to link it here.
                     </p>
                   ) : (
@@ -176,18 +176,21 @@ export function QuickAgentCreateDrawer({ sources, onCreated }: QuickAgentCreateD
                         const id = `source-${source.id}`;
                         const checked = selectedSources.includes(source.id);
                         return (
-                          <li key={source.id} className="flex items-center justify-between rounded-lg border border-slate-200 bg-white px-3 py-2">
+                          <li
+                            key={source.id}
+                            className="flex items-center justify-between rounded-xl border border-[color:var(--panel-border)] bg-[color:var(--panel-bg)] px-3 py-2"
+                          >
                             <label htmlFor={id} className="flex flex-1 cursor-pointer items-center justify-between gap-3 text-sm">
                               <span>
-                                <span className="font-medium text-slate-900">{source.name}</span>
-                                <span className="ml-2 text-xs uppercase text-slate-400">{source.type}</span>
+                                <span className="font-medium text-[color:var(--text-primary)]">{source.name}</span>
+                                <span className="ml-2 text-xs uppercase text-[color:var(--text-muted)]">{source.type}</span>
                               </span>
                               <input
                                 id={id}
                                 type="checkbox"
                                 checked={checked}
                                 onChange={toggleSource(source.id)}
-                                className="h-4 w-4 rounded border-slate-300 text-slate-900 focus:outline-none focus:ring-2 focus:ring-slate-900"
+                                className="h-4 w-4 rounded border-[color:var(--border-strong)] text-[color:var(--text-primary)] focus:outline-none focus:ring-2 focus:ring-[color:var(--accent)]"
                               />
                             </label>
                           </li>
@@ -199,9 +202,9 @@ export function QuickAgentCreateDrawer({ sources, onCreated }: QuickAgentCreateD
               </div>
             </div>
 
-            {formError ? <p className="text-sm text-red-600" role="alert">{formError}</p> : null}
+            {formError ? <p className="text-sm text-rose-500" role="alert">{formError}</p> : null}
 
-            <div className="mt-auto flex flex-col gap-2 border-t border-slate-200 pt-4 sm:flex-row sm:justify-end">
+            <div className="mt-auto flex flex-col gap-2 border-t border-[color:var(--panel-border)] pt-4 sm:flex-row sm:justify-end">
               <DrawerClose>
                 <Button type="button" variant="ghost">
                   Cancel

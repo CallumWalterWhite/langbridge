@@ -116,7 +116,7 @@ export function DialogContent({ className, children, ...props }: DialogContentPr
 
   return createPortal(
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 px-4"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/35 px-4"
       role="presentation"
       onMouseDown={handleBackdropClick}
     >
@@ -125,7 +125,7 @@ export function DialogContent({ className, children, ...props }: DialogContentPr
         role="dialog"
         aria-modal="true"
         className={cn(
-          'max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-2xl border border-slate-200 bg-white p-6 shadow-2xl',
+          'max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-3xl border border-[color:var(--panel-border)] bg-[color:var(--panel-bg)] p-6 text-[color:var(--text-primary)] shadow-soft',
           className,
         )}
         {...props}
@@ -146,7 +146,7 @@ export const DialogTitle = ({ className, ...props }: React.HTMLAttributes<HTMLHe
 );
 
 export const DialogDescription = ({ className, ...props }: React.HTMLAttributes<HTMLParagraphElement>) => (
-  <p className={cn('text-sm text-slate-600', className)} {...props} />
+  <p className={cn('text-sm text-[color:var(--text-secondary)]', className)} {...props} />
 );
 
 export type DialogFooterProps = React.HTMLAttributes<HTMLDivElement>;
