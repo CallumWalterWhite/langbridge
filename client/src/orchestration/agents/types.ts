@@ -100,3 +100,28 @@ export interface UpdateAgentDefinitionPayload {
   definition?: unknown;
   isActive?: boolean;
 }
+
+export interface SemanticModelResponse {
+  id: string;
+  name: string;
+  description?: string;
+}
+
+export interface FileRetriverDefinitionResponse {
+  id: string;
+  name: string;
+  description?: string;
+  configurationSchema?: Record<string, any>;
+}
+
+export interface WebSearchDefinitionResponse {
+  id: string;
+  name: string;
+  description?: string;
+}
+
+export interface SemanticSearchDefinitionResponse {
+  id: string;
+  name: string;
+  description?: string;
+}

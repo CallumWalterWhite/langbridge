@@ -5,8 +5,10 @@ from dependency_injector.wiring import Provide, inject
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import PlainTextResponse
 
+from auth.dependencies import has_organization_access, has_project_access
 from errors.application_errors import BusinessValidationError
 from ioc import Container
+from models.auth import UserResponse
 from models.semantic_models import (
     SemanticModelCreateRequest,
     SemanticModelRecordResponse,
@@ -55,6 +57,8 @@ async def create_semantic_model(
 async def list_semantic_models(
     organization_id: UUID,
     project_id: Optional[UUID] = None,
+    _: UserResponse = Depends(has_organization_access),
+    __: UserResponse = Depends(has_project_access),
     service: SemanticModelService = Depends(Provide[Container.semantic_model_service]),
 ) -> list[SemanticModelRecordResponse]:
     models = await service.list_models(

@@ -49,7 +49,7 @@ export default function LLMConnectionsIndex(): JSX.Element {
       });
       return;
     }
-    router.push('/agents/create');
+    router.push('/agents/llm/create');
   };
 
   return (
@@ -74,11 +74,6 @@ export default function LLMConnectionsIndex(): JSX.Element {
             <Button onClick={handleCreate} size="sm" className="gap-2">
               <Plus className="h-4 w-4" aria-hidden="true" />
               New LLM connection
-            </Button>
-            <Button asChild variant="outline" size="sm" className="gap-2">
-              <Link href="/agents/definitions">
-                <Sparkles className="h-4 w-4" aria-hidden="true" /> Agent builder
-              </Link>
             </Button>
           </div>
         </div>
@@ -136,7 +131,7 @@ export default function LLMConnectionsIndex(): JSX.Element {
               {connections.map((connection) => (
                 <li key={connection.id}>
                   <Link
-                    href={`/agents/${connection.id}`}
+                    href={`/agents/llm/${connection.id}`}
                     className="group flex items-center justify-between rounded-2xl border border-[color:var(--panel-border)] bg-[color:var(--panel-bg)] px-4 py-4 transition hover:border-[color:var(--border-strong)] hover:bg-[color:var(--panel-alt)]"
                   >
                     <div className="flex items-center gap-3">

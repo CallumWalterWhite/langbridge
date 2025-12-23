@@ -10,10 +10,15 @@ import type {
   TestLLMConnectionPayload,
   UpdateAgentDefinitionPayload,
   UpdateLLMConnectionPayload,
+  SemanticModelResponse,
+  FileRetriverDefinitionResponse,
+  WebSearchDefinitionResponse,
+  SemanticSearchDefinitionResponse
 } from './types';
 
 const BASE_PATH = '/api/v1/agents/llm-connections';
 const DEF_BASE_PATH = '/api/v1/agents/definitions';
+const SM_BASE_PATH = '/api/v1/semantic-model';
 
 function normalizeConnection(payload: LLMConnectionApiResponse): LLMConnection {
   return {
@@ -191,6 +196,46 @@ export async function updateAgentDefinition(
 
 export async function deleteAgentDefinition(agentId: string): Promise<void> {
   await apiFetch<void>(`${DEF_BASE_PATH}/${agentId}`, { method: 'DELETE', skipJsonParse: true });
+}
+
+export async function getAvailableSemanticModels(
+  organizationId: string,
+  projectId?: string,
+): Promise<SemanticModelResponse[]> {
+  return apiFetch<SemanticModelResponse[]>(`${SM_BASE_PATH}?organization_id=${organizationId}${projectId ? `&project_id=${projectId}` : ''}`);
+  // Stub response until backend is implemented
+  return Promise.resolve([
+    { id: 'semantic-model-1', name: 'Semantic Model 1', description: 'A powerful semantic model for understanding text.' },
+    { id: 'semantic-model-2', name: 'Semantic Model 2', description: 'An advanced model for semantic analysis.' },
+    { id: 'semantic-model-3', name: 'Semantic Model 3', description: 'A cutting-edge model for deep semantic comprehension.' },
+  ]);
+}
+
+export async function getAvailableFileRetriverDefinitions(): Promise<FileRetriverDefinitionResponse[]> {
+  // return apiFetch<FileRetriverDefinitionResponse[]>(`${DEF_BASE_PATH}/file-retrievers`);
+  // Stub response until backend is implemented
+  return Promise.resolve([
+    { id: 'file-retriever-1', name: 'File Retriever 1', description: 'Retrieves files from various sources efficiently.', },
+    { id: 'file-retriever-2', name: 'File Retriever 2', description: 'Advanced file retrieval system for large datasets.', },
+  ]);
+}
+
+export async function getAvailableWebSearchDefinitions(): Promise<WebSearchDefinitionResponse[]> {
+  // return apiFetch<WebSearchDefinitionResponse[]>(`${DEF_BASE_PATH}/web-searches`);
+  // Stub response until backend is implemented
+  return Promise.resolve([
+    { id: 'web-search-1', name: 'Web Search 1', description: 'Performs web searches to gather relevant information.', },
+    { id: 'web-search-2', name: 'Web Search 2', description: 'Advanced web search capabilities for comprehensive results.', },
+  ]);
+}
+
+export async function getAvailableSemanticSearchDefinitions(): Promise<SemanticSearchDefinitionResponse[]> {
+  // return apiFetch<SemanticSearchDefinitionResponse[]>(`${DEF_BASE_PATH}/semantic-searches`);
+  // Stub response until backend is implemented
+  return Promise.resolve([
+    { id: 'semantic-search-1', name: 'Semantic Search 1', description: 'Enables semantic search across large document sets.', },
+    { id: 'semantic-search-2', name: 'Semantic Search 2', description: 'Advanced semantic search for precise information retrieval.', },
+  ]);
 }
 
 export type {

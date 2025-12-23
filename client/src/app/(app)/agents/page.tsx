@@ -16,7 +16,7 @@ import { JSX } from 'react';
 
 const llmConnectionsQueryKey = ['llm-connections'] as const;
 
-export default function LLMConnectionsIndex(): JSX.Element {
+export default function AgentIndex(): JSX.Element {
   const router = useRouter();
   const { toast } = useToast();
   const { selectedOrganizationId } = useWorkspaceScope();
@@ -49,7 +49,7 @@ export default function LLMConnectionsIndex(): JSX.Element {
       });
       return;
     }
-    router.push('/agents/create');
+    router.push('/agents/definitions/create');
   };
 
   return (
@@ -58,26 +58,26 @@ export default function LLMConnectionsIndex(): JSX.Element {
         <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
           <div className="space-y-3">
             <p className="text-xs font-semibold uppercase tracking-[0.2em] text-[color:var(--text-muted)]">
-              LLM connections
+              Agents
             </p>
             <div className="space-y-2">
               <h1 className="text-2xl font-semibold text-[color:var(--text-primary)] md:text-3xl">
-                Manage provider credentials
+                Orchestrate intelligent agents
               </h1>
               <p className="text-sm md:text-base">
-                Keep Anthropic, OpenAI, and Azure keys in sync. Open a connection to rotate secrets or update model
-                defaults.
+                Add definded and analytical agents or create your own to automate complex tasks.
               </p>
             </div>
           </div>
-          <div className="flex flex-col items-start gap-3 sm:flex-row sm:items-center sm:justify-end">
+          <div className="flex flex-col items-start gap-4 sm:flex-row sm:items-center sm:justify-end">
             <Button onClick={handleCreate} size="sm" className="gap-2">
               <Plus className="h-4 w-4" aria-hidden="true" />
-              New LLM connection
+              New Definded Agent
             </Button>
-            <Button asChild variant="outline" size="sm" className="gap-2">
+            <Button onClick={handleCreate} variant="outline" size="md" className="gap-6">
               <Link href="/agents/definitions">
-                <Sparkles className="h-4 w-4" aria-hidden="true" /> Agent builder
+                {/* <Sparkles className="h-4 w-4" aria-hidden="true" />  */}
+                Agent builder
               </Link>
             </Button>
           </div>

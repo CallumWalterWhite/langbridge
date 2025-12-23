@@ -7,6 +7,16 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import {
+  Dialog,
+  DialogClose,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select } from '@/components/ui/select';
@@ -17,6 +27,10 @@ import {
   createAgentDefinition,
   fetchAgentDefinition,
   fetchLLMConnections,
+  getAvailableFileRetriverDefinitions,
+  getAvailableSemanticModels,
+  getAvailableSemanticSearchDefinitions,
+  getAvailableWebSearchDefinitions,
   updateAgentDefinition,
 } from '@/orchestration/agents';
 import type {
@@ -26,6 +40,7 @@ import type {
   UpdateAgentDefinitionPayload,
 } from '@/orchestration/agents';
 import { ApiError } from '@/orchestration/http';
+import { get } from 'http';
 
 const memoryStrategies = ['none', 'transient', 'conversation', 'long_term', 'vector', 'database'] as const;
 const executionModes = ['single_step', 'iterative'] as const;
@@ -72,6 +87,40 @@ interface FormState {
   capturePrompts: boolean;
   auditFields: string;
 }
+
+interface ToolDefinitionOption {
+  id: string;
+  name: string;
+  description: string;
+}
+
+enum ToolType {
+  sql_analyst = 'sql_analyst',
+  file_retriever = 'file_retriever',
+  web_searcher = 'web_searcher',
+  semantic_searcher = 'semantic_searcher',
+}
+
+const ToolTypeLabels: Record<ToolType, string> = {
+  [ToolType.sql_analyst]: 'SQL Analyst',
+  [ToolType.file_retriever]: 'File Retriever',
+  [ToolType.web_searcher]: 'Web Searcher',
+  [ToolType.semantic_searcher]: 'Semantic Searcher',
+};
+
+const ToolTypeOptions: ToolType[] = [
+  ToolType.sql_analyst,
+  ToolType.file_retriever,
+  ToolType.web_searcher,
+  ToolType.semantic_searcher,
+];
+
+const ToolDefinitionLabels: Record<ToolType, string> = {
+  [ToolType.sql_analyst]: 'Semantic model',
+  [ToolType.file_retriever]: 'File retriever definition',
+  [ToolType.web_searcher]: 'Web search definition',
+  [ToolType.semantic_searcher]: 'Semantic search definition',
+};
 
 function defaultFormState(): FormState {
   return {
@@ -209,17 +258,65 @@ export function AgentDefinitionForm({ mode, agentId, initialAgent, onComplete }:
   const { selectedOrganizationId } = useWorkspaceScope();
   const [formState, setFormState] = useState<FormState>(defaultFormState());
   const [pending, setPending] = useState(false);
+  const [toolPickerOpen, setToolPickerOpen] = useState(false);
+  const [selectedToolType, setSelectedToolType] = useState<ToolType | ''>('');
+  const [selectedToolDefinitionId, setSelectedToolDefinitionId] = useState('');
 
   const connectionsQuery = useQuery<LLMConnection[]>({
     queryKey: ['llm-connections'],
     queryFn: () => fetchLLMConnections(),
   });
 
+  const toolDefinitionsQuery = useQuery<ToolDefinitionOption[]>({
+    queryKey: ['agent-tool-definitions', selectedToolType],
+    enabled: toolPickerOpen && Boolean(selectedToolType),
+    queryFn: async () => {
+      switch (selectedToolType) {
+        case ToolType.sql_analyst: {
+          const models = await getAvailableSemanticModels(
+            selectedOrganizationId ?? ''
+          );
+          return models.map((model) => ({
+            id: model.id,
+            name: model.name,
+            description: model.description ?? '',
+          }));
+        }
+        case ToolType.file_retriever: {
+          const retrievers = await getAvailableFileRetriverDefinitions();
+          return retrievers.map((retriever) => ({
+            id: retriever.id,
+            name: retriever.name,
+            description: retriever.description ?? '',
+          }));
+        }
+        case ToolType.web_searcher: {
+          const searches = await getAvailableWebSearchDefinitions();
+          return searches.map((search) => ({
+            id: search.id,
+            name: search.name,
+            description: search.description ?? '',
+          }));
+        }
+        case ToolType.semantic_searcher: {
+          const searches = await getAvailableSemanticSearchDefinitions();
+          return searches.map((search) => ({
+            id: search.id,
+            name: search.name,
+            description: search.description ?? '',
+          }));
+        }
+        default:
+          return [];
+      }
+    },
+  });
+
   useQuery<AgentDefinition>({
     queryKey: ['agent-definition', agentId],
     enabled: mode === 'edit' && Boolean(agentId) && !initialAgent,
     queryFn: () => fetchAgentDefinition(agentId ?? ''),
-    onSuccess: (agent) => {
+    onSuccess: (agent: AgentDefinition) => {
       const base = defaultFormState();
       setFormState({
         ...hydrateFromDefinition(agent.definition, base),
@@ -251,7 +348,25 @@ export function AgentDefinitionForm({ mode, agentId, initialAgent, onComplete }:
     }
   }, [connectionsQuery.data, formState.llmConnectionId]);
 
+  useEffect(() => {
+    if (!toolPickerOpen) {
+      setSelectedToolType('');
+      setSelectedToolDefinitionId('');
+    }
+  }, [toolPickerOpen]);
+
+  useEffect(() => {
+    setSelectedToolDefinitionId('');
+  }, [selectedToolType]);
+
   const tools = formState.tools;
+  const toolDefinitionOptions = toolDefinitionsQuery.data ?? [];
+  const selectedToolDefinition = toolDefinitionOptions.find((option) => option.id === selectedToolDefinitionId);
+  const toolDefinitionLabel = selectedToolType ? ToolDefinitionLabels[selectedToolType] : 'Definition';
+  const canAddTool =
+    Boolean(selectedToolType) &&
+    !toolDefinitionsQuery.isLoading &&
+    (!toolDefinitionOptions.length || Boolean(selectedToolDefinitionId));
 
   const connectionLookup = useMemo(() => {
     return Object.fromEntries((connectionsQuery.data ?? []).map((conn) => [conn.id, conn.name]));
@@ -265,11 +380,30 @@ export function AgentDefinitionForm({ mode, agentId, initialAgent, onComplete }:
     });
   };
 
-  const addTool = () => {
+  const handleAddTool = () => {
+    if (!selectedToolType) {
+      return;
+    }
+
+    const configPayload: Record<string, unknown> = {};
+    if (selectedToolDefinition) {
+      configPayload.definition_id = selectedToolDefinition.id;
+      configPayload.definition_name = selectedToolDefinition.name;
+    }
+
     setFormState((prev) => ({
       ...prev,
-      tools: [...prev.tools, { name: '', connectorId: '', description: '', config: '{}' }],
+      tools: [
+        ...prev.tools,
+        {
+          name: selectedToolType,
+          connectorId: '',
+          description: selectedToolDefinition?.description ?? '',
+          config: stringifyConfig(configPayload) || '{}',
+        },
+      ],
     }));
+    setToolPickerOpen(false);
   };
 
   const removeTool = (index: number) => {
@@ -736,9 +870,80 @@ export function AgentDefinitionForm({ mode, agentId, initialAgent, onComplete }:
             <p className="text-sm font-semibold text-[color:var(--text-primary)]">Tools & connectors</p>
             <p className="text-xs text-[color:var(--text-muted)]">Map functions or connectors the agent can call.</p>
           </div>
-          <Button type="button" onClick={addTool} size="sm" className="gap-2">
-            <Plus className="h-4 w-4" /> Add tool
-          </Button>
+          <Dialog open={toolPickerOpen} onOpenChange={setToolPickerOpen}>
+            <DialogTrigger>
+              <Button type="button" size="sm" className="gap-2">
+                <Plus className="h-4 w-4" /> Add tool
+              </Button>
+            </DialogTrigger>
+            <DialogContent className="max-w-xl">
+              <DialogHeader>
+                <DialogTitle>Add tool</DialogTitle>
+                <DialogDescription>Pick a tool type and definition. You can edit details after adding.</DialogDescription>
+              </DialogHeader>
+              <div className="space-y-4">
+                <div className="space-y-2">
+                  <Label htmlFor="tool-type">Tool type</Label>
+                  <Select
+                    id="tool-type"
+                    value={selectedToolType}
+                    onChange={(event) => setSelectedToolType(event.target.value as ToolType)}
+                    placeholder="Choose a tool type"
+                  >
+                    {ToolTypeOptions.map((toolType) => (
+                      <option key={toolType} value={toolType}>
+                        {ToolTypeLabels[toolType]}
+                      </option>
+                    ))}
+                  </Select>
+                </div>
+                {selectedToolType ? (
+                  <div className="space-y-2">
+                    <Label htmlFor="tool-definition">{toolDefinitionLabel}</Label>
+                    {toolDefinitionsQuery.isLoading ? (
+                      <p className="text-xs text-[color:var(--text-muted)]">Loading available definitions...</p>
+                    ) : toolDefinitionsQuery.isError ? (
+                      <p className="text-xs text-rose-500">Unable to load definitions right now.</p>
+                    ) : toolDefinitionOptions.length ? (
+                      <>
+                        <Select
+                          id="tool-definition"
+                          value={selectedToolDefinitionId}
+                          onChange={(event) => setSelectedToolDefinitionId(event.target.value)}
+                          placeholder={`Select a ${toolDefinitionLabel.toLowerCase()}`}
+                        >
+                          {toolDefinitionOptions.map((option) => (
+                            <option key={option.id} value={option.id}>
+                              {option.name}
+                            </option>
+                          ))}
+                        </Select>
+                        {selectedToolDefinition ? (
+                          <p className="text-xs text-[color:var(--text-muted)]">
+                            {selectedToolDefinition.description || 'No description provided.'}
+                          </p>
+                        ) : null}
+                      </>
+                    ) : (
+                      <p className="text-xs text-[color:var(--text-muted)]">
+                        No definitions available yet. You can still add the tool and configure it manually.
+                      </p>
+                    )}
+                  </div>
+                ) : null}
+              </div>
+              <DialogFooter>
+                <DialogClose>
+                  <Button type="button" variant="ghost">
+                    Cancel
+                  </Button>
+                </DialogClose>
+                <Button type="button" onClick={handleAddTool} disabled={!canAddTool}>
+                  Add tool
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
         </div>
         <div className="mt-4 space-y-3">
           {tools.map((tool, index) => (

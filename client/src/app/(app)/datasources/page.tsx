@@ -59,12 +59,11 @@ export default function DataConnectionsIndex(): JSX.Element {
                 Connect structured data
               </h1>
               <p className="text-sm md:text-base">
-                Catalog every warehouse, lake, and business system powering LangBridge agents. Open a connection to
-                review credentials or update settings.
+                Catalog every warehouse, lake, and business system powering your agents.
               </p>
             </div>
           </div>
-          <div className="flex flex-col items-start gap-3 sm:flex-row sm:items-center sm:justify-end">
+          <div className="flex flex-col items-start gap-4 sm:flex-row sm:items-center sm:justify-end">
             <Button onClick={handleCreate} size="sm" className="gap-2">
               <Plus className="h-4 w-4" aria-hidden="true" />
               New connection
