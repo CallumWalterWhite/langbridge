@@ -85,7 +85,11 @@ async def chat_thread(
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc
 
     try:
-        response = await orchestrator_service.chat(msg=request.message)
+        response = await orchestrator_service.chat(
+            msg=request.message,
+            agent_id=request.agent_id,
+            current_user=current_user,
+        )
     except BusinessValidationError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 

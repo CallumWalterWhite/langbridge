@@ -76,8 +76,8 @@ const NAV_ITEMS: NavItem[] = [
   },
   {
     href: '/chat',
-    label: 'Conversations',
-    description: 'Revisit copilot chats and escalate threads to playbooks.',
+    label: 'Threads',
+    description: 'Revisit active threads and manage ongoing analysis sessions.',
   },
   {
     href: '/settings',
@@ -92,6 +92,7 @@ export function AppShell({ children }: { children: ReactNode }): JSX.Element {
   const { selectedOrganization, selectedProject } = useWorkspaceScope();
 
   const [openParent, setOpenParent] = useState<string | null>(null);
+  const isChatRoute = pathname.startsWith('/chat');
 
   const activeNav = useMemo(() => {
     for (const item of NAV_ITEMS) {
@@ -258,7 +259,14 @@ export function AppShell({ children }: { children: ReactNode }): JSX.Element {
           </header>
 
           <div className="flex-1 overflow-y-auto">
-            <main className="mx-auto w-full max-w-[1200px] px-6 py-8 page-enter">{children}</main>
+            <main
+              className={cn(
+                'w-full px-6 py-8 page-enter',
+                isChatRoute ? 'max-w-none' : 'mx-auto max-w-[1200px]',
+              )}
+            >
+              {children}
+            </main>
           </div>
         </div>
       </div>

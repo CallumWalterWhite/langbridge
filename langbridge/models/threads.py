@@ -34,6 +34,7 @@ class ThreadUpdateRequest(_Base):
 
 class ThreadChatRequest(_Base):
     message: str
+    agent_id: UUID
 
 
 class ThreadTabularResult(_Base):

@@ -27,6 +27,7 @@ class PlanningConstraints(BaseModel):
     prefer_low_latency: bool = True
     cost_sensitivity: str = "medium"      # "low" | "medium" | "high"
     require_viz_when_chartable: bool = True
+    allow_sql_analyst: bool = True
     allow_web_search: bool = True
     allow_deep_research: bool = True
     timebox_seconds: int = 30
@@ -107,6 +108,7 @@ Example (`AnalystThenVisual`):
 - `prefer_low_latency`: penalises `DeepResearch`.
 - `cost_sensitivity`: further adjusts the research score when `high`.
 - `require_viz_when_chartable`: upgrades routes that look chartable when two steps are allowed.
+- `allow_sql_analyst`: disables SQL analyst routes entirely.
 - `allow_web_search`: disables the `WebSearch` route entirely.
 - `allow_deep_research`: disables the `DeepResearch` route entirely.
 - `timebox_seconds`: surfaced in doc retrieval step inputs and assumptions.

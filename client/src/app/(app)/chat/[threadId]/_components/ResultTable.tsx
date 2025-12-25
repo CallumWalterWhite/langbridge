@@ -100,12 +100,16 @@ export function ResultTable({ result, maxPreviewRows = 10 }: ResultTableProps) {
 
   return (
     <div className="space-y-3">
-      <div className="overflow-x-auto rounded-2xl border border-[color:var(--panel-border)] bg-[color:var(--panel-alt)]">
-        <table className="min-w-full divide-y divide-[color:var(--panel-border)] text-left text-xs sm:text-sm">
+      <div className="overflow-x-hidden rounded-2xl border border-[color:var(--panel-border)] bg-[color:var(--panel-alt)]">
+        <table className="w-full table-fixed divide-y divide-[color:var(--panel-border)] text-left text-xs sm:text-sm">
           <thead className="bg-[color:var(--panel-bg)]">
             <tr>
               {displayColumns.map((column) => (
-                <th key={column} scope="col" className="px-4 py-3 font-semibold uppercase tracking-wider text-[10px] text-[color:var(--text-muted)] sm:text-[11px]">
+                <th
+                  key={column}
+                  scope="col"
+                  className="break-words px-4 py-3 font-semibold uppercase tracking-wider text-[10px] text-[color:var(--text-muted)] sm:text-[11px]"
+                >
                   {column}
                 </th>
               ))}
@@ -115,7 +119,10 @@ export function ResultTable({ result, maxPreviewRows = 10 }: ResultTableProps) {
             {normalised.map((row, rowIndex) => (
               <tr key={rowIndex} className="odd:bg-[color:var(--panel-alt)]/60">
                 {row.map((value, cellIndex) => (
-                  <td key={`${rowIndex}-${cellIndex}`} className="px-4 py-3 align-top text-[color:var(--text-secondary)]">
+                  <td
+                    key={`${rowIndex}-${cellIndex}`}
+                    className="break-words px-4 py-3 align-top text-[color:var(--text-secondary)]"
+                  >
                     {formatValue(value)}
                   </td>
                 ))}

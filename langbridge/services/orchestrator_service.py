@@ -1,20 +1,39 @@
 
+import json
 import logging
+import re
 import time
 import uuid
-from typing import Any
+from dataclasses import dataclass, field
+from typing import Any, Iterable, Optional
 
-from langchain_core.messages import BaseMessage, HumanMessage
+from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
 from langchain_core.language_models import BaseChatModel
 from langchain_openai import ChatOpenAI
 
 from connectors.config import ConnectorRuntimeType
 from errors.application_errors import BusinessValidationError
 from orchestrator.agents.analyst import AnalystAgent
+from orchestrator.agents.planner import PlanningConstraints
 from orchestrator.agents.visual import VisualAgent
 from orchestrator.agents.supervisor import SupervisorOrchestrator
+from orchestrator.agents.supervisor.orchestrator import ReasoningAgent
+from orchestrator.definitions import (
+    AgentDefinitionModel,
+    DataAccessPolicy,
+    ExecutionMode,
+    GuardrailConfig,
+    OutputFormat,
+    OutputSchema,
+    PromptContract,
+)
 from orchestrator.tools.sql_analyst import SqlAnalystTool, load_semantic_model
-from orchestrator.tools.sql_analyst.interfaces import LLMClient, SemanticModel, UnifiedSemanticModel
+from orchestrator.tools.sql_analyst.interfaces import (
+    AnalystQueryResponse,
+    LLMClient,
+    SemanticModel,
+    UnifiedSemanticModel,
+)
 from services.agent_service import AgentService
 from services.connector_service import ConnectorService
 from services.organization_service import OrganizationService
@@ -23,6 +42,7 @@ from utils.embedding_provider import EmbeddingProvider, EmbeddingProviderError
 
 from models.llm_connections import LLMConnectionSecretResponse
 from models.connectors import ConnectorResponse
+from models.auth import UserResponse
 
 
 class _ChatModelLLMClient(LLMClient):
@@ -48,6 +68,38 @@ class _ChatModelLLMClient(LLMClient):
         return str(response)
 
 
+class _DisabledAnalystAgent:
+    def __init__(self, *, reason: str) -> None:
+        self._reason = reason
+
+    async def answer_async(self, question: str, *, filters: dict | None = None, limit: int | None = None) -> AnalystQueryResponse:
+        return AnalystQueryResponse(
+            sql_canonical="",
+            sql_executable="",
+            dialect="n/a",
+            model_name="",
+            result=None,
+            error=self._reason,
+            execution_time_ms=None,
+        )
+
+
+@dataclass(slots=True)
+class _AgentToolConfig:
+    allow_sql: bool = True
+    allow_web_search: bool = True
+    allow_deep_research: bool = True
+    sql_model_ids: set[uuid.UUID] = field(default_factory=set)
+    allowed_connector_ids: Optional[set[uuid.UUID]] = None
+    denied_connector_ids: set[uuid.UUID] = field(default_factory=set)
+    web_search_defaults: dict[str, Any] = field(default_factory=dict)
+
+
+SQL_TOOL_NAMES = {"sql_analyst", "sql", "sql_analytics"}
+WEB_TOOL_NAMES = {"web_search", "web_searcher", "web_search_agent"}
+DOC_TOOL_NAMES = {"doc_retrieval", "deep_research", "research"}
+
+
 class OrchestratorService:
     def __init__(
         self,
@@ -62,14 +114,40 @@ class OrchestratorService:
         self._agent_service = agent_service
         self._logger = logging.getLogger(__name__)
 
-    async def chat(self, msg: str) -> dict[str, Any]:
+    async def chat(
+        self,
+        msg: str,
+        *,
+        agent_id: uuid.UUID | None = None,
+        current_user: UserResponse | None = None,
+    ) -> dict[str, Any]:
         request_id = str(uuid.uuid4())
         start_ts = time.perf_counter()
         self._logger.info("orchestrator.chat start request_id=%s", request_id)
+        agent_definition: AgentDefinitionModel | None = None
+        agent_record = None
+        if agent_id is None:
+            raise BusinessValidationError("Agent definition is required.")
+        if current_user is None:
+            raise BusinessValidationError("User must be authenticated to run an agent definition.")
+        agent_record = await self._agent_service.get_agent_definition(agent_id, current_user)
+        if not agent_record:
+            raise BusinessValidationError("Agent definition not found.")
+        agent_definition = (
+            agent_record.definition
+            if isinstance(agent_record.definition, AgentDefinitionModel)
+            else AgentDefinitionModel.model_validate(agent_record.definition)
+        )
+        self._logger.debug(
+            "request_id=%s using agent_definition id=%s name=%s",
+            request_id,
+            agent_record.id,
+            agent_record.name
+        )
         llm_connections = await self._agent_service.list_llm_connection_secrets()
         if not llm_connections:
             raise BusinessValidationError("No LLM connections configured")
-        llm_connection: LLMConnectionSecretResponse = llm_connections[0]
+        llm_connection = self._select_llm_connection(llm_connections, agent_record)
         self._logger.debug(
             "request_id=%s using llm_connection id=%s model=%s",
             request_id,
@@ -92,7 +170,13 @@ class OrchestratorService:
                 exc,
             )
 
+        tool_config = self._build_agent_tool_config(agent_definition)
         semantic_entries = await self._semantic_model_service.list_all_models()
+        filtered_entries = (
+            self._filter_semantic_entries(semantic_entries, tool_config)
+            if tool_config.allow_sql
+            else []
+        )
         connectors: list[ConnectorResponse] = await self._connector_service.list_all_connectors()
         connector_lookup = {str(connector.id): connector for connector in connectors}
         self._logger.info(
@@ -105,7 +189,14 @@ class OrchestratorService:
         connector_instances: dict[str, Any] = {}
         tools: list[SqlAnalystTool] = []
 
-        for entry in semantic_entries:
+        if tool_config.allow_sql and not filtered_entries:
+            self._logger.warning(
+                "request_id=%s no semantic models matched agent tool constraints; disabling SQL analyst",
+                request_id,
+            )
+            tool_config.allow_sql = False
+
+        for entry in filtered_entries:
             connector_id = str(entry.connector_id)
             connector_entry = connector_lookup.get(connector_id)
             if not connector_entry:
@@ -161,19 +252,39 @@ class OrchestratorService:
             )
             tools.append(tool)
 
-        if not tools:
+        if tool_config.allow_sql and not tools:
             raise BusinessValidationError("No semantic models or connectors available for SQL analysis.")
 
-        analyst_agent = AnalystAgent(tools)
+        analyst_agent = (
+            AnalystAgent(tools)
+            if tools
+            else _DisabledAnalystAgent(reason="SQL analyst tools are disabled for this agent.")
+        )
         visual_agent = VisualAgent()
+        planning_constraints = self._build_planning_constraints(agent_definition, tool_config)
+        reasoning_agent = self._build_reasoning_agent(agent_definition)
+        planning_context = tool_config.web_search_defaults or None
 
         supervisor = SupervisorOrchestrator(
             analyst_agent=analyst_agent,
             visual_agent=visual_agent,
+            reasoning_agent=reasoning_agent,
         )
 
-        response = await supervisor.handle(user_query=msg)
-        summary = await self._summarize_response(base_llm, msg, response, request_id=request_id)
+        response = await supervisor.handle(
+            user_query=msg,
+            planning_constraints=planning_constraints,
+            planning_context=planning_context,
+        )
+        summary = await self._summarize_response(
+            base_llm,
+            msg,
+            response,
+            request_id=request_id,
+            prompt_contract=agent_definition.prompt if agent_definition else None,
+            output_schema=agent_definition.output if agent_definition else None,
+            guardrails=agent_definition.guardrails if agent_definition else None,
+        )
         response["summary"] = summary
         elapsed_ms = int((time.perf_counter() - start_ts) * 1000)
         self._logger.info("orchestrator.chat complete request_id=%s elapsed_ms=%d", request_id, elapsed_ms)
@@ -186,6 +297,9 @@ class OrchestratorService:
         response_payload: dict[str, Any],
         *,
         request_id: str | None = None,
+        prompt_contract: PromptContract | None = None,
+        output_schema: OutputSchema | None = None,
+        guardrails: GuardrailConfig | None = None,
     ) -> str:
         """
         Generate a concise natural language summary of the orchestrated response.
@@ -201,14 +315,36 @@ class OrchestratorService:
         ]
         if viz_summary:
             prompt_sections.append(f"Visualization guidance:\n{viz_summary}")
+        if output_schema:
+            prompt_sections.append(f"Output format: {output_schema.format.value}.")
+            if output_schema.format == OutputFormat.json and output_schema.json_schema:
+                schema_text = json.dumps(output_schema.json_schema, indent=2, sort_keys=True)
+                prompt_sections.append(f"JSON schema:\n{schema_text}")
+            if output_schema.format == OutputFormat.markdown and output_schema.markdown_template:
+                prompt_sections.append(f"Markdown template:\n{output_schema.markdown_template}")
         prompt_sections.append(
             "Highlight the most important metric, call out notable changes or trends, and mention if the dataset is empty."
         )
 
         prompt = "\n\n".join(prompt_sections)
 
+        messages: list[BaseMessage] = []
+        if prompt_contract:
+            system_sections = [
+                section.strip()
+                for section in [
+                    prompt_contract.system_prompt,
+                    prompt_contract.user_instructions,
+                    prompt_contract.style_guidance,
+                ]
+                if section
+            ]
+            if system_sections:
+                messages.append(SystemMessage(content="\n\n".join(system_sections)))
+        messages.append(HumanMessage(content=prompt))
+
         try:
-            llm_response = await chat_model.ainvoke([HumanMessage(content=prompt)])
+            llm_response = await chat_model.ainvoke(messages)
         except Exception as exc:  # pragma: no cover - defensive guard against transient LLM failures
             suffix = f" request_id={request_id}" if request_id else ""
             self._logger.warning("Failed to generate summary%s: %s", suffix, exc, exc_info=True)
@@ -221,7 +357,7 @@ class OrchestratorService:
 
         if not summary_text:
             return "No summary produced."
-        return summary_text
+        return self._enforce_guardrails(summary_text, guardrails)
 
     @staticmethod
     def _summarise_visualization(visualization: Any) -> str:
@@ -292,3 +428,154 @@ class OrchestratorService:
             formatted = f"{value:.4f}".rstrip("0").rstrip(".")
             return formatted or "0"
         return str(value)
+
+    def _select_llm_connection(
+        self,
+        llm_connections: list[LLMConnectionSecretResponse],
+        agent_record: Any | None,
+    ) -> LLMConnectionSecretResponse:
+        if agent_record is None:
+            return llm_connections[0]
+
+        desired_id = getattr(agent_record, "llm_connection_id", None)
+        for connection in llm_connections:
+            if connection.id == desired_id:
+                return connection
+
+        raise BusinessValidationError("LLM connection for the selected agent definition was not found.")
+
+    def _build_agent_tool_config(
+        self,
+        definition: AgentDefinitionModel | None,
+    ) -> _AgentToolConfig:
+        config = _AgentToolConfig()
+        if not definition:
+            return config
+
+        tools = list(definition.tools or [])
+        access_policy = definition.access_policy or DataAccessPolicy()
+        allowed_connectors = set(access_policy.allowed_connectors or [])
+        denied_connectors = set(access_policy.denied_connectors or [])
+        config.denied_connector_ids = denied_connectors
+
+        if not tools:
+            config.allowed_connector_ids = allowed_connectors or None
+            return config
+
+        normalized_names = {self._normalize_tool_name(tool.name) for tool in tools}
+        config.allow_sql = any(name in SQL_TOOL_NAMES for name in normalized_names)
+        config.allow_web_search = any(name in WEB_TOOL_NAMES for name in normalized_names)
+        config.allow_deep_research = any(name in DOC_TOOL_NAMES for name in normalized_names)
+
+        sql_connector_ids: set[uuid.UUID] = set()
+        for tool in tools:
+            tool_name = self._normalize_tool_name(tool.name)
+            if tool_name not in SQL_TOOL_NAMES:
+                continue
+            if tool.connector_id:
+                sql_connector_ids.add(tool.connector_id)
+            definition_id = self._coerce_uuid(tool.config.get("definition_id")) if isinstance(tool.config, dict) else None
+            if definition_id:
+                config.sql_model_ids.add(definition_id)
+
+        if sql_connector_ids:
+            config.allowed_connector_ids = (
+                sql_connector_ids.intersection(allowed_connectors)
+                if allowed_connectors
+                else sql_connector_ids
+            )
+        else:
+            config.allowed_connector_ids = allowed_connectors or None
+
+        for tool in tools:
+            tool_name = self._normalize_tool_name(tool.name)
+            if tool_name not in WEB_TOOL_NAMES:
+                continue
+            if isinstance(tool.config, dict):
+                for key in ("region", "safe_search", "max_results"):
+                    if key in tool.config and tool.config[key] not in (None, ""):
+                        config.web_search_defaults[key] = tool.config[key]
+
+        return config
+
+    def _filter_semantic_entries(
+        self,
+        entries: Iterable[Any],
+        tool_config: _AgentToolConfig,
+    ) -> list[Any]:
+        filtered: list[Any] = []
+        for entry in entries:
+            if tool_config.sql_model_ids and entry.id not in tool_config.sql_model_ids:
+                continue
+            if (
+                tool_config.allowed_connector_ids is not None
+                and entry.connector_id not in tool_config.allowed_connector_ids
+            ):
+                continue
+            if tool_config.denied_connector_ids and entry.connector_id in tool_config.denied_connector_ids:
+                continue
+            filtered.append(entry)
+        return filtered
+
+    def _build_planning_constraints(
+        self,
+        definition: AgentDefinitionModel | None,
+        tool_config: _AgentToolConfig,
+    ) -> PlanningConstraints | None:
+        if not definition:
+            return None
+
+        max_steps = max(1, min(int(definition.execution.max_steps_per_iteration), 10))
+        prefer_low_latency = definition.execution.mode == ExecutionMode.single_step
+
+        return PlanningConstraints(
+            max_steps=max_steps,
+            prefer_low_latency=prefer_low_latency,
+            allow_sql_analyst=tool_config.allow_sql,
+            allow_web_search=tool_config.allow_web_search,
+            allow_deep_research=tool_config.allow_deep_research,
+        )
+
+    def _build_reasoning_agent(
+        self,
+        definition: AgentDefinitionModel | None,
+    ) -> ReasoningAgent | None:
+        if not definition:
+            return None
+        max_iterations = max(1, int(definition.execution.max_iterations))
+        if definition.execution.mode == ExecutionMode.single_step:
+            max_iterations = 1
+        return ReasoningAgent(max_iterations=max_iterations, logger=self._logger)
+
+    @staticmethod
+    def _normalize_tool_name(name: str) -> str:
+        return str(name or "").strip().lower()
+
+    @staticmethod
+    def _coerce_uuid(value: Any) -> uuid.UUID | None:
+        if isinstance(value, uuid.UUID):
+            return value
+        if isinstance(value, str):
+            try:
+                return uuid.UUID(value)
+            except ValueError:
+                return None
+        return None
+
+    @staticmethod
+    def _enforce_guardrails(
+        summary: str,
+        guardrails: GuardrailConfig | None,
+    ) -> str:
+        if not guardrails or not guardrails.moderation_enabled:
+            return summary
+        if not guardrails.regex_denylist:
+            return summary
+
+        for pattern in guardrails.regex_denylist:
+            try:
+                if re.search(pattern, summary):
+                    return guardrails.escalation_message or "Response blocked by content guardrails."
+            except re.error:
+                continue
+        return summary

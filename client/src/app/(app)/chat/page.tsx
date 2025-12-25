@@ -31,8 +31,8 @@ export default function ChatIndexPage() {
       router.push(`/chat/${thread.id}`);
     },
     onError: (error: unknown) => {
-      const message = error instanceof Error ? error.message : 'Unable to start a new chat';
-      toast({ title: 'Could not create chat', description: message, variant: 'destructive' });
+      const message = error instanceof Error ? error.message : 'Unable to start a new thread';
+      toast({ title: 'Could not create thread', description: message, variant: 'destructive' });
     },
   });
 
@@ -40,7 +40,7 @@ export default function ChatIndexPage() {
     mutationFn: (threadId: string) => deleteThread(threadId),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: threadsQueryKey });
-      toast({ title: 'Thread deleted', description: 'The conversation has been removed.' });
+      toast({ title: 'Thread deleted', description: 'The thread has been removed.' });
     },
     onError: (error: unknown) => {
       const message = error instanceof Error ? error.message : 'Unable to delete this thread';
@@ -69,12 +69,11 @@ export default function ChatIndexPage() {
       <header className="surface-panel rounded-3xl p-6 shadow-soft">
         <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
           <div className="space-y-3">
-            <p className="text-xs font-semibold uppercase tracking-[0.2em] text-[color:var(--text-muted)]">Conversations</p>
+            <p className="text-xs font-semibold uppercase tracking-[0.2em] text-[color:var(--text-muted)]">Threads</p>
             <div className="space-y-2">
-              <h1 className="text-2xl font-semibold text-[color:var(--text-primary)] md:text-3xl">Your chat workspace</h1>
+              <h1 className="text-2xl font-semibold text-[color:var(--text-primary)] md:text-3xl">Your thread workspace</h1>
               <p className="text-sm md:text-base">
-                Review recent threads, resume ongoing investigations, or spin up a new assistant conversation grounded in
-                your connected data sources.
+                Review recent threads, resume ongoing investigations, or spin up a new agent-led session grounded in your data.
               </p>
             </div>
           </div>
@@ -88,7 +87,7 @@ export default function ChatIndexPage() {
               loadingText="Creating..."
             >
               <Plus className="h-4 w-4" aria-hidden="true" />
-              New conversation
+              New thread
             </Button>
           </div>
         </div>
@@ -131,11 +130,11 @@ export default function ChatIndexPage() {
               </div>
               <div className="space-y-2">
                 <p className="text-base font-semibold text-[color:var(--text-primary)]">No threads found</p>
-                <p className="text-sm">Start a new chat to see it appear here.</p>
+                <p className="text-sm">Start a new thread to see it appear here.</p>
               </div>
               <Button onClick={handleCreateChat} size="sm" className="gap-2" disabled={createThreadMutation.isPending}>
                 <MessageSquare className="h-4 w-4" aria-hidden="true" />
-                Start talking
+                Start a thread
               </Button>
             </div>
           ) : (

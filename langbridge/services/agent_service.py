@@ -18,6 +18,7 @@ from models.llm_connections import (
 )
 from .user_auth_provider import UserAuthorizedProvider
 from models.agents import AgentDefinitionCreate, AgentDefinitionResponse, AgentDefinitionUpdate
+from orchestrator.definitions import AgentDefinitionModel
 from repositories.llm_connection_repository import LLMConnectionRepository
 from utils.llm.llm_tester import LLMConnectionTester
 
@@ -213,7 +214,7 @@ class AgentService:
             name=agent_definition.name,
             description=agent_definition.description,
             llm_connection_id=agent_definition.llm_connection_id,
-            definition=agent_definition.definition,
+            definition=self._serialize_definition(agent_definition.definition),
             is_active=True,
         )
 
@@ -253,7 +254,7 @@ class AgentService:
         if agent_update.llm_connection_id is not None:
             current_agent.llm_connection_id = agent_update.llm_connection_id
         if agent_update.definition is not None:
-            current_agent.definition = agent_update.definition
+            current_agent.definition = self._serialize_definition(agent_update.definition)
         if agent_update.is_active is not None:
             current_agent.is_active = agent_update.is_active
 
@@ -294,3 +295,11 @@ class AgentService:
         if not connection:
             raise BusinessValidationError("LLM connection not found")
         return connection
+
+    @staticmethod
+    def _serialize_definition(definition: AgentDefinitionModel | dict | str) -> dict:
+        if isinstance(definition, AgentDefinitionModel):
+            return definition.model_dump(mode="json")
+        if isinstance(definition, str):
+            return AgentDefinitionModel.model_validate_json(definition).model_dump(mode="json")
+        return AgentDefinitionModel.model_validate(definition).model_dump(mode="json")

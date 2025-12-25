@@ -33,6 +33,7 @@ class PlanningConstraints(BaseModel):
     prefer_low_latency: bool = True
     cost_sensitivity: str = Field(default="medium")
     require_viz_when_chartable: bool = True
+    allow_sql_analyst: bool = True
     allow_web_search: bool = True
     allow_deep_research: bool = True
     timebox_seconds: int = Field(default=30, ge=5, le=600)

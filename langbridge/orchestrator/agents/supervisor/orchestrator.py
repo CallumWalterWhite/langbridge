@@ -9,7 +9,14 @@ from typing import Any, Dict, Optional, Sequence
 
 from orchestrator.agents.analyst import AnalystAgent
 from orchestrator.agents.deep_research import DeepResearchAgent, DeepResearchResult
-from orchestrator.agents.planner import AgentName, Plan, PlanStep, PlannerRequest, PlanningAgent
+from orchestrator.agents.planner import (
+    AgentName,
+    Plan,
+    PlanStep,
+    PlannerRequest,
+    PlanningAgent,
+    PlanningConstraints,
+)
 from orchestrator.agents.visual import VisualAgent
 from orchestrator.agents.web_search import WebSearchAgent, WebSearchResult
 from orchestrator.tools.sql_analyst.interfaces import AnalystQueryResponse
@@ -141,6 +148,8 @@ class SupervisorOrchestrator:
         filters: Optional[Dict[str, Any]] = None,
         limit: Optional[int] = None,
         title: Optional[str] = None,
+        planning_constraints: Optional[PlanningConstraints] = None,
+        planning_context: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """Execute planner-driven workflows for a single user query."""
 
@@ -149,7 +158,7 @@ class SupervisorOrchestrator:
         plan: Optional[Plan] = None
         artifacts: Optional[PlanExecutionArtifacts] = None
         final_decision: Optional[ReasoningDecision] = None
-        extra_context: Dict[str, Any] = {}
+        extra_context: Dict[str, Any] = dict(planning_context or {})
         iteration_diagnostics: Dict[str, Any] = {}
         iterations_completed = 0
 
@@ -160,6 +169,7 @@ class SupervisorOrchestrator:
                 limit=limit,
                 title=title,
                 extra_context=extra_context,
+                constraints=planning_constraints,
             )
             plan = self.planning_agent.plan(planner_request)
             artifacts = await self._execute_plan(
@@ -253,6 +263,7 @@ class SupervisorOrchestrator:
         limit: Optional[int],
         title: Optional[str],
         extra_context: Optional[Dict[str, Any]] = None,
+        constraints: Optional[PlanningConstraints] = None,
     ) -> PlannerRequest:
         context: Dict[str, Any] = {}
         if filters is not None:
@@ -266,6 +277,7 @@ class SupervisorOrchestrator:
         return PlannerRequest(
             question=user_query,
             context=context or None,
+            constraints=constraints or PlanningConstraints(),
         )
 
     async def _execute_plan(

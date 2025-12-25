@@ -56,7 +56,7 @@ export default function DataConnectionsIndex(): JSX.Element {
             </p>
             <div className="space-y-2">
               <h1 className="text-2xl font-semibold text-[color:var(--text-primary)] md:text-3xl">
-                Connect structured data
+                Connect structured data, unstructured data, and APIs.
               </h1>
               <p className="text-sm md:text-base">
                 Catalog every warehouse, lake, and business system powering your agents.

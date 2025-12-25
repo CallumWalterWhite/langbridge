@@ -60,9 +60,14 @@ export async function deleteThread(threadId: string): Promise<void> {
   await apiFetch<void>(`${BASE_PATH}/${threadId}`, { method: 'DELETE' });
 }
 
-export async function runThreadChat(threadId: string, message: string): Promise<ThreadChatResponse> {
+export async function runThreadChat(
+  threadId: string,
+  message: string,
+  agentId: string,
+): Promise<ThreadChatResponse> {
+  const body: Record<string, unknown> = { message, agent_id: agentId };
   return apiFetch<ThreadChatResponse>(`${BASE_PATH}/${threadId}/chat`, {
     method: 'POST',
-    body: JSON.stringify({ message }),
+    body: JSON.stringify(body),
   });
 }

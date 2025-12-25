@@ -19,7 +19,7 @@ class MemoryStrategy(str, Enum):
     conversation = "conversation"
     long_term = "long_term"
     vector = "vector"
-    database = "database"
+    database = "database"  # only database is supported for now
 
 
 class ExecutionMode(str, Enum):
@@ -32,6 +32,14 @@ class OutputFormat(str, Enum):
     markdown = "markdown"
     json = "json"
     yaml = "yaml"
+
+
+class LogLevel(str, Enum):
+    debug = "debug"
+    info = "info"
+    warning = "warning"
+    error = "error"
+    critical = "critical"
     
 class PromptContract(BaseModel):
     system_prompt: str = Field(..., description="Primary system prompt/instruction.")
@@ -65,21 +73,6 @@ class ToolBinding(BaseModel):
     config: Dict[str, Any] = Field(default_factory=dict, description="Tool-specific configuration.")
 
 
-class DataAccessPolicy(BaseModel):
-    allowed_connectors: List[uuid.UUID] = Field(
-        default_factory=list, description="Connector IDs the agent may access."
-    )
-    denied_connectors: List[uuid.UUID] = Field(
-        default_factory=list, description="Connector IDs explicitly blocked."
-    )
-    pii_handling: Optional[str] = Field(
-        None, description="Notes on how PII is handled/redacted in outputs."
-    )
-    row_level_filter: Optional[str] = Field(
-        None, description="SQL predicate or policy statement for row-level filtering."
-    )
-
-
 class ExecutionBehavior(BaseModel):
     mode: ExecutionMode = Field(..., description="Single response or iterative planning/execution.")
     max_iterations: int = Field(3, description="Cap iterations when in iterative mode.")
@@ -97,6 +90,21 @@ class OutputSchema(BaseModel):
     )
 
 
+class DataAccessPolicy(BaseModel):
+    allowed_connectors: List[uuid.UUID] = Field(
+        default_factory=list, description="Connector IDs explicitly allowed for tool access."
+    )
+    denied_connectors: List[uuid.UUID] = Field(
+        default_factory=list, description="Connector IDs explicitly denied for tool access."
+    )
+    pii_handling: Optional[str] = Field(
+        None, description="Guidance for handling PII (e.g., mask, redact, block)."
+    )
+    row_level_filter: Optional[str] = Field(
+        None, description="Row-level filter expression to apply to data access."
+    )
+
+
 class GuardrailConfig(BaseModel):
     moderation_enabled: bool = Field(True, description="Run outputs through moderation.")
     blocked_categories: List[str] = Field(
@@ -111,6 +119,7 @@ class GuardrailConfig(BaseModel):
 
 
 class ObservabilityConfig(BaseModel):
+    log_level: LogLevel = Field(LogLevel.info, description="Minimum log level for this agent.")
     emit_traces: bool = Field(True, description="Enable tracing/telemetry for this agent.")
     capture_prompts: bool = Field(True, description="Persist prompts/responses for debugging.")
     audit_fields: List[str] = Field(
@@ -125,7 +134,7 @@ class AgentDefinitionModel(BaseModel):
     prompt: PromptContract
     memory: MemoryConfig
     tools: List[ToolBinding] = Field(default_factory=list)
-    access_policy: DataAccessPolicy
+    access_policy: DataAccessPolicy = Field(default_factory=DataAccessPolicy)
     execution: ExecutionBehavior
     output: OutputSchema
     guardrails: GuardrailConfig = Field(default_factory=GuardrailConfig)

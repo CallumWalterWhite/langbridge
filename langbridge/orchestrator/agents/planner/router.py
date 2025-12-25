@@ -345,7 +345,12 @@ def choose_route(request: PlannerRequest) -> RouteDecision:
         )
 
     # Hard routing rules
-    if constraints.require_viz_when_chartable and signals.chartable and constraints.max_steps >= 2:
+    if (
+        constraints.allow_sql_analyst
+        and constraints.require_viz_when_chartable
+        and signals.chartable
+        and constraints.max_steps >= 2
+    ):
         justification = _build_justification(RouteName.ANALYST_THEN_VISUAL, signals)
         return RouteDecision(
             route=RouteName.ANALYST_THEN_VISUAL,
@@ -355,13 +360,21 @@ def choose_route(request: PlannerRequest) -> RouteDecision:
 
     route_scores: Dict[RouteName, float] = {}
 
-    # Simple analyst route is always available as long as at least one step permitted.
-    if constraints.max_steps >= _estimate_step_count(RouteName.SIMPLE_ANALYST, signals, constraints):
+    # Simple analyst route is available only when SQL tools are enabled.
+    if constraints.allow_sql_analyst and constraints.max_steps >= _estimate_step_count(
+        RouteName.SIMPLE_ANALYST,
+        signals,
+        constraints,
+    ):
         route_scores[RouteName.SIMPLE_ANALYST] = _score_simple_analyst(signals)
     else:
         route_scores[RouteName.SIMPLE_ANALYST] = float("-inf")
 
-    if constraints.max_steps >= _estimate_step_count(RouteName.ANALYST_THEN_VISUAL, signals, constraints):
+    if constraints.allow_sql_analyst and constraints.max_steps >= _estimate_step_count(
+        RouteName.ANALYST_THEN_VISUAL,
+        signals,
+        constraints,
+    ):
         route_scores[RouteName.ANALYST_THEN_VISUAL] = _score_analyst_then_visual(signals)
     else:
         route_scores[RouteName.ANALYST_THEN_VISUAL] = float("-inf")
@@ -383,6 +396,14 @@ def choose_route(request: PlannerRequest) -> RouteDecision:
             route_scores[RouteName.DEEP_RESEARCH] = float("-inf")
     else:
         route_scores[RouteName.DEEP_RESEARCH] = float("-inf")
+
+    if all(score == float("-inf") for score in route_scores.values()):
+        return RouteDecision(
+            route=RouteName.CLARIFY,
+            justification="No enabled routes matched the current tool configuration.",
+            signals=signals,
+            assumptions=["Enable at least one tool category to proceed."],
+        )
 
     selected_route = _select_best_route(route_scores)
     justification = _build_justification(selected_route, signals)

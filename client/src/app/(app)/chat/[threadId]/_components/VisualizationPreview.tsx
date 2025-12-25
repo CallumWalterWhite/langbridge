@@ -319,7 +319,7 @@ export function VisualizationPreview({ visualization, result }: VisualizationPre
         {groupBy ? (
           <div>
             <dt className="font-semibold text-[color:var(--text-primary)]">Group by</dt>
-            <dd className="mt-1 text-[color:var(--text-secondary)]">{groupBy}</dd>
+            <dd className="mt-1 break-words text-[color:var(--text-secondary)]">{groupBy}</dd>
           </div>
         ) : null}
       </dl>
@@ -330,7 +330,7 @@ export function VisualizationPreview({ visualization, result }: VisualizationPre
             <summary className="cursor-pointer list-none px-4 py-3 text-xs font-semibold text-[color:var(--text-muted)] transition hover:text-[color:var(--text-primary)]">
               Chart options
             </summary>
-            <pre className="overflow-x-auto px-4 pb-4 text-[10px] leading-relaxed text-[color:var(--text-secondary)]">
+            <pre className="overflow-x-hidden whitespace-pre-wrap break-words px-4 pb-4 text-[10px] leading-relaxed text-[color:var(--text-secondary)]">
               {optionsPreview}
             </pre>
           </details>
@@ -344,7 +344,7 @@ export function VisualizationPreview({ visualization, result }: VisualizationPre
             {sampleRows.map((row, index) => (
               <pre
                 key={index}
-                className="overflow-x-auto rounded-2xl border border-[color:var(--panel-border)] bg-[color:var(--panel-bg)] px-4 py-3 text-[color:var(--text-secondary)]"
+                className="overflow-x-hidden whitespace-pre-wrap break-words rounded-2xl border border-[color:var(--panel-border)] bg-[color:var(--panel-bg)] px-4 py-3 text-[color:var(--text-secondary)]"
               >
                 {JSON.stringify(row, null, 2)}
               </pre>
