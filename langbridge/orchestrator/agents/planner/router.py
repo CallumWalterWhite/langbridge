@@ -1,7 +1,7 @@
 
 import re
-from dataclasses import dataclass
-from typing import Dict, Iterable, List, Tuple
+from dataclasses import dataclass, field
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 from .models import (
     AgentName,
@@ -163,6 +163,105 @@ _AMBIGUITY_PHRASES: Tuple[str, ...] = (
 _NUMBER_PATTERN = re.compile(r"\b\d{4}\b")
 
 
+@dataclass(slots=True)
+class RoutingOverrides:
+    force_route: Optional[RouteName] = None
+    prefer_routes: List[RouteName] = field(default_factory=list)
+    avoid_routes: set[RouteName] = field(default_factory=set)
+    previous_route: Optional[RouteName] = None
+    require_visual: bool = False
+    require_web_search: bool = False
+    require_deep_research: bool = False
+    require_sql: bool = False
+
+
+def _route_slug(value: str) -> str:
+    return re.sub(r"[^a-z0-9]", "", value.lower())
+
+
+def _normalize_route_name(value: Any) -> Optional[RouteName]:
+    if isinstance(value, RouteName):
+        return value
+    if value is None:
+        return None
+    slug = _route_slug(str(value))
+    if not slug:
+        return None
+    for route in RouteName:
+        if slug == _route_slug(route.value) or slug == _route_slug(route.name):
+            return route
+    alias_map = {
+        "analyst": RouteName.SIMPLE_ANALYST,
+        "visual": RouteName.ANALYST_THEN_VISUAL,
+        "chart": RouteName.ANALYST_THEN_VISUAL,
+        "websearch": RouteName.WEB_SEARCH,
+        "web": RouteName.WEB_SEARCH,
+        "research": RouteName.DEEP_RESEARCH,
+        "deepresearch": RouteName.DEEP_RESEARCH,
+    }
+    return alias_map.get(slug)
+
+
+def _normalize_route_list(value: Any) -> List[RouteName]:
+    if not value:
+        return []
+    if isinstance(value, (list, tuple, set)):
+        items = value
+    else:
+        items = [value]
+    routes: List[RouteName] = []
+    for item in items:
+        route = _normalize_route_name(item)
+        if route and route not in routes:
+            routes.append(route)
+    return routes
+
+
+def _extract_routing_overrides(context: Optional[Dict[str, Any]]) -> RoutingOverrides:
+    overrides = RoutingOverrides()
+    if not isinstance(context, dict):
+        return overrides
+
+    raw = context.get("routing")
+    if not isinstance(raw, dict):
+        raw = context.get("reasoning")
+    if not isinstance(raw, dict):
+        return overrides
+
+    overrides.force_route = _normalize_route_name(raw.get("force_route") or raw.get("force_tool"))
+    if overrides.force_route is None:
+        if raw.get("force_web_search"):
+            overrides.force_route = RouteName.WEB_SEARCH
+        elif raw.get("force_deep_research"):
+            overrides.force_route = RouteName.DEEP_RESEARCH
+        elif raw.get("force_visual"):
+            overrides.force_route = RouteName.ANALYST_THEN_VISUAL
+        elif raw.get("force_sql"):
+            overrides.force_route = RouteName.SIMPLE_ANALYST
+        elif raw.get("force_clarify"):
+            overrides.force_route = RouteName.CLARIFY
+
+    overrides.prefer_routes = _normalize_route_list(
+        raw.get("prefer_routes") or raw.get("preferred_routes")
+    )
+    overrides.avoid_routes = set(_normalize_route_list(raw.get("avoid_routes")))
+    overrides.require_visual = bool(raw.get("require_visual"))
+    overrides.require_web_search = bool(raw.get("require_web_search"))
+    overrides.require_deep_research = bool(raw.get("require_deep_research"))
+    overrides.require_sql = bool(raw.get("require_sql"))
+
+    overrides.previous_route = _normalize_route_name(raw.get("previous_route"))
+    retry_flag = bool(
+        raw.get("retry_due_to_error")
+        or raw.get("retry_due_to_empty")
+        or raw.get("retry_due_to_low_sources")
+    )
+    if retry_flag and overrides.previous_route:
+        overrides.avoid_routes.add(overrides.previous_route)
+
+    return overrides
+
+
 def _contains_keyword(text: str, keywords: Iterable[str]) -> bool:
     for keyword in keywords:
         if " " in keyword:
@@ -281,6 +380,75 @@ def _score_deep_research(signals: RouteSignals, constraints: PlanningConstraints
     return score
 
 
+def _route_is_available(
+    route: RouteName,
+    signals: RouteSignals,
+    constraints: PlanningConstraints,
+) -> bool:
+    if route == RouteName.CLARIFY:
+        return True
+    if route == RouteName.SIMPLE_ANALYST:
+        return (
+            constraints.allow_sql_analyst
+            and constraints.max_steps
+            >= _estimate_step_count(RouteName.SIMPLE_ANALYST, signals, constraints)
+        )
+    if route == RouteName.ANALYST_THEN_VISUAL:
+        return (
+            constraints.allow_sql_analyst
+            and constraints.max_steps
+            >= _estimate_step_count(RouteName.ANALYST_THEN_VISUAL, signals, constraints)
+        )
+    if route == RouteName.WEB_SEARCH:
+        return (
+            constraints.allow_web_search
+            and constraints.max_steps
+            >= _estimate_step_count(RouteName.WEB_SEARCH, signals, constraints)
+        )
+    if route == RouteName.DEEP_RESEARCH:
+        return (
+            constraints.allow_deep_research
+            and constraints.max_steps
+            >= _estimate_step_count(RouteName.DEEP_RESEARCH, signals, constraints)
+        )
+    return False
+
+
+def _apply_routing_overrides(
+    route_scores: Dict[RouteName, float],
+    overrides: RoutingOverrides,
+    *,
+    constraints: PlanningConstraints,
+) -> None:
+    if overrides.previous_route and overrides.previous_route in route_scores:
+        if route_scores[overrides.previous_route] != float("-inf"):
+            route_scores[overrides.previous_route] -= 1.0
+
+    for route in overrides.prefer_routes:
+        if route in route_scores and route_scores[route] != float("-inf"):
+            route_scores[route] += 1.5
+
+    if overrides.require_visual and constraints.allow_sql_analyst:
+        if RouteName.ANALYST_THEN_VISUAL in route_scores:
+            route_scores[RouteName.ANALYST_THEN_VISUAL] += 2.5
+
+    if overrides.require_web_search and constraints.allow_web_search:
+        if RouteName.WEB_SEARCH in route_scores:
+            route_scores[RouteName.WEB_SEARCH] += 2.5
+
+    if overrides.require_deep_research and constraints.allow_deep_research:
+        if RouteName.DEEP_RESEARCH in route_scores:
+            route_scores[RouteName.DEEP_RESEARCH] += 2.0
+
+    if overrides.require_sql and constraints.allow_sql_analyst:
+        if RouteName.SIMPLE_ANALYST in route_scores:
+            route_scores[RouteName.SIMPLE_ANALYST] += 1.5
+
+    for route in overrides.avoid_routes:
+        if route in route_scores:
+            route_scores[route] = float("-inf")
+
+
 def _select_best_route(route_scores: Dict[RouteName, float]) -> RouteName:
     priority = (
         RouteName.SIMPLE_ANALYST,
@@ -329,6 +497,24 @@ def _build_justification(route: RouteName, signals: RouteSignals) -> str:
 def choose_route(request: PlannerRequest) -> RouteDecision:
     constraints = request.constraints
     signals = _extract_signals(request.question)
+    overrides = _extract_routing_overrides(request.context)
+    override_notes: list[str] = []
+
+    if overrides.force_route:
+        if _route_is_available(overrides.force_route, signals, constraints):
+            justification = f"Routing override applied: {overrides.force_route.value}."
+            assumptions: list[str] = []
+            if signals.requires_clarification:
+                assumptions.append("Proceeding despite ambiguity due to routing override.")
+            return RouteDecision(
+                route=overrides.force_route,
+                justification=justification,
+                signals=signals,
+                assumptions=assumptions,
+            )
+        override_notes.append(
+            f"Requested route '{overrides.force_route.value}' unavailable; falling back to best match."
+        )
 
     if signals.requires_clarification:
         justification = "Ambiguous intent detected; clarification is required before safe execution."
@@ -337,6 +523,7 @@ def choose_route(request: PlannerRequest) -> RouteDecision:
             assumptions.append("Need specific entity or scope before querying data sources.")
         if not signals.has_time_reference:
             assumptions.append("Need time window to avoid misaligned metrics.")
+        assumptions.extend(override_notes)
         return RouteDecision(
             route=RouteName.CLARIFY,
             justification=justification,
@@ -397,6 +584,8 @@ def choose_route(request: PlannerRequest) -> RouteDecision:
     else:
         route_scores[RouteName.DEEP_RESEARCH] = float("-inf")
 
+    _apply_routing_overrides(route_scores, overrides, constraints=constraints)
+
     if all(score == float("-inf") for score in route_scores.values()):
         return RouteDecision(
             route=RouteName.CLARIFY,
@@ -417,6 +606,11 @@ def choose_route(request: PlannerRequest) -> RouteDecision:
         and constraints.timebox_seconds < 30
     ):
         assumptions.append("Document retrieval scoped to high-signal sources due to tight timebox.")
+    if overrides.require_visual and not constraints.allow_sql_analyst:
+        assumptions.append("Visualization request ignored because SQL analyst tools are disabled.")
+    if overrides.require_visual and constraints.max_steps < 2:
+        assumptions.append("Visualization request ignored due to step limit.")
+    assumptions.extend(override_notes)
 
     return RouteDecision(
         route=selected_route,
@@ -457,10 +651,23 @@ def _build_clarifying_question(signals: RouteSignals, question: str) -> str:
     )
 
 
+def _context_has_documents(context: Optional[Dict[str, Any]]) -> bool:
+    if not isinstance(context, dict):
+        return False
+    for key in ("documents", "sources", "notes"):
+        value = context.get(key)
+        if isinstance(value, dict) and value:
+            return True
+        if isinstance(value, list) and value:
+            return True
+    return False
+
+
 def build_steps(decision: RouteDecision, request: PlannerRequest) -> List[PlanStep]:
     constraints = request.constraints
     steps: List[PlanStep] = []
     step_counter = 1
+    routing_overrides = _extract_routing_overrides(request.context)
 
     def _append_step(agent: AgentName, input_payload: dict, expected_output: dict) -> None:
         nonlocal step_counter
@@ -550,19 +757,45 @@ def build_steps(decision: RouteDecision, request: PlannerRequest) -> List[PlanSt
         return steps
 
     if decision.route == RouteName.DEEP_RESEARCH:
+        context = request.context or {}
+        web_search_step_id: Optional[str] = None
+        should_use_web_search = (
+            constraints.allow_web_search
+            and not _context_has_documents(context)
+            and (routing_overrides.require_web_search or decision.signals.has_web_search_signals)
+        )
+        if should_use_web_search and constraints.max_steps - len(steps) >= 2:
+            _append_step(
+                AgentName.WEB_SEARCH,
+                {
+                    "query": request.question,
+                    "context": context,
+                    "max_results": context.get("max_results", 6),
+                    "region": context.get("region"),
+                    "safe_search": context.get("safe_search"),
+                    "timebox_seconds": constraints.timebox_seconds,
+                },
+                {
+                    "results": "web_search_results",
+                    "sources": "list_of_urls",
+                },
+            )
+            web_search_step_id = steps[-1].id if steps else None
+
         _append_step(
             AgentName.DOC_RETRIEVAL,
             {
                 "question": request.question,
-                "context": request.context or {},
+                "context": context,
                 "timebox_seconds": constraints.timebox_seconds,
+                "source_step_ref": web_search_step_id,
             },
             {
                 "synthesis": "key_findings_with_citations",
                 "evidence": "source_references",
             },
         )
-        doc_step_id = steps[0].id if steps else None
+        doc_step_id = steps[-1].id if steps else None
         if (
             decision.signals.has_sql_signals
             and len(steps) < constraints.max_steps

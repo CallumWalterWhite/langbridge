@@ -16,7 +16,9 @@ from orchestrator.agents.planner import (
     PlannerRequest,
     PlanningAgent,
     PlanningConstraints,
+    RouteName,
 )
+from orchestrator.agents.planner.router import _extract_signals
 from orchestrator.agents.visual import VisualAgent
 from orchestrator.agents.web_search import WebSearchAgent, WebSearchResult
 from orchestrator.tools.sql_analyst.interfaces import AnalystQueryResponse
@@ -65,6 +67,60 @@ class ReasoningAgent:
         self.max_iterations = max_iterations
         self.logger = logger or logging.getLogger(__name__)
 
+    @staticmethod
+    def _has_structured_data(artifacts: PlanExecutionArtifacts) -> bool:
+        return bool(artifacts.analyst_result and artifacts.analyst_result.result)
+
+    @staticmethod
+    def _has_web_results(artifacts: PlanExecutionArtifacts) -> bool:
+        return bool(artifacts.web_search_result)
+
+    @staticmethod
+    def _has_research_results(artifacts: PlanExecutionArtifacts) -> bool:
+        if not artifacts.research_result:
+            return False
+        return bool(artifacts.research_result.findings or artifacts.research_result.synthesis)
+
+    @staticmethod
+    def _is_low_signal_research(result: DeepResearchResult) -> bool:
+        if not result.findings:
+            return True
+        if all(finding.source == "knowledge_base" for finding in result.findings):
+            return True
+        synthesis = (result.synthesis or "").lower()
+        if "no documents provided" in synthesis or "reviewed 0 document" in synthesis:
+            return True
+        return False
+
+    @staticmethod
+    def _pick_fallback_route(current_route: Optional[str]) -> RouteName:
+        if current_route == RouteName.WEB_SEARCH.value:
+            return RouteName.DEEP_RESEARCH
+        return RouteName.WEB_SEARCH
+
+    def _build_retry_decision(
+        self,
+        *,
+        plan: Plan,
+        rationale: str,
+        force_route: RouteName,
+        retry_flag: str,
+        detail: Optional[str] = None,
+    ) -> ReasoningDecision:
+        self.logger.debug(rationale)
+        reasoning_payload: Dict[str, Any] = {
+            "force_route": force_route.value,
+            "previous_route": plan.route,
+        }
+        reasoning_payload[retry_flag] = detail if detail is not None else True
+        return ReasoningDecision(
+            continue_planning=True,
+            updated_context={
+                "reasoning": reasoning_payload
+            },
+            rationale=rationale,
+        )
+
     def evaluate(
         self,
         *,
@@ -72,6 +128,7 @@ class ReasoningAgent:
         plan: Plan,
         artifacts: PlanExecutionArtifacts,
         diagnostics: Dict[str, Any],
+        user_query: Optional[str] = None,
     ) -> ReasoningDecision:
         if artifacts.clarifying_question:
             rationale = "Clarification needed from user; stopping further planning."
@@ -83,37 +140,70 @@ class ReasoningAgent:
             self.logger.debug(rationale)
             return ReasoningDecision(continue_planning=False, rationale=rationale)
 
+        has_structured_data = self._has_structured_data(artifacts)
+        has_web_results = self._has_web_results(artifacts)
+        has_research = self._has_research_results(artifacts)
+        has_data = has_structured_data or has_web_results or has_research
+
         analyst_error = artifacts.analyst_result and artifacts.analyst_result.error
-        if analyst_error:
+        if analyst_error and not (has_web_results or has_research):
+            force_route = self._pick_fallback_route(plan.route)
             rationale = "Retrying due to analyst error."
             self.logger.debug("%s Error: %s", rationale, artifacts.analyst_result.error)
-            return ReasoningDecision(
-                continue_planning=True,
-                updated_context={
-                    "reasoning": {
-                        "retry_due_to_error": str(artifacts.analyst_result.error),
-                        "previous_route": plan.route,
-                    }
-                },
+            return self._build_retry_decision(
+                plan=plan,
                 rationale=rationale,
+                force_route=force_route,
+                retry_flag="retry_due_to_error",
+                detail=str(artifacts.analyst_result.error),
             )
 
-        has_data = bool(artifacts.data_payload) or bool(artifacts.research_result) or bool(
-            artifacts.web_search_result
-        )
         if not has_data:
+            force_route = self._pick_fallback_route(plan.route)
             rationale = "No structured or research data produced; requesting replanning."
-            self.logger.debug(rationale)
-            return ReasoningDecision(
-                continue_planning=True,
-                updated_context={
-                    "reasoning": {
-                        "retry_due_to_empty": True,
-                        "previous_route": plan.route,
-                    }
-                },
+            return self._build_retry_decision(
+                plan=plan,
                 rationale=rationale,
+                force_route=force_route,
+                retry_flag="retry_due_to_empty",
             )
+
+        signals = _extract_signals(user_query) if user_query else None
+
+        if has_web_results and not has_research:
+            has_sources = bool(artifacts.web_search_result and artifacts.web_search_result.results)
+            if has_sources and (signals is None or signals.has_research_signals):
+                rationale = "Web search produced sources; synthesizing with deep research."
+                self.logger.debug(rationale)
+                web_docs = artifacts.web_search_result.to_documents() if artifacts.web_search_result else []
+                return ReasoningDecision(
+                    continue_planning=True,
+                    updated_context={
+                        "documents": web_docs,
+                        "reasoning": {
+                            "force_route": RouteName.DEEP_RESEARCH.value,
+                            "previous_route": plan.route,
+                            "promoted_from_web_search": True,
+                        },
+                    },
+                    rationale=rationale,
+                )
+
+        if has_research and not has_web_results:
+            if artifacts.research_result and self._is_low_signal_research(artifacts.research_result):
+                rationale = "Research lacked source material; broadening with web search."
+                self.logger.debug(rationale)
+                return ReasoningDecision(
+                    continue_planning=True,
+                    updated_context={
+                        "reasoning": {
+                            "force_route": RouteName.WEB_SEARCH.value,
+                            "previous_route": plan.route,
+                            "retry_due_to_low_sources": True,
+                        }
+                    },
+                    rationale=rationale,
+                )
 
         self.logger.debug("Reasoning agent determined results look sufficient.")
         return ReasoningDecision(continue_planning=False, rationale="Results look sufficient.")
@@ -157,6 +247,7 @@ class SupervisorOrchestrator:
 
         plan: Optional[Plan] = None
         artifacts: Optional[PlanExecutionArtifacts] = None
+        combined_artifacts = PlanExecutionArtifacts()
         final_decision: Optional[ReasoningDecision] = None
         extra_context: Dict[str, Any] = dict(planning_context or {})
         iteration_diagnostics: Dict[str, Any] = {}
@@ -179,6 +270,7 @@ class SupervisorOrchestrator:
                 limit=limit,
                 title=title,
             )
+            self._merge_artifacts(combined_artifacts, artifacts)
 
             iteration_diagnostics = {
                 "iteration": iteration,
@@ -190,13 +282,14 @@ class SupervisorOrchestrator:
                 plan=plan,
                 artifacts=artifacts,
                 diagnostics=iteration_diagnostics,
+                user_query=user_query,
             )
             iterations_completed = iteration + 1
 
             if not final_decision.continue_planning:
                 break
 
-            extra_context = {**extra_context, **(final_decision.updated_context or {})}
+            extra_context = self._merge_context(extra_context, final_decision.updated_context or {})
         else:
             # Loop exhausted without final decision; treat last pass as final.
             self.logger.warning("Reasoning agent exhausted max iterations without convergence.")
@@ -229,8 +322,9 @@ class SupervisorOrchestrator:
         }
         if artifacts.research_result:
             diagnostics["research"] = artifacts.research_result.to_dict()
-        if artifacts.web_search_result:
-            diagnostics["web_search"] = artifacts.web_search_result.to_dict()
+        web_search_result = artifacts.web_search_result or combined_artifacts.web_search_result
+        if web_search_result:
+            diagnostics["web_search"] = web_search_result.to_dict()
         if artifacts.clarifying_question:
             diagnostics["clarifying_question"] = artifacts.clarifying_question
         diagnostics["reasoning"] = {
@@ -328,7 +422,7 @@ class SupervisorOrchestrator:
                 continue
 
             if agent_name == AgentName.DOC_RETRIEVAL.value:
-                research_result = await self._run_doc_retrieval_step(step, user_query)
+                research_result = await self._run_doc_retrieval_step(step, user_query, step_outputs)
                 artifacts.research_result = research_result
                 step_outputs[step.id] = {
                     "agent": AgentName.DOC_RETRIEVAL.value,
@@ -344,6 +438,7 @@ class SupervisorOrchestrator:
                 step_outputs[step.id] = {
                     "agent": AgentName.WEB_SEARCH.value,
                     "web_search_result": web_search_result,
+                    "documents": web_search_result.to_documents(),
                 }
                 if not artifacts.data_payload:
                     artifacts.data_payload = web_search_result.to_tabular()
@@ -370,9 +465,11 @@ class SupervisorOrchestrator:
         context_overrides = step.input.get("context") or {}
         step_filters = context_overrides.get("filters", default_filters)
         step_limit = context_overrides.get("limit", default_limit)
+        conversation_context = context_overrides.get("conversation_context")
 
         analyst_result = await self.analyst_agent.answer_async(
             question,
+            conversation_context=conversation_context,
             filters=step_filters,
             limit=step_limit,
         )
@@ -394,10 +491,20 @@ class SupervisorOrchestrator:
         viz_title = title or f"Visualization for '{user_query}'"
         return self.visual_agent.run(data, title=viz_title)
 
-    async def _run_doc_retrieval_step(self, step: PlanStep, user_query: str) -> DeepResearchResult:
+    async def _run_doc_retrieval_step(
+        self,
+        step: PlanStep,
+        user_query: str,
+        step_outputs: Dict[str, Dict[str, Any]],
+    ) -> DeepResearchResult:
         if not self.deep_research_agent:
             raise RuntimeError("DeepResearchAgent is not configured but planner requested DocRetrieval.")
         context = step.input.get("context") or {}
+        source_step_ref = step.input.get("source_step_ref")
+        if source_step_ref:
+            documents = self._resolve_documents_reference(source_step_ref, step_outputs)
+            if documents:
+                context = self._merge_document_context(context, documents)
         timebox = int(step.input.get("timebox_seconds", 30))
         question = step.input.get("question") or user_query
         return await self.deep_research_agent.research_async(
@@ -438,8 +545,66 @@ class SupervisorOrchestrator:
         return {}
 
     @staticmethod
+    def _merge_artifacts(base: PlanExecutionArtifacts, updates: PlanExecutionArtifacts) -> None:
+        if updates.analyst_result:
+            base.analyst_result = updates.analyst_result
+        if updates.data_payload:
+            base.data_payload = updates.data_payload
+        if updates.visualization:
+            base.visualization = updates.visualization
+        if updates.research_result:
+            base.research_result = updates.research_result
+        if updates.web_search_result:
+            base.web_search_result = updates.web_search_result
+        if updates.clarifying_question:
+            base.clarifying_question = updates.clarifying_question
+
+    @staticmethod
+    def _merge_context(base: Dict[str, Any], updates: Dict[str, Any]) -> Dict[str, Any]:
+        if not updates:
+            return dict(base)
+        merged = dict(base)
+        for key, value in updates.items():
+            if key == "reasoning" and isinstance(value, dict):
+                existing = merged.get("reasoning")
+                if isinstance(existing, dict):
+                    merged["reasoning"] = {**existing, **value}
+                else:
+                    merged["reasoning"] = dict(value)
+                continue
+            if key == "documents" and isinstance(value, list):
+                existing = merged.get("documents")
+                if isinstance(existing, list):
+                    merged["documents"] = existing + [doc for doc in value if doc not in existing]
+                elif isinstance(existing, dict):
+                    merged["documents"] = [existing] + list(value)
+                else:
+                    merged["documents"] = list(value)
+                continue
+            merged[key] = value
+        return merged
+
+    @staticmethod
     def _coerce_research_payload(result: DeepResearchResult) -> Dict[str, Any]:
         return result.to_tabular()
+
+    @staticmethod
+    def _merge_document_context(
+        context: Dict[str, Any],
+        documents: Sequence[Dict[str, Any]],
+    ) -> Dict[str, Any]:
+        merged = dict(context)
+        cleaned_docs = [doc for doc in documents if isinstance(doc, dict)]
+        if not cleaned_docs:
+            return merged
+        existing = merged.get("documents")
+        if isinstance(existing, list):
+            merged["documents"] = existing + [doc for doc in cleaned_docs if doc not in existing]
+        elif isinstance(existing, dict):
+            merged["documents"] = [existing] + cleaned_docs
+        else:
+            merged["documents"] = cleaned_docs
+        return merged
 
     @staticmethod
     def _resolve_rows_reference(
@@ -456,6 +621,24 @@ class SupervisorOrchestrator:
         if "research_result" in referenced:
             research_result: DeepResearchResult = referenced["research_result"]
             return research_result.to_tabular()
+        return None
+
+    @staticmethod
+    def _resolve_documents_reference(
+        reference_id: Optional[str],
+        step_outputs: Dict[str, Dict[str, Any]],
+    ) -> Optional[Sequence[Dict[str, Any]]]:
+        if not reference_id:
+            return None
+        referenced = step_outputs.get(reference_id)
+        if not referenced:
+            return None
+        documents = referenced.get("documents")
+        if isinstance(documents, list):
+            return [doc for doc in documents if isinstance(doc, dict)]
+        web_search_result = referenced.get("web_search_result")
+        if isinstance(web_search_result, WebSearchResult):
+            return web_search_result.to_documents()
         return None
 
     @staticmethod

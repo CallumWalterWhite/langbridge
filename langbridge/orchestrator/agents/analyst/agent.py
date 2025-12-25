@@ -30,6 +30,7 @@ class AnalystAgent:
         self,
         question: str,
         *,
+        conversation_context: Optional[str] = None,
         filters: Optional[dict[str, Any]] = None,
         limit: Optional[int] = None,
     ) -> AnalystQueryResponse:
@@ -39,6 +40,7 @@ class AnalystAgent:
 
         request = AnalystQueryRequest(
             question=question,
+            conversation_context=conversation_context,
             filters=filters,
             limit=limit if limit is not None else 1000,
         )
@@ -53,11 +55,13 @@ class AnalystAgent:
         self,
         question: str,
         *,
+        conversation_context: Optional[str] = None,
         filters: Optional[dict[str, Any]] = None,
         limit: Optional[int] = None,
     ) -> AnalystQueryResponse:
         request = AnalystQueryRequest(
             question=question,
+            conversation_context=conversation_context,
             filters=filters,
             limit=limit if limit is not None else 1000,
         )

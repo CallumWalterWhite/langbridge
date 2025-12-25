@@ -30,7 +30,6 @@ import {
   getAvailableFileRetriverDefinitions,
   getAvailableSemanticModels,
   getAvailableSemanticSearchDefinitions,
-  getAvailableWebSearchDefinitions,
   updateAgentDefinition,
 } from '@/orchestration/agents';
 import type {
@@ -40,7 +39,6 @@ import type {
   UpdateAgentDefinitionPayload,
 } from '@/orchestration/agents';
 import { ApiError } from '@/orchestration/http';
-import { get } from 'http';
 
 // const memoryStrategies = ['none', 'transient', 'conversation', 'long_term', 'vector', 'database'] as const;
 const memoryStrategies = ['database'] as const;
@@ -97,31 +95,69 @@ interface ToolDefinitionOption {
 
 enum ToolType {
   sql_analyst = 'sql_analyst',
+  web_search = 'web_search',
+  deep_research = 'deep_research',
   file_retriever = 'file_retriever',
-  web_searcher = 'web_searcher',
   semantic_searcher = 'semantic_searcher',
 }
 
 const ToolTypeLabels: Record<ToolType, string> = {
   [ToolType.sql_analyst]: 'SQL Analyst',
+  [ToolType.web_search]: 'Web Search',
+  [ToolType.deep_research]: 'Deep Research',
   [ToolType.file_retriever]: 'File Retriever',
-  [ToolType.web_searcher]: 'Web Searcher',
   [ToolType.semantic_searcher]: 'Semantic Searcher',
 };
 
 const ToolTypeOptions: ToolType[] = [
   ToolType.sql_analyst,
+  ToolType.web_search,
+  ToolType.deep_research,
   ToolType.file_retriever,
-  ToolType.web_searcher,
   ToolType.semantic_searcher,
 ];
 
 const ToolDefinitionLabels: Record<ToolType, string> = {
   [ToolType.sql_analyst]: 'Semantic model',
+  [ToolType.web_search]: 'Web search definition',
+  [ToolType.deep_research]: 'Research definition',
   [ToolType.file_retriever]: 'File retriever definition',
-  [ToolType.web_searcher]: 'Web search definition',
   [ToolType.semantic_searcher]: 'Semantic search definition',
 };
+
+const TOOL_TYPES_WITH_DEFINITIONS = new Set<ToolType>([
+  ToolType.sql_analyst,
+  ToolType.file_retriever,
+  ToolType.semantic_searcher,
+]);
+
+const TOOL_DEFAULT_DESCRIPTIONS: Record<ToolType, string> = {
+  [ToolType.sql_analyst]: 'Query structured data through semantic models.',
+  [ToolType.web_search]: 'Search the public web for sources and summaries.',
+  [ToolType.deep_research]: 'Synthesize insights from documents and sources.',
+  [ToolType.file_retriever]: 'Retrieve files from configured sources.',
+  [ToolType.semantic_searcher]: 'Run semantic retrieval over embeddings.',
+};
+
+const TOOL_DEFAULT_CONFIG: Record<ToolType, Record<string, unknown>> = {
+  [ToolType.sql_analyst]: {},
+  [ToolType.web_search]: { max_results: 6, safe_search: 'moderate' },
+  [ToolType.deep_research]: {},
+  [ToolType.file_retriever]: {},
+  [ToolType.semantic_searcher]: {},
+};
+
+const ALL_SEMANTIC_MODELS_OPTION = '__all__';
+
+const WEB_SEARCH_TOOL_NAMES = new Set(['web_search', 'web_searcher', 'web_search_agent']);
+
+function normalizeToolName(value: string): string {
+  return value.trim().toLowerCase();
+}
+
+function isWebSearchTool(value: string): boolean {
+  return WEB_SEARCH_TOOL_NAMES.has(normalizeToolName(value));
+}
 
 function defaultFormState(): FormState {
   return {
@@ -190,6 +226,21 @@ function stringifyConfig(value: unknown): string {
   } catch {
     return '';
   }
+}
+
+function readConfigField(config: string, key: string): string {
+  const parsed = parseJsonSafe(config);
+  if (!parsed || typeof parsed !== 'object') {
+    return '';
+  }
+  const value = (parsed as Record<string, unknown>)[key];
+  if (value === null || value === undefined) {
+    return '';
+  }
+  if (typeof value === 'string' || typeof value === 'number') {
+    return String(value);
+  }
+  return '';
 }
 
 function hydrateFromDefinition(definition: unknown, base: FormState): FormState {
@@ -268,15 +319,17 @@ export function AgentDefinitionForm({ mode, agentId, initialAgent, onComplete }:
     queryFn: () => fetchLLMConnections(),
   });
 
+  const toolSupportsDefinitions = Boolean(
+    selectedToolType && TOOL_TYPES_WITH_DEFINITIONS.has(selectedToolType as ToolType),
+  );
+
   const toolDefinitionsQuery = useQuery<ToolDefinitionOption[]>({
     queryKey: ['agent-tool-definitions', selectedToolType],
-    enabled: toolPickerOpen && Boolean(selectedToolType),
+    enabled: toolPickerOpen && toolSupportsDefinitions,
     queryFn: async () => {
       switch (selectedToolType) {
         case ToolType.sql_analyst: {
-          const models = await getAvailableSemanticModels(
-            selectedOrganizationId ?? ''
-          );
+          const models = await getAvailableSemanticModels(selectedOrganizationId ?? '');
           return models.map((model) => ({
             id: model.id,
             name: model.name,
@@ -289,14 +342,6 @@ export function AgentDefinitionForm({ mode, agentId, initialAgent, onComplete }:
             id: retriever.id,
             name: retriever.name,
             description: retriever.description ?? '',
-          }));
-        }
-        case ToolType.web_searcher: {
-          const searches = await getAvailableWebSearchDefinitions();
-          return searches.map((search) => ({
-            id: search.id,
-            name: search.name,
-            description: search.description ?? '',
           }));
         }
         case ToolType.semantic_searcher: {
@@ -360,14 +405,26 @@ export function AgentDefinitionForm({ mode, agentId, initialAgent, onComplete }:
     setSelectedToolDefinitionId('');
   }, [selectedToolType]);
 
+  useEffect(() => {
+    if (!toolPickerOpen) {
+      return;
+    }
+    if (selectedToolType !== ToolType.sql_analyst) {
+      return;
+    }
+    if (!toolDefinitionsQuery.data || toolDefinitionsQuery.data.length === 0) {
+      return;
+    }
+    if (!selectedToolDefinitionId) {
+      setSelectedToolDefinitionId(ALL_SEMANTIC_MODELS_OPTION);
+    }
+  }, [selectedToolDefinitionId, selectedToolType, toolDefinitionsQuery.data, toolPickerOpen]);
+
   const tools = formState.tools;
   const toolDefinitionOptions = toolDefinitionsQuery.data ?? [];
   const selectedToolDefinition = toolDefinitionOptions.find((option) => option.id === selectedToolDefinitionId);
   const toolDefinitionLabel = selectedToolType ? ToolDefinitionLabels[selectedToolType] : 'Definition';
-  const canAddTool =
-    Boolean(selectedToolType) &&
-    !toolDefinitionsQuery.isLoading &&
-    (!toolDefinitionOptions.length || Boolean(selectedToolDefinitionId));
+  const canAddTool = Boolean(selectedToolType) && !toolDefinitionsQuery.isLoading;
 
   const connectionLookup = useMemo(() => {
     return Object.fromEntries((connectionsQuery.data ?? []).map((conn) => [conn.id, conn.name]));
@@ -381,13 +438,40 @@ export function AgentDefinitionForm({ mode, agentId, initialAgent, onComplete }:
     });
   };
 
+  const updateToolConfig = (index: number, updates: Record<string, unknown>) => {
+    setFormState((prev) => {
+      const nextTools = prev.tools.slice();
+      const currentConfig = parseJsonSafe(nextTools[index].config);
+      const nextConfig: Record<string, unknown> =
+        currentConfig && typeof currentConfig === 'object' ? { ...(currentConfig as Record<string, unknown>) } : {};
+
+      Object.entries(updates).forEach(([key, value]) => {
+        if (value === '' || value === undefined || value === null) {
+          delete nextConfig[key];
+        } else {
+          nextConfig[key] = value;
+        }
+      });
+
+      nextTools[index] = {
+        ...nextTools[index],
+        config: stringifyConfig(nextConfig) || '{}',
+      };
+      return { ...prev, tools: nextTools };
+    });
+  };
+
   const handleAddTool = () => {
     if (!selectedToolType) {
       return;
     }
 
-    const configPayload: Record<string, unknown> = {};
-    if (selectedToolDefinition) {
+    const configPayload: Record<string, unknown> = {
+      ...TOOL_DEFAULT_CONFIG[selectedToolType],
+    };
+    const shouldAttachDefinition =
+      Boolean(selectedToolDefinition) && selectedToolDefinitionId !== ALL_SEMANTIC_MODELS_OPTION;
+    if (shouldAttachDefinition && selectedToolDefinition) {
       configPayload.definition_id = selectedToolDefinition.id;
       configPayload.definition_name = selectedToolDefinition.name;
     }
@@ -399,7 +483,7 @@ export function AgentDefinitionForm({ mode, agentId, initialAgent, onComplete }:
         {
           name: selectedToolType,
           connectorId: '',
-          description: selectedToolDefinition?.description ?? '',
+          description: selectedToolDefinition?.description ?? TOOL_DEFAULT_DESCRIPTIONS[selectedToolType],
           config: stringifyConfig(configPayload) || '{}',
         },
       ],
@@ -866,7 +950,9 @@ export function AgentDefinitionForm({ mode, agentId, initialAgent, onComplete }:
             <DialogContent className="max-w-xl">
               <DialogHeader>
                 <DialogTitle>Add tool</DialogTitle>
-                <DialogDescription>Pick a tool type and definition. You can edit details after adding.</DialogDescription>
+                <DialogDescription>
+                  Pick a tool type. Built-in tools can be added immediately, while others can be scoped to a definition.
+                </DialogDescription>
               </DialogHeader>
               <div className="space-y-4">
                 <div className="space-y-2">
@@ -885,38 +971,51 @@ export function AgentDefinitionForm({ mode, agentId, initialAgent, onComplete }:
                   </Select>
                 </div>
                 {selectedToolType ? (
-                  <div className="space-y-2">
-                    <Label htmlFor="tool-definition">{toolDefinitionLabel}</Label>
-                    {toolDefinitionsQuery.isLoading ? (
-                      <p className="text-xs text-[color:var(--text-muted)]">Loading available definitions...</p>
-                    ) : toolDefinitionsQuery.isError ? (
-                      <p className="text-xs text-rose-500">Unable to load definitions right now.</p>
-                    ) : toolDefinitionOptions.length ? (
-                      <>
-                        <Select
-                          id="tool-definition"
-                          value={selectedToolDefinitionId}
-                          onChange={(event) => setSelectedToolDefinitionId(event.target.value)}
-                          placeholder={`Select a ${toolDefinitionLabel.toLowerCase()}`}
-                        >
-                          {toolDefinitionOptions.map((option) => (
-                            <option key={option.id} value={option.id}>
-                              {option.name}
-                            </option>
-                          ))}
-                        </Select>
-                        {selectedToolDefinition ? (
-                          <p className="text-xs text-[color:var(--text-muted)]">
-                            {selectedToolDefinition.description || 'No description provided.'}
-                          </p>
-                        ) : null}
-                      </>
-                    ) : (
-                      <p className="text-xs text-[color:var(--text-muted)]">
-                        No definitions available yet. You can still add the tool and configure it manually.
-                      </p>
-                    )}
-                  </div>
+                  toolSupportsDefinitions ? (
+                    <div className="space-y-2">
+                      <Label htmlFor="tool-definition">{toolDefinitionLabel}</Label>
+                      {toolDefinitionsQuery.isLoading ? (
+                        <p className="text-xs text-[color:var(--text-muted)]">Loading available definitions...</p>
+                      ) : toolDefinitionsQuery.isError ? (
+                        <p className="text-xs text-rose-500">Unable to load definitions right now.</p>
+                      ) : toolDefinitionOptions.length ? (
+                        <>
+                          <Select
+                            id="tool-definition"
+                            value={selectedToolDefinitionId}
+                            onChange={(event) => setSelectedToolDefinitionId(event.target.value)}
+                            placeholder={`Select a ${toolDefinitionLabel.toLowerCase()}`}
+                          >
+                            {selectedToolType === ToolType.sql_analyst ? (
+                              <option value={ALL_SEMANTIC_MODELS_OPTION}>All semantic models</option>
+                            ) : null}
+                            {toolDefinitionOptions.map((option) => (
+                              <option key={option.id} value={option.id}>
+                                {option.name}
+                              </option>
+                            ))}
+                          </Select>
+                          {selectedToolDefinition ? (
+                            <p className="text-xs text-[color:var(--text-muted)]">
+                              {selectedToolDefinition.description || 'No description provided.'}
+                            </p>
+                          ) : selectedToolDefinitionId === ALL_SEMANTIC_MODELS_OPTION ? (
+                            <p className="text-xs text-[color:var(--text-muted)]">
+                              All available semantic models will be available to this agent.
+                            </p>
+                          ) : null}
+                        </>
+                      ) : (
+                        <p className="text-xs text-[color:var(--text-muted)]">
+                          No definitions available yet. You can still add the tool and configure it manually.
+                        </p>
+                      )}
+                    </div>
+                  ) : (
+                    <p className="text-xs text-[color:var(--text-muted)]">
+                      This is a built-in tool. You can configure it after adding.
+                    </p>
+                  )
                 ) : null}
               </div>
               <DialogFooter>
@@ -980,6 +1079,49 @@ export function AgentDefinitionForm({ mode, agentId, initialAgent, onComplete }:
                   onChange={(e) => handleToolChange(index, 'config', e.target.value)}
                 />
               </div>
+              {isWebSearchTool(tool.name) ? (
+                <div className="mt-4 grid gap-3 rounded-2xl border border-[color:var(--panel-border)] bg-[color:var(--panel-alt)] p-4 text-xs text-[color:var(--text-muted)] sm:grid-cols-3">
+                  <div className="space-y-2">
+                    <Label className="text-xs">Max results</Label>
+                    <Input
+                      type="number"
+                      min={1}
+                      max={20}
+                      value={readConfigField(tool.config, 'max_results')}
+                      onChange={(event) => {
+                        const rawValue = event.target.value;
+                        updateToolConfig(index, {
+                          max_results: rawValue ? Number(rawValue) : '',
+                        });
+                      }}
+                      placeholder="6"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label className="text-xs">Region</Label>
+                    <Input
+                      value={readConfigField(tool.config, 'region')}
+                      onChange={(event) => updateToolConfig(index, { region: event.target.value })}
+                      placeholder="us-en"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label className="text-xs">Safe search</Label>
+                    <Select
+                      value={readConfigField(tool.config, 'safe_search')}
+                      onChange={(event) => updateToolConfig(index, { safe_search: event.target.value })}
+                    >
+                      <option value="">Default</option>
+                      <option value="off">Off</option>
+                      <option value="moderate">Moderate</option>
+                      <option value="strict">Strict</option>
+                    </Select>
+                  </div>
+                  <p className="sm:col-span-3">
+                    These fields map to the web search tool config (`max_results`, `region`, `safe_search`).
+                  </p>
+                </div>
+              ) : null}
             </div>
           ))}
         </div>

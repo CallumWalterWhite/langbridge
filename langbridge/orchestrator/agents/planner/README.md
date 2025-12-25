@@ -113,6 +113,15 @@ Example (`AnalystThenVisual`):
 - `allow_deep_research`: disables the `DeepResearch` route entirely.
 - `timebox_seconds`: surfaced in doc retrieval step inputs and assumptions.
 
+## Routing Overrides (Context)
+
+`PlannerRequest.context` can include a `routing` (or `reasoning`) dict to bias replanning:
+
+- `force_route`: `"SimpleAnalyst" | "AnalystThenVisual" | "WebSearch" | "DeepResearch" | "Clarify"`.
+- `prefer_routes` / `avoid_routes`: list of route names to nudge scoring.
+- `require_web_search`, `require_deep_research`, `require_visual`, `require_sql`: additive boosts.
+- `previous_route` + retry flags (`retry_due_to_error`, `retry_due_to_empty`, `retry_due_to_low_sources`) penalise repeats.
+
 ## Extending the Planner
 
 - Add new routes by extending `RouteName`, updating routing heuristics, and

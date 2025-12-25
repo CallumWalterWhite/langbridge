@@ -148,18 +148,19 @@ class Container(containers.DeclarativeContainer):
         agent_service=agent_service,
     )
 
-    orchestrator_service = providers.Factory(
-        OrchestratorService,
-        organization_service=organization_service,
-        semantic_model_service=semantic_model_service,
-        connector_service=connector_service,
-        agent_service=agent_service
-    )
-
     thread_service = providers.Factory(
         ThreadService,
         thread_repository=thread_repository,
         thread_message_repository=thread_message_repository,
         project_repository=project_repository,
         organization_service=organization_service,
+    )
+
+    orchestrator_service = providers.Factory(
+        OrchestratorService,
+        organization_service=organization_service,
+        semantic_model_service=semantic_model_service,
+        connector_service=connector_service,
+        agent_service=agent_service,
+        thread_service=thread_service,
     )

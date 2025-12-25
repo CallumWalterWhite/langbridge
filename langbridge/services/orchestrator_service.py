@@ -5,7 +5,8 @@ import re
 import time
 import uuid
 from dataclasses import dataclass, field
-from typing import Any, Iterable, Optional
+from datetime import datetime, timedelta, timezone
+from typing import Any, Iterable, Optional, Sequence
 
 from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
 from langchain_core.language_models import BaseChatModel
@@ -23,6 +24,7 @@ from orchestrator.definitions import (
     DataAccessPolicy,
     ExecutionMode,
     GuardrailConfig,
+    MemoryStrategy,
     OutputFormat,
     OutputSchema,
     PromptContract,
@@ -43,6 +45,9 @@ from utils.embedding_provider import EmbeddingProvider, EmbeddingProviderError
 from models.llm_connections import LLMConnectionSecretResponse
 from models.connectors import ConnectorResponse
 from models.auth import UserResponse
+from models.threads import ThreadMessageResponse
+from db.threads import Role
+from services.thread_service import ThreadService
 
 
 class _ChatModelLLMClient(LLMClient):
@@ -72,7 +77,14 @@ class _DisabledAnalystAgent:
     def __init__(self, *, reason: str) -> None:
         self._reason = reason
 
-    async def answer_async(self, question: str, *, filters: dict | None = None, limit: int | None = None) -> AnalystQueryResponse:
+    async def answer_async(
+        self,
+        question: str,
+        *,
+        conversation_context: str | None = None,
+        filters: dict | None = None,
+        limit: int | None = None,
+    ) -> AnalystQueryResponse:
         return AnalystQueryResponse(
             sql_canonical="",
             sql_executable="",
@@ -98,6 +110,7 @@ class _AgentToolConfig:
 SQL_TOOL_NAMES = {"sql_analyst", "sql", "sql_analytics"}
 WEB_TOOL_NAMES = {"web_search", "web_searcher", "web_search_agent"}
 DOC_TOOL_NAMES = {"doc_retrieval", "deep_research", "research"}
+MAX_CONTEXT_TURNS = 6
 
 
 class OrchestratorService:
@@ -107,11 +120,13 @@ class OrchestratorService:
         semantic_model_service: SemanticModelService,
         connector_service: ConnectorService,
         agent_service: AgentService,
+        thread_service: ThreadService,
     ):
         self._organization_service = organization_service
         self._semantic_model_service = semantic_model_service
         self._connector_service = connector_service
         self._agent_service = agent_service
+        self._thread_service = thread_service
         self._logger = logging.getLogger(__name__)
 
     async def chat(
@@ -119,6 +134,7 @@ class OrchestratorService:
         msg: str,
         *,
         agent_id: uuid.UUID | None = None,
+        thread_id: uuid.UUID | None = None,
         current_user: UserResponse | None = None,
     ) -> dict[str, Any]:
         request_id = str(uuid.uuid4())
@@ -144,6 +160,13 @@ class OrchestratorService:
             agent_record.id,
             agent_record.name
         )
+        conversation_context = await self._load_conversation_context(
+            thread_id=thread_id,
+            current_user=current_user,
+            agent_definition=agent_definition,
+            request_id=request_id,
+        )
+
         llm_connections = await self._agent_service.list_llm_connection_secrets()
         if not llm_connections:
             raise BusinessValidationError("No LLM connections configured")
@@ -154,9 +177,24 @@ class OrchestratorService:
             llm_connection.id,
             llm_connection.model,
         )
+        
+        
+        llm_conn_config = llm_connection.configuration or {}
+        llm_conn_temperature = 0.2 # default temperature
+        if llm_conn_config.get("temperature") is not None:
+            self._logger.debug(
+                "request_id=%s overriding llm temperature to %s from connection config",
+                request_id,
+                llm_conn_config.get("temperature"),
+            )
+            try:
+                llm_conn_temperature = float(llm_conn_config.get("temperature"))
+            except (ValueError, TypeError):
+                pass
+        
         base_llm: BaseChatModel = ChatOpenAI(
             model=llm_connection.model,
-            temperature=0.1,
+            temperature=llm_conn_temperature,
             api_key=llm_connection.api_key,
         )
         llm_client = _ChatModelLLMClient(base_llm)
@@ -263,7 +301,11 @@ class OrchestratorService:
         visual_agent = VisualAgent()
         planning_constraints = self._build_planning_constraints(agent_definition, tool_config)
         reasoning_agent = self._build_reasoning_agent(agent_definition)
-        planning_context = tool_config.web_search_defaults or None
+        planning_context: dict[str, Any] = dict(tool_config.web_search_defaults)
+        if conversation_context:
+            planning_context["conversation_context"] = conversation_context
+        if not planning_context:
+            planning_context = None
 
         supervisor = SupervisorOrchestrator(
             analyst_agent=analyst_agent,
@@ -289,6 +331,119 @@ class OrchestratorService:
         elapsed_ms = int((time.perf_counter() - start_ts) * 1000)
         self._logger.info("orchestrator.chat complete request_id=%s elapsed_ms=%d", request_id, elapsed_ms)
         return response
+
+    async def _load_conversation_context(
+        self,
+        *,
+        thread_id: uuid.UUID | None,
+        current_user: UserResponse | None,
+        agent_definition: AgentDefinitionModel | None,
+        request_id: str,
+    ) -> str | None:
+        if thread_id is None or current_user is None or agent_definition is None:
+            return None
+        if agent_definition.memory.strategy == MemoryStrategy.none:
+            return None
+
+        if agent_definition.memory.strategy not in (
+            MemoryStrategy.conversation,
+            MemoryStrategy.database,
+            MemoryStrategy.transient,
+        ):
+            self._logger.info(
+                "request_id=%s memory strategy '%s' not fully supported; using thread history fallback.",
+                request_id,
+                agent_definition.memory.strategy.value,
+            )
+
+        try:
+            messages = await self._thread_service.list_messages_for_thread(thread_id, current_user)
+        except Exception as exc:  # pragma: no cover - defensive guard
+            self._logger.warning(
+                "request_id=%s failed to load conversation history: %s",
+                request_id,
+                exc,
+            )
+            return None
+
+        return self._render_conversation_context(messages, agent_definition.memory.ttl_seconds)
+
+    @staticmethod
+    def _render_conversation_context(
+        messages: Sequence[ThreadMessageResponse],
+        ttl_seconds: int | None,
+    ) -> str | None:
+        if not messages:
+            return None
+
+        filtered = OrchestratorService._filter_messages_by_ttl(messages, ttl_seconds)
+        if not filtered:
+            return None
+
+        assistant_by_parent: dict[uuid.UUID, ThreadMessageResponse] = {}
+        for message in filtered:
+            if message.role == Role.assistant and message.parent_message_id:
+                assistant_by_parent[message.parent_message_id] = message
+
+        turns: list[str] = []
+        for message in filtered:
+            if message.role != Role.user:
+                continue
+            user_text = OrchestratorService._read_text_field(message.content, "text")
+            if not user_text:
+                continue
+            assistant = assistant_by_parent.get(message.id)
+            assistant_text = OrchestratorService._read_text_field(
+                assistant.content if assistant else None,
+                "summary",
+            )
+            if not assistant_text and assistant and assistant.error:
+                assistant_text = OrchestratorService._read_text_field(assistant.error, "message")
+                if not assistant_text:
+                    assistant_text = str(assistant.error)
+
+            if assistant_text:
+                turns.append(f"User: {user_text}\nAssistant: {assistant_text}")
+            else:
+                turns.append(f"User: {user_text}")
+
+        if not turns:
+            return None
+        return "\n\n".join(turns[-MAX_CONTEXT_TURNS:])
+
+    @staticmethod
+    def _filter_messages_by_ttl(
+        messages: Sequence[ThreadMessageResponse],
+        ttl_seconds: int | None,
+    ) -> list[ThreadMessageResponse]:
+        if not ttl_seconds:
+            return list(messages)
+
+        cutoff = datetime.now(timezone.utc) - timedelta(seconds=int(ttl_seconds))
+        filtered: list[ThreadMessageResponse] = []
+        for message in messages:
+            created_at = OrchestratorService._normalize_timestamp(message.created_at)
+            if created_at and created_at >= cutoff:
+                filtered.append(message)
+        return filtered
+
+    @staticmethod
+    def _normalize_timestamp(value: datetime | None) -> datetime | None:
+        if value is None:
+            return None
+        if value.tzinfo is None:
+            return value.replace(tzinfo=timezone.utc)
+        return value
+
+    @staticmethod
+    def _read_text_field(payload: Any, key: str) -> str | None:
+        if not isinstance(payload, dict):
+            return None
+        value = payload.get(key)
+        if isinstance(value, str):
+            cleaned = value.strip()
+            return cleaned or None
+        return None
 
     async def _summarize_response(
         self,

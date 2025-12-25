@@ -252,6 +252,10 @@ class SqlAnalystTool:
         )
 
     def _build_prompt(self, request: AnalystQueryRequest) -> str:
+        conversation_text = ""
+        if request.conversation_context:
+            conversation_text = f"Conversation context:\n{request.conversation_context}\n"
+
         filters_text = ""
         if request.filters:
             filters_kv = ", ".join(f"{key} = {value!r}" for key, value in request.filters.items())
@@ -283,6 +287,7 @@ class SqlAnalystTool:
             """
             f"{limit_hint}"
             f"{filters_text}"
+            f"{conversation_text}"
             f"Question: {request.question}\n"
             "Return SQL in PostgreSQL dialect only. No comments or explanation."
         )

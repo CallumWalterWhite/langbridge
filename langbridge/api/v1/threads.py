@@ -89,6 +89,7 @@ async def chat_thread(
         response = await orchestrator_service.chat(
             msg=request.message,
             agent_id=request.agent_id,
+            thread_id=thread_id,
             current_user=current_user,
         )
         await thread_service.record_chat_turn(

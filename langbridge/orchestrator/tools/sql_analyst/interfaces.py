@@ -117,6 +117,10 @@ class AnalystQueryRequest(BaseModel):
     """
 
     question: str = Field(..., min_length=1)
+    conversation_context: str | None = Field(
+        default=None,
+        description="Optional conversation history to help interpret follow-up questions.",
+    )
     filters: dict[str, Any] | None = None
     limit: int | None = Field(default=1000, ge=1)
 
