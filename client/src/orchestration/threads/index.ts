@@ -44,6 +44,22 @@ export type ThreadChatResponse = {
   summary: string | null;
 };
 
+export type ThreadMessage = {
+  id: string;
+  threadId: string;
+  parentMessageId?: string | null;
+  role: 'system' | 'user' | 'assistant' | 'tool' | string;
+  content: Record<string, unknown>;
+  modelSnapshot?: Record<string, unknown> | null;
+  tokenUsage?: Record<string, unknown> | null;
+  error?: Record<string, unknown> | null;
+  createdAt?: string | null;
+};
+
+export type ThreadHistoryResponse = {
+  messages: ThreadMessage[];
+};
+
 export async function listThreads(): Promise<Thread[]> {
   const response = await apiFetch<ThreadListResponse>(`${BASE_PATH}/`);
   return response.threads;
@@ -58,6 +74,11 @@ export async function createThread(payload: ThreadCreatePayload = {}): Promise<T
 
 export async function deleteThread(threadId: string): Promise<void> {
   await apiFetch<void>(`${BASE_PATH}/${threadId}`, { method: 'DELETE' });
+}
+
+export async function listThreadMessages(threadId: string): Promise<ThreadMessage[]> {
+  const response = await apiFetch<ThreadHistoryResponse>(`${BASE_PATH}/${threadId}/messages`);
+  return response.messages;
 }
 
 export async function runThreadChat(

@@ -4,6 +4,8 @@ from datetime import datetime
 
 from pydantic import Field
 
+from db.threads import Role
+
 from .base import _Base
 
 
@@ -35,6 +37,22 @@ class ThreadUpdateRequest(_Base):
 class ThreadChatRequest(_Base):
     message: str
     agent_id: UUID
+
+
+class ThreadMessageResponse(_Base):
+    id: Optional[UUID] = None
+    thread_id: UUID
+    parent_message_id: Optional[UUID] = None
+    role: Role
+    content: Dict[str, Any] = Field(default_factory=dict)
+    model_snapshot: Optional[Dict[str, Any]] = None
+    token_usage: Optional[Dict[str, Any]] = None
+    error: Optional[Dict[str, Any]] = None
+    created_at: Optional[datetime] = None
+
+
+class ThreadHistoryResponse(_Base):
+    messages: list[ThreadMessageResponse] = Field(default_factory=list)
 
 
 class ThreadTabularResult(_Base):

@@ -15,6 +15,7 @@ from models.threads import (
     ThreadChatRequest,
     ThreadChatResponse,
     ThreadCreateRequest,
+    ThreadHistoryResponse,
     ThreadListResponse,
     ThreadResponse,
 )
@@ -90,6 +91,13 @@ async def chat_thread(
             agent_id=request.agent_id,
             current_user=current_user,
         )
+        await thread_service.record_chat_turn(
+            thread_id,
+            current_user,
+            prompt=request.message,
+            response=response,
+            agent_snapshot={"agent_id": str(request.agent_id)},
+        )
     except BusinessValidationError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
@@ -98,3 +106,20 @@ async def chat_thread(
         visualization=response.get("visualization"),
         summary=response.get("summary"),
     )
+
+
+@router.get("/{thread_id}/messages", response_model=ThreadHistoryResponse)
+@inject
+async def list_thread_messages(
+    thread_id: uuid.UUID,
+    current_user: UserResponse = Depends(get_current_user),
+    thread_service: ThreadService = Depends(Provide[Container.thread_service]),
+) -> ThreadHistoryResponse:
+    try:
+        messages = await thread_service.list_messages_for_thread(thread_id, current_user)
+    except ResourceNotFound as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except PermissionDeniedBusinessValidationError as exc:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc
+
+    return ThreadHistoryResponse(messages=messages)

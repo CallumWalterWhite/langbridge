@@ -17,8 +17,10 @@ import { useToast } from '@/components/ui/toast';
 import { formatRelativeDate } from '@/lib/utils';
 import { fetchAgentDefinitions, type AgentDefinition } from '@/orchestration/agents';
 import {
+  listThreadMessages,
   runThreadChat,
   type ThreadChatResponse,
+  type ThreadMessage,
   type ThreadTabularResult,
   type ThreadVisualizationSpec,
 } from '@/orchestration/threads';
@@ -50,12 +52,64 @@ type ChatInterfaceProps = {
   threadId: string;
 };
 
+const readTextField = (value: unknown): string | undefined => {
+  return typeof value === 'string' ? value : undefined;
+};
+
+const extractAgentMeta = (message: ThreadMessage | undefined) => {
+  if (!message) {
+    return { agentId: undefined, agentLabel: undefined };
+  }
+  const snapshot = message.modelSnapshot ?? {};
+  const agentId = readTextField(snapshot.agent_id ?? snapshot.agentId);
+  const agentLabel = readTextField(snapshot.agent_name ?? snapshot.agentName);
+  return { agentId, agentLabel };
+};
+
+const buildTurnsFromMessages = (messages: ThreadMessage[]): ConversationTurn[] => {
+  if (messages.length === 0) {
+    return [];
+  }
+  const assistantByParent = new Map<string, ThreadMessage>();
+  messages
+    .filter((message) => message.role === 'assistant')
+    .forEach((message) => {
+      if (message.parentMessageId) {
+        assistantByParent.set(message.parentMessageId, message);
+      }
+    });
+
+  return messages
+    .filter((message) => message.role === 'user')
+    .map((message, index) => {
+      const assistant = assistantByParent.get(message.id);
+      const content = message.content ?? {};
+      const assistantContent = assistant?.content ?? {};
+      const { agentId, agentLabel } = extractAgentMeta(assistant ?? message);
+      const errorMessage = readTextField((assistant?.error as Record<string, unknown> | undefined)?.message);
+
+      return {
+        id: message.id ?? `history-${index}`,
+        prompt: readTextField(content.text) ?? '',
+        createdAt: message.createdAt ?? new Date().toISOString(),
+        status: assistant ? (assistant.error ? 'error' : 'ready') : 'pending',
+        agentId,
+        agentLabel,
+        summary: readTextField(assistantContent.summary) ?? null,
+        result: (assistantContent.result as ThreadTabularResult | null | undefined) ?? null,
+        visualization: (assistantContent.visualization as ThreadVisualizationSpec | null | undefined) ?? null,
+        errorMessage: errorMessage || undefined,
+      };
+    });
+};
+
 export function ChatInterface({ threadId }: ChatInterfaceProps) {
   const router = useRouter();
   const { toast } = useToast();
   const [composer, setComposer] = useState('');
   const [turns, setTurns] = useState<ConversationTurn[]>([]);
   const [selectedAgentId, setSelectedAgentId] = useState('');
+  const [historyLoaded, setHistoryLoaded] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
 
   const agentDefinitionsQuery = useQuery<AgentDefinition[]>({
@@ -63,9 +117,18 @@ export function ChatInterface({ threadId }: ChatInterfaceProps) {
     queryFn: () => fetchAgentDefinitions(),
   });
 
+  const historyQuery = useQuery<ThreadMessage[]>({
+    queryKey: ['thread-messages', threadId],
+    queryFn: () => listThreadMessages(threadId),
+  });
+
   const agentOptions = useMemo(() => {
     return (agentDefinitionsQuery.data ?? []).slice().sort((a, b) => a.name.localeCompare(b.name));
   }, [agentDefinitionsQuery.data]);
+
+  const agentLabelById = useMemo(() => {
+    return new Map(agentOptions.map((agent) => [agent.id, agent.name]));
+  }, [agentOptions]);
 
   const selectedAgent = useMemo(() => {
     return agentOptions.find((agent) => agent.id === selectedAgentId) ?? null;
@@ -116,6 +179,7 @@ export function ChatInterface({ threadId }: ChatInterfaceProps) {
   useEffect(() => {
     setTurns([]);
     setComposer('');
+    setHistoryLoaded(false);
     const storageKey = `thread-agent:${threadId}`;
     const storedAgentId = window.localStorage.getItem(storageKey);
     setSelectedAgentId(storedAgentId ?? '');
@@ -235,6 +299,24 @@ export function ChatInterface({ threadId }: ChatInterfaceProps) {
   const resetConversation = () => {
     setTurns([]);
   };
+
+  useEffect(() => {
+    if (historyLoaded || !historyQuery.isSuccess) {
+      return;
+    }
+    const historyTurns = buildTurnsFromMessages(historyQuery.data ?? []);
+    const historyIds = new Set(historyTurns.map((turn) => turn.id));
+    const mergedTurns =
+      turns.length > 0 ? [...historyTurns, ...turns.filter((turn) => !historyIds.has(turn.id))] : historyTurns;
+    setTurns(mergedTurns);
+    setHistoryLoaded(true);
+    if (!selectedAgentId) {
+      const lastAgentId = [...historyTurns].reverse().find((turn) => turn.agentId)?.agentId;
+      if (lastAgentId) {
+        setSelectedAgentId(lastAgentId);
+      }
+    }
+  }, [historyLoaded, historyQuery.data, historyQuery.isSuccess, selectedAgentId, turns]);
 
   return (
     <section className="flex h-[calc(100vh-8rem)] flex-col gap-4 py-2 text-[color:var(--text-secondary)] transition-colors">
@@ -375,7 +457,12 @@ export function ChatInterface({ threadId }: ChatInterfaceProps) {
                           </div>
                           <div className="flex-1 space-y-4 rounded-3xl border border-[color:var(--panel-border)] bg-[color:var(--panel-bg)] px-5 py-4 shadow-soft">
                             <div className="flex items-center justify-between text-xs text-[color:var(--text-muted)]">
-                              <span>Agent: {turn.agentLabel ?? 'Unknown agent'}</span>
+                              <span>
+                                Agent:{' '}
+                                {turn.agentLabel ??
+                                  (turn.agentId ? agentLabelById.get(turn.agentId) : undefined) ??
+                                  'Unknown agent'}
+                              </span>
                               <span className="uppercase tracking-[0.2em]">
                                 {turn.status === 'pending'
                                   ? 'Processing'
