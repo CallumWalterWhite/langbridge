@@ -11,6 +11,7 @@ class RouteName(str, Enum):
 
     SIMPLE_ANALYST = "SimpleAnalyst"
     ANALYST_THEN_VISUAL = "AnalystThenVisual"
+    WEB_SEARCH = "WebSearch"
     DEEP_RESEARCH = "DeepResearch"
     CLARIFY = "Clarify"
 
@@ -20,6 +21,7 @@ class AgentName(str, Enum):
 
     ANALYST = "Analyst"
     VISUAL = "Visual"
+    WEB_SEARCH = "WebSearch"
     DOC_RETRIEVAL = "DocRetrieval"
     CLARIFY = "Clarify"
 
@@ -31,6 +33,7 @@ class PlanningConstraints(BaseModel):
     prefer_low_latency: bool = True
     cost_sensitivity: str = Field(default="medium")
     require_viz_when_chartable: bool = True
+    allow_web_search: bool = True
     allow_deep_research: bool = True
     timebox_seconds: int = Field(default=30, ge=5, le=600)
 
@@ -90,6 +93,7 @@ class RouteSignals:
     has_sql_signals: bool = False
     has_visual_cues: bool = False
     has_research_signals: bool = False
+    has_web_search_signals: bool = False
     requires_clarification: bool = False
     chartable: bool = False
     has_time_reference: bool = False
@@ -104,4 +108,3 @@ class RouteDecision:
     justification: str
     signals: RouteSignals
     assumptions: List[str] = field(default_factory=list)
-

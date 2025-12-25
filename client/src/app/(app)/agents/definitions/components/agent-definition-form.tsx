@@ -42,10 +42,11 @@ import type {
 import { ApiError } from '@/orchestration/http';
 import { get } from 'http';
 
-const memoryStrategies = ['none', 'transient', 'conversation', 'long_term', 'vector', 'database'] as const;
+// const memoryStrategies = ['none', 'transient', 'conversation', 'long_term', 'vector', 'database'] as const;
+const memoryStrategies = ['database'] as const;
 const executionModes = ['single_step', 'iterative'] as const;
 const outputFormats = ['text', 'markdown', 'json', 'yaml'] as const;
-const logLevels = ['debug', 'info', 'warning', 'error', 'critical'] as const;
+// const logLevels = ['debug', 'info', 'warning', 'error', 'critical'] as const;
 
 interface ToolState {
   name: string;
@@ -82,7 +83,7 @@ interface FormState {
   blockedCategories: string;
   regexDenylist: string;
   escalationMessage: string;
-  logLevel: (typeof logLevels)[number];
+  // logLevel: (typeof logLevels)[number];
   emitTraces: boolean;
   capturePrompts: boolean;
   auditFields: string;
@@ -131,7 +132,7 @@ function defaultFormState(): FormState {
     systemPrompt: '',
     userInstructions: '',
     styleGuidance: '',
-    memoryStrategy: 'conversation',
+    memoryStrategy: 'database',
     ttlSeconds: '',
     vectorIndex: '',
     databaseTable: '',
@@ -158,7 +159,7 @@ function defaultFormState(): FormState {
     blockedCategories: '',
     regexDenylist: '',
     escalationMessage: '',
-    logLevel: 'info',
+    // logLevel: 'info',
     emitTraces: true,
     capturePrompts: true,
     auditFields: '',
@@ -238,7 +239,7 @@ function hydrateFromDefinition(definition: unknown, base: FormState): FormState 
     blockedCategories: (guardrails.blocked_categories ?? []).join(', '),
     regexDenylist: (guardrails.regex_denylist ?? []).join(', '),
     escalationMessage: guardrails.escalation_message ?? '',
-    logLevel: observability.log_level ?? base.logLevel,
+    // logLevel: observability.log_level ?? base.logLevel,
     emitTraces: observability.emit_traces ?? base.emitTraces,
     capturePrompts: observability.capture_prompts ?? base.capturePrompts,
     auditFields: (observability.audit_fields ?? []).join(', '),
@@ -468,7 +469,7 @@ export function AgentDefinitionForm({ mode, agentId, initialAgent, onComplete }:
         escalation_message: formState.escalationMessage || undefined,
       },
       observability: {
-        log_level: formState.logLevel,
+        // log_level: formState.logLevel,
         emit_traces: formState.emitTraces,
         capture_prompts: formState.capturePrompts,
         audit_fields: listFromCsv(formState.auditFields),
@@ -823,20 +824,6 @@ export function AgentDefinitionForm({ mode, agentId, initialAgent, onComplete }:
                   {outputFormats.map((format) => (
                     <option key={format} value={format}>
                       {format.toUpperCase()}
-                    </option>
-                  ))}
-                </Select>
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="log-level">Log level</Label>
-                <Select
-                  id="log-level"
-                  value={formState.logLevel}
-                  onChange={(e) => setFormState((prev) => ({ ...prev, logLevel: e.target.value as FormState['logLevel'] }))}
-                >
-                  {logLevels.map((level) => (
-                    <option key={level} value={level}>
-                      {level.toUpperCase()}
                     </option>
                   ))}
                 </Select>

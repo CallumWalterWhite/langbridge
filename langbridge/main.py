@@ -14,6 +14,9 @@ from ioc.wiring import wire_packages
 from utils.logger import setup_logging
 
 from middleware import UnitOfWorkMiddleware, ErrorMiddleware, AuthMiddleware
+from dotenv import load_dotenv
+
+load_dotenv()
 
 def custom_generate_unique_id(route: APIRoute) -> str:
     return f"{route.tags[0]}-{route.name}"

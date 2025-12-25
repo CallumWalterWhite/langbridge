@@ -10,7 +10,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { useToast } from '@/components/ui/toast';
 import { useWorkspaceScope } from '@/context/workspaceScope';
 import { formatRelativeDate } from '@/lib/utils';
-import { fetchLLMConnections } from '@/orchestration/agents';
+import { fetchLLMConnections, deleteLLMConnection } from '@/orchestration/agents';
 import type { LLMConnection } from '@/orchestration/agents';
 import { JSX } from 'react';
 
@@ -51,6 +51,24 @@ export default function LLMConnectionsIndex(): JSX.Element {
     }
     router.push('/agents/llm/create');
   };
+
+  const handleDelete = (connectionId: string) => {
+    deleteLLMConnection(connectionId)
+      .then(() => {
+        toast({
+          title: 'Connection deleted',
+          description: 'The LLM connection has been successfully deleted.',
+        });
+        connectionsQuery.refetch();
+      })
+      .catch(() => {
+        toast({
+          title: 'Error deleting connection',
+          description: 'There was an issue deleting the LLM connection. Please try again.',
+          variant: 'destructive',
+        });
+      });
+  }
 
   return (
     <div className="space-y-6 text-[color:var(--text-secondary)]">

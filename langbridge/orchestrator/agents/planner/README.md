@@ -27,6 +27,7 @@ class PlanningConstraints(BaseModel):
     prefer_low_latency: bool = True
     cost_sensitivity: str = "medium"      # "low" | "medium" | "high"
     require_viz_when_chartable: bool = True
+    allow_web_search: bool = True
     allow_deep_research: bool = True
     timebox_seconds: int = 30
 
@@ -38,12 +39,12 @@ class PlannerRequest(BaseModel):
 
 class PlanStep(BaseModel):
     id: str
-    agent: str           # "Analyst" | "Visual" | "DocRetrieval" | "Clarify"
+    agent: str           # "Analyst" | "Visual" | "WebSearch" | "DocRetrieval" | "Clarify"
     input: dict[str, Any]
     expected_output: dict[str, Any]
 
 class Plan(BaseModel):
-    route: str           # "SimpleAnalyst" | "AnalystThenVisual" | "DeepResearch" | "Clarify"
+    route: str           # "SimpleAnalyst" | "AnalystThenVisual" | "WebSearch" | "DeepResearch" | "Clarify"
     steps: list[PlanStep]
     justification: str
     user_summary: str
@@ -57,6 +58,7 @@ class Plan(BaseModel):
 |----------------------|--------------------------------------------------------------------------------------|
 | `SimpleAnalyst`      | SQL-amenable question with clear entity/time cues. Emphasises low latency.           |
 | `AnalystThenVisual`  | SQL intent plus chart/visual cues, or chartable aggregations when viz is required.   |
+| `WebSearch`          | Explicit request to search the public web (news, sources, articles).                 |
 | `DeepResearch`       | Document/narrative synthesis, multi-source analysis, optional data verification.     |
 | `Clarify`            | Ambiguous intent blocks safe execution; planner returns one clarifying question.     |
 
@@ -105,6 +107,7 @@ Example (`AnalystThenVisual`):
 - `prefer_low_latency`: penalises `DeepResearch`.
 - `cost_sensitivity`: further adjusts the research score when `high`.
 - `require_viz_when_chartable`: upgrades routes that look chartable when two steps are allowed.
+- `allow_web_search`: disables the `WebSearch` route entirely.
 - `allow_deep_research`: disables the `DeepResearch` route entirely.
 - `timebox_seconds`: surfaced in doc retrieval step inputs and assumptions.
 
@@ -114,4 +117,3 @@ Example (`AnalystThenVisual`):
   providing `build_steps` logic for the route.
 - Refine policy checks in `policies.py` for organisation-specific guardrails.
 - Update tests under `tests/orchestrator/agents/planner` to cover new behaviour.
-

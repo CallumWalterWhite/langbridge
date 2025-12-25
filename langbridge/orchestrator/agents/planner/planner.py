@@ -18,6 +18,10 @@ def _summarize_plan(decision: RouteDecision, steps: List[PlanStep], request: Pla
             "I'll run the analyst workflow to retrieve the data you asked for, "
             "then generate a visualization spec so you get both the table and an easy-to-read chart."
         )
+    if decision.route == RouteName.WEB_SEARCH:
+        return (
+            "I'll search the web for relevant sources and return the most useful links with snippets."
+        )
     if decision.route == RouteName.DEEP_RESEARCH:
         if any(step.agent == "Analyst" for step in steps):
             return (
@@ -58,4 +62,3 @@ class PlanningAgent:
 
 
 __all__ = ["PlanningAgent"]
-

@@ -91,6 +91,18 @@ async def test_llm_connection(
 ) -> dict:
     return agent_service.test_llm_connection(request)
 
+@router.delete("/llm-connections/{connection_id}", status_code=status.HTTP_204_NO_CONTENT)
+@inject
+async def delete_llm_connection(
+    connection_id: uuid.UUID,
+    current_user: UserResponse = Depends(get_current_user),
+    agent_service: AgentService = Depends(Provide[Container.agent_service]),
+) -> None:
+    try:
+        await agent_service.delete_llm_connection(current_user, connection_id)
+    except BusinessValidationError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    return None
 
 # Agent definitions CRUD
 
@@ -154,3 +166,11 @@ async def delete_agent_definition(
     except BusinessValidationError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
     return None
+
+@router.get("/definitions/tools/agents", response_model=List[AgentDefinitionResponse])
+@inject
+async def list_tool_compatible_agents(
+    current_user: UserResponse = Depends(get_current_user),
+    agent_service: AgentService = Depends(Provide[Container.agent_service]),
+) -> List[AgentDefinitionResponse]:
+    return await agent_service.list_tool_compatible_agents(current_user)

@@ -11,6 +11,7 @@ from orchestrator.agents.analyst import AnalystAgent
 from orchestrator.agents.deep_research import DeepResearchAgent, DeepResearchResult
 from orchestrator.agents.planner import AgentName, Plan, PlanStep, PlannerRequest, PlanningAgent
 from orchestrator.agents.visual import VisualAgent
+from orchestrator.agents.web_search import WebSearchAgent, WebSearchResult
 from orchestrator.tools.sql_analyst.interfaces import AnalystQueryResponse
 
 
@@ -30,6 +31,7 @@ class PlanExecutionArtifacts:
     data_payload: Dict[str, Any] = field(default_factory=dict)
     visualization: Dict[str, Any] = field(default_factory=dict)
     research_result: Optional[DeepResearchResult] = None
+    web_search_result: Optional[WebSearchResult] = None
     clarifying_question: Optional[str] = None
 
 
@@ -89,7 +91,9 @@ class ReasoningAgent:
                 rationale=rationale,
             )
 
-        has_data = bool(artifacts.data_payload) or bool(artifacts.research_result)
+        has_data = bool(artifacts.data_payload) or bool(artifacts.research_result) or bool(
+            artifacts.web_search_result
+        )
         if not has_data:
             rationale = "No structured or research data produced; requesting replanning."
             self.logger.debug(rationale)
@@ -119,6 +123,7 @@ class SupervisorOrchestrator:
         logger: Optional[logging.Logger] = None,
         planning_agent: Optional[PlanningAgent] = None,
         deep_research_agent: Optional[DeepResearchAgent] = None,
+        web_search_agent: Optional[WebSearchAgent] = None,
         reasoning_agent: Optional[ReasoningAgent] = None,
     ) -> None:
         self.analyst_agent = analyst_agent
@@ -126,6 +131,7 @@ class SupervisorOrchestrator:
         self.logger = logger or logging.getLogger(__name__)
         self.planning_agent = planning_agent or PlanningAgent()
         self.deep_research_agent = deep_research_agent or DeepResearchAgent(logger=self.logger)
+        self.web_search_agent = web_search_agent or WebSearchAgent(logger=self.logger)
         self.reasoning_agent = reasoning_agent or ReasoningAgent(logger=self.logger)
 
     async def handle(
@@ -213,6 +219,8 @@ class SupervisorOrchestrator:
         }
         if artifacts.research_result:
             diagnostics["research"] = artifacts.research_result.to_dict()
+        if artifacts.web_search_result:
+            diagnostics["web_search"] = artifacts.web_search_result.to_dict()
         if artifacts.clarifying_question:
             diagnostics["clarifying_question"] = artifacts.clarifying_question
         diagnostics["reasoning"] = {
@@ -318,6 +326,17 @@ class SupervisorOrchestrator:
                     artifacts.data_payload = research_result.to_tabular()
                 continue
 
+            if agent_name == AgentName.WEB_SEARCH.value:
+                web_search_result = await self._run_web_search_step(step, user_query)
+                artifacts.web_search_result = web_search_result
+                step_outputs[step.id] = {
+                    "agent": AgentName.WEB_SEARCH.value,
+                    "web_search_result": web_search_result,
+                }
+                if not artifacts.data_payload:
+                    artifacts.data_payload = web_search_result.to_tabular()
+                continue
+
             if agent_name == AgentName.CLARIFY.value:
                 artifacts.clarifying_question = step.input.get("clarifying_question")
                 self.logger.info("Planner requested clarification: %s", artifacts.clarifying_question)
@@ -372,6 +391,28 @@ class SupervisorOrchestrator:
         return await self.deep_research_agent.research_async(
             question=question,
             context=context,
+            timebox_seconds=timebox,
+        )
+
+    async def _run_web_search_step(self, step: PlanStep, user_query: str) -> WebSearchResult:
+        if not self.web_search_agent:
+            raise RuntimeError("WebSearchAgent is not configured but planner requested WebSearch.")
+        query = step.input.get("query") or user_query
+        context = step.input.get("context") or {}
+        max_results = step.input.get("max_results", 6)
+        region = step.input.get("region") or context.get("region")
+        safe_search = step.input.get("safe_search") or context.get("safe_search")
+        timebox = int(step.input.get("timebox_seconds", 10))
+        try:
+            max_results_value = int(max_results)
+        except (TypeError, ValueError):
+            max_results_value = 6
+
+        return await self.web_search_agent.search_async(
+            query,
+            max_results=max_results_value,
+            region=region,
+            safe_search=safe_search,
             timebox_seconds=timebox,
         )
 

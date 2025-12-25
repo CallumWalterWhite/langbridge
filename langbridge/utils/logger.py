@@ -153,6 +153,7 @@ def setup_logging(
         console.setFormatter(formatter)
         handlers.append(console)
 
+    print(f"Logging initialized. Level={level}, OTEL_SDK_DISABLED={_otel_disabled()}")
     if _otel_disabled():
         handlers.insert(
             0,

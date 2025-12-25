@@ -114,6 +114,10 @@ export async function testLLMConnection(payload: TestLLMConnectionPayload): Prom
   });
 }
 
+export async function deleteLLMConnection(connectionId: string): Promise<void> {
+  await apiFetch<void>(`${BASE_PATH}/${connectionId}`, { method: 'DELETE', skipJsonParse: true });
+}
+
 function normalizeDefinition(payload: AgentDefinitionApiResponse): AgentDefinition {
   let parsedDefinition: unknown = payload.definition;
   if (typeof parsedDefinition === 'string') {

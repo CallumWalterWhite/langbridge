@@ -32,16 +32,7 @@ class OutputFormat(str, Enum):
     markdown = "markdown"
     json = "json"
     yaml = "yaml"
-
-
-class LogLevel(str, Enum):
-    debug = "debug"
-    info = "info"
-    warning = "warning"
-    error = "error"
-    critical = "critical"
-
-
+    
 class PromptContract(BaseModel):
     system_prompt: str = Field(..., description="Primary system prompt/instruction.")
     user_instructions: Optional[str] = Field(
@@ -120,7 +111,6 @@ class GuardrailConfig(BaseModel):
 
 
 class ObservabilityConfig(BaseModel):
-    log_level: LogLevel = Field(LogLevel.info, description="Verbosity for this agent.")
     emit_traces: bool = Field(True, description="Enable tracing/telemetry for this agent.")
     capture_prompts: bool = Field(True, description="Persist prompts/responses for debugging.")
     audit_fields: List[str] = Field(

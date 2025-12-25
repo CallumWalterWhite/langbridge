@@ -69,6 +69,23 @@ _RESEARCH_KEYWORDS: Tuple[str, ...] = (
     "research",
 )
 
+_WEB_SEARCH_KEYWORDS: Tuple[str, ...] = (
+    "web",
+    "search the web",
+    "web search",
+    "internet",
+    "online",
+    "google",
+    "bing",
+    "duckduckgo",
+    "news",
+    "headline",
+    "article",
+    "press release",
+    "site:",
+    "wikipedia",
+)
+
 _ENTITY_HINTS: Tuple[str, ...] = (
     "fund",
     "portfolio",
@@ -166,6 +183,7 @@ def _extract_signals(question: str) -> RouteSignals:
     )
     has_visual_cues = _contains_keyword(lowered, _VISUAL_KEYWORDS)
     has_research_signals = _contains_keyword(lowered, _RESEARCH_KEYWORDS)
+    has_web_search_signals = _contains_keyword(lowered, _WEB_SEARCH_KEYWORDS)
     has_entity_reference = _contains_keyword(lowered, _ENTITY_HINTS)
     has_time_reference = _contains_keyword(lowered, _TIME_HINTS) or bool(_NUMBER_PATTERN.search(lowered))
     chartable = has_visual_cues or (
@@ -175,15 +193,16 @@ def _extract_signals(question: str) -> RouteSignals:
     requires_clarification = False
     if _contains_keyword(lowered, _AMBIGUITY_PHRASES):
         requires_clarification = True
-    elif len(tokens) <= 4 and not has_research_signals and "?" not in lowered:
+    elif len(tokens) <= 4 and not has_research_signals and not has_web_search_signals and "?" not in lowered:
         requires_clarification = True
-    elif "performance" in lowered and not has_entity_reference and not has_research_signals:
+    elif "performance" in lowered and not has_entity_reference and not has_research_signals and not has_web_search_signals:
         requires_clarification = True
 
     return RouteSignals(
         has_sql_signals=has_sql_signals,
         has_visual_cues=has_visual_cues,
         has_research_signals=has_research_signals,
+        has_web_search_signals=has_web_search_signals,
         requires_clarification=requires_clarification,
         chartable=chartable,
         has_time_reference=has_time_reference,
@@ -196,6 +215,8 @@ def _estimate_step_count(route: RouteName, signals: RouteSignals, constraints: P
         return 1
     if route == RouteName.ANALYST_THEN_VISUAL:
         return 2
+    if route == RouteName.WEB_SEARCH:
+        return 1
     if route == RouteName.DEEP_RESEARCH:
         steps = 1  # Doc retrieval mandatory
         if signals.has_sql_signals:
@@ -230,6 +251,19 @@ def _score_analyst_then_visual(signals: RouteSignals) -> float:
     return score
 
 
+def _score_web_search(signals: RouteSignals, constraints: PlanningConstraints) -> float:
+    if not signals.has_web_search_signals:
+        return float("-inf")
+    score = 3.0
+    if signals.has_research_signals:
+        score += 1.0
+    if signals.has_sql_signals:
+        score -= 2.0
+    if constraints.prefer_low_latency:
+        score += 0.5
+    return score
+
+
 def _score_deep_research(signals: RouteSignals, constraints: PlanningConstraints) -> float:
     score = 0.0
     if signals.has_research_signals:
@@ -251,6 +285,7 @@ def _select_best_route(route_scores: Dict[RouteName, float]) -> RouteName:
     priority = (
         RouteName.SIMPLE_ANALYST,
         RouteName.ANALYST_THEN_VISUAL,
+        RouteName.WEB_SEARCH,
         RouteName.DEEP_RESEARCH,
     )
     best_route = RouteName.SIMPLE_ANALYST
@@ -277,6 +312,11 @@ def _build_justification(route: RouteName, signals: RouteSignals) -> str:
         parts = ["SQL intent with visualization cues"]
         if signals.chartable:
             parts.append("aggregations suitable for charting")
+        return "; ".join(parts) + "."
+    if route == RouteName.WEB_SEARCH:
+        parts = ["Explicit web lookup requested"]
+        if signals.has_research_signals:
+            parts.append("news or external sources referenced")
         return "; ".join(parts) + "."
     if route == RouteName.DEEP_RESEARCH:
         parts = ["Unstructured research signals dominate"]
@@ -325,6 +365,15 @@ def choose_route(request: PlannerRequest) -> RouteDecision:
         route_scores[RouteName.ANALYST_THEN_VISUAL] = _score_analyst_then_visual(signals)
     else:
         route_scores[RouteName.ANALYST_THEN_VISUAL] = float("-inf")
+
+    if constraints.allow_web_search:
+        estimated_steps = _estimate_step_count(RouteName.WEB_SEARCH, signals, constraints)
+        if constraints.max_steps >= estimated_steps:
+            route_scores[RouteName.WEB_SEARCH] = _score_web_search(signals, constraints)
+        else:
+            route_scores[RouteName.WEB_SEARCH] = float("-inf")
+    else:
+        route_scores[RouteName.WEB_SEARCH] = float("-inf")
 
     if constraints.allow_deep_research:
         estimated_steps = _estimate_step_count(RouteName.DEEP_RESEARCH, signals, constraints)
@@ -458,6 +507,25 @@ def build_steps(decision: RouteDecision, request: PlannerRequest) -> List[PlanSt
                     "insight_summary": "string",
                 },
             )
+        return steps
+
+    if decision.route == RouteName.WEB_SEARCH:
+        context = request.context or {}
+        _append_step(
+            AgentName.WEB_SEARCH,
+            {
+                "query": request.question,
+                "context": context,
+                "max_results": context.get("max_results", 6),
+                "region": context.get("region"),
+                "safe_search": context.get("safe_search"),
+                "timebox_seconds": constraints.timebox_seconds,
+            },
+            {
+                "results": "web_search_results",
+                "sources": "list_of_urls",
+            },
+        )
         return steps
 
     if decision.route == RouteName.DEEP_RESEARCH:

@@ -15,6 +15,7 @@ import { ApiError } from '@/orchestration/http';
 import {
   fetchLLMConnection,
   updateLLMConnection,
+  deleteLLMConnection,
   type LLMConnection,
   type UpdateLLMConnectionPayload,
 } from '@/orchestration/agents';
@@ -136,6 +137,26 @@ export function LLMConnectionUpdate({ connectionId }: LLMConnectionUpdateProps):
     updateMutation.mutate(payload);
   };
 
+  const handleDelete = () => {
+    deleteLLMConnection(connectionId)
+      .then(() => {
+        toast({
+          title: 'Connection deleted',
+          description: 'The LLM connection has been successfully deleted.',
+        });
+        queryClient.invalidateQueries({ queryKey: ['llm-connections'] });
+        router.push('/agents/llm');
+      })
+      .catch(() => {
+        toast({
+          title: 'Error deleting connection',
+          description: 'There was an issue deleting the LLM connection. Please try again.',
+          variant: 'destructive',
+        });
+      }
+    );
+  };
+
   if (connectionQuery.isLoading) {
     return (
       <div className="space-y-6">
@@ -173,6 +194,14 @@ export function LLMConnectionUpdate({ connectionId }: LLMConnectionUpdateProps):
           Back to connections
         </Button>
         <h1 className="text-xl font-semibold text-[color:var(--text-primary)]">{connection.name}</h1>
+        <Button
+          variant="outline"
+          size="sm"
+          className="ml-auto text-red-600 hover:text-red-700"
+          onClick={() => handleDelete()}
+        >
+          Delete Connection
+        </Button>
       </div>
 
       <form onSubmit={handleSubmit} className="space-y-6">
