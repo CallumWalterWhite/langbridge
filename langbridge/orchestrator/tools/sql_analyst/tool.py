@@ -14,11 +14,11 @@ from typing import Any, Dict, List, Optional, Sequence
 
 import sqlglot
 
+from orchestrator.llm.provider import LLMProvider
 from .interfaces import (
     AnalystQueryRequest,
     AnalystQueryResponse,
     DatabaseConnector,
-    LLMClient,
     QueryResult,
     SemanticModel,
     UnifiedSemanticModel,
@@ -73,7 +73,7 @@ class SqlAnalystTool:
     def __init__(
         self,
         *,
-        llm: LLMClient,
+        llm: LLMProvider,
         semantic_model: SemanticModelLike,
         connector: DatabaseConnector,
         dialect: str,
@@ -280,6 +280,7 @@ class SqlAnalystTool:
             - Apply table filters when the request mentions their name or synonyms.
             - Group only by non-aggregated selected dimensions.
             - Prefer a single query; CTEs allowed: base_fact -> joined -> final.
+            - Use STRFTIME('%Y',date) ||'-Q'|| ((CAST(strftime('%m', date) AS INT) - 1) / 3 + 1) to represent quarters.
             - Do NOT invent columns/joins. If something is missing, omit it safely.
             - Use ANSI-friendly constructs (CAST, COALESCE, CASE, DATE_PART, standard aggregates) that transpile cleanly.
             - Avoid Postgres-only syntax such as :: type casts, EXTRACT(... FROM ...), DATE_TRUNC, ILIKE, array operators, or JSON-specific features.

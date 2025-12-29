@@ -78,7 +78,7 @@ class Run(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     thread_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("threads.id", ondelete="cascade"), index=True)
-    root_message_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("messages.id", ondelete="cascade"))
+    root_message_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("thread_messages.id", ondelete="cascade"))
 
     graph: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON)
     state_before: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON)
@@ -96,7 +96,7 @@ class ToolCall(Base):
     __tablename__ = "tool_calls"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    message_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("messages.id", ondelete="cascade"), index=True)
+    message_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("thread_messages.id", ondelete="cascade"), index=True)
 
     tool_name: Mapped[str] = mapped_column(String)
     arguments: Mapped[Dict[str, Any]] = mapped_column(JSON)

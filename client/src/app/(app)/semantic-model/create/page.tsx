@@ -223,7 +223,7 @@ export default function SemanticModelPage(): JSX.Element {
       const yamlPayload = serializeBuilderModel(builder, selectedConnector?.name);
       await createSemanticModel({
         organizationId: selectedOrganizationId,
-        projectId: selectedProjectId ?? undefined,
+        projectId: selectedProjectId ?? null,
         connectorId: selectedConnectorId,
         name: formState.name.trim(),
         description: formState.description.trim() || undefined,

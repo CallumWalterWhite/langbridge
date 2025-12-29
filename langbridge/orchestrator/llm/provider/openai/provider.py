@@ -1,14 +1,16 @@
 
 
-from typing import Any
+from typing import Any, Union
 
 from ..base import LLMProvider, LLMProviderName, ProviderConfigurationError
 from ..factory import register_provider
 
 try:  # pragma: no cover - optional dependency
     from langchain_openai import ChatOpenAI
+    from langchain_core.messages import BaseMessage
 except ImportError as exc:  # pragma: no cover - optional dependency
     ChatOpenAI = None  # type: ignore[assignment]
+    HumanMessage = None  # type: ignore[assignment]
     _IMPORT_ERROR: Exception | None = exc
 else:  # pragma: no cover - optional dependency
     _IMPORT_ERROR = None
@@ -41,6 +43,53 @@ class OpenAIProvider(LLMProvider):
 
         return ChatOpenAI(**params)
 
+    def complete(
+        self,
+        prompt: str,
+        *,
+        temperature: float = 0.0,
+        max_tokens: int | None = None,
+    ) -> str:
+        chat_model = self.create_chat_model(temperature=temperature, max_tokens=max_tokens)
+        response = chat_model.invoke(prompt)
+        if isinstance(response, BaseMessage):
+            return str(response.content)
+        return str(response)
+    
+    async def acomplete(
+        self,
+        prompt: str,
+        *,
+        temperature: float = 0.0,
+        max_tokens: int | None = None,
+    ) -> str:
+        chat_model = self.create_chat_model(temperature=temperature, max_tokens=max_tokens)
+        response = await chat_model.ainvoke(prompt)
+        if isinstance(response, BaseMessage):
+            return str(response.content)
+        return str(response)
+    
+    def invoke(
+        self,
+        messages: Union[list[dict[str, Any]], list[BaseMessage]],
+        *,
+        temperature: float = 0.0,
+        max_tokens: int | None = None,
+    ) -> Union[dict[str, Any], BaseMessage]:
+        chat_model = self.create_chat_model(temperature=temperature, max_tokens=max_tokens)
+        response = chat_model.invoke(messages)
+        return response
+    
+    async def ainvoke(
+        self,
+        messages: Union[list[dict[str, Any]], list[BaseMessage]],
+        *,
+        temperature: float = 0.0,
+        max_tokens: int | None = None,
+    ) -> Union[dict[str, Any], BaseMessage]:
+        chat_model = self.create_chat_model(temperature=temperature, max_tokens=max_tokens)
+        response = await chat_model.ainvoke(messages)
+        return response
 
 __all__ = ["OpenAIProvider"]
 

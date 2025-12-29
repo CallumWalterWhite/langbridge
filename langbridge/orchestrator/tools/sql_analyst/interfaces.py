@@ -7,22 +7,6 @@ from typing import Any, Optional, Protocol, Sequence
 
 from pydantic import BaseModel, Field, field_validator
 
-
-class LLMClient(Protocol):
-    """
-    Minimal protocol describing the LLM capability required by the SQL analyst tool.
-    """
-
-    def complete(
-        self,
-        prompt: str,
-        *,
-        temperature: float = 0.0,
-        max_tokens: int | None = None,
-    ) -> str:
-        ...
-
-
 class DatabaseConnector(Protocol):
     """
     Minimal protocol describing the execution surface the SQL analyst tool relies on.

@@ -31,6 +31,9 @@ export async function listSemanticModels(
 }
 
 export async function createSemanticModel(payload: CreateSemanticModelPayload): Promise<SemanticModelRecord> {
+  if (payload.projectId?.length === 0) {
+    payload.projectId = undefined;
+  }
   return apiFetch<SemanticModelRecord>(BASE_PATH, {
     method: 'POST',
     body: JSON.stringify(payload),

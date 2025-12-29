@@ -2,11 +2,13 @@
 Supervisor orchestrator that coordinates planner, analyst, research, and visual agents.
 """
 
+import json
 import logging
 import time
 from dataclasses import dataclass, field
 from typing import Any, Dict, Optional, Sequence
 
+from orchestrator.llm.provider import LLMProvider
 from orchestrator.agents.analyst import AnalystAgent
 from orchestrator.agents.deep_research import DeepResearchAgent, DeepResearchResult
 from orchestrator.agents.planner import (
@@ -60,12 +62,14 @@ class ReasoningAgent:
         self,
         *,
         max_iterations: int = 2,
+        llm: Optional[LLMProvider] = None,
         logger: Optional[logging.Logger] = None,
     ) -> None:
         if max_iterations < 1:
             raise ValueError("ReasoningAgent requires at least one iteration.")
         self.max_iterations = max_iterations
         self.logger = logger or logging.getLogger(__name__)
+        self.llm = llm
 
     @staticmethod
     def _has_structured_data(artifacts: PlanExecutionArtifacts) -> bool:
@@ -97,6 +101,281 @@ class ReasoningAgent:
         if current_route == RouteName.WEB_SEARCH.value:
             return RouteName.DEEP_RESEARCH
         return RouteName.WEB_SEARCH
+
+    @staticmethod
+    def _extract_json_blob(text: str) -> Optional[str]:
+        if not text:
+            return None
+        start = text.find("{")
+        if start == -1:
+            return None
+        depth = 0
+        for index in range(start, len(text)):
+            char = text[index]
+            if char == "{":
+                depth += 1
+            elif char == "}":
+                depth -= 1
+                if depth == 0:
+                    return text[start : index + 1]
+        return None
+
+    def _parse_llm_payload(self, response: str) -> Optional[Dict[str, Any]]:
+        blob = self._extract_json_blob(response)
+        if not blob:
+            return None
+        try:
+            parsed = json.loads(blob)
+        except json.JSONDecodeError:
+            return None
+        if not isinstance(parsed, dict):
+            return None
+        return parsed
+
+    @staticmethod
+    def _coerce_bool(value: Any) -> Optional[bool]:
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, str):
+            cleaned = value.strip().lower()
+            if cleaned in {"true", "yes", "1"}:
+                return True
+            if cleaned in {"false", "no", "0"}:
+                return False
+        return None
+
+    @staticmethod
+    def _normalize_route_name(value: Any) -> Optional[RouteName]:
+        if isinstance(value, RouteName):
+            return value
+        if value is None:
+            return None
+        cleaned = str(value).strip().lower()
+        if not cleaned:
+            return None
+        for route in RouteName:
+            if cleaned == route.value.lower() or cleaned == route.name.lower():
+                return route
+        alias_map = {
+            "analyst": RouteName.SIMPLE_ANALYST,
+            "simpleanalyst": RouteName.SIMPLE_ANALYST,
+            "visual": RouteName.ANALYST_THEN_VISUAL,
+            "chart": RouteName.ANALYST_THEN_VISUAL,
+            "websearch": RouteName.WEB_SEARCH,
+            "web": RouteName.WEB_SEARCH,
+            "research": RouteName.DEEP_RESEARCH,
+            "deepresearch": RouteName.DEEP_RESEARCH,
+            "clarify": RouteName.CLARIFY,
+        }
+        return alias_map.get(cleaned)
+
+    def _normalize_route_list(self, value: Any) -> list[str]:
+        if not value:
+            return []
+        if isinstance(value, (list, tuple, set)):
+            items = value
+        else:
+            items = [value]
+        routes: list[str] = []
+        for item in items:
+            route = self._normalize_route_name(item)
+            if route and route.value not in routes:
+                routes.append(route.value)
+        return routes
+
+    def _summarize_artifacts(self, artifacts: PlanExecutionArtifacts) -> Dict[str, Any]:
+        columns: list[Any] = []
+        rows: list[Any] = []
+        if artifacts.data_payload:
+            columns = list(artifacts.data_payload.get("columns") or [])
+            rows = list(artifacts.data_payload.get("rows") or [])
+        elif artifacts.analyst_result and artifacts.analyst_result.result:
+            columns = list(artifacts.analyst_result.result.columns or [])
+            rows = list(artifacts.analyst_result.result.rows or [])
+
+        analyst_error = artifacts.analyst_result.error if artifacts.analyst_result else None
+        web_count = len(artifacts.web_search_result.results) if artifacts.web_search_result else 0
+        research_findings = (
+            len(artifacts.research_result.findings) if artifacts.research_result else 0
+        )
+        research_synthesis = (
+            (artifacts.research_result.synthesis or "") if artifacts.research_result else ""
+        )
+        chart_type = None
+        if isinstance(artifacts.visualization, dict):
+            chart_type = artifacts.visualization.get("chart_type") or artifacts.visualization.get(
+                "chartType"
+            )
+
+        return {
+            "row_count": len(rows),
+            "columns": columns,
+            "analyst_error": analyst_error,
+            "web_results_count": web_count,
+            "research_findings_count": research_findings,
+            "research_synthesis": research_synthesis[:240],
+            "visualization_chart_type": chart_type,
+        }
+
+    def _build_llm_prompt(
+        self,
+        *,
+        iteration: int,
+        plan: Plan,
+        artifacts: PlanExecutionArtifacts,
+        diagnostics: Dict[str, Any],
+        user_query: Optional[str],
+    ) -> str:
+        summary = self._summarize_artifacts(artifacts)
+        prompt_sections = [
+            "You are an orchestration evaluator. Decide if more planning is needed.",
+            "Return ONLY JSON with keys: continue_planning (boolean), rationale (string).",
+            "Optional keys: force_route, prefer_routes, avoid_routes, require_web_search,",
+            "require_deep_research, require_visual, require_sql, retry_due_to_error,",
+            "retry_due_to_empty, retry_due_to_low_sources.",
+            "Routes: SimpleAnalyst, AnalystThenVisual, WebSearch, DeepResearch, Clarify.",
+            f"User query: {user_query or ''}",
+            f"Current route: {plan.route}",
+            f"Iteration: {iteration + 1} of {self.max_iterations}",
+            f"Execution summary (JSON): {json.dumps(summary, default=str, ensure_ascii=True)}",
+            f"Diagnostics (JSON): {json.dumps(diagnostics or {}, default=str, ensure_ascii=True)}",
+        ]
+        return "\n".join(prompt_sections)
+
+    def _evaluate_with_llm(
+        self,
+        *,
+        iteration: int,
+        plan: Plan,
+        artifacts: PlanExecutionArtifacts,
+        diagnostics: Dict[str, Any],
+        user_query: Optional[str],
+    ) -> Optional[ReasoningDecision]:
+        if not self.llm:
+            return None
+        prompt = self._build_llm_prompt(
+            iteration=iteration,
+            plan=plan,
+            artifacts=artifacts,
+            diagnostics=diagnostics,
+            user_query=user_query,
+        )
+        try:
+            response = self.llm.complete(prompt, temperature=0.0, max_tokens=350)
+        except Exception as exc:  # pragma: no cover - defensive guard
+            self.logger.warning("ReasoningAgent LLM evaluation failed: %s", exc)
+            return None
+
+        payload = self._parse_llm_payload(str(response))
+        if not payload:
+            return None
+
+        continue_value = self._coerce_bool(payload.get("continue_planning"))
+        if continue_value is None:
+            return None
+
+        rationale = str(payload.get("rationale") or "").strip() or "LLM evaluation completed."
+        if not continue_value:
+            return ReasoningDecision(continue_planning=False, rationale=rationale)
+
+        reasoning_payload: Dict[str, Any] = {"previous_route": plan.route}
+        force_route = self._normalize_route_name(payload.get("force_route") or payload.get("force_tool"))
+        if force_route:
+            reasoning_payload["force_route"] = force_route.value
+
+        prefer_routes = self._normalize_route_list(payload.get("prefer_routes") or payload.get("preferred_routes"))
+        if prefer_routes:
+            reasoning_payload["prefer_routes"] = prefer_routes
+        avoid_routes = self._normalize_route_list(payload.get("avoid_routes"))
+        if avoid_routes:
+            reasoning_payload["avoid_routes"] = avoid_routes
+
+        require_web_search = self._coerce_bool(payload.get("require_web_search"))
+        if require_web_search:
+            reasoning_payload["require_web_search"] = True
+        require_deep = self._coerce_bool(payload.get("require_deep_research"))
+        if require_deep:
+            reasoning_payload["require_deep_research"] = True
+        require_visual = self._coerce_bool(payload.get("require_visual"))
+        if require_visual:
+            reasoning_payload["require_visual"] = True
+        require_sql = self._coerce_bool(payload.get("require_sql"))
+        if require_sql:
+            reasoning_payload["require_sql"] = True
+
+        for flag in ("retry_due_to_error", "retry_due_to_empty", "retry_due_to_low_sources"):
+            flag_value = payload.get(flag)
+            if flag_value is not None:
+                reasoning_payload[flag] = flag_value
+
+        return ReasoningDecision(
+            continue_planning=True,
+            updated_context={"reasoning": reasoning_payload},
+            rationale=rationale,
+        )
+
+    def _apply_llm_safeguards(
+        self,
+        decision: ReasoningDecision,
+        *,
+        plan: Plan,
+        artifacts: PlanExecutionArtifacts,
+        user_query: Optional[str],
+    ) -> ReasoningDecision:
+        has_structured_data = self._has_structured_data(artifacts)
+        has_web_results = self._has_web_results(artifacts)
+        has_research = self._has_research_results(artifacts)
+        has_data = has_structured_data or has_web_results or has_research
+
+        analyst_error = artifacts.analyst_result and artifacts.analyst_result.error
+        if not decision.continue_planning and analyst_error and not (has_web_results or has_research):
+            force_route = self._pick_fallback_route(plan.route)
+            rationale = "Retrying due to analyst error."
+            self.logger.debug("%s Error: %s", rationale, artifacts.analyst_result.error)
+            return self._build_retry_decision(
+                plan=plan,
+                rationale=rationale,
+                force_route=force_route,
+                retry_flag="retry_due_to_error",
+                detail=str(artifacts.analyst_result.error),
+            )
+
+        if not decision.continue_planning and not has_data:
+            force_route = self._pick_fallback_route(plan.route)
+            rationale = "No structured or research data produced; requesting replanning."
+            return self._build_retry_decision(
+                plan=plan,
+                rationale=rationale,
+                force_route=force_route,
+                retry_flag="retry_due_to_empty",
+            )
+
+        if not decision.continue_planning:
+            return decision
+
+        updated_context = decision.updated_context or {}
+        reasoning_payload = updated_context.get("reasoning")
+        if not isinstance(reasoning_payload, dict):
+            reasoning_payload = {"previous_route": plan.route}
+        else:
+            reasoning_payload.setdefault("previous_route", plan.route)
+
+        if not any(
+            flag in reasoning_payload for flag in ("retry_due_to_error", "retry_due_to_empty", "retry_due_to_low_sources")
+        ):
+            if analyst_error and not (has_web_results or has_research):
+                reasoning_payload["retry_due_to_error"] = str(analyst_error)
+            elif not has_data:
+                reasoning_payload["retry_due_to_empty"] = True
+            elif artifacts.research_result and self._is_low_signal_research(artifacts.research_result):
+                reasoning_payload["retry_due_to_low_sources"] = True
+
+        updated_context["reasoning"] = reasoning_payload
+        return ReasoningDecision(
+            continue_planning=True,
+            updated_context=updated_context,
+            rationale=decision.rationale,
+        )
 
     def _build_retry_decision(
         self,
@@ -139,6 +418,21 @@ class ReasoningAgent:
             rationale = "Max reasoning iterations reached; finalising current response."
             self.logger.debug(rationale)
             return ReasoningDecision(continue_planning=False, rationale=rationale)
+
+        llm_decision = self._evaluate_with_llm(
+            iteration=iteration,
+            plan=plan,
+            artifacts=artifacts,
+            diagnostics=diagnostics,
+            user_query=user_query,
+        )
+        if llm_decision:
+            return self._apply_llm_safeguards(
+                llm_decision,
+                plan=plan,
+                artifacts=artifacts,
+                user_query=user_query,
+            )
 
         has_structured_data = self._has_structured_data(artifacts)
         has_web_results = self._has_web_results(artifacts)
@@ -215,8 +509,8 @@ class SupervisorOrchestrator:
     def __init__(
         self,
         *,
-        analyst_agent: AnalystAgent,
         visual_agent: VisualAgent,
+        analyst_agent: Optional[AnalystAgent] = None,
         logger: Optional[logging.Logger] = None,
         planning_agent: Optional[PlanningAgent] = None,
         deep_research_agent: Optional[DeepResearchAgent] = None,
@@ -316,6 +610,8 @@ class SupervisorOrchestrator:
         diagnostics: Dict[str, Any] = {
             "execution_time_ms": analyst_result.execution_time_ms,
             "total_elapsed_ms": elapsed_ms,
+            "sql_executable": analyst_result.sql_executable,
+            "sql_canonical": analyst_result.sql_canonical,
             "error": analyst_result.error,
             "dialect": analyst_result.dialect,
             "plan": plan.model_dump(),
@@ -461,13 +757,15 @@ class SupervisorOrchestrator:
         default_filters: Optional[Dict[str, Any]],
         default_limit: Optional[int],
     ) -> tuple[AnalystQueryResponse, Dict[str, Any]]:
+        if not self.analyst_agent:
+            raise RuntimeError("AnalystAgent is not configured but planner requested SQL analysis.")
         question = step.input.get("question") or user_query
         context_overrides = step.input.get("context") or {}
         step_filters = context_overrides.get("filters", default_filters)
         step_limit = context_overrides.get("limit", default_limit)
         conversation_context = context_overrides.get("conversation_context")
-
-        analyst_result = await self.analyst_agent.answer_async(
+        
+        analyst_result: AnalystQueryResponse = await self.analyst_agent.answer_async(
             question,
             conversation_context=conversation_context,
             filters=step_filters,
@@ -489,7 +787,13 @@ class SupervisorOrchestrator:
         referenced_payload = self._resolve_rows_reference(reference_id, step_outputs)
         data = referenced_payload or fallback_payload or {"columns": [], "rows": []}
         viz_title = title or f"Visualization for '{user_query}'"
-        return self.visual_agent.run(data, title=viz_title)
+        user_intent = step.input.get("user_intent")
+        return self.visual_agent.run(
+            data,
+            title=viz_title,
+            question=user_query,
+            user_intent=user_intent,
+        )
 
     async def _run_doc_retrieval_step(
         self,

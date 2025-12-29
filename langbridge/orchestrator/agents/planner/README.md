@@ -1,23 +1,25 @@
 # Planning Agent
 
-The planning agent provides deterministic, policy-aware routing for downstream
-orchestration. It does not execute tools. Instead it analyses a user question,
-applies routing policies and constraints, and returns an ordered JSON plan that
-the supervisor can execute.
+The planning agent provides policy-aware routing for downstream orchestration.
+It does not execute tools. Instead it analyses a user question, applies routing
+policies and constraints, and returns an ordered JSON plan that the supervisor
+can execute. When an LLM is configured it proposes a plan, with deterministic
+fallbacks if the output is invalid.
 
 ## Architecture
 
 ```
 PlannerRequest -> PlanningAgent.plan()
-    ├─ policies.check_policies()  # annotate risks
-    ├─ router.choose_route()      # rule/heuristic routing
-    ├─ router.build_steps()       # construct ordered steps
-    └─ Plan                       # Plan / PlanStep Pydantic models
+    - policies.check_policies()  # annotate risks
+    - LLM plan proposal (optional)
+    - router.choose_route()      # rule/heuristic fallback
+    - router.build_steps()       # construct ordered steps
+    - Plan                       # Plan / PlanStep Pydantic models
 ```
 
-The planner is stateless and side-effect free: identical inputs produce the same
-plan output. Guardrails run before routing so risks can be surfaced alongside
-plans.
+The planner is stateless and side-effect free. Guardrails run before routing so
+risks can be surfaced alongside plans. If the LLM output is invalid, the
+deterministic router produces the plan.
 
 ## Models
 
@@ -63,14 +65,14 @@ class Plan(BaseModel):
 | `DeepResearch`       | Document/narrative synthesis, multi-source analysis, optional data verification.     |
 | `Clarify`            | Ambiguous intent blocks safe execution; planner returns one clarifying question.     |
 
-Routing is rule-first and heuristic-second:
+Routing is rule-first and heuristic-second for the deterministic fallback:
 
-1. Guardrails (PII, destructive SQL) record risks – they do not block.
+1. Guardrails (PII, destructive SQL) record risks; they do not block.
 2. Ambiguity triggers `Clarify`.
 3. Hard constraints honour `allow_deep_research`, `max_steps`, and `require_viz_when_chartable`.
 4. Remaining candidates receive deterministic scores.
 
-Tie-breaking order: `SimpleAnalyst` → `AnalystThenVisual` → `DeepResearch`.
+Tie-breaking order: `SimpleAnalyst` -> `AnalystThenVisual` -> `DeepResearch`.
 
 ## Plan Construction
 

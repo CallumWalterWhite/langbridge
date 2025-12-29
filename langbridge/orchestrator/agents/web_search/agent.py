@@ -1,12 +1,16 @@
 """
 Web search agent that retrieves and normalizes search results.
 """
+import asyncio
+import json
 import logging
 from dataclasses import dataclass, field
 from typing import Any, Dict, Iterable, Optional, Protocol
 from urllib.parse import urlparse
 
 import httpx
+
+from orchestrator.llm.provider import LLMProvider
 
 DEFAULT_MAX_RESULTS = 6
 MAX_RESULTS_CAP = 20
@@ -291,10 +295,169 @@ class WebSearchAgent:
         self,
         *,
         provider: Optional[WebSearchProvider] = None,
+        llm: Optional[LLMProvider] = None,
         logger: Optional[logging.Logger] = None,
     ) -> None:
         self.provider = provider or DuckDuckGoInstantAnswerProvider()
         self.logger = logger or logging.getLogger(__name__)
+        self.llm = llm
+
+    @staticmethod
+    def _extract_json_blob(text: str) -> Optional[str]:
+        if not text:
+            return None
+        start = text.find("{")
+        if start == -1:
+            return None
+        depth = 0
+        for index in range(start, len(text)):
+            char = text[index]
+            if char == "{":
+                depth += 1
+            elif char == "}":
+                depth -= 1
+                if depth == 0:
+                    return text[start : index + 1]
+        return None
+
+    def _parse_llm_payload(self, response: str) -> Optional[Dict[str, Any]]:
+        blob = self._extract_json_blob(response)
+        if not blob:
+            return None
+        try:
+            parsed = json.loads(blob)
+        except json.JSONDecodeError:
+            return None
+        if not isinstance(parsed, dict):
+            return None
+        return parsed
+
+    @staticmethod
+    def _normalize_alternates(value: Any, base_query: str) -> list[str]:
+        if not isinstance(value, list):
+            return []
+        cleaned: list[str] = []
+        for item in value:
+            text = str(item or "").strip()
+            if not text or text == base_query:
+                continue
+            cleaned.append(text)
+        return cleaned
+
+    @staticmethod
+    def _dedupe_queries(queries: Iterable[str]) -> list[str]:
+        seen: set[str] = set()
+        ordered: list[str] = []
+        for query in queries:
+            if not query:
+                continue
+            if query in seen:
+                continue
+            seen.add(query)
+            ordered.append(query)
+        return ordered
+
+    def _build_llm_prompt(self, query: str) -> str:
+        prompt_sections = [
+            "You are a web search assistant. Rewrite the query to maximize relevant results.",
+            "Return ONLY JSON with keys: query, alternates.",
+            "query must be a concise search string. alternates is a list of backup queries.",
+            f"Original query: {query}",
+        ]
+        return "\n".join(prompt_sections)
+
+    def _rewrite_query_with_llm(self, query: str) -> Optional[Dict[str, Any]]:
+        if not self.llm:
+            return None
+        prompt = self._build_llm_prompt(query)
+        try:
+            response = self.llm.complete(prompt, temperature=0.0, max_tokens=160)
+        except Exception as exc:  # pragma: no cover - defensive guard
+            self.logger.warning("WebSearchAgent LLM query rewrite failed: %s", exc)
+            return None
+        payload = self._parse_llm_payload(str(response))
+        if not payload:
+            return None
+        return payload
+
+    async def _rewrite_query_with_llm_async(self, query: str) -> Optional[Dict[str, Any]]:
+        if not self.llm:
+            return None
+        return await asyncio.to_thread(self._rewrite_query_with_llm, query)
+
+    def _prepare_query_candidates(self, query: str) -> tuple[str, list[str], list[str]]:
+        warnings: list[str] = []
+        payload = self._rewrite_query_with_llm(query)
+        if not payload:
+            return query, [], warnings
+        llm_query = str(payload.get("query") or payload.get("search_query") or "").strip()
+        if llm_query and llm_query != query:
+            warnings.append(f"LLM rewrote query to '{llm_query}'.")
+        alternates = self._normalize_alternates(
+            payload.get("alternates") or payload.get("alternate_queries") or payload.get("queries"),
+            llm_query or query,
+        )
+        return llm_query or query, alternates, warnings
+
+    async def _prepare_query_candidates_async(self, query: str) -> tuple[str, list[str], list[str]]:
+        warnings: list[str] = []
+        payload = await self._rewrite_query_with_llm_async(query)
+        if not payload:
+            return query, [], warnings
+        llm_query = str(payload.get("query") or payload.get("search_query") or "").strip()
+        if llm_query and llm_query != query:
+            warnings.append(f"LLM rewrote query to '{llm_query}'.")
+        alternates = self._normalize_alternates(
+            payload.get("alternates") or payload.get("alternate_queries") or payload.get("queries"),
+            llm_query or query,
+        )
+        return llm_query or query, alternates, warnings
+
+    def _execute_query_sequence(
+        self,
+        queries: list[str],
+        *,
+        max_results: int,
+        region: Optional[str],
+        safe_search: Optional[str],
+        timebox_seconds: int,
+    ) -> tuple[list[WebSearchResultItem], str, list[str]]:
+        attempts: list[str] = []
+        for candidate in queries:
+            attempts.append(candidate)
+            results = self.provider.search(
+                candidate,
+                max_results=max_results,
+                region=region,
+                safe_search=safe_search,
+                timebox_seconds=timebox_seconds,
+            )
+            if results:
+                return results, candidate, attempts
+        return [], attempts[-1] if attempts else "", attempts
+
+    async def _execute_query_sequence_async(
+        self,
+        queries: list[str],
+        *,
+        max_results: int,
+        region: Optional[str],
+        safe_search: Optional[str],
+        timebox_seconds: int,
+    ) -> tuple[list[WebSearchResultItem], str, list[str]]:
+        attempts: list[str] = []
+        for candidate in queries:
+            attempts.append(candidate)
+            results = await self.provider.search_async(
+                candidate,
+                max_results=max_results,
+                region=region,
+                safe_search=safe_search,
+                timebox_seconds=timebox_seconds,
+            )
+            if results:
+                return results, candidate, attempts
+        return [], attempts[-1] if attempts else "", attempts
 
     def search(
         self,
@@ -307,24 +470,31 @@ class WebSearchAgent:
     ) -> WebSearchResult:
         clean_query = self._normalize_query(query)
         capped_max_results = self._normalize_max_results(max_results)
-        results = self.provider.search(
-            clean_query,
+        primary_query, alternates, warnings = self._prepare_query_candidates(clean_query)
+        query_sequence = self._dedupe_queries([primary_query, *alternates, clean_query])
+        results, final_query, attempts = self._execute_query_sequence(
+            query_sequence,
             max_results=capped_max_results,
             region=region,
             safe_search=safe_search,
             timebox_seconds=timebox_seconds,
         )
+        if final_query and final_query != clean_query:
+            warnings.append(f"Search used query '{final_query}' after {len(attempts)} attempt(s).")
+        if not results:
+            warnings.append("No web results returned by the provider.")
         self._apply_ranking(results)
         self.logger.info(
             "WebSearchAgent retrieved %d result(s) for query '%s' via %s",
             len(results),
-            clean_query,
+            final_query or clean_query,
             self.provider.name,
         )
         return WebSearchResult(
-            query=clean_query,
+            query=final_query or clean_query,
             provider=self.provider.name,
             results=results,
+            warnings=warnings,
         )
 
     async def search_async(
@@ -338,24 +508,31 @@ class WebSearchAgent:
     ) -> WebSearchResult:
         clean_query = self._normalize_query(query)
         capped_max_results = self._normalize_max_results(max_results)
-        results = await self.provider.search_async(
-            clean_query,
+        primary_query, alternates, warnings = await self._prepare_query_candidates_async(clean_query)
+        query_sequence = self._dedupe_queries([primary_query, *alternates, clean_query])
+        results, final_query, attempts = await self._execute_query_sequence_async(
+            query_sequence,
             max_results=capped_max_results,
             region=region,
             safe_search=safe_search,
             timebox_seconds=timebox_seconds,
         )
+        if final_query and final_query != clean_query:
+            warnings.append(f"Search used query '{final_query}' after {len(attempts)} attempt(s).")
+        if not results:
+            warnings.append("No web results returned by the provider.")
         self._apply_ranking(results)
         self.logger.info(
             "WebSearchAgent retrieved %d result(s) for query '%s' via %s",
             len(results),
-            clean_query,
+            final_query or clean_query,
             self.provider.name,
         )
         return WebSearchResult(
-            query=clean_query,
+            query=final_query or clean_query,
             provider=self.provider.name,
             results=results,
+            warnings=warnings,
         )
 
     @staticmethod

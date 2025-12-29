@@ -7,6 +7,7 @@ from ..factory import register_provider
 
 try:  # pragma: no cover - optional dependency
     from langchain_openai import AzureChatOpenAI
+    from langchain_core.messages import BaseMessage
 except ImportError as exc:  # pragma: no cover - optional dependency
     AzureChatOpenAI = None  # type: ignore[assignment]
     if hasattr(exc, "add_note"):
@@ -73,6 +74,17 @@ class AzureOpenAIProvider(LLMProvider):
         params = self._clean_kwargs(params)
 
         return AzureChatOpenAI(**params)
+    
+    def complete(
+        self,
+        prompt: str,
+        *,
+        temperature: float = 0.0,
+        max_tokens: int | None = None,
+    ) -> str:
+        chat_model = self.create_chat_model(temperature=temperature, max_tokens=max_tokens)
+        response = chat_model.predict_messages([BaseMessage(content=prompt)])
+        return str(response.content)
 
 
 __all__ = ["AzureOpenAIProvider"]

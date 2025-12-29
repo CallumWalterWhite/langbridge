@@ -8,7 +8,6 @@ for backwards compatibility but are not part of the new orchestrator pathway.
 from .interfaces import (
     AnalystQueryRequest,
     AnalystQueryResponse,
-    LLMClient,
     QueryResult,
     SemanticModel,
     UnifiedSemanticModel,
@@ -24,7 +23,6 @@ from .service import SQLAnalystError, SQLAnalystService, create_service  # noqa:
 __all__ = [
     "AnalystQueryRequest",
     "AnalystQueryResponse",
-    "LLMClient",
     "QueryResult",
     "SemanticModel",
     "SqlAnalystTool",

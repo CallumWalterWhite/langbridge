@@ -31,6 +31,7 @@ import {
   getAvailableSemanticModels,
   getAvailableSemanticSearchDefinitions,
   updateAgentDefinition,
+  deleteAgentDefinition
 } from '@/orchestration/agents';
 import type {
   AgentDefinition,
@@ -595,6 +596,31 @@ export function AgentDefinitionForm({ mode, agentId, initialAgent, onComplete }:
     }
   };
 
+  const handleDelete = async () => { 
+    if (mode !== 'edit' || !agentId) {
+      return;
+    }
+    try {
+      setPending(true);
+      await deleteAgentDefinition(agentId);
+      toast({ title: 'Agent deleted', description: 'Your agent definition has been deleted.' });
+      queryClient.invalidateQueries({ queryKey: ['agent-definitions'] });
+      if (onComplete) {
+        onComplete();
+      }
+    } catch (error) {
+      const message =
+        error instanceof ApiError
+          ? error.message
+          : error instanceof Error
+            ? error.message
+            : 'Unable to delete agent right now.';
+      toast({ title: 'Delete failed', description: message, variant: 'destructive' });
+    } finally {
+      setPending(false);
+    }
+  };
+
   const connections = connectionsQuery.data ?? [];
   const llmOptions = connections.filter((conn) =>
     selectedOrganizationId ? conn.organizationId === selectedOrganizationId || !conn.organizationId : true,
@@ -629,6 +655,31 @@ export function AgentDefinitionForm({ mode, agentId, initialAgent, onComplete }:
                 Active
               </label>
             </div>
+            {mode === 'edit' ? (
+              <Dialog>
+                <DialogTrigger asChild>
+                  <Button variant="destructive" disabled={pending}>
+                    <Trash2 className="h-4 w-4" />
+                    <span>Delete agent</span>
+                  </Button>
+                </DialogTrigger>
+                <DialogContent>
+                  <DialogHeader>
+                    <DialogTitle>Delete agent definition</DialogTitle>
+                    <DialogDescription>
+                      Are you sure you want to delete this agent definition? This action cannot be undone.
+                    </DialogDescription>
+                  </DialogHeader>
+                  <DialogFooter>
+                    <DialogClose asChild>
+                      <Button variant="destructive" disabled={pending} onClick={handleDelete}>
+                        Delete
+                      </Button>
+                    </DialogClose>
+                  </DialogFooter>
+                </DialogContent>
+              </Dialog>
+            ) : null}
           </div>
         </div>
       </div>

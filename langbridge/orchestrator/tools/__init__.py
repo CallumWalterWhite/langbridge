@@ -6,7 +6,6 @@ from .sql_analyst import (
     AnalystQueryRequest,
     AnalystQueryResponse,
     LangChainLLMAdapter,
-    LLMClient,
     QueryResult,
     SQLAnalystError,
     SQLAnalystService,
@@ -22,7 +21,6 @@ from .sql_analyst import (
 __all__ = [
     "AnalystQueryRequest",
     "AnalystQueryResponse",
-    "LLMClient",
     "QueryResult",
     "SqlAnalystTool",
     "SemanticModel",

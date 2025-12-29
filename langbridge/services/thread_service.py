@@ -127,6 +127,7 @@ class ThreadService:
                 "summary": response.get("summary"),
                 "result": jsonable_encoder(response.get("result")),
                 "visualization": jsonable_encoder(response.get("visualization")),
+                "diagnostics": response.get("diagnostics"),
             },
             model_snapshot=agent_snapshot,
             error=response.get("error"),

@@ -10,13 +10,14 @@ from typing import Any, Iterable, Optional, Sequence
 
 from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
 from langchain_core.language_models import BaseChatModel
-from langchain_openai import ChatOpenAI
 
 from connectors.config import ConnectorRuntimeType
 from errors.application_errors import BusinessValidationError
 from orchestrator.agents.analyst import AnalystAgent
-from orchestrator.agents.planner import PlanningConstraints
+from orchestrator.agents.deep_research import DeepResearchAgent
+from orchestrator.agents.planner import PlanningAgent, PlanningConstraints
 from orchestrator.agents.visual import VisualAgent
+from orchestrator.agents.web_search import WebSearchAgent
 from orchestrator.agents.supervisor import SupervisorOrchestrator
 from orchestrator.agents.supervisor.orchestrator import ReasoningAgent
 from orchestrator.definitions import (
@@ -30,9 +31,12 @@ from orchestrator.definitions import (
     PromptContract,
 )
 from orchestrator.tools.sql_analyst import SqlAnalystTool, load_semantic_model
+from orchestrator.llm.provider import (
+    LLMProvider,
+    create_provider
+)
 from orchestrator.tools.sql_analyst.interfaces import (
     AnalystQueryResponse,
-    LLMClient,
     SemanticModel,
     UnifiedSemanticModel,
 )
@@ -48,52 +52,6 @@ from models.auth import UserResponse
 from models.threads import ThreadMessageResponse
 from db.threads import Role
 from services.thread_service import ThreadService
-
-
-class _ChatModelLLMClient(LLMClient):
-    """
-    Adapter that exposes a LangChain chat model via the lightweight LLMClient protocol.
-    """
-
-    def __init__(self, chat_model: BaseChatModel) -> None:
-        self._chat_model = chat_model
-
-    def complete(
-        self,
-        prompt: str,
-        *,
-        temperature: float = 0.0,
-        max_tokens: int | None = None,
-    ) -> str:
-        # The LangChain ChatOpenAI model handles temperature/max tokens during instantiation.
-        # We keep the parameters for protocol compatibility.
-        response = self._chat_model.invoke(prompt)
-        if isinstance(response, BaseMessage):
-            return str(response.content)
-        return str(response)
-
-
-class _DisabledAnalystAgent:
-    def __init__(self, *, reason: str) -> None:
-        self._reason = reason
-
-    async def answer_async(
-        self,
-        question: str,
-        *,
-        conversation_context: str | None = None,
-        filters: dict | None = None,
-        limit: int | None = None,
-    ) -> AnalystQueryResponse:
-        return AnalystQueryResponse(
-            sql_canonical="",
-            sql_executable="",
-            dialect="n/a",
-            model_name="",
-            result=None,
-            error=self._reason,
-            execution_time_ms=None,
-        )
 
 
 @dataclass(slots=True)
@@ -178,26 +136,7 @@ class OrchestratorService:
             llm_connection.model,
         )
         
-        
-        llm_conn_config = llm_connection.configuration or {}
-        llm_conn_temperature = 0.2 # default temperature
-        if llm_conn_config.get("temperature") is not None:
-            self._logger.debug(
-                "request_id=%s overriding llm temperature to %s from connection config",
-                request_id,
-                llm_conn_config.get("temperature"),
-            )
-            try:
-                llm_conn_temperature = float(llm_conn_config.get("temperature"))
-            except (ValueError, TypeError):
-                pass
-        
-        base_llm: BaseChatModel = ChatOpenAI(
-            model=llm_connection.model,
-            temperature=llm_conn_temperature,
-            api_key=llm_connection.api_key,
-        )
-        llm_client = _ChatModelLLMClient(base_llm)
+        llm_provider: LLMProvider = create_provider(llm_connection)
         try:
             embedding_provider: EmbeddingProvider | None = EmbeddingProvider.from_llm_connection(llm_connection)
         except EmbeddingProviderError as exc:
@@ -281,7 +220,7 @@ class OrchestratorService:
             )
 
             tool = SqlAnalystTool(
-                llm=llm_client,
+                llm=llm_provider,
                 semantic_model=semantic_model,
                 connector=sql_connector,
                 dialect=dialect,
@@ -293,15 +232,18 @@ class OrchestratorService:
         if tool_config.allow_sql and not tools:
             raise BusinessValidationError("No semantic models or connectors available for SQL analysis.")
 
-        analyst_agent = (
+        analyst_agent: AnalystAgent | None = (
             AnalystAgent(tools)
             if tools
-            else _DisabledAnalystAgent(reason="SQL analyst tools are disabled for this agent.")
+            else None
         )
-        visual_agent = VisualAgent()
+        visual_agent = VisualAgent(llm=llm_provider)
+        planning_agent = PlanningAgent(llm=llm_provider, logger=self._logger)
         planning_constraints = self._build_planning_constraints(agent_definition, tool_config)
-        reasoning_agent = self._build_reasoning_agent(agent_definition)
-        planning_context: dict[str, Any] = dict(tool_config.web_search_defaults)
+        reasoning_agent = self._build_reasoning_agent(agent_definition, llm_provider)
+        deep_research_agent = DeepResearchAgent(llm=llm_provider, logger=self._logger)
+        web_search_agent = WebSearchAgent(llm=llm_provider, logger=self._logger)
+        planning_context: dict[str, Any] | None = dict(tool_config.web_search_defaults)
         if conversation_context:
             planning_context["conversation_context"] = conversation_context
         if not planning_context:
@@ -310,7 +252,10 @@ class OrchestratorService:
         supervisor = SupervisorOrchestrator(
             analyst_agent=analyst_agent,
             visual_agent=visual_agent,
+            planning_agent=planning_agent,
             reasoning_agent=reasoning_agent,
+            deep_research_agent=deep_research_agent,
+            web_search_agent=web_search_agent,
         )
 
         response = await supervisor.handle(
@@ -319,7 +264,7 @@ class OrchestratorService:
             planning_context=planning_context,
         )
         summary = await self._summarize_response(
-            base_llm,
+            llm_provider,
             msg,
             response,
             request_id=request_id,
@@ -447,7 +392,7 @@ class OrchestratorService:
 
     async def _summarize_response(
         self,
-        chat_model: BaseChatModel,
+        llm_provider: LLMProvider,
         question: str,
         response_payload: dict[str, Any],
         *,
@@ -499,7 +444,7 @@ class OrchestratorService:
         messages.append(HumanMessage(content=prompt))
 
         try:
-            llm_response = await chat_model.ainvoke(messages)
+            llm_response = await llm_provider.ainvoke(messages)
         except Exception as exc:  # pragma: no cover - defensive guard against transient LLM failures
             suffix = f" request_id={request_id}" if request_id else ""
             self._logger.warning("Failed to generate summary%s: %s", suffix, exc, exc_info=True)
@@ -694,13 +639,14 @@ class OrchestratorService:
     def _build_reasoning_agent(
         self,
         definition: AgentDefinitionModel | None,
+        llm_client: LLMProvider,
     ) -> ReasoningAgent | None:
         if not definition:
             return None
         max_iterations = max(1, int(definition.execution.max_iterations))
         if definition.execution.mode == ExecutionMode.single_step:
             max_iterations = 1
-        return ReasoningAgent(max_iterations=max_iterations, logger=self._logger)
+        return ReasoningAgent(max_iterations=max_iterations, logger=self._logger, llm=llm_client)
 
     @staticmethod
     def _normalize_tool_name(name: str) -> str:

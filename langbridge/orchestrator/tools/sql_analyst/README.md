@@ -10,7 +10,7 @@ The tool is configured with four dependencies:
 
 | Dependency | Purpose |
 |------------|---------|
-| `LLMClient` | Generates canonical PostgreSQL SQL from structured prompts. |
+| `LLMProvider` | Generates canonical PostgreSQL SQL from structured prompts. |
 | `SemanticModel` | Describes entities, joins, metrics, and dimensions. Used to craft prompts and validate routing. |
 | `DatabaseConnector` | Executes SQL against the backing data warehouse. |
 | `dialect` | Target dialect for the connector (`"snowflake"`, `"bigquery"`, `"postgres"`, etc.). |

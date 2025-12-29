@@ -3,7 +3,8 @@
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Mapping, MutableMapping
+from typing import Any, Mapping, MutableMapping, Union
+from langchain_core.messages import BaseMessage
 
 from langchain_core.language_models import BaseChatModel
 
@@ -106,3 +107,43 @@ class LLMProvider(ABC):
     @abstractmethod
     def create_chat_model(self, **overrides: Any) -> BaseChatModel:
         """Instantiate a LangChain chat model for this provider."""
+
+    @abstractmethod
+    def complete(
+        self,
+        prompt: str,
+        *,
+        temperature: float = 0.0,
+        max_tokens: int | None = None,
+    ) -> str:
+        """Generate a text completion for the given prompt."""
+
+    @abstractmethod
+    async def acomplete(
+        self,
+        prompt: str,
+        *,
+        temperature: float = 0.0,
+        max_tokens: int | None = None,
+    ) -> str:
+        """Asynchronously generate a text completion for the given prompt."""
+
+    @abstractmethod
+    def invoke(
+        self,
+        messages: Union[list[dict[str, Any]], list[BaseMessage]],
+        *,
+        temperature: float = 0.0,
+        max_tokens: int | None = None,
+    ) -> Union[dict[str, Any], BaseMessage]:
+        """Invoke the model with a list of messages and return the raw response."""
+
+    @abstractmethod
+    async def ainvoke(
+        self,
+        messages: Union[list[dict[str, Any]], list[BaseMessage]],
+        *,
+        temperature: float = 0.0,
+        max_tokens: int | None = None,
+    ) -> Union[dict[str, Any], BaseMessage]:
+        """Asynchronously invoke the model with a list of messages and return the raw response."""
