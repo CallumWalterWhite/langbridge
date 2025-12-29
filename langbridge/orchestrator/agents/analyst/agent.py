@@ -4,6 +4,7 @@ Analyst agent that selects between multiple SQL analyst tools.
 import logging
 from typing import Any, Optional, Sequence
 
+from orchestrator.llm.provider import LLMProvider
 from orchestrator.tools.sql_analyst.interfaces import AnalystQueryRequest, AnalystQueryResponse
 from orchestrator.tools.sql_analyst.tool import SqlAnalystTool
 from .selector import SemanticToolSelector
@@ -16,14 +17,16 @@ class AnalystAgent:
 
     def __init__(
         self,
+        llm: LLMProvider,
         tools: Sequence[SqlAnalystTool],
         *,
         logger: Optional[logging.Logger] = None,
     ) -> None:
         if not tools:
             raise ValueError("AnalystAgent requires at least one SqlAnalystTool.")
+        self.llm = llm
         self._tools = list(tools)
-        self.selector = SemanticToolSelector(self._tools)
+        self.selector = SemanticToolSelector(self.llm, self._tools)
         self.logger = logger or logging.getLogger(__name__)
 
     def answer(

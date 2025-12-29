@@ -29,6 +29,7 @@ from orchestrator.definitions import (
     OutputFormat,
     OutputSchema,
     PromptContract,
+    ResponseMode,
 )
 from orchestrator.tools.sql_analyst import SqlAnalystTool, load_semantic_model
 from orchestrator.llm.provider import (
@@ -124,6 +125,8 @@ class OrchestratorService:
             agent_definition=agent_definition,
             request_id=request_id,
         )
+        response_mode = agent_definition.execution.response_mode if agent_definition else ResponseMode.analyst
+        self._logger.debug("request_id=%s response_mode=%s", request_id, response_mode.value)
 
         llm_connections = await self._agent_service.list_llm_connection_secrets()
         if not llm_connections:
@@ -137,6 +140,30 @@ class OrchestratorService:
         )
         
         llm_provider: LLMProvider = create_provider(llm_connection)
+
+        if response_mode == ResponseMode.chat:
+            chat_response = await self._generate_chat_response(
+                llm_provider,
+                msg,
+                conversation_context=conversation_context,
+                request_id=request_id,
+                prompt_contract=agent_definition.prompt if agent_definition else None,
+                output_schema=agent_definition.output if agent_definition else None,
+                guardrails=agent_definition.guardrails if agent_definition else None,
+                response_mode=response_mode,
+            )
+            elapsed_ms = int((time.perf_counter() - start_ts) * 1000)
+            self._logger.info("orchestrator.chat complete request_id=%s elapsed_ms=%d", request_id, elapsed_ms)
+            return {
+                "result": None,
+                "visualization": None,
+                "summary": chat_response,
+                "diagnostics": {
+                    "response_mode": response_mode.value,
+                    "total_elapsed_ms": elapsed_ms,
+                },
+            }
+
         try:
             embedding_provider: EmbeddingProvider | None = EmbeddingProvider.from_llm_connection(llm_connection)
         except EmbeddingProviderError as exc:
@@ -233,7 +260,7 @@ class OrchestratorService:
             raise BusinessValidationError("No semantic models or connectors available for SQL analysis.")
 
         analyst_agent: AnalystAgent | None = (
-            AnalystAgent(tools)
+            AnalystAgent(llm_provider, tools)
             if tools
             else None
         )
@@ -244,6 +271,13 @@ class OrchestratorService:
         deep_research_agent = DeepResearchAgent(llm=llm_provider, logger=self._logger)
         web_search_agent = WebSearchAgent(llm=llm_provider, logger=self._logger)
         planning_context: dict[str, Any] | None = dict(tool_config.web_search_defaults)
+        planning_context.update(
+            self._build_planner_tool_context(
+                tool_config=tool_config,
+                semantic_entries=filtered_entries,
+                connector_lookup=connector_lookup,
+            )
+        )
         if conversation_context:
             planning_context["conversation_context"] = conversation_context
         if not planning_context:
@@ -263,6 +297,9 @@ class OrchestratorService:
             planning_constraints=planning_constraints,
             planning_context=planning_context,
         )
+        diagnostics = response.get("diagnostics")
+        if isinstance(diagnostics, dict):
+            diagnostics["response_mode"] = response_mode.value
         summary = await self._summarize_response(
             llm_provider,
             msg,
@@ -271,6 +308,7 @@ class OrchestratorService:
             prompt_contract=agent_definition.prompt if agent_definition else None,
             output_schema=agent_definition.output if agent_definition else None,
             guardrails=agent_definition.guardrails if agent_definition else None,
+            response_mode=response_mode,
         )
         response["summary"] = summary
         elapsed_ms = int((time.perf_counter() - start_ts) * 1000)
@@ -312,6 +350,64 @@ class OrchestratorService:
             return None
 
         return self._render_conversation_context(messages, agent_definition.memory.ttl_seconds)
+
+    async def _generate_chat_response(
+        self,
+        llm_provider: LLMProvider,
+        question: str,
+        *,
+        conversation_context: str | None,
+        request_id: str | None = None,
+        prompt_contract: PromptContract | None = None,
+        output_schema: OutputSchema | None = None,
+        guardrails: GuardrailConfig | None = None,
+        response_mode: ResponseMode | None = None,
+    ) -> str:
+        prompt_sections: list[str] = []
+        if conversation_context:
+            prompt_sections.append(f"Conversation so far:\n{conversation_context}")
+        prompt_sections.append(f"User: {question.strip()}")
+        if output_schema:
+            prompt_sections.append(f"Output format: {output_schema.format.value}.")
+            if output_schema.format == OutputFormat.json and output_schema.json_schema:
+                schema_text = json.dumps(output_schema.json_schema, indent=2, sort_keys=True)
+                prompt_sections.append(f"JSON schema:\n{schema_text}")
+            if output_schema.format == OutputFormat.markdown and output_schema.markdown_template:
+                prompt_sections.append(f"Markdown template:\n{output_schema.markdown_template}")
+        prompt_sections.append("Assistant:")
+
+        messages: list[BaseMessage] = []
+        system_sections: list[str] = []
+        mode_prompt = self._chat_mode_prompt(response_mode)
+        if mode_prompt:
+            system_sections.append(mode_prompt)
+        if prompt_contract:
+            for section in (
+                prompt_contract.system_prompt,
+                prompt_contract.user_instructions,
+                prompt_contract.style_guidance,
+            ):
+                if section:
+                    system_sections.append(section.strip())
+        if system_sections:
+            messages.append(SystemMessage(content="\n\n".join(system_sections)))
+        messages.append(HumanMessage(content="\n\n".join(prompt_sections)))
+
+        try:
+            llm_response = await llm_provider.ainvoke(messages, temperature=0.4, max_tokens=900)
+        except Exception as exc:  # pragma: no cover - defensive guard against transient LLM failures
+            suffix = f" request_id={request_id}" if request_id else ""
+            self._logger.warning("Failed to generate chat response%s: %s", suffix, exc, exc_info=True)
+            return "Response unavailable due to temporary AI service issues."
+
+        if isinstance(llm_response, BaseMessage):
+            response_text = str(llm_response.content).strip()
+        else:
+            response_text = str(llm_response).strip()
+
+        if not response_text:
+            return "No response produced."
+        return self._enforce_guardrails(response_text, guardrails)
 
     @staticmethod
     def _render_conversation_context(
@@ -400,16 +496,18 @@ class OrchestratorService:
         prompt_contract: PromptContract | None = None,
         output_schema: OutputSchema | None = None,
         guardrails: GuardrailConfig | None = None,
+        response_mode: ResponseMode | None = None,
     ) -> str:
         """
         Generate a concise natural language summary of the orchestrated response.
         """
 
+        summary_intro, summary_tail = self._summary_prompt_parts(response_mode)
         preview = self._render_tabular_preview(response_payload.get("result"))
         viz_summary = self._summarise_visualization(response_payload.get("visualization"))
 
         prompt_sections = [
-            "You are a senior analytics assistant. Summarize the findings for a business stakeholder in 2-3 sentences.",
+            summary_intro,
             f"Original question:\n{question.strip()}",
             f"Tabular result preview:\n{preview}",
         ]
@@ -422,9 +520,8 @@ class OrchestratorService:
                 prompt_sections.append(f"JSON schema:\n{schema_text}")
             if output_schema.format == OutputFormat.markdown and output_schema.markdown_template:
                 prompt_sections.append(f"Markdown template:\n{output_schema.markdown_template}")
-        prompt_sections.append(
-            "Highlight the most important metric, call out notable changes or trends, and mention if the dataset is empty."
-        )
+        if summary_tail:
+            prompt_sections.append(summary_tail)
 
         prompt = "\n\n".join(prompt_sections)
 
@@ -636,6 +733,67 @@ class OrchestratorService:
             allow_deep_research=tool_config.allow_deep_research,
         )
 
+    @staticmethod
+    def _build_planner_tool_context(
+        *,
+        tool_config: _AgentToolConfig,
+        semantic_entries: Sequence[Any],
+        connector_lookup: dict[str, ConnectorResponse],
+        max_models: int = 25,
+    ) -> dict[str, Any]:
+        available_agents = [
+            {
+                "agent": "Analyst",
+                "description": "Query structured data via semantic models (NL to SQL).",
+                "enabled": tool_config.allow_sql,
+                "notes": "Uses the semantic_models list.",
+            },
+            {
+                "agent": "Visual",
+                "description": "Generate a visualization spec from analyst results.",
+                "enabled": tool_config.allow_sql,
+            },
+            {
+                "agent": "WebSearch",
+                "description": "Search the web for sources and snippets.",
+                "enabled": tool_config.allow_web_search,
+            },
+            {
+                "agent": "DocRetrieval",
+                "description": "Synthesize insights from documents and sources.",
+                "enabled": tool_config.allow_deep_research,
+            },
+            {
+                "agent": "Clarify",
+                "description": "Ask a clarifying question when key details are missing.",
+                "enabled": True,
+            },
+        ]
+
+        semantic_models: list[dict[str, Any]] = []
+        for entry in list(semantic_entries)[:max_models]:
+            connector_id = str(getattr(entry, "connector_id", "") or "")
+            connector = connector_lookup.get(connector_id)
+            description = (getattr(entry, "description", "") or "").strip()
+            if len(description) > 180:
+                description = f"{description[:177]}..."
+            semantic_models.append(
+                {
+                    "id": str(getattr(entry, "id", "") or ""),
+                    "name": getattr(entry, "name", "") or "",
+                    "description": description or None,
+                    "connector": connector.name if connector else None,
+                    "connector_type": getattr(connector, "connector_type", None) if connector else None,
+                }
+            )
+
+        return {
+            "available_agents": available_agents,
+            "semantic_models": semantic_models,
+            "semantic_models_count": len(semantic_entries),
+            "semantic_models_truncated": len(semantic_entries) > max_models,
+        }
+
     def _build_reasoning_agent(
         self,
         definition: AgentDefinitionModel | None,
@@ -662,6 +820,39 @@ class OrchestratorService:
             except ValueError:
                 return None
         return None
+
+    @staticmethod
+    def _chat_mode_prompt(response_mode: ResponseMode | None) -> str | None:
+        if response_mode == ResponseMode.chat:
+            return (
+                "You are a helpful conversational assistant. Answer directly, keep a friendly tone, "
+                "and ask a concise clarifying question when needed."
+            )
+        if response_mode == ResponseMode.executive:
+            return "You are an executive briefing assistant. Keep responses concise and decision-focused."
+        if response_mode == ResponseMode.explainer:
+            return "You are a plain-language explainer. Use simple terms and avoid jargon."
+        return None
+
+    @staticmethod
+    def _summary_prompt_parts(response_mode: ResponseMode | None) -> tuple[str, str]:
+        mode = response_mode or ResponseMode.analyst
+        if mode == ResponseMode.chat:
+            mode = ResponseMode.analyst
+        if mode == ResponseMode.executive:
+            return (
+                "You are an executive briefing assistant. Summarize the findings for a leadership audience.",
+                "Return 3 bullet points and 1 recommended action. Mention if the dataset is empty.",
+            )
+        if mode == ResponseMode.explainer:
+            return (
+                "You are a data explainer. Summarize for a non-technical audience in 3-5 sentences.",
+                "Avoid jargon, define any terms, and mention if the dataset is empty.",
+            )
+        return (
+            "You are a senior analytics assistant. Summarize the findings for a business stakeholder in 2-3 sentences.",
+            "Highlight the most important metric, call out notable changes or trends, and mention if the dataset is empty.",
+        )
 
     @staticmethod
     def _enforce_guardrails(

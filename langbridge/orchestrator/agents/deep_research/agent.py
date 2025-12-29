@@ -72,7 +72,7 @@ class DeepResearchAgent:
     def __init__(
         self,
         *,
-        llm: Optional[LLMProvider] = None,
+        llm: LLMProvider,
         logger: Optional[logging.Logger] = None,
     ) -> None:
         self.logger = logger or logging.getLogger(__name__)
@@ -254,7 +254,7 @@ class DeepResearchAgent:
         documents: Sequence[Dict[str, Any]],
         timebox_seconds: int,
     ) -> Optional[DeepResearchResult]:
-        prompt = self._build_llm_prompt(
+        prompt: str = self._build_llm_prompt(
             question=question,
             documents=documents,
             timebox_seconds=timebox_seconds,

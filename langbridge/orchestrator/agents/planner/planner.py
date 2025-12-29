@@ -123,6 +123,20 @@ class PlanningAgent:
     def _build_llm_prompt(self, request: PlannerRequest, policy_notes: PolicyNotes) -> str:
         constraints_payload = request.constraints.model_dump()
         context_payload = request.context or {}
+        available_agents = context_payload.get("available_agents")
+        semantic_models = context_payload.get("semantic_models")
+        semantic_models_count = context_payload.get("semantic_models_count")
+        context_core = {
+            key: value
+            for key, value in context_payload.items()
+            if key
+            not in (
+                "available_agents",
+                "semantic_models",
+                "semantic_models_count",
+                "semantic_models_truncated",
+            )
+        }
         prompt_sections = [
             "You are the planning agent for an analytics orchestrator.",
             "Return ONLY a JSON object with keys: route, steps, justification, user_summary, assumptions.",
@@ -133,10 +147,24 @@ class PlanningAgent:
             "If route is Clarify, include exactly one Clarify step with clarifying_question in input.",
             "If you include a Visual step, set rows_ref to the Analyst step id.",
             f"Question: {request.question}",
-            f"Context (JSON): {json.dumps(context_payload, default=str, ensure_ascii=True)}",
+            f"Context (JSON): {json.dumps(context_core, default=str, ensure_ascii=True)}",
             f"Constraints (JSON): {json.dumps(constraints_payload, default=str, ensure_ascii=True)}",
-            f"Policy risks: {policy_notes.risks or []}",
         ]
+        if "available_agents" in context_payload:
+            prompt_sections.append(
+                f"Available agents (JSON): {json.dumps(available_agents, default=str, ensure_ascii=True)}"
+            )
+        if "semantic_models" in context_payload:
+            prompt_sections.append(
+                f"Available semantic models (JSON): {json.dumps(semantic_models, default=str, ensure_ascii=True)}"
+            )
+        if semantic_models_count is not None:
+            prompt_sections.append(f"Semantic model count: {semantic_models_count}")
+            if context_payload.get("semantic_models_truncated"):
+                prompt_sections.append(
+                    "Note: semantic_models list truncated; choose the best match or ask for a specific model if needed."
+                )
+        prompt_sections.append(f"Policy risks: {policy_notes.risks or []}")
         return "\n".join(prompt_sections)
 
     def _parse_llm_payload(self, response: str) -> Optional[dict[str, Any]]:

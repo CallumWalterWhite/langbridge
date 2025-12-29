@@ -27,6 +27,13 @@ class ExecutionMode(str, Enum):
     iterative = "iterative"
 
 
+class ResponseMode(str, Enum):
+    analyst = "analyst"
+    chat = "chat"
+    executive = "executive"
+    explainer = "explainer"
+
+
 class OutputFormat(str, Enum):
     text = "text"
     markdown = "markdown"
@@ -75,6 +82,10 @@ class ToolBinding(BaseModel):
 
 class ExecutionBehavior(BaseModel):
     mode: ExecutionMode = Field(..., description="Single response or iterative planning/execution.")
+    response_mode: ResponseMode = Field(
+        ResponseMode.analyst,
+        description="Controls agent routing and response style (analyst, chat, executive, explainer).",
+    )
     max_iterations: int = Field(3, description="Cap iterations when in iterative mode.")
     max_steps_per_iteration: int = Field(5, description="Max tool calls per iteration.")
     allow_parallel_tools: bool = Field(False, description="Allow running multiple tools concurrently.")

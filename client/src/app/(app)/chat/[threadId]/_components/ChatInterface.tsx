@@ -400,7 +400,7 @@ export function ChatInterface({ threadId }: ChatInterfaceProps) {
                   className={`inline-flex h-2 w-2 rounded-full ${isSending ? 'bg-amber-400' : 'bg-emerald-400'}`}
                   aria-hidden="true"
                 />
-                {isSending ? 'Running analysis…' : 'Standing by'}
+                {isSending ? 'Generating response...' : 'Standing by'}
               </div>
               <span>{lastUpdated ? `Updated ${formatRelativeDate(lastUpdated)}` : 'Awaiting first prompt'}</span>
             </div>
@@ -419,7 +419,7 @@ export function ChatInterface({ threadId }: ChatInterfaceProps) {
                       {isLoadingAgents
                         ? 'Fetching your agent roster for this workspace.'
                         : hasAgents
-                          ? 'Pick an agent and send a prompt to generate analysis, visuals, and summaries.'
+                          ? 'Pick an agent and send a prompt to generate responses, visuals, and summaries.'
                           : 'Agents you create will appear here for new conversations.'}
                     </p>
                   </div>
@@ -475,7 +475,7 @@ export function ChatInterface({ threadId }: ChatInterfaceProps) {
                               <div className="space-y-3">
                                 <div className="flex items-center gap-2 text-xs text-[color:var(--text-muted)]">
                                   <Spinner className="h-3.5 w-3.5 text-[color:var(--accent)]" />
-                                  Generating analysis&hellip;
+                                  Generating response&hellip;
                                 </div>
                                 <Skeleton className="h-4 w-48" />
                                 <Skeleton className="h-4 w-64" />

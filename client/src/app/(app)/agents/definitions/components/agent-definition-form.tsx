@@ -44,8 +44,16 @@ import { ApiError } from '@/orchestration/http';
 // const memoryStrategies = ['none', 'transient', 'conversation', 'long_term', 'vector', 'database'] as const;
 const memoryStrategies = ['database'] as const;
 const executionModes = ['single_step', 'iterative'] as const;
+const responseModes = ['analyst', 'chat', 'executive', 'explainer'] as const;
 const outputFormats = ['text', 'markdown', 'json', 'yaml'] as const;
 // const logLevels = ['debug', 'info', 'warning', 'error', 'critical'] as const;
+
+const responseModeLabels: Record<(typeof responseModes)[number], string> = {
+  analyst: 'Analyst (data + visuals)',
+  chat: 'Chat (conversation only)',
+  executive: 'Executive brief',
+  explainer: 'Plain-language explainer',
+};
 
 interface ToolState {
   name: string;
@@ -72,6 +80,7 @@ interface FormState {
   piiHandling: string;
   rowLevelFilter: string;
   executionMode: (typeof executionModes)[number];
+  responseMode: (typeof responseModes)[number];
   maxIterations: string;
   maxStepsPerIteration: string;
   allowParallelTools: boolean;
@@ -186,6 +195,7 @@ function defaultFormState(): FormState {
     piiHandling: '',
     rowLevelFilter: '',
     executionMode: 'single_step',
+    responseMode: 'analyst',
     maxIterations: '3',
     maxStepsPerIteration: '5',
     allowParallelTools: false,
@@ -281,6 +291,7 @@ function hydrateFromDefinition(definition: unknown, base: FormState): FormState 
     piiHandling: accessPolicy.pii_handling ?? '',
     rowLevelFilter: accessPolicy.row_level_filter ?? '',
     executionMode: execution.mode ?? base.executionMode,
+    responseMode: execution.response_mode ?? base.responseMode,
     maxIterations: execution.max_iterations?.toString() ?? base.maxIterations,
     maxStepsPerIteration: execution.max_steps_per_iteration?.toString() ?? base.maxStepsPerIteration,
     allowParallelTools: Boolean(execution.allow_parallel_tools ?? base.allowParallelTools),
@@ -538,6 +549,7 @@ export function AgentDefinitionForm({ mode, agentId, initialAgent, onComplete }:
       },
       execution: {
         mode: formState.executionMode,
+        response_mode: formState.responseMode,
         max_iterations: Number(formState.maxIterations || 3),
         max_steps_per_iteration: Number(formState.maxStepsPerIteration || 5),
         allow_parallel_tools: formState.allowParallelTools,
@@ -903,6 +915,26 @@ export function AgentDefinitionForm({ mode, agentId, initialAgent, onComplete }:
                     </option>
                   ))}
                 </Select>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="response-mode">Response mode</Label>
+                <Select
+                  id="response-mode"
+                  value={formState.responseMode}
+                  onChange={(e) => setFormState((prev) => ({
+                    ...prev,
+                    responseMode: e.target.value as FormState['responseMode'],
+                  }))}
+                >
+                  {responseModes.map((modeOption) => (
+                    <option key={modeOption} value={modeOption}>
+                      {responseModeLabels[modeOption]}
+                    </option>
+                  ))}
+                </Select>
+                <p className="text-xs text-[color:var(--text-muted)]">
+                  Controls whether this agent runs tools or responds conversationally.
+                </p>
               </div>
               <div className="space-y-2">
                 <Label htmlFor="max-iterations">Max iterations</Label>
