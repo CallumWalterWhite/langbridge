@@ -2,13 +2,23 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { useMutation, useQuery } from '@tanstack/react-query';
-import { History, RefreshCw, Send, Sparkles } from 'lucide-react';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { History, Pencil, RefreshCw, Send, Sparkles } from 'lucide-react';
 
 import { ThemeToggle } from '@/components/ThemeToggle';
 import { LogoutButton } from '@/components/LogoutButton';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import {
+  Dialog,
+  DialogClose,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from '@/components/ui/dialog';
+import { Input } from '@/components/ui/input';
 import { Select } from '@/components/ui/select';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Spinner } from '@/components/ui/spinner';
@@ -17,8 +27,11 @@ import { useToast } from '@/components/ui/toast';
 import { formatRelativeDate } from '@/lib/utils';
 import { fetchAgentDefinitions, type AgentDefinition } from '@/orchestration/agents';
 import {
+  fetchThread,
   listThreadMessages,
   runThreadChat,
+  updateThread,
+  type Thread,
   type ThreadChatResponse,
   type ThreadMessage,
   type ThreadTabularResult,
@@ -105,10 +118,15 @@ const buildTurnsFromMessages = (messages: ThreadMessage[]): ConversationTurn[] =
 
 export function ChatInterface({ threadId }: ChatInterfaceProps) {
   const router = useRouter();
+  const queryClient = useQueryClient();
   const { toast } = useToast();
   const [composer, setComposer] = useState('');
   const [turns, setTurns] = useState<ConversationTurn[]>([]);
   const [selectedAgentId, setSelectedAgentId] = useState('');
+  const [threadTitle, setThreadTitle] = useState<string | null>(null);
+  const [renameOpen, setRenameOpen] = useState(false);
+  const [renameValue, setRenameValue] = useState('');
+  const [renameError, setRenameError] = useState<string | null>(null);
   const [historyLoaded, setHistoryLoaded] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
 
@@ -120,6 +138,11 @@ export function ChatInterface({ threadId }: ChatInterfaceProps) {
   const historyQuery = useQuery<ThreadMessage[]>({
     queryKey: ['thread-messages', threadId],
     queryFn: () => listThreadMessages(threadId),
+  });
+
+  const threadQuery = useQuery<Thread>({
+    queryKey: ['thread', threadId],
+    queryFn: () => fetchThread(threadId),
   });
 
   const agentOptions = useMemo(() => {
@@ -172,6 +195,24 @@ export function ChatInterface({ threadId }: ChatInterfaceProps) {
     },
   });
 
+  const renameThreadMutation = useMutation<Thread, Error, { title: string }>({
+    mutationFn: ({ title }) => updateThread(threadId, { title }),
+    onSuccess: (updated) => {
+      setThreadTitle(updated.title ?? null);
+      setRenameOpen(false);
+      setRenameValue('');
+      setRenameError(null);
+      queryClient.invalidateQueries({ queryKey: ['thread', threadId] });
+      queryClient.invalidateQueries({ queryKey: ['chat-threads'] });
+      toast({ title: 'Thread renamed', description: 'Your thread title has been updated.' });
+    },
+    onError: (error) => {
+      const message = error.message || 'Unable to rename this thread.';
+      setRenameError(message);
+      toast({ title: 'Rename failed', description: message, variant: 'destructive' });
+    },
+  });
+
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
   }, [turns.length, sendMessageMutation.isPending]);
@@ -183,6 +224,7 @@ export function ChatInterface({ threadId }: ChatInterfaceProps) {
     const storageKey = `thread-agent:${threadId}`;
     const storedAgentId = window.localStorage.getItem(storageKey);
     setSelectedAgentId(storedAgentId ?? '');
+    setThreadTitle(null);
   }, [threadId]);
 
   useEffect(() => {
@@ -318,6 +360,33 @@ export function ChatInterface({ threadId }: ChatInterfaceProps) {
     }
   }, [historyLoaded, historyQuery.data, historyQuery.isSuccess, selectedAgentId, turns]);
 
+  useEffect(() => {
+    if (!threadQuery.data) {
+      return;
+    }
+    setThreadTitle(threadQuery.data.title ?? null);
+  }, [threadQuery.data]);
+
+  useEffect(() => {
+    if (!renameOpen) {
+      setRenameError(null);
+      return;
+    }
+    setRenameValue(threadTitle ?? '');
+  }, [renameOpen, threadTitle]);
+
+  const handleRenameSubmit = (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const trimmed = renameValue.trim();
+    if (!trimmed) {
+      setRenameError('Title is required.');
+      return;
+    }
+    renameThreadMutation.mutate({ title: trimmed });
+  };
+
+  const threadLabel = threadTitle?.trim() || `Thread ${threadId.slice(0, 8)}`;
+
   return (
     <section className="flex h-[calc(100vh-8rem)] flex-col gap-4 py-2 text-[color:var(--text-secondary)] transition-colors">
       <header className="surface-panel flex flex-wrap items-center justify-between gap-4 rounded-2xl px-4 py-3 shadow-soft">
@@ -328,7 +397,8 @@ export function ChatInterface({ threadId }: ChatInterfaceProps) {
           >
             Thread
           </Badge>
-          <span className="truncate text-xs text-[color:var(--text-muted)]" title={threadId}>
+          <span className="text-xs font-semibold text-[color:var(--text-primary)]">{threadLabel}</span>
+          <span className="truncate text-[10px] uppercase tracking-[0.2em] text-[color:var(--text-muted)]" title={threadId}>
             {threadId}
           </span>
           <span className="text-xs text-[color:var(--text-muted)]">Agent: {agentStatusLabel}</span>
@@ -369,6 +439,40 @@ export function ChatInterface({ threadId }: ChatInterfaceProps) {
           >
             Manage agents
           </Button>
+          <Dialog open={renameOpen} onOpenChange={setRenameOpen}>
+            <DialogTrigger asChild>
+              <Button type="button" variant="ghost" size="sm" className="gap-2">
+                <Pencil className="h-4 w-4" aria-hidden="true" />
+                Rename
+              </Button>
+            </DialogTrigger>
+            <DialogContent>
+              <form onSubmit={handleRenameSubmit} className="space-y-4">
+                <DialogHeader>
+                  <DialogTitle>Rename thread</DialogTitle>
+                </DialogHeader>
+                <div className="space-y-2">
+                  <Input
+                    value={renameValue}
+                    onChange={(event) => setRenameValue(event.target.value)}
+                    placeholder="e.g. Q4 pipeline review"
+                    autoFocus
+                  />
+                  {renameError ? <p className="text-xs text-rose-500">{renameError}</p> : null}
+                </div>
+                <DialogFooter className="gap-2 sm:gap-3">
+                  <DialogClose asChild>
+                    <Button type="button" variant="ghost">
+                      Cancel
+                    </Button>
+                  </DialogClose>
+                  <Button type="submit" disabled={renameThreadMutation.isPending}>
+                    {renameThreadMutation.isPending ? 'Saving...' : 'Save'}
+                  </Button>
+                </DialogFooter>
+              </form>
+            </DialogContent>
+          </Dialog>
           <Button
             type="button"
             variant="ghost"

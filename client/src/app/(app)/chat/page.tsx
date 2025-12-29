@@ -142,37 +142,44 @@ export default function ChatIndexPage() {
               {threadsQuery.data
                 ?.slice()
                 .sort((a, b) => (a.updatedAt != null && b.updatedAt != null ? a.updatedAt < b.updatedAt ? 1 : -1: 0))
-                .map((thread) => (
-                  <li key={thread.id}>
-                    <div className="group flex items-center justify-between rounded-2xl border border-[color:var(--panel-border)] bg-[color:var(--panel-bg)] px-4 py-4 transition hover:border-[color:var(--border-strong)] hover:bg-[color:var(--panel-alt)]">
-                      <Link href={`/chat/${thread.id}`} className="flex flex-1 items-center justify-between gap-3">
-                        <div className="flex items-center gap-3">
-                          <span className="flex h-9 w-9 items-center justify-center rounded-full bg-[color:var(--chip-bg)] text-sm font-semibold text-[color:var(--text-primary)]">
-                            {thread.id.slice(0, 2).toUpperCase()}
-                          </span>
-                          <div>
-                            <p className="text-sm font-semibold text-[color:var(--text-primary)]">Thread {thread.id.slice(0, 8)}</p>
-                            <p className="text-xs text-[color:var(--text-muted)]">
-                              Created {thread.createdAt ? formatRelativeDate(thread.createdAt) : 'just now'}
-                            </p>
+                .map((thread) => {
+                  const timestamp = thread.updatedAt ?? thread.createdAt;
+                  const timeLabel = thread.title ? 'Updated' : 'Created';
+
+                  return (
+                    <li key={thread.id}>
+                      <div className="group flex items-center justify-between rounded-2xl border border-[color:var(--panel-border)] bg-[color:var(--panel-bg)] px-4 py-4 transition hover:border-[color:var(--border-strong)] hover:bg-[color:var(--panel-alt)]">
+                        <Link href={`/chat/${thread.id}`} className="flex flex-1 items-center justify-between gap-3">
+                          <div className="flex items-center gap-3">
+                            <span className="flex h-9 w-9 items-center justify-center rounded-full bg-[color:var(--chip-bg)] text-sm font-semibold text-[color:var(--text-primary)]">
+                              {thread.id.slice(0, 2).toUpperCase()}
+                            </span>
+                            <div>
+                              <p className="text-sm font-semibold text-[color:var(--text-primary)]">
+                                {thread.title?.trim() || `Thread ${thread.id.slice(0, 8)}`}
+                              </p>
+                              <p className="text-xs text-[color:var(--text-muted)]">
+                                {timeLabel} {timestamp ? formatRelativeDate(timestamp) : 'just now'}
+                              </p>
+                            </div>
                           </div>
-                        </div>
-                        <ArrowRight className="h-4 w-4 text-[color:var(--text-muted)] transition group-hover:translate-x-1 group-hover:text-[color:var(--text-primary)]" aria-hidden="true" />
-                      </Link>
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="icon"
-                        className="text-[color:var(--text-muted)] hover:text-[color:var(--text-primary)]"
-                        onClick={(event) => handleDeleteThread(event, thread.id)}
-                        disabled={deleteThreadMutation.isPending}
-                        aria-label={`Delete thread ${thread.id.slice(0, 8)}`}
-                      >
-                        <Trash2 className="h-4 w-4" aria-hidden="true" />
-                      </Button>
-                    </div>
-                  </li>
-                ))}
+                          <ArrowRight className="h-4 w-4 text-[color:var(--text-muted)] transition group-hover:translate-x-1 group-hover:text-[color:var(--text-primary)]" aria-hidden="true" />
+                        </Link>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          className="text-[color:var(--text-muted)] hover:text-[color:var(--text-primary)]"
+                          onClick={(event) => handleDeleteThread(event, thread.id)}
+                          disabled={deleteThreadMutation.isPending}
+                          aria-label={`Delete thread ${thread.id.slice(0, 8)}`}
+                        >
+                          <Trash2 className="h-4 w-4" aria-hidden="true" />
+                        </Button>
+                      </div>
+                    </li>
+                  );
+                })}
             </ul>
           )}
         </div>

@@ -18,6 +18,7 @@ from models.threads import (
     ThreadHistoryResponse,
     ThreadListResponse,
     ThreadResponse,
+    ThreadUpdateRequest,
 )
 from services.orchestrator_service import OrchestratorService
 from services.thread_service import ThreadService
@@ -66,6 +67,41 @@ async def delete_thread(
     except PermissionDeniedBusinessValidationError as exc:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc
     return None
+
+
+@router.get("/{thread_id}", response_model=ThreadResponse)
+@inject
+async def get_thread(
+    thread_id: uuid.UUID,
+    current_user: UserResponse = Depends(get_current_user),
+    thread_service: ThreadService = Depends(Provide[Container.thread_service]),
+) -> ThreadResponse:
+    try:
+        thread = await thread_service.get_thread_for_user(thread_id, current_user)
+    except ResourceNotFound as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except PermissionDeniedBusinessValidationError as exc:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc
+    return ThreadResponse.model_validate(thread)
+
+
+@router.put("/{thread_id}", response_model=ThreadResponse)
+@inject
+async def update_thread(
+    thread_id: uuid.UUID,
+    request: ThreadUpdateRequest,
+    current_user: UserResponse = Depends(get_current_user),
+    thread_service: ThreadService = Depends(Provide[Container.thread_service]),
+) -> ThreadResponse:
+    try:
+        thread = await thread_service.update_thread(thread_id, current_user, request=request)
+    except ResourceNotFound as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except PermissionDeniedBusinessValidationError as exc:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc
+    except BusinessValidationError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    return thread
 
 
 @router.post("/{thread_id}/chat", response_model=ThreadChatResponse)

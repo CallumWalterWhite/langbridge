@@ -22,6 +22,11 @@ export type ThreadCreatePayload = {
   metadataJson?: Record<string, unknown>;
 };
 
+export type ThreadUpdatePayload = {
+  title?: string;
+  metadataJson?: Record<string, unknown>;
+};
+
 export type ThreadTabularResult = {
   columns: string[];
   rows: Array<Record<string, unknown> | unknown[]>;
@@ -73,7 +78,22 @@ export async function createThread(payload: ThreadCreatePayload = {}): Promise<T
 }
 
 export async function deleteThread(threadId: string): Promise<void> {
-  await apiFetch<void>(`${BASE_PATH}/${threadId}`, { method: 'DELETE' });
+  await apiFetch<void>(`${BASE_PATH}/${threadId}`, { method: 'DELETE', skipJsonParse: true });
+}
+
+export async function fetchThread(threadId: string): Promise<Thread> {
+  return apiFetch<Thread>(`${BASE_PATH}/${threadId}`);
+}
+
+export async function updateThread(threadId: string, payload: ThreadUpdatePayload): Promise<Thread> {
+  const body: Record<string, unknown> = {};
+  if (payload.title !== undefined) body.title = payload.title;
+  if (payload.metadataJson !== undefined) body.metadata_json = payload.metadataJson;
+
+  return apiFetch<Thread>(`${BASE_PATH}/${threadId}`, {
+    method: 'PUT',
+    body: JSON.stringify(body),
+  });
 }
 
 export async function listThreadMessages(threadId: string): Promise<ThreadMessage[]> {

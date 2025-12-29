@@ -10,7 +10,7 @@ from errors.application_errors import (
     ResourceNotFound,
 )
 from models.auth import UserResponse
-from models.threads import ThreadCreateRequest, ThreadMessageResponse, ThreadResponse
+from models.threads import ThreadCreateRequest, ThreadMessageResponse, ThreadResponse, ThreadUpdateRequest
 from repositories.organization_repository import ProjectRepository
 from repositories.thread_message_repository import ThreadMessageRepository
 from repositories.thread_repository import ThreadRepository
@@ -84,6 +84,27 @@ class ThreadService:
     async def delete_thread(self, thread_id: uuid.UUID, user: UserResponse) -> None:
         thread = await self.get_thread_for_user(thread_id, user)
         await self._thread_repository.delete(thread)
+        await self._thread_repository.flush()
+
+    async def update_thread(
+        self,
+        thread_id: uuid.UUID,
+        user: UserResponse,
+        *,
+        request: ThreadUpdateRequest,
+    ) -> ThreadResponse:
+        thread = await self.get_thread_for_user(thread_id, user)
+
+        if request.title is not None:
+            thread.title = request.title
+        if request.metadata_json is not None:
+            if not isinstance(request.metadata_json, dict):
+                raise BusinessValidationError("metadata_json must be an object if provided.")
+            thread.metadata_json = request.metadata_json
+
+        thread.updated_at = datetime.now(timezone.utc)
+        await self._thread_repository.flush()
+        return ThreadResponse.model_validate(thread)
 
     async def list_messages_for_thread(
         self,
