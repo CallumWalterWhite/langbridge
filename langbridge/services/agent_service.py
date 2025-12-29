@@ -1,3 +1,4 @@
+from datetime import datetime
 import uuid
 from typing import List, Optional
 
@@ -71,6 +72,8 @@ class AgentService:
             configuration=connection.configuration,
             name=connection.name,
             description=connection.description,
+            created_at=datetime.now(),
+            updated_at=datetime.now(),
         )
 
         self._llm_repository.add(new_connection)
@@ -91,7 +94,10 @@ class AgentService:
                 raise BusinessValidationError("Project not found")
             project.llm_connections.append(new_connection)
         
-        return LLMConnectionResponse.model_validate(new_connection)
+        llm_connection = LLMConnectionResponse.model_validate(new_connection)
+        llm_connection.created_at = new_connection.created_at
+        llm_connection.updated_at = new_connection.updated_at
+        return llm_connection
 
     async def list_llm_connections(self,
                                    current_user: UserResponse,
@@ -216,6 +222,8 @@ class AgentService:
             llm_connection_id=agent_definition.llm_connection_id,
             definition=self._serialize_definition(agent_definition.definition),
             is_active=True,
+            created_at=datetime.now(),
+            updated_at=datetime.now(),
         )
 
         self._agent_definition_repository.add(new_agent)

@@ -182,14 +182,7 @@ function defaultFormState(): FormState {
     ttlSeconds: '',
     vectorIndex: '',
     databaseTable: '',
-    tools: [
-      {
-        name: '',
-        connectorId: '',
-        description: '',
-        config: '{}',
-      },
-    ],
+    tools: [],
     allowedConnectors: '',
     deniedConnectors: '',
     piiHandling: '',

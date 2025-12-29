@@ -1,0 +1,11 @@
+{
+    "sqltools.connections": [
+        {
+            "previewLimit": 50,
+            "driver": "SQLite",
+            "database": "${workspaceFolder:langbridge}/langbridge/local.db",
+            "name": "langbridge local"
+        }
+    ],
+    "sqltools.useNodeRuntime": true
+}
