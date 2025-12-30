@@ -1,4 +1,5 @@
 from datetime import datetime
+import logging
 import uuid
 from typing import List, Optional
 
@@ -36,6 +37,7 @@ class AgentService:
         self._organization_repository = organization_repository
         self._project_repository = project_repository
         self._tester = LLMConnectionTester()
+        self._logger = logging.getLogger(__name__)
 
     async def create_llm_connection(
         self,
@@ -95,8 +97,6 @@ class AgentService:
             project.llm_connections.append(new_connection)
         
         llm_connection = LLMConnectionResponse.model_validate(new_connection)
-        llm_connection.created_at = new_connection.created_at
-        llm_connection.updated_at = new_connection.updated_at
         return llm_connection
 
     async def list_llm_connections(self,
@@ -250,7 +250,7 @@ class AgentService:
         current_agent: Optional[AgentDefinition] = await self._agent_definition_repository.get_by_id(agent_id)
         if not current_agent:
             return None
-
+        
         connection_id = agent_update.llm_connection_id or current_agent.llm_connection_id
         connection = await self._get_llm_connection(connection_id)
         self.__check_authorized(current_user, connection)
@@ -265,6 +265,8 @@ class AgentService:
             current_agent.definition = self._serialize_definition(agent_update.definition)
         if agent_update.is_active is not None:
             current_agent.is_active = agent_update.is_active
+        if agent_update.definition is not None:
+            current_agent.definition = self._serialize_definition(agent_update.definition)
 
         return AgentDefinitionResponse.model_validate(current_agent)
     

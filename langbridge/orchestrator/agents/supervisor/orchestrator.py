@@ -4,6 +4,7 @@ Supervisor orchestrator that coordinates planner, analyst, research, and visual 
 
 import json
 import logging
+import re
 import time
 from dataclasses import dataclass, field
 from typing import Any, Dict, Optional, Sequence
@@ -44,6 +45,7 @@ class PlanExecutionArtifacts:
     research_result: Optional[DeepResearchResult] = None
     web_search_result: Optional[WebSearchResult] = None
     clarifying_question: Optional[str] = None
+    tool_calls: list[Dict[str, Any]] = field(default_factory=list)
 
 
 @dataclass
@@ -57,6 +59,20 @@ class ReasoningDecision:
 
 class ReasoningAgent:
     """Simple reasoning layer that decides whether additional planning is required."""
+
+    _ENTITY_ALIAS_MAP: dict[str, tuple[str, ...]] = {
+        "store": ("store", "shop", "outlet", "branch", "location"),
+        "client": ("client", "customer", "account"),
+        "product": ("product", "sku", "item"),
+        "region": ("region", "territory", "area", "country"),
+        "fund": ("fund", "portfolio", "strategy"),
+        "team": ("team", "desk"),
+        "sector": ("sector", "industry"),
+        "channel": ("channel", "source"),
+        "segment": ("segment",),
+        "asset": ("asset",),
+    }
+    _MAX_ENTITY_RESOLUTION_ATTEMPTS = 1
 
     def __init__(
         self,
@@ -183,6 +199,89 @@ class ReasoningAgent:
                 routes.append(route.value)
         return routes
 
+    @staticmethod
+    def _normalize_agent_name(value: Any) -> Optional[AgentName]:
+        if isinstance(value, AgentName):
+            return value
+        if value is None:
+            return None
+        cleaned = str(value).strip().lower()
+        if not cleaned:
+            return None
+        for agent in AgentName:
+            if cleaned == agent.value.lower() or cleaned == agent.name.lower():
+                return agent
+        alias_map = {
+            "analysis": AgentName.ANALYST,
+            "sql": AgentName.ANALYST,
+            "visualization": AgentName.VISUAL,
+            "visual": AgentName.VISUAL,
+            "websearch": AgentName.WEB_SEARCH,
+            "web": AgentName.WEB_SEARCH,
+            "docretrieval": AgentName.DOC_RETRIEVAL,
+            "doc_retrieval": AgentName.DOC_RETRIEVAL,
+            "research": AgentName.DOC_RETRIEVAL,
+            "clarify": AgentName.CLARIFY,
+        }
+        return alias_map.get(cleaned)
+
+    def _coerce_tool_rewrites(self, value: Any) -> list[dict[str, Any]]:
+        if not value:
+            return []
+        items = value if isinstance(value, list) else [value]
+        rewrites: list[dict[str, Any]] = []
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            agent = self._normalize_agent_name(
+                item.get("agent") or item.get("tool") or item.get("target")
+            )
+            if not agent:
+                continue
+            entry: dict[str, Any] = {"agent": agent.value}
+            step_id = item.get("step_id") or item.get("step") or item.get("id")
+            if isinstance(step_id, str) and step_id.strip():
+                entry["step_id"] = step_id.strip()
+            source_step_ref = item.get("source_step_ref") or item.get("source_step")
+            if isinstance(source_step_ref, str) and source_step_ref.strip():
+                entry["source_step_ref"] = source_step_ref.strip()
+            follow_up = item.get("follow_up") or item.get("instruction")
+            if isinstance(follow_up, str) and follow_up.strip():
+                entry["follow_up"] = follow_up.strip()
+
+            question = item.get("question") or item.get("query") or item.get("rewritten_question")
+            if isinstance(question, str) and question.strip():
+                if agent == AgentName.WEB_SEARCH:
+                    entry["query"] = question.strip()
+                else:
+                    entry["question"] = question.strip()
+
+            if len(entry) > 1:
+                rewrites.append(entry)
+        return rewrites
+
+    @staticmethod
+    def _coerce_entity_resolution(value: Any) -> Optional[dict[str, Any]]:
+        if not isinstance(value, dict):
+            return None
+        entity_type = str(value.get("entity_type") or "").strip()
+        entity_phrase = str(value.get("entity_phrase") or value.get("entity") or "").strip()
+        probe_question = str(value.get("probe_question") or "").strip()
+        follow_up = str(value.get("follow_up") or "").strip()
+        original_question = str(value.get("original_question") or "").strip()
+        payload: dict[str, Any] = {}
+        if entity_type:
+            payload["entity_type"] = entity_type
+        if entity_phrase:
+            payload["entity_phrase"] = entity_phrase
+        if probe_question:
+            payload["probe_question"] = probe_question
+        if follow_up:
+            payload["follow_up"] = follow_up
+        if original_question:
+            payload["original_question"] = original_question
+        return payload or None
+
     def _summarize_artifacts(self, artifacts: PlanExecutionArtifacts) -> Dict[str, Any]:
         columns: list[Any] = []
         rows: list[Any] = []
@@ -207,14 +306,128 @@ class ReasoningAgent:
                 "chartType"
             )
 
+        sample_values = self._sample_column_values(columns, rows)
+
         return {
             "row_count": len(rows),
             "columns": columns,
+            "sample_values": sample_values,
             "analyst_error": analyst_error,
             "web_results_count": web_count,
             "research_findings_count": research_findings,
             "research_synthesis": research_synthesis[:240],
             "visualization_chart_type": chart_type,
+        }
+
+    @staticmethod
+    def _sample_column_values(
+        columns: Sequence[Any],
+        rows: Sequence[Any],
+        *,
+        max_columns: int = 4,
+        max_rows: int = 6,
+        max_values: int = 4,
+    ) -> Dict[str, list[str]]:
+        if not columns or not rows:
+            return {}
+        samples: Dict[str, list[str]] = {}
+        for col_index, col in enumerate(columns[:max_columns]):
+            seen: list[str] = []
+            for row in rows[:max_rows]:
+                if not isinstance(row, (list, tuple)) or col_index >= len(row):
+                    continue
+                value = row[col_index]
+                if value is None:
+                    continue
+                text = str(value).strip()
+                if not text or len(text) > 80:
+                    continue
+                if text not in seen:
+                    seen.append(text)
+                if len(seen) >= max_values:
+                    break
+            if seen:
+                samples[str(col)] = seen
+        return samples
+
+    @staticmethod
+    def _structured_row_count(artifacts: PlanExecutionArtifacts) -> Optional[int]:
+        if artifacts.data_payload:
+            rows = artifacts.data_payload.get("rows")
+            if isinstance(rows, list):
+                return len(rows)
+        if artifacts.analyst_result and artifacts.analyst_result.result:
+            rows = artifacts.analyst_result.result.rows
+            if isinstance(rows, list):
+                return len(rows)
+        return None
+
+    @staticmethod
+    def _pluralize_label(label: str) -> str:
+        cleaned = str(label or "").strip()
+        if not cleaned:
+            return "items"
+        lower = cleaned.lower()
+        if lower.endswith("y") and len(lower) > 1:
+            return f"{cleaned[:-1]}ies"
+        if lower.endswith("s"):
+            return cleaned
+        return f"{cleaned}s"
+
+    def _extract_entity_target(self, question: str) -> Optional[Dict[str, str]]:
+        if not question:
+            return None
+        for entity_type, aliases in self._ENTITY_ALIAS_MAP.items():
+            for alias in aliases:
+                pattern = rf"\b{re.escape(alias)}s?\b\s+([A-Za-z0-9&.'\-]+(?:\s+[A-Za-z0-9&.'\-]+){{0,2}})"
+                match = re.search(pattern, question, flags=re.IGNORECASE)
+                if match:
+                    phrase = match.group(0).strip()
+                    return {
+                        "entity_type": entity_type,
+                        "entity_phrase": phrase,
+                    }
+        return None
+
+    @staticmethod
+    def _extract_entity_resolution_context(diagnostics: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        extra_context = diagnostics.get("extra_context")
+        if not isinstance(extra_context, dict):
+            return None
+        reasoning = extra_context.get("reasoning")
+        if not isinstance(reasoning, dict):
+            return None
+        resolution = reasoning.get("entity_resolution")
+        if not isinstance(resolution, dict):
+            return None
+        return resolution
+
+    def _build_entity_resolution(
+        self,
+        *,
+        user_query: str,
+        diagnostics: Dict[str, Any],
+    ) -> Optional[Dict[str, Any]]:
+        target = self._extract_entity_target(user_query)
+        if not target:
+            return None
+
+        existing = self._extract_entity_resolution_context(diagnostics) or {}
+        attempts = int(existing.get("attempts") or 0)
+        if attempts >= self._MAX_ENTITY_RESOLUTION_ATTEMPTS:
+            return None
+
+        entity_type = target["entity_type"]
+        entity_phrase = target["entity_phrase"]
+        plural = self._pluralize_label(entity_type)
+        probe_question = f"List all {plural} names."
+
+        return {
+            "entity_type": entity_type,
+            "entity_phrase": entity_phrase,
+            "original_question": user_query,
+            "probe_question": probe_question,
+            "attempts": attempts + 1,
         }
 
     def _build_llm_prompt(
@@ -232,7 +445,14 @@ class ReasoningAgent:
             "Return ONLY JSON with keys: continue_planning (boolean), rationale (string).",
             "Optional keys: force_route, prefer_routes, avoid_routes, require_web_search,",
             "require_deep_research, require_visual, require_sql, retry_due_to_error,",
-            "retry_due_to_empty, retry_due_to_low_sources.",
+            "retry_due_to_empty, retry_due_to_low_sources, tool_rewrites, entity_resolution.",
+            "tool_rewrites should be a list of objects with keys: agent, question/query,",
+            "optional step_id, source_step_ref, follow_up. Use it to rewrite tool inputs.",
+            "entity_resolution should be an object with keys: entity_type, entity_phrase,",
+            "probe_question, follow_up, original_question. Use it when SQL results are empty",
+            "and you need to resolve entity naming mismatches (e.g. Store A vs Shop A).",
+            "If results are empty or errors occurred, set continue_planning=true and provide",
+            "tool_rewrites or entity_resolution to improve the next tool call.",
             "Routes: SimpleAnalyst, AnalystThenVisual, WebSearch, DeepResearch, Clarify.",
             f"User query: {user_query or ''}",
             f"Current route: {plan.route}",
@@ -302,6 +522,14 @@ class ReasoningAgent:
         require_sql = self._coerce_bool(payload.get("require_sql"))
         if require_sql:
             reasoning_payload["require_sql"] = True
+
+        tool_rewrites = self._coerce_tool_rewrites(payload.get("tool_rewrites") or payload.get("rewrites"))
+        if tool_rewrites:
+            reasoning_payload["tool_rewrites"] = tool_rewrites
+
+        entity_resolution = self._coerce_entity_resolution(payload.get("entity_resolution"))
+        if entity_resolution:
+            reasoning_payload["entity_resolution"] = entity_resolution
 
         for flag in ("retry_due_to_error", "retry_due_to_empty", "retry_due_to_low_sources"):
             flag_value = payload.get(flag)
@@ -438,8 +666,36 @@ class ReasoningAgent:
         has_web_results = self._has_web_results(artifacts)
         has_research = self._has_research_results(artifacts)
         has_data = has_structured_data or has_web_results or has_research
-
+        row_count = self._structured_row_count(artifacts)
         analyst_error = artifacts.analyst_result and artifacts.analyst_result.error
+
+        if (
+            row_count == 0
+            and has_structured_data
+            and not analyst_error
+            and not has_web_results
+            and not has_research
+            and user_query
+            and plan.route in (RouteName.SIMPLE_ANALYST.value, RouteName.ANALYST_THEN_VISUAL.value)
+        ):
+            entity_resolution = self._build_entity_resolution(
+                user_query=user_query,
+                diagnostics=diagnostics,
+            )
+            if entity_resolution:
+                rationale = "No rows returned; probing entity names to resolve mismatches."
+                self.logger.debug(rationale)
+                return ReasoningDecision(
+                    continue_planning=True,
+                    updated_context={
+                        "reasoning": {
+                            "previous_route": plan.route,
+                            "entity_resolution": entity_resolution,
+                        }
+                    },
+                    rationale=rationale,
+                )
+
         if analyst_error and not (has_web_results or has_research):
             force_route = self._pick_fallback_route(plan.route)
             rationale = "Retrying due to analyst error."
@@ -643,6 +899,7 @@ class SupervisorOrchestrator:
             "result": data_payload,
             "visualization": visualization,
             "diagnostics": diagnostics,
+            "tool_calls": combined_artifacts.tool_calls,
         }
 
     def _build_planner_request(
@@ -686,11 +943,37 @@ class SupervisorOrchestrator:
             agent_name = step.agent
 
             if agent_name == AgentName.ANALYST.value:
-                analyst_result, data_payload = await self._run_analyst_step(
-                    step,
-                    user_query=user_query,
-                    default_filters=filters,
-                    default_limit=limit,
+                step_start = time.perf_counter()
+                tool_args: Dict[str, Any] = {"step_id": step.id, "input": step.input}
+                try:
+                    analyst_result, data_payload, tool_args = await self._run_analyst_step(
+                        step,
+                        user_query=user_query,
+                        default_filters=filters,
+                        default_limit=limit,
+                        step_outputs=step_outputs,
+                    )
+                except Exception as exc:
+                    duration_ms = int((time.perf_counter() - step_start) * 1000)
+                    artifacts.tool_calls.append(
+                        {
+                            "tool_name": AgentName.ANALYST.value,
+                            "arguments": tool_args,
+                            "result": None,
+                            "duration_ms": duration_ms,
+                            "error": {"message": str(exc), "type": exc.__class__.__name__},
+                        }
+                    )
+                    raise
+                duration_ms = int((time.perf_counter() - step_start) * 1000)
+                artifacts.tool_calls.append(
+                    {
+                        "tool_name": AgentName.ANALYST.value,
+                        "arguments": tool_args,
+                        "result": self._summarize_analyst_result(analyst_result, data_payload),
+                        "duration_ms": duration_ms,
+                        "error": self._coerce_tool_error(analyst_result.error),
+                    }
                 )
                 artifacts.analyst_result = analyst_result
                 if data_payload:
@@ -703,12 +986,37 @@ class SupervisorOrchestrator:
                 continue
 
             if agent_name == AgentName.VISUAL.value:
-                visualization = self._run_visual_step(
-                    step,
-                    user_query=user_query,
-                    title=title,
-                    fallback_payload=artifacts.data_payload,
-                    step_outputs=step_outputs,
+                step_start = time.perf_counter()
+                tool_args = {"step_id": step.id, "input": step.input}
+                try:
+                    visualization, tool_args = self._run_visual_step(
+                        step,
+                        user_query=user_query,
+                        title=title,
+                        fallback_payload=artifacts.data_payload,
+                        step_outputs=step_outputs,
+                    )
+                except Exception as exc:
+                    duration_ms = int((time.perf_counter() - step_start) * 1000)
+                    artifacts.tool_calls.append(
+                        {
+                            "tool_name": AgentName.VISUAL.value,
+                            "arguments": tool_args,
+                            "result": None,
+                            "duration_ms": duration_ms,
+                            "error": {"message": str(exc), "type": exc.__class__.__name__},
+                        }
+                    )
+                    raise
+                duration_ms = int((time.perf_counter() - step_start) * 1000)
+                artifacts.tool_calls.append(
+                    {
+                        "tool_name": AgentName.VISUAL.value,
+                        "arguments": tool_args,
+                        "result": visualization,
+                        "duration_ms": duration_ms,
+                        "error": None,
+                    }
                 )
                 artifacts.visualization = visualization
                 step_outputs[step.id] = {
@@ -718,7 +1026,34 @@ class SupervisorOrchestrator:
                 continue
 
             if agent_name == AgentName.DOC_RETRIEVAL.value:
-                research_result = await self._run_doc_retrieval_step(step, user_query, step_outputs)
+                step_start = time.perf_counter()
+                tool_args = {"step_id": step.id, "input": step.input}
+                try:
+                    research_result, tool_args = await self._run_doc_retrieval_step(
+                        step, user_query, step_outputs
+                    )
+                except Exception as exc:
+                    duration_ms = int((time.perf_counter() - step_start) * 1000)
+                    artifacts.tool_calls.append(
+                        {
+                            "tool_name": AgentName.DOC_RETRIEVAL.value,
+                            "arguments": tool_args,
+                            "result": None,
+                            "duration_ms": duration_ms,
+                            "error": {"message": str(exc), "type": exc.__class__.__name__},
+                        }
+                    )
+                    raise
+                duration_ms = int((time.perf_counter() - step_start) * 1000)
+                artifacts.tool_calls.append(
+                    {
+                        "tool_name": AgentName.DOC_RETRIEVAL.value,
+                        "arguments": tool_args,
+                        "result": research_result.to_dict() if research_result else None,
+                        "duration_ms": duration_ms,
+                        "error": None,
+                    }
+                )
                 artifacts.research_result = research_result
                 step_outputs[step.id] = {
                     "agent": AgentName.DOC_RETRIEVAL.value,
@@ -729,7 +1064,32 @@ class SupervisorOrchestrator:
                 continue
 
             if agent_name == AgentName.WEB_SEARCH.value:
-                web_search_result = await self._run_web_search_step(step, user_query)
+                step_start = time.perf_counter()
+                tool_args = {"step_id": step.id, "input": step.input}
+                try:
+                    web_search_result, tool_args = await self._run_web_search_step(step, user_query)
+                except Exception as exc:
+                    duration_ms = int((time.perf_counter() - step_start) * 1000)
+                    artifacts.tool_calls.append(
+                        {
+                            "tool_name": AgentName.WEB_SEARCH.value,
+                            "arguments": tool_args,
+                            "result": None,
+                            "duration_ms": duration_ms,
+                            "error": {"message": str(exc), "type": exc.__class__.__name__},
+                        }
+                    )
+                    raise
+                duration_ms = int((time.perf_counter() - step_start) * 1000)
+                artifacts.tool_calls.append(
+                    {
+                        "tool_name": AgentName.WEB_SEARCH.value,
+                        "arguments": tool_args,
+                        "result": web_search_result.to_dict() if web_search_result else None,
+                        "duration_ms": duration_ms,
+                        "error": None,
+                    }
+                )
                 artifacts.web_search_result = web_search_result
                 step_outputs[step.id] = {
                     "agent": AgentName.WEB_SEARCH.value,
@@ -756,15 +1116,35 @@ class SupervisorOrchestrator:
         user_query: str,
         default_filters: Optional[Dict[str, Any]],
         default_limit: Optional[int],
-    ) -> tuple[AnalystQueryResponse, Dict[str, Any]]:
+        step_outputs: Dict[str, Dict[str, Any]],
+    ) -> tuple[AnalystQueryResponse, Dict[str, Any], Dict[str, Any]]:
         if not self.analyst_agent:
             raise RuntimeError("AnalystAgent is not configured but planner requested SQL analysis.")
-        question = step.input.get("question") or user_query
+        base_question = step.input.get("question") or user_query
+        question = base_question
         context_overrides = step.input.get("context") or {}
         step_filters = context_overrides.get("filters", default_filters)
         step_limit = context_overrides.get("limit", default_limit)
         conversation_context = context_overrides.get("conversation_context")
-        
+        source_step_ref = step.input.get("source_step_ref")
+        tool_context = self._build_step_context_summary(source_step_ref, step_outputs)
+        if tool_context:
+            conversation_context = self._merge_conversation_context(conversation_context, tool_context)
+
+        if tool_context:
+            rewritten = self._rewrite_question_with_llm(
+                question=question,
+                tool_context=tool_context,
+                original_question=step.input.get("original_question") or user_query,
+            )
+            if rewritten:
+                question = rewritten
+
+        follow_up = step.input.get("follow_up")
+        if isinstance(follow_up, str) and follow_up.strip():
+            if follow_up.strip().lower() not in question.lower():
+                question = f"{question}\nFollow-up: {follow_up.strip()}"
+
         analyst_result: AnalystQueryResponse = await self.analyst_agent.answer_async(
             question,
             conversation_context=conversation_context,
@@ -772,7 +1152,20 @@ class SupervisorOrchestrator:
             limit=step_limit,
         )
         data_payload = self._extract_data_payload(analyst_result)
-        return analyst_result, data_payload
+        tool_args: Dict[str, Any] = {
+            "step_id": step.id,
+            "input": step.input,
+            "question": question,
+            "filters": step_filters,
+            "limit": step_limit,
+        }
+        if base_question and base_question != question:
+            tool_args["original_question"] = base_question
+        if conversation_context:
+            tool_args["conversation_context"] = conversation_context
+        if source_step_ref:
+            tool_args["source_step_ref"] = source_step_ref
+        return analyst_result, data_payload, tool_args
 
     def _run_visual_step(
         self,
@@ -782,25 +1175,37 @@ class SupervisorOrchestrator:
         title: Optional[str],
         fallback_payload: Dict[str, Any],
         step_outputs: Dict[str, Dict[str, Any]],
-    ) -> Dict[str, Any]:
+    ) -> tuple[Dict[str, Any], Dict[str, Any]]:
         reference_id = step.input.get("rows_ref")
         referenced_payload = self._resolve_rows_reference(reference_id, step_outputs)
         data = referenced_payload or fallback_payload or {"columns": [], "rows": []}
         viz_title = title or f"Visualization for '{user_query}'"
         user_intent = step.input.get("user_intent")
-        return self.visual_agent.run(
+        visualization = self.visual_agent.run(
             data,
             title=viz_title,
             question=user_query,
             user_intent=user_intent,
         )
+        tool_args: Dict[str, Any] = {
+            "step_id": step.id,
+            "input": step.input,
+            "question": user_query,
+            "title": viz_title,
+            "data_summary": self._summarize_tabular_payload(data),
+        }
+        if reference_id:
+            tool_args["rows_ref"] = reference_id
+        if user_intent:
+            tool_args["user_intent"] = user_intent
+        return visualization, tool_args
 
     async def _run_doc_retrieval_step(
         self,
         step: PlanStep,
         user_query: str,
         step_outputs: Dict[str, Dict[str, Any]],
-    ) -> DeepResearchResult:
+    ) -> tuple[DeepResearchResult, Dict[str, Any]]:
         if not self.deep_research_agent:
             raise RuntimeError("DeepResearchAgent is not configured but planner requested DocRetrieval.")
         context = step.input.get("context") or {}
@@ -811,13 +1216,27 @@ class SupervisorOrchestrator:
                 context = self._merge_document_context(context, documents)
         timebox = int(step.input.get("timebox_seconds", 30))
         question = step.input.get("question") or user_query
-        return await self.deep_research_agent.research_async(
+        result = await self.deep_research_agent.research_async(
             question=question,
             context=context,
             timebox_seconds=timebox,
         )
+        tool_args: Dict[str, Any] = {
+            "step_id": step.id,
+            "input": step.input,
+            "question": question,
+            "context": context,
+            "timebox_seconds": timebox,
+        }
+        if source_step_ref:
+            tool_args["source_step_ref"] = source_step_ref
+        return result, tool_args
 
-    async def _run_web_search_step(self, step: PlanStep, user_query: str) -> WebSearchResult:
+    async def _run_web_search_step(
+        self,
+        step: PlanStep,
+        user_query: str,
+    ) -> tuple[WebSearchResult, Dict[str, Any]]:
         if not self.web_search_agent:
             raise RuntimeError("WebSearchAgent is not configured but planner requested WebSearch.")
         query = step.input.get("query") or user_query
@@ -831,13 +1250,71 @@ class SupervisorOrchestrator:
         except (TypeError, ValueError):
             max_results_value = 6
 
-        return await self.web_search_agent.search_async(
+        result = await self.web_search_agent.search_async(
             query,
             max_results=max_results_value,
             region=region,
             safe_search=safe_search,
             timebox_seconds=timebox,
         )
+        tool_args: Dict[str, Any] = {
+            "step_id": step.id,
+            "input": step.input,
+            "query": query,
+            "max_results": max_results_value,
+            "region": region,
+            "safe_search": safe_search,
+            "timebox_seconds": timebox,
+        }
+        return result, tool_args
+
+    @staticmethod
+    def _coerce_tool_error(error: Any) -> Optional[Dict[str, Any]]:
+        if not error:
+            return None
+        if isinstance(error, dict):
+            return error
+        return {"message": str(error)}
+
+    @staticmethod
+    def _summarize_tabular_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
+        summary: Dict[str, Any] = {}
+        columns = payload.get("columns")
+        if isinstance(columns, list):
+            summary["columns"] = columns
+        rows = payload.get("rows")
+        if isinstance(rows, list):
+            summary["row_count"] = len(rows)
+        return summary
+
+    def _summarize_analyst_result(
+        self,
+        analyst_result: AnalystQueryResponse,
+        data_payload: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        summary: Dict[str, Any] = {
+            "sql_canonical": analyst_result.sql_canonical,
+            "sql_executable": analyst_result.sql_executable,
+            "dialect": analyst_result.dialect,
+            "model_name": analyst_result.model_name,
+            "execution_time_ms": analyst_result.execution_time_ms,
+        }
+        query_result = analyst_result.result
+        if query_result:
+            row_count = query_result.rowcount
+            if row_count is None and isinstance(query_result.rows, list):
+                row_count = len(query_result.rows)
+            if row_count is not None:
+                summary["row_count"] = row_count
+            if query_result.elapsed_ms is not None:
+                summary["elapsed_ms"] = query_result.elapsed_ms
+            if query_result.columns:
+                summary["columns"] = list(query_result.columns)
+            if query_result.source_sql:
+                summary["source_sql"] = query_result.source_sql
+        elif data_payload:
+            summary.update(self._summarize_tabular_payload(data_payload))
+        return summary
 
     @staticmethod
     def _extract_data_payload(analyst_result: AnalystQueryResponse) -> Dict[str, Any]:
@@ -847,6 +1324,170 @@ class SupervisorOrchestrator:
                 "rows": analyst_result.result.rows,
             }
         return {}
+
+    @staticmethod
+    def _trim_text(value: str, limit: int = 280) -> str:
+        cleaned = str(value or "").strip()
+        if len(cleaned) <= limit:
+            return cleaned
+        return cleaned[:limit].rstrip() + "..."
+
+    @staticmethod
+    def _merge_conversation_context(base: Optional[str], extra: str) -> str:
+        base_text = str(base or "").strip()
+        extra_text = str(extra or "").strip()
+        if not extra_text:
+            return base_text
+        if base_text:
+            return f"{base_text}\n\n{extra_text}"
+        return extra_text
+
+    def _build_step_context_summary(
+        self,
+        reference_id: Optional[str],
+        step_outputs: Dict[str, Dict[str, Any]],
+    ) -> Optional[str]:
+        if not reference_id:
+            return None
+        referenced = step_outputs.get(reference_id)
+        if not referenced:
+            return None
+
+        parts: list[str] = []
+        research_result = referenced.get("research_result")
+        if isinstance(research_result, DeepResearchResult):
+            if research_result.synthesis:
+                parts.append(
+                    f"Research synthesis: {self._trim_text(research_result.synthesis, 360)}"
+                )
+            if research_result.findings:
+                insights = "; ".join(
+                    self._trim_text(finding.insight, 160) for finding in research_result.findings[:3]
+                )
+                parts.append(f"Research findings: {insights}")
+
+        web_search_result = referenced.get("web_search_result")
+        if isinstance(web_search_result, WebSearchResult) and web_search_result.results:
+            sources = "; ".join(
+                f"{self._trim_text(item.title, 100)} ({item.url})"
+                for item in web_search_result.results[:3]
+            )
+            parts.append(f"Web sources: {sources}")
+
+        data_payload = referenced.get("data_payload")
+        if isinstance(data_payload, dict):
+            columns = data_payload.get("columns")
+            rows = data_payload.get("rows")
+            if isinstance(columns, list) and columns:
+                column_list = ", ".join(str(col) for col in columns[:8])
+                parts.append(f"Data columns: {self._trim_text(column_list, 180)}")
+            if isinstance(rows, list):
+                parts.append(f"Row count: {len(rows)}")
+                if isinstance(columns, list):
+                    samples = self._extract_sample_values(columns, rows)
+                    if samples:
+                        parts.extend(samples)
+
+        if not parts:
+            return None
+        return "\n".join(parts)
+
+    @staticmethod
+    def _extract_json_blob(text: str) -> Optional[str]:
+        if not text:
+            return None
+        start = text.find("{")
+        if start == -1:
+            return None
+        depth = 0
+        for index in range(start, len(text)):
+            char = text[index]
+            if char == "{":
+                depth += 1
+            elif char == "}":
+                depth -= 1
+                if depth == 0:
+                    return text[start : index + 1]
+        return None
+
+    @classmethod
+    def _parse_llm_payload(cls, response: str) -> Optional[Dict[str, Any]]:
+        blob = cls._extract_json_blob(response)
+        if not blob:
+            return None
+        try:
+            parsed = json.loads(blob)
+        except json.JSONDecodeError:
+            return None
+        if not isinstance(parsed, dict):
+            return None
+        return parsed
+
+    def _rewrite_question_with_llm(
+        self,
+        *,
+        question: str,
+        tool_context: str,
+        original_question: str,
+    ) -> Optional[str]:
+        llm = self.reasoning_agent.llm if self.reasoning_agent else None
+        if not llm:
+            return None
+
+        prompt_sections = [
+            "You rewrite analyst questions to align with known entity names.",
+            "Return ONLY JSON with key: rewritten_question.",
+            f"Original question: {original_question}",
+            f"Current question: {question}",
+            f"Tool context: {tool_context}",
+        ]
+        prompt = "\n".join(prompt_sections)
+        try:
+            response = llm.complete(prompt, temperature=0.0, max_tokens=160)
+        except Exception as exc:  # pragma: no cover - defensive guard
+            self.logger.warning("LLM question rewrite failed: %s", exc)
+            return None
+
+        payload = self._parse_llm_payload(str(response))
+        if not payload:
+            return None
+        rewritten = payload.get("rewritten_question") or payload.get("question")
+        if not isinstance(rewritten, str):
+            return None
+        rewritten = rewritten.strip()
+        if not rewritten:
+            return None
+        return rewritten
+
+    @staticmethod
+    def _extract_sample_values(columns: Sequence[Any], rows: Sequence[Any]) -> list[str]:
+        if not rows or not columns:
+            return []
+        sample_lines: list[str] = []
+        max_columns = 4
+        max_rows = 6
+        max_values = 4
+
+        for col_index, col in enumerate(columns[:max_columns]):
+            seen: list[str] = []
+            for row in rows[:max_rows]:
+                if not isinstance(row, (list, tuple)) or col_index >= len(row):
+                    continue
+                value = row[col_index]
+                if value is None:
+                    continue
+                text = str(value).strip()
+                if not text or len(text) > 80:
+                    continue
+                if text not in seen:
+                    seen.append(text)
+                if len(seen) >= max_values:
+                    break
+            if seen:
+                sample_values = ", ".join(seen)
+                sample_lines.append(f"Sample values for {col}: {sample_values}")
+
+        return sample_lines
 
     @staticmethod
     def _merge_artifacts(base: PlanExecutionArtifacts, updates: PlanExecutionArtifacts) -> None:
@@ -862,6 +1503,8 @@ class SupervisorOrchestrator:
             base.web_search_result = updates.web_search_result
         if updates.clarifying_question:
             base.clarifying_question = updates.clarifying_question
+        if updates.tool_calls:
+            base.tool_calls.extend(updates.tool_calls)
 
     @staticmethod
     def _merge_context(base: Dict[str, Any], updates: Dict[str, Any]) -> Dict[str, Any]:

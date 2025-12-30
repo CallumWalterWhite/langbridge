@@ -27,7 +27,7 @@ async def create_llm_connection(
     current_user: UserResponse = Depends(get_current_user),
     agent_service: AgentService = Depends(Provide[Container.agent_service]),
 ) -> LLMConnectionResponse:
-    return await agent_service.create_llm_connection(current_user, request)
+    return await agent_service.create_llm_connection(request, current_user)
 
 
 @router.get("/llm-connections", response_model=List[LLMConnectionResponse])

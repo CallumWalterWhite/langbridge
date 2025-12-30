@@ -1,5 +1,6 @@
 import json
 import logging
+import re
 from typing import Any, List, Optional
 
 from orchestrator.llm.provider import LLMProvider
@@ -7,6 +8,82 @@ from orchestrator.llm.provider import LLMProvider
 from .models import AgentName, Plan, PlanStep, PlannerRequest, RouteDecision, RouteName, RouteSignals
 from .policies import PolicyNotes, check_policies
 from .router import build_steps, choose_route
+
+
+_LEADING_FILLER_RE = re.compile(
+    r"^(?:please\s+)?(?:can you|could you|would you|show me|tell me|give me|i need|i want|"
+    r"i would like|let me know|what is|what are|what's|whats|find|search for|search the web for)\s+",
+    re.IGNORECASE,
+)
+_TRAILING_FILLER_RE = re.compile(r"(?:thanks|thank you|please)[.!?]*$", re.IGNORECASE)
+_WEB_DIRECTIVE_RE = re.compile(
+    r"\b(?:search (?:the )?web|search online|google|bing|duckduckgo|look up|find online)\b",
+    re.IGNORECASE,
+)
+_VISUAL_TERM_RE = re.compile(
+    r"\b(?:chart|graph|plot|visualise|visualize|visual|dashboard)\b",
+    re.IGNORECASE,
+)
+
+
+def _normalize_question(text: str) -> str:
+    cleaned = re.sub(r"\s+", " ", text.strip())
+    cleaned = _LEADING_FILLER_RE.sub("", cleaned).strip()
+    cleaned = _TRAILING_FILLER_RE.sub("", cleaned).strip()
+    return re.sub(r"\s+", " ", cleaned).strip()
+
+
+def _normalize_for_compare(text: str) -> str:
+    return re.sub(r"[^a-z0-9]+", " ", text.lower()).strip()
+
+
+def _rewrite_for_agent(agent: AgentName, question: str) -> str:
+    base = _normalize_question(question)
+    if not base:
+        return question.strip()
+
+    if agent == AgentName.ANALYST:
+        base = _VISUAL_TERM_RE.sub("", base)
+        base = _WEB_DIRECTIVE_RE.sub("", base)
+        base = re.sub(r"\s+", " ", base).strip()
+        return base or question.strip()
+
+    if agent == AgentName.WEB_SEARCH:
+        base = _WEB_DIRECTIVE_RE.sub("", base)
+        base = re.sub(r"\s+", " ", base).strip()
+        return base or question.strip()
+
+    if agent == AgentName.DOC_RETRIEVAL:
+        lowered = base.lower()
+        if lowered.startswith(
+            (
+                "summarize",
+                "summarise",
+                "synthesize",
+                "synthesise",
+                "research",
+                "analyze",
+                "analyse",
+            )
+        ):
+            return base
+        return f"Synthesize key findings with citations for: {base}"
+
+    return base
+
+
+def _extract_tool_rewrites(context: Optional[dict[str, Any]]) -> list[dict[str, Any]]:
+    if not isinstance(context, dict):
+        return []
+    for key in ("reasoning", "routing"):
+        payload = context.get(key)
+        if isinstance(payload, dict):
+            rewrites = payload.get("tool_rewrites")
+            if isinstance(rewrites, list):
+                return [item for item in rewrites if isinstance(item, dict)]
+            if isinstance(rewrites, dict):
+                return [rewrites]
+    return []
 
 
 def _summarize_plan(decision: RouteDecision, steps: List[PlanStep], request: PlannerRequest) -> str:
@@ -77,15 +154,19 @@ class PlanningAgent:
 
     def plan(self, request: PlannerRequest) -> Plan:
         policy_notes: PolicyNotes = check_policies(request)
-        llm_plan = self._plan_with_llm(request, policy_notes)
+        llm_plan = None
+        if not self._should_bypass_llm(request):
+            llm_plan = self._plan_with_llm(request, policy_notes)
         if llm_plan:
+            self._apply_tool_rewrites(llm_plan, request)
+            self._apply_question_rewrites(llm_plan, request)
             return llm_plan
 
         decision: RouteDecision = choose_route(request)
         steps: List[PlanStep] = build_steps(decision, request)
         user_summary = _summarize_plan(decision, steps, request)
 
-        return Plan(
+        plan = Plan(
             route=decision.route.value,
             steps=steps,
             justification=decision.justification,
@@ -93,6 +174,100 @@ class PlanningAgent:
             assumptions=decision.assumptions,
             risks=policy_notes.risks,
         )
+        self._apply_tool_rewrites(plan, request)
+        self._apply_question_rewrites(plan, request)
+        return plan
+
+    @staticmethod
+    def _should_bypass_llm(request: PlannerRequest) -> bool:
+        if not isinstance(request.context, dict):
+            return False
+        for key in ("reasoning", "routing"):
+            payload = request.context.get(key)
+            if isinstance(payload, dict) and payload:
+                return True
+        return False
+
+    def _apply_question_rewrites(self, plan: Plan, request: PlannerRequest) -> None:
+        base_question = request.question
+        base_norm = _normalize_for_compare(base_question)
+        for step in plan.steps:
+            input_payload = step.input if isinstance(step.input, dict) else {}
+            if step.agent == AgentName.ANALYST.value:
+                current = str(input_payload.get("question") or base_question)
+                current_norm = _normalize_for_compare(current)
+                if not current.strip() or current_norm == base_norm:
+                    input_payload["original_question"] = base_question
+                    input_payload["question"] = _rewrite_for_agent(AgentName.ANALYST, base_question)
+                step.input = input_payload
+                continue
+            if step.agent == AgentName.WEB_SEARCH.value:
+                current = str(input_payload.get("query") or base_question)
+                current_norm = _normalize_for_compare(current)
+                if not current.strip() or current_norm == base_norm:
+                    input_payload["original_question"] = base_question
+                    input_payload["query"] = _rewrite_for_agent(AgentName.WEB_SEARCH, base_question)
+                step.input = input_payload
+                continue
+            if step.agent == AgentName.DOC_RETRIEVAL.value:
+                current = str(input_payload.get("question") or base_question)
+                current_norm = _normalize_for_compare(current)
+                if not current.strip() or current_norm == base_norm:
+                    input_payload["original_question"] = base_question
+                    input_payload["question"] = _rewrite_for_agent(AgentName.DOC_RETRIEVAL, base_question)
+                step.input = input_payload
+
+    def _apply_tool_rewrites(self, plan: Plan, request: PlannerRequest) -> None:
+        rewrites = _extract_tool_rewrites(request.context)
+        if not rewrites:
+            return
+
+        used_steps: set[str] = set()
+        for rewrite in rewrites:
+            agent = self._normalize_agent_name(
+                rewrite.get("agent") or rewrite.get("tool") or rewrite.get("target")
+            )
+            if not agent:
+                continue
+
+            step_id = rewrite.get("step_id") or rewrite.get("step") or rewrite.get("id")
+            target_step: Optional[PlanStep] = None
+            if isinstance(step_id, str) and step_id.strip():
+                target_step = next(
+                    (step for step in plan.steps if step.id == step_id and step.agent == agent.value),
+                    None,
+                )
+            if not target_step:
+                for step in plan.steps:
+                    if step.agent != agent.value:
+                        continue
+                    if step.id in used_steps:
+                        continue
+                    target_step = step
+                    break
+
+            if not target_step:
+                continue
+
+            input_payload = target_step.input if isinstance(target_step.input, dict) else {}
+            question = rewrite.get("question") or rewrite.get("query") or rewrite.get("rewritten_question")
+            if isinstance(question, str) and question.strip():
+                if agent == AgentName.WEB_SEARCH:
+                    input_payload["query"] = question.strip()
+                else:
+                    input_payload["question"] = question.strip()
+                    input_payload.setdefault("original_question", request.question)
+
+            follow_up = rewrite.get("follow_up") or rewrite.get("instruction")
+            if isinstance(follow_up, str) and follow_up.strip():
+                input_payload["follow_up"] = follow_up.strip()
+
+            source_step_ref = rewrite.get("source_step_ref") or rewrite.get("source_step")
+            if isinstance(source_step_ref, str) and source_step_ref.strip():
+                input_payload["source_step_ref"] = source_step_ref.strip()
+
+            target_step.input = input_payload
+            used_steps.add(target_step.id)
 
     def _plan_with_llm(
         self,
@@ -363,12 +538,15 @@ class PlanningAgent:
         valid_ids = {step.id for step in steps}
         last_analyst_id: Optional[str] = None
         last_web_id: Optional[str] = None
+        last_doc_id: Optional[str] = None
 
         for step in steps:
             if step.agent == AgentName.ANALYST.value:
                 last_analyst_id = step.id
             if step.agent == AgentName.WEB_SEARCH.value:
                 last_web_id = step.id
+            if step.agent == AgentName.DOC_RETRIEVAL.value:
+                last_doc_id = step.id
 
             input_payload = step.input if isinstance(step.input, dict) else {}
             for ref_key in ("rows_ref", "schema_ref", "source_step_ref", "step_ref"):
@@ -385,6 +563,10 @@ class PlanningAgent:
             if step.agent == AgentName.DOC_RETRIEVAL.value and last_web_id:
                 if input_payload.get("source_step_ref") not in valid_ids:
                     input_payload["source_step_ref"] = last_web_id
+
+            if step.agent == AgentName.ANALYST.value and last_doc_id:
+                if input_payload.get("source_step_ref") not in valid_ids:
+                    input_payload["source_step_ref"] = last_doc_id
 
             step.input = input_payload
 

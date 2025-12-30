@@ -663,11 +663,122 @@ def _context_has_documents(context: Optional[Dict[str, Any]]) -> bool:
     return False
 
 
+def _extract_entity_resolution(context: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    if not isinstance(context, dict):
+        return None
+    reasoning = context.get("reasoning")
+    if not isinstance(reasoning, dict):
+        return None
+    resolution = reasoning.get("entity_resolution")
+    if not isinstance(resolution, dict):
+        return None
+    return resolution
+
+
+def _pluralize_label(label: str) -> str:
+    cleaned = str(label or "").strip()
+    if not cleaned:
+        return "items"
+    lower = cleaned.lower()
+    if lower.endswith("y") and len(lower) > 1:
+        return f"{cleaned[:-1]}ies"
+    if lower.endswith("s"):
+        return cleaned
+    return f"{cleaned}s"
+
+
+def _build_entity_resolution_steps(
+    *,
+    resolution: Dict[str, Any],
+    request: PlannerRequest,
+    constraints: PlanningConstraints,
+) -> Optional[List[PlanStep]]:
+    if constraints.max_steps < 2:
+        return None
+
+    entity_type = str(resolution.get("entity_type") or "").strip()
+    entity_phrase = str(resolution.get("entity_phrase") or "").strip()
+    probe_question = str(resolution.get("probe_question") or "").strip()
+    original_question = str(resolution.get("original_question") or request.question).strip()
+
+    if not probe_question:
+        label = entity_type or "item"
+        plural = _pluralize_label(label)
+        probe_question = f"List all {plural}."
+
+    follow_up = str(resolution.get("follow_up") or "").strip()
+    if not follow_up and entity_type and entity_phrase:
+        follow_up = (
+            f"Use the list of known {entity_type} names to resolve the closest match to "
+            f"'{entity_phrase}', then answer the original question."
+        )
+    elif not follow_up and entity_phrase:
+        follow_up = (
+            f"Use the list of known names to resolve the closest match to '{entity_phrase}', "
+            "then answer the original question."
+        )
+
+    steps: List[PlanStep] = []
+    step_counter = 1
+
+    def _append_step(agent: AgentName, input_payload: dict, expected_output: dict) -> None:
+        nonlocal step_counter
+        if len(steps) >= constraints.max_steps:
+            return
+        steps.append(
+            PlanStep(
+                id=f"step-{step_counter}",
+                agent=agent.value,
+                input=input_payload,
+                expected_output=expected_output,
+            )
+        )
+        step_counter += 1
+
+    probe_context = dict(request.context or {})
+    if "limit" not in probe_context:
+        probe_context["limit"] = 200
+
+    _append_step(
+        AgentName.ANALYST,
+        {
+            "question": probe_question,
+            "context": probe_context,
+            "constraints": request.constraints.model_dump(),
+        },
+        {
+            "rows": "tabular_result_set",
+            "schema": "column_metadata",
+            "final_sql": "string",
+        },
+    )
+
+    source_step_id = steps[0].id if steps else None
+    _append_step(
+        AgentName.ANALYST,
+        {
+            "question": original_question,
+            "context": request.context or {},
+            "constraints": request.constraints.model_dump(),
+            "source_step_ref": source_step_id,
+            "follow_up": follow_up or None,
+        },
+        {
+            "rows": "tabular_result_set",
+            "schema": "column_metadata",
+            "final_sql": "string",
+        },
+    )
+
+    return steps
+
+
 def build_steps(decision: RouteDecision, request: PlannerRequest) -> List[PlanStep]:
     constraints = request.constraints
     steps: List[PlanStep] = []
     step_counter = 1
     routing_overrides = _extract_routing_overrides(request.context)
+    entity_resolution = _extract_entity_resolution(request.context)
 
     def _append_step(agent: AgentName, input_payload: dict, expected_output: dict) -> None:
         nonlocal step_counter
@@ -701,6 +812,14 @@ def build_steps(decision: RouteDecision, request: PlannerRequest) -> List[PlanSt
     }
 
     if decision.route == RouteName.SIMPLE_ANALYST:
+        if entity_resolution:
+            resolved_steps = _build_entity_resolution_steps(
+                resolution=entity_resolution,
+                request=request,
+                constraints=constraints,
+            )
+            if resolved_steps:
+                return resolved_steps
         _append_step(
             AgentName.ANALYST,
             base_input,
@@ -713,6 +832,34 @@ def build_steps(decision: RouteDecision, request: PlannerRequest) -> List[PlanSt
         return steps
 
     if decision.route == RouteName.ANALYST_THEN_VISUAL:
+        if entity_resolution:
+            resolved_steps = _build_entity_resolution_steps(
+                resolution=entity_resolution,
+                request=request,
+                constraints=constraints,
+            )
+            if resolved_steps:
+                steps = resolved_steps
+                step_counter = len(steps) + 1
+                if len(steps) < constraints.max_steps:
+                    last_analyst_step = next(
+                        (step.id for step in reversed(steps) if step.agent == AgentName.ANALYST.value),
+                        None,
+                    )
+                    if last_analyst_step and len(steps) < constraints.max_steps:
+                        _append_step(
+                            AgentName.VISUAL,
+                            {
+                                "rows_ref": last_analyst_step,
+                                "schema_ref": last_analyst_step,
+                                "user_intent": _infer_visual_intent(request.question),
+                            },
+                            {
+                                "viz_spec": "json_visualization_spec",
+                                "insight_summary": "string",
+                            },
+                        )
+                return steps
         _append_step(
             AgentName.ANALYST,
             base_input,

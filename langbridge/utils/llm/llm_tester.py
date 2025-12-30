@@ -47,8 +47,7 @@ class LLMConnectionTester:
             client = OpenAI(api_key=api_key)
             client.chat.completions.create(
                 model=model,
-                messages=[{"role": "user", "content": "Hello"}],
-                max_tokens=5
+                messages=[{"role": "user", "content": "Hello"}]
             )
             return {
                 "success": True,

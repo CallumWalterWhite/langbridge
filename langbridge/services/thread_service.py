@@ -3,7 +3,7 @@ import uuid
 from datetime import datetime, timezone
 from fastapi.encoders import jsonable_encoder
 
-from db.threads import Role, Thread, ThreadMessage, ThreadStatus
+from db.threads import Role, Thread, ThreadMessage, ThreadStatus, ToolCall
 from errors.application_errors import (
     BusinessValidationError,
     PermissionDeniedBusinessValidationError,
@@ -14,6 +14,7 @@ from models.threads import ThreadCreateRequest, ThreadMessageResponse, ThreadRes
 from repositories.organization_repository import ProjectRepository
 from repositories.thread_message_repository import ThreadMessageRepository
 from repositories.thread_repository import ThreadRepository
+from repositories.tool_call_repository import ToolCallRepository
 from services.organization_service import OrganizationService
 
 
@@ -24,11 +25,13 @@ class ThreadService:
         self,
         thread_repository: ThreadRepository,
         thread_message_repository: ThreadMessageRepository,
+        tool_call_repository: ToolCallRepository,
         project_repository: ProjectRepository,
         organization_service: OrganizationService,
     ) -> None:
         self._thread_repository = thread_repository
         self._thread_message_repository = thread_message_repository
+        self._tool_call_repository = tool_call_repository
         self._project_repository = project_repository
         self._organization_service = organization_service
 
@@ -156,4 +159,35 @@ class ThreadService:
 
         self._thread_message_repository.add(user_message)
         self._thread_message_repository.add(assistant_message)
+
+        tool_calls = response.get("tool_calls")
+        added_tool_calls = False
+        if isinstance(tool_calls, list):
+            for entry in tool_calls:
+                if not isinstance(entry, dict):
+                    continue
+                tool_name = entry.get("tool_name") or entry.get("name") or entry.get("tool")
+                if not tool_name:
+                    continue
+                duration_ms = entry.get("duration_ms")
+                if isinstance(duration_ms, float):
+                    duration_ms = int(duration_ms)
+                elif not isinstance(duration_ms, int):
+                    duration_ms = None
+                self._tool_call_repository.add(
+                    ToolCall(
+                        id=uuid.uuid4(),
+                        message_id=assistant_message_id,
+                        tool_name=str(tool_name),
+                        arguments=jsonable_encoder(entry.get("arguments") or {}),
+                        result=jsonable_encoder(entry.get("result")),
+                        duration_ms=duration_ms,
+                        error=jsonable_encoder(entry.get("error"))
+                        if entry.get("error") is not None
+                        else None,
+                    )
+                )
+                added_tool_calls = True
         await self._thread_message_repository.flush()
+        if added_tool_calls:
+            await self._tool_call_repository.flush()

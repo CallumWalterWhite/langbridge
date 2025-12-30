@@ -26,6 +26,7 @@ from repositories.semantic_model_repository import SemanticModelRepository
 from repositories.agent_repository import AgentRepository
 from repositories.thread_message_repository import ThreadMessageRepository
 from repositories.thread_repository import ThreadRepository
+from repositories.tool_call_repository import ToolCallRepository
 from services.auth_service import AuthService
 from services.organization_service import OrganizationService
 from services.agent_service import AgentService
@@ -88,6 +89,7 @@ class Container(containers.DeclarativeContainer):
     semantic_model_repository = providers.Factory(SemanticModelRepository, session=async_session)
     thread_repository = providers.Factory(ThreadRepository, session=async_session)
     thread_message_repository = providers.Factory(ThreadMessageRepository, session=async_session)
+    tool_call_repository = providers.Factory(ToolCallRepository, session=async_session)
     agent_definition_repository = providers.Factory(AgentRepository, session=async_session)
 
     environment_service = providers.Factory(
@@ -152,6 +154,7 @@ class Container(containers.DeclarativeContainer):
         ThreadService,
         thread_repository=thread_repository,
         thread_message_repository=thread_message_repository,
+        tool_call_repository=tool_call_repository,
         project_repository=project_repository,
         organization_service=organization_service,
     )

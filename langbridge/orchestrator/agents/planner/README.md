@@ -80,6 +80,16 @@ The planner emits an ordered list of steps where each step references an agent
 and articulates both input payload and expected output. Cross-step references
 use `step-{n}` identifiers (e.g. the Visual step references analyst results).
 
+## Tool Question Rewrites
+
+Planner steps normalize the user question to better fit each tool:
+
+- Analyst steps remove visual/web directives to keep SQL intents crisp.
+- WebSearch steps strip explicit "search the web" phrasing for cleaner queries.
+- DocRetrieval steps prefix a synthesis instruction so downstream research is grounded.
+
+When a rewrite is applied, the original question is preserved in `input.original_question`.
+
 Example (`AnalystThenVisual`):
 
 ```jsonc
@@ -123,6 +133,22 @@ Example (`AnalystThenVisual`):
 - `prefer_routes` / `avoid_routes`: list of route names to nudge scoring.
 - `require_web_search`, `require_deep_research`, `require_visual`, `require_sql`: additive boosts.
 - `previous_route` + retry flags (`retry_due_to_error`, `retry_due_to_empty`, `retry_due_to_low_sources`) penalise repeats.
+
+## Tool Rewrites (Context)
+
+`reasoning.tool_rewrites` can provide LLM-authored overrides for tool inputs. Each entry may include:
+
+- `agent`: target tool (`Analyst`, `WebSearch`, `DocRetrieval`, `Visual`).
+- `question`/`query`: rewritten input for the tool.
+- Optional: `step_id`, `source_step_ref`, `follow_up`.
+
+## Entity Resolution (SQL)
+
+When the supervisor detects empty SQL results and an entity-like phrase in the query,
+it can inject `reasoning.entity_resolution` into context. The planner will then:
+
+- Run a short "list entity names" analyst step to surface valid values.
+- Re-run the original question with the probe step referenced via `source_step_ref`.
 
 ## Extending the Planner
 
