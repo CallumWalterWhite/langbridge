@@ -169,7 +169,7 @@ class SqlAnalystTool:
                 active_request = query_request
 
         try:
-            canonical_sql = self._generate_canonical_sql(active_request)
+            canonical_sql = await asyncio.to_thread(self._generate_canonical_sql, active_request)
         except Exception as exc:  # pragma: no cover - defensive: LLM failure surfaces clean error
             self.logger.exception("LLM failed to generate SQL for model %s", self.name)
             return AnalystQueryResponse(

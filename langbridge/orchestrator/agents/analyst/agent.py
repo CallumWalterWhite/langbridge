@@ -1,6 +1,7 @@
 """
 Analyst agent that selects between multiple SQL analyst tools.
 """
+import asyncio
 import logging
 from typing import Any, Optional, Sequence
 
@@ -68,7 +69,7 @@ class AnalystAgent:
             filters=filters,
             limit=limit if limit is not None else 1000,
         )
-        tool = self.selector.select(request)
+        tool = await asyncio.to_thread(self.selector.select, request)
         self.logger.info("AnalystAgent selected semantic model '%s'", tool.name)
         return await tool.arun(request)
 

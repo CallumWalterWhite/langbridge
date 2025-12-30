@@ -2,6 +2,7 @@
 Supervisor orchestrator that coordinates planner, analyst, research, and visual agents.
 """
 
+import asyncio
 import json
 import logging
 import re
@@ -812,7 +813,7 @@ class SupervisorOrchestrator:
                 extra_context=extra_context,
                 constraints=planning_constraints,
             )
-            plan = self.planning_agent.plan(planner_request)
+            plan = await asyncio.to_thread(self.planning_agent.plan, planner_request)
             artifacts = await self._execute_plan(
                 plan,
                 user_query=user_query,
@@ -827,7 +828,8 @@ class SupervisorOrchestrator:
                 "plan_route": plan.route,
                 "extra_context": extra_context,
             }
-            final_decision = self.reasoning_agent.evaluate(
+            final_decision = await asyncio.to_thread(
+                self.reasoning_agent.evaluate,
                 iteration=iteration,
                 plan=plan,
                 artifacts=artifacts,
@@ -989,7 +991,7 @@ class SupervisorOrchestrator:
                 step_start = time.perf_counter()
                 tool_args = {"step_id": step.id, "input": step.input}
                 try:
-                    visualization, tool_args = self._run_visual_step(
+                    visualization, tool_args = await self._run_visual_step(
                         step,
                         user_query=user_query,
                         title=title,
@@ -1132,7 +1134,8 @@ class SupervisorOrchestrator:
             conversation_context = self._merge_conversation_context(conversation_context, tool_context)
 
         if tool_context:
-            rewritten = self._rewrite_question_with_llm(
+            rewritten = await asyncio.to_thread(
+                self._rewrite_question_with_llm,
                 question=question,
                 tool_context=tool_context,
                 original_question=step.input.get("original_question") or user_query,
@@ -1167,7 +1170,7 @@ class SupervisorOrchestrator:
             tool_args["source_step_ref"] = source_step_ref
         return analyst_result, data_payload, tool_args
 
-    def _run_visual_step(
+    async def _run_visual_step(
         self,
         step: PlanStep,
         *,
@@ -1181,7 +1184,8 @@ class SupervisorOrchestrator:
         data = referenced_payload or fallback_payload or {"columns": [], "rows": []}
         viz_title = title or f"Visualization for '{user_query}'"
         user_intent = step.input.get("user_intent")
-        visualization = self.visual_agent.run(
+        visualization = await asyncio.to_thread(
+            self.visual_agent.run,
             data,
             title=viz_title,
             question=user_query,
