@@ -802,6 +802,7 @@ class SupervisorOrchestrator:
         final_decision: Optional[ReasoningDecision] = None
         extra_context: Dict[str, Any] = dict(planning_context or {})
         iteration_diagnostics: Dict[str, Any] = {}
+        iteration_diagnostics_history: list[Dict[str, Any]] = []
         iterations_completed = 0
 
         for iteration in range(self.reasoning_agent.max_iterations):
@@ -828,6 +829,10 @@ class SupervisorOrchestrator:
                 "plan_route": plan.route,
                 "extra_context": extra_context,
             }
+            if artifacts.clarifying_question:
+                iteration_diagnostics["clarifying_question"] = artifacts.clarifying_question
+            iteration_diagnostics_history.append(iteration_diagnostics)
+            
             final_decision = await asyncio.to_thread(
                 self.reasoning_agent.evaluate,
                 iteration=iteration,
@@ -872,6 +877,7 @@ class SupervisorOrchestrator:
             "sql_canonical": analyst_result.sql_canonical,
             "error": analyst_result.error,
             "dialect": analyst_result.dialect,
+            "iterations_diagnostics": iteration_diagnostics_history,
             "plan": plan.model_dump(),
         }
         if artifacts.research_result:

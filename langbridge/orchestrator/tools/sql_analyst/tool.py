@@ -14,11 +14,11 @@ from typing import Any, Dict, List, Optional, Sequence
 
 import sqlglot
 
+from connectors import SqlConnector
 from orchestrator.llm.provider import LLMProvider
 from .interfaces import (
     AnalystQueryRequest,
     AnalystQueryResponse,
-    DatabaseConnector,
     QueryResult,
     SemanticModel,
     UnifiedSemanticModel,
@@ -75,7 +75,7 @@ class SqlAnalystTool:
         *,
         llm: LLMProvider,
         semantic_model: SemanticModelLike,
-        connector: DatabaseConnector,
+        connector: SqlConnector,
         dialect: str,
         logger: Optional[logging.Logger] = None,
         llm_temperature: float = 0.0,
@@ -285,10 +285,13 @@ class SqlAnalystTool:
             - Use ANSI-friendly constructs (CAST, COALESCE, CASE, DATE_PART, standard aggregates) that transpile cleanly.
             - Avoid Postgres-only syntax such as :: type casts, EXTRACT(... FROM ...), DATE_TRUNC, ILIKE, array operators, or JSON-specific features.
             - For date extracts, use strftime function instead.
+            - Use semantic search results to resolve ambiguous entity references.
             """
             f"{limit_hint}"
             f"{filters_text}"
             f"{conversation_text}"
+            f"Semantic search results:\n"
+            f"{request.semantic_search_results}\n"
             f"Question: {request.question}\n"
             "Return SQL in PostgreSQL dialect only. No comments or explanation."
         )

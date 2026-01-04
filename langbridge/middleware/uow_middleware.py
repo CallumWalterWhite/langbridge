@@ -1,11 +1,10 @@
 import logging
-from dependency_injector import providers
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import Response
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from ioc import Container
+from db.session_context import reset_session, set_session
 
 
 class UnitOfWorkMiddleware(BaseHTTPMiddleware):
@@ -19,18 +18,21 @@ class UnitOfWorkMiddleware(BaseHTTPMiddleware):
         call_next,
     ) -> Response:
         container: Container = request.app.state.container  # type: ignore[attr-defined]
-        session_factory: async_sessionmaker[AsyncSession] = container.async_session_factory()
-        session: AsyncSession = session_factory()
-
-        with container.async_session.override(providers.Object(session)):
-            try:
-                self.logger.debug("UnitOfWork: starting async DB session")
-                response = await call_next(request)
-                await session.commit()
-                return response
-            except Exception as exc:
-                self.logger.error("UnitOfWork: rolling back due to exception: %s", exc)
+        session_factory = container.async_session_factory()
+        session = session_factory()
+        token = set_session(session)
+        try:
+            self.logger.debug("UnitOfWork: starting async DB session")
+            response = await call_next(request)
+            if response.status_code >= 400:
                 await session.rollback()
-                raise
-            finally:
-                await session.close()
+            else:
+                await session.commit()
+            return response
+        except BaseException as exc:
+            self.logger.error("UnitOfWork: rolling back due to exception: %s", exc)
+            await session.rollback()
+            raise
+        finally:
+            reset_session(token)
+            await session.close()

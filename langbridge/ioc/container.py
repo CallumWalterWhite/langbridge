@@ -1,13 +1,13 @@
 from dependency_injector import containers, providers
 
 from db import (
-    async_session_scope,
     create_async_engine_for_url,
     create_async_session_factory,
     create_engine_for_url,
     create_session_factory,
     session_scope,
 )
+from db.session_context import get_session
 from auth.register import create_oauth_client
 from repositories.connector_repository import ConnectorRepository
 from repositories.environment_repository import OrganizationEnvironmentSettingRepository
@@ -27,6 +27,7 @@ from repositories.agent_repository import AgentRepository
 from repositories.thread_message_repository import ThreadMessageRepository
 from repositories.thread_repository import ThreadRepository
 from repositories.tool_call_repository import ToolCallRepository
+from repositories.semantic_search_repository import SemanticVectorStoreEntryRepository
 from services.auth_service import AuthService
 from services.organization_service import OrganizationService
 from services.agent_service import AgentService
@@ -34,6 +35,7 @@ from semantic.semantic_model_builder import SemanticModelBuilder
 from services.semantic_model_service import SemanticModelService
 from services.orchestrator_service import OrchestratorService
 from services.thread_service import ThreadService
+from services.semantic_search_sercice import SemanticSearchService
 from config import settings
 
 
@@ -71,10 +73,7 @@ class Container(containers.DeclarativeContainer):
     )
 
     session = providers.Resource(session_scope, session_factory=session_factory)
-    async_session = providers.Resource(
-        async_session_scope,
-        session_factory=async_session_factory,
-    )
+    async_session = providers.Factory(get_session)
 
     user_repository = providers.Factory(UserRepository, session=async_session)
     
@@ -91,6 +90,7 @@ class Container(containers.DeclarativeContainer):
     thread_message_repository = providers.Factory(ThreadMessageRepository, session=async_session)
     tool_call_repository = providers.Factory(ToolCallRepository, session=async_session)
     agent_definition_repository = providers.Factory(AgentRepository, session=async_session)
+    semantic_vector_store_repository = providers.Factory(SemanticVectorStoreEntryRepository, session=async_session)
 
     environment_service = providers.Factory(
         EnvironmentService,
@@ -139,6 +139,11 @@ class Container(containers.DeclarativeContainer):
         SemanticModelBuilder,
         connector_service=connector_service,
     )
+    
+    semantic_search_service = providers.Factory(
+        SemanticSearchService,
+        vector_store_entry_repository=semantic_vector_store_repository,
+    )
 
     semantic_model_service = providers.Factory(
         SemanticModelService,
@@ -148,6 +153,7 @@ class Container(containers.DeclarativeContainer):
         project_repository=project_repository,
         connector_service=connector_service,
         agent_service=agent_service,
+        semantic_search_service=semantic_search_service,
     )
 
     thread_service = providers.Factory(

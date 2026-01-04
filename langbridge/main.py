@@ -1,4 +1,5 @@
 from contextlib import asynccontextmanager
+import inspect
 
 from fastapi import FastAPI
 from fastapi.routing import APIRoute
@@ -31,11 +32,15 @@ wire_packages(
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Lifespan context manager to handle startup and shutdown events."""
-    await container.init_resources()
+    init_result = container.init_resources()
+    if inspect.isawaitable(init_result):
+        await init_result
     initialize_database(container.engine())
     app.state.container = container
     yield
-    await container.shutdown_resources()
+    shutdown_result = container.shutdown_resources()
+    if inspect.isawaitable(shutdown_result):
+        await shutdown_result
 
 setup_logging(service_name=settings.PROJECT_NAME)
 

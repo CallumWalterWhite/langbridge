@@ -128,6 +128,7 @@ class FaissConnector(ManagedVectorDB):
         vector: Sequence[float],
         *,
         top_k: int = 5,
+        metadata_filters: Optional[Dict[str, Any]] = None,
     ) -> List[Dict[str, Any]]:
         if top_k <= 0:
             return []
@@ -137,34 +138,37 @@ class FaissConnector(ManagedVectorDB):
             query = self._normalize_matrix(self._to_matrix([vector]))
         except ValueError as exc:  # pragma: no cover - defensive parsing guard
             raise ConnectorError(f"Invalid query vector: {exc}") from exc
-
         async with self._lock:
             await self._ensure_loaded()
-            if not self._index or self._dimension is None or self._index.ntotal == 0:
-                return []
+            if self._index is None or self._dimension is None:
+                raise ConnectorError("FAISS index unavailable; call test_connection first.")
             if query.shape[1] != self._dimension:
                 raise ConnectorError(
-                    f"Query dimension {query.shape[1]} does not match index dimension {self._dimension}."
+                    f"Query vector dimension {query.shape[1]} does not match index dimension {self._dimension}."
                 )
-
-            top = min(int(top_k), int(self._index.ntotal)) or 1
             try:
-                scores, ids = self._index.search(query, top)
+                distances, indices = self._index.search(query, top_k)
             except Exception as exc:  # pragma: no cover - relies on FAISS internals
                 raise ConnectorError(f"FAISS search failed: {exc}") from exc
 
-            matches: List[Dict[str, Any]] = []
-            for idx, score in zip(ids[0], scores[0]):
-                if idx < 0:
+            results: List[Dict[str, Any]] = []
+            for idx, dist in zip(indices[0], distances[0]):
+                if idx == -1:
                     continue
-                matches.append(
-                    {
-                        "id": int(idx),
-                        "score": float(score),
-                        "metadata": self._metadata.get(int(idx)),
-                    }
-                )
-            return matches
+                metadata_entry = self._metadata.get(int(idx))
+                
+                if metadata_filters:
+                    if not metadata_entry or not all(
+                        item in metadata_entry.items() for item in metadata_filters.items()
+                    ):
+                        continue
+                
+                results.append({
+                    "id": int(idx),
+                    "score": float(dist),
+                    "metadata": metadata_entry,
+                })
+            return results
 
     async def _ensure_loaded(self) -> None:
         if self._loaded:

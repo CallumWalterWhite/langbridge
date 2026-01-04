@@ -231,6 +231,7 @@ class VecotorDBConnector(Connector):
         vector: Sequence[float],
         *,
         top_k: int = 5,
+        metadata_filters: Optional[Dict[str, Any]] = None,
     ) -> List[Dict[str, Any]]:
         """Search similar vectors and return match metadata payloads."""
         raise NotImplementedError

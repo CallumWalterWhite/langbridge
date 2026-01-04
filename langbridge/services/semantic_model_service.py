@@ -16,6 +16,8 @@ from db.auth import Project
 from db.semantic import SemanticModelEntry
 from errors.application_errors import BusinessValidationError
 from errors.connector_errors import ConnectorError
+from services.semantic_search_sercice import SemanticSearchService
+from repositories.semantic_search_repository import SemanticVectorStoreEntryRepository
 from repositories.organization_repository import (
     OrganizationRepository,
     ProjectRepository,
@@ -42,6 +44,7 @@ class SemanticModelService:
         project_repository: ProjectRepository,
         connector_service: ConnectorService,
         agent_service: AgentService,
+        semantic_search_service: SemanticSearchService,
     ) -> None:
         self._repository = repository
         self._builder = builder
@@ -49,6 +52,7 @@ class SemanticModelService:
         self._project_repository = project_repository
         self._connector_service = connector_service
         self._agent_service = agent_service
+        self._semantic_search_service = semantic_search_service
         
         self._vector_factory = VectorDBConnectorFactory()
 
@@ -130,13 +134,15 @@ class SemanticModelService:
                     f"Semantic model failed validation: {exc}"
                 ) from exc
 
-        await self._populate_vector_indexes(payload, request.connector_id)
+        semantic_id: UUID = uuid.uuid4()
+
+        await self._populate_vector_indexes(payload, request.connector_id, semantic_id)
 
         model_yaml = yaml.safe_dump(payload, sort_keys=False)
         content_json = json.dumps(payload)
 
         entry = SemanticModelEntry(
-            id=uuid.uuid4(),
+            id=semantic_id,
             connector_id=request.connector_id,
             organization_id=request.organization_id,
             project_id=request.project_id,
@@ -160,7 +166,7 @@ class SemanticModelService:
             raise BusinessValidationError("Semantic model not found")
         return model
 
-    async def _populate_vector_indexes(self, payload: Dict[str, Any], connector_id: UUID) -> None:
+    async def _populate_vector_indexes(self, payload: Dict[str, Any], connector_id: UUID, semantic_id: UUID) -> None:
         vector_targets = self._discover_vectorized_columns(payload)
         if not vector_targets:
             return
@@ -191,8 +197,9 @@ class SemanticModelService:
         vector_managed_class_ref: Type[ManagedVectorDB] = (
             self._vector_factory.get_managed_vector_db_class_reference(vector_db_type)
         )
+        vector_id: str = f"semantic_model_{connector_id.hex}_{semantic_id.hex}_idx"
         vector_managed_instance: ManagedVectorDB = await vector_managed_class_ref.create_managed_instance(
-            index_name=f"semantic_model_{connector_id.hex}_vectors",
+            index_name=vector_id,
         )
         await vector_managed_instance.test_connection()
 
@@ -245,16 +252,16 @@ class SemanticModelService:
                     f"Failed to persist vectors for {target['entity']}.{target['column']}: {exc}"
                 ) from exc
 
-            vector_entries = []
-            for idx, (value, vector) in enumerate(zip(values, embeddings, strict=False)):
-                entry: Dict[str, Any] = {"value": value, "embedding": vector}
-                if idx < len(vector_ids):
-                    entry["vector_id"] = vector_ids[idx]
-                vector_entries.append(entry)
+            # vector_entries = []
+            # for idx, (value, vector) in enumerate(zip(values, embeddings, strict=False)):
+            #     entry: Dict[str, Any] = {"value": value, "embedding": vector}
+            #     if idx < len(vector_ids):
+            #         entry["vector_id"] = vector_ids[idx]
+            #     vector_entries.append(entry)
 
-            if not vector_entries:
-                target["meta"].pop("vector_index", None)
-                continue
+            # if not vector_entries:
+            #     target["meta"].pop("vector_index", None)
+            #     continue
 
             vector_reference = self._build_vector_reference(
                 vector_db_type=vector_db_type,
@@ -266,7 +273,9 @@ class SemanticModelService:
 
             vector_index_meta: Dict[str, Any] = {
                 "model": embedder.embedding_model,
-                "values": vector_entries,
+                "dimension": vector_length,
+                "size": len(values),
+                "vector_namespace": vector_id,
             }
             # Persist the backing vector store metadata so the orchestrator can evolve to read from it.
             vector_index_meta["vector_store"] = {

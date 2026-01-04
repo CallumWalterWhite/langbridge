@@ -7,23 +7,6 @@ from typing import Any, Optional, Protocol, Sequence
 
 from pydantic import BaseModel, Field, field_validator
 
-class DatabaseConnector(Protocol):
-    """
-    Minimal protocol describing the execution surface the SQL analyst tool relies on.
-    """
-
-    DIALECT: str | Any
-
-    async def execute(
-        self,
-        sql: str,
-        *,
-        params: dict[str, Any] | None = None,
-        max_rows: int | None = None,
-        timeout_s: int | None = None,
-    ) -> "ConnectorQueryResult":
-        ...
-
 
 class ConnectorQueryResult(Protocol):
     """
@@ -79,6 +62,7 @@ class SemanticModel(BaseModel):
     def _normalise_entity_keys(cls, value: dict[str, dict[str, Any]]) -> dict[str, dict[str, Any]]:
         return {str(key): entity for key, entity in (value or {}).items()}
     
+    
 class UnifiedSemanticModel(BaseModel):
     """
     Wrapper that stitches multiple semantic models together for cross-model querying.
@@ -107,6 +91,10 @@ class AnalystQueryRequest(BaseModel):
     )
     filters: dict[str, Any] | None = None
     limit: int | None = Field(default=1000, ge=1)
+    semantic_search_results: dict[str, list[dict[str, Any]]] | None = Field(
+        default=None,
+        description="Optional pre-fetched semantic search results to assist SQL generation.",
+    )
 
 
 class AnalystQueryResponse(BaseModel):

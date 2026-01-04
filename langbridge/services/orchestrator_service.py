@@ -223,6 +223,7 @@ class OrchestratorService:
 
             sql_connector = connector_instances[connector_id]
             semantic_model = load_semantic_model(entry.content_yaml)
+            semantic_searches = []
             base_dialect = None
             if isinstance(semantic_model, UnifiedSemanticModel):
                 if not semantic_model.name:
@@ -236,6 +237,8 @@ class OrchestratorService:
                 if not semantic_model.connector:
                     semantic_model.connector = connector_entry.name
                 base_dialect = semantic_model.dialect
+                
+                
             dialect = (base_dialect or getattr(sql_connector.DIALECT, "name", "postgres")).lower()
             self._logger.debug(
                 "request_id=%s configured tool model=%s connector=%s dialect=%s unified=%s",
@@ -485,6 +488,20 @@ class OrchestratorService:
             cleaned = value.strip()
             return cleaned or None
         return None
+    
+    @staticmethod
+    def get_vector_semantic_searches(semantic_model: SemanticModel) -> list[dict[str, Any]]:
+        searches = []
+        vectorised_dimensions = [dim for dim in semantic_model.dimensions if dim["vectorised"] is True] 
+        for dimension in vectorised_dimensions:
+            search = {
+                "name": f"semantic_search_{dimension['name']}",
+                "type": "semantic_search",
+                "column": dimension["name"],
+                "metadata_filters": dimension.get("metadata_filters", {}),
+            }
+            searches.append(search)   
+    
 
     async def _summarize_response(
         self,
