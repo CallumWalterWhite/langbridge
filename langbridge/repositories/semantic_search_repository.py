@@ -7,6 +7,9 @@ from db.associations import vector_entry_semantic
 
 class SemanticVectorStoreEntryRepository(AsyncBaseRepository):
     """Repository for managing SemanticVectorStoreEntry entities."""
+    
+    def __init__(self, session):
+        super().__init__(session, SemanticVectorStoreEntry)
 
     async def get_by_semantic_model_id(
         self,

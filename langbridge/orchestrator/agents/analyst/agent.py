@@ -30,7 +30,7 @@ class AnalystAgent:
         self._sql_tools = list(sql_tools)
         if not self._sql_tools:
             raise ValueError("At least one SqlAnalystTool must be provided to AnalystAgent.")
-        self.selector = SemanticToolSelector(self.llm, self._tools)
+        self.selector = SemanticToolSelector(self.llm, self._sql_tools)
         self.logger = logger or logging.getLogger(__name__)
 
     def answer(
