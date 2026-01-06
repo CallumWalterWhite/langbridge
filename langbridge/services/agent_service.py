@@ -121,6 +121,16 @@ class AgentService:
     async def list_llm_connection_secrets(self) -> List[LLMConnectionSecretResponse]:
         connections = await self._llm_repository.get_all()
         return [LLMConnectionSecretResponse.model_validate(conn) for conn in connections]
+    
+    @internal_service
+    async def get_llm_connection_secret(
+        self,
+        connection_id: uuid.UUID
+    ) -> Optional[LLMConnectionSecretResponse]:
+        connection: LLMConnection | None = await self._llm_repository.get_by_id(connection_id)
+        if not connection:
+            return None
+        return LLMConnectionSecretResponse.model_validate(connection)
 
     @internal_service
     async def get_llm_connection(

@@ -392,6 +392,7 @@ class ManagedVectorDB(VecotorDBConnector):
     @staticmethod
     @abstractmethod
     async def create_managed_instance(
+        kwargs: Any,
         logger: Optional[logging.Logger] = None,
     ) -> "ManagedVectorDB":
         """Create and return a new managed vector DB instance."""

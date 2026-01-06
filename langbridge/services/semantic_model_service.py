@@ -199,7 +199,9 @@ class SemanticModelService:
         )
         vector_id: str = f"semantic_model_{connector_id.hex}_{semantic_id.hex}_idx"
         vector_managed_instance: ManagedVectorDB = await vector_managed_class_ref.create_managed_instance(
-            index_name=vector_id,
+            kwargs={
+                "index_name": vector_id
+            },
         )
         await vector_managed_instance.test_connection()
 

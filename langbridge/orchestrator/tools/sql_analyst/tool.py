@@ -291,14 +291,15 @@ class SqlAnalystTool:
             f"{filters_text}"
             f"{conversation_text}"
             f"Semantic search results:\n"
-            f"{request.semantic_search_results}\n"
+            f"{request.semantic_search_results or 'None'}\n"
             f"Question: {request.question}\n"
             "Return SQL in PostgreSQL dialect only. No comments or explanation."
         )
 
     def _generate_canonical_sql(self, request: AnalystQueryRequest) -> str:
         prompt = self._build_prompt(request)
-        self.logger.debug("Invoking LLM for model %s", self.name)
+        self.logger.info("Invoking LLM for model %s", self.name)
+        self.logger.info("Prompt:\n%s", prompt)
         return self.llm.complete(prompt, temperature=self.llm_temperature)
 
     async def _maybe_augment_request_with_vectors(self, request: AnalystQueryRequest) -> AnalystQueryRequest:

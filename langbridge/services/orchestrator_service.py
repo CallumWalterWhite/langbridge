@@ -6,13 +6,15 @@ import time
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
-from typing import Any, Iterable, Optional, Sequence
+from typing import Any, Iterable, Optional, Sequence, Type
 
 from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
 from langchain_core.language_models import BaseChatModel
 
 from connectors.config import ConnectorRuntimeType
 from errors.application_errors import BusinessValidationError
+from connectors.registry import VectorDBConnectorFactory
+from connectors.connector import ManagedVectorDB, VectorDBType
 from orchestrator.agents.analyst import AnalystAgent
 from orchestrator.agents.deep_research import DeepResearchAgent
 from orchestrator.agents.planner import PlanningAgent, PlanningConstraints
@@ -32,6 +34,7 @@ from orchestrator.definitions import (
     ResponseMode,
 )
 from orchestrator.tools.sql_analyst import SqlAnalystTool, load_semantic_model
+from orchestrator.tools.semantic_search import SemanticSearchTool
 from orchestrator.llm.provider import (
     LLMProvider,
     create_provider
@@ -87,6 +90,7 @@ class OrchestratorService:
         self._agent_service = agent_service
         self._thread_service = thread_service
         self._logger = logging.getLogger(__name__)
+        self._vector_factory = VectorDBConnectorFactory()
 
     async def chat(
         self,
@@ -192,6 +196,7 @@ class OrchestratorService:
 
         connector_instances: dict[str, Any] = {}
         tools: list[SqlAnalystTool] = []
+        semantic_search_tools: list[SemanticSearchTool] = []
 
         if tool_config.allow_sql and not filtered_entries:
             self._logger.warning(
@@ -237,7 +242,12 @@ class OrchestratorService:
                 if not semantic_model.connector:
                     semantic_model.connector = connector_entry.name
                 base_dialect = semantic_model.dialect
-                
+
+                sematic_searches = await self._build_semantic_search_tools(
+                        llm_provider,
+                        semantic_model,
+                    )
+                semantic_search_tools.extend(sematic_searches)
                 
             dialect = (base_dialect or getattr(sql_connector.DIALECT, "name", "postgres")).lower()
             self._logger.debug(
@@ -263,7 +273,7 @@ class OrchestratorService:
             raise BusinessValidationError("No semantic models or connectors available for SQL analysis.")
 
         analyst_agent: AnalystAgent | None = (
-            AnalystAgent(llm_provider, sql_tools=tools, search_tools=[])
+            AnalystAgent(llm_provider, sql_tools=tools, search_tools=semantic_search_tools)
             if tools
             else None
         )
@@ -489,18 +499,75 @@ class OrchestratorService:
             return cleaned or None
         return None
     
-    @staticmethod
-    def get_vector_semantic_searches(semantic_model: SemanticModel) -> list[dict[str, Any]]:
+    def _get_vector_semantic_searches(self, semantic_model: SemanticModel) -> list[dict[str, Any]]:
         searches = []
-        vectorised_dimensions = [dim for dim in semantic_model.dimensions if dim["vectorised"] is True] 
+        vectorised_dimensions = [semantic_model.dimensions[dim] for dim in semantic_model.dimensions if semantic_model.dimensions[dim]["vectorized"] is True] 
         for dimension in vectorised_dimensions:
+            entity_name = dimension.get("entity")
+            column_name = dimension.get("column")
+            vector_index = semantic_model.entities[entity_name]["columns"][column_name].get("vector_index", {})
+            self._logger.info("Found vectorized dimension: %s", dimension)
             search = {
-                "name": f"semantic_search_{dimension['name']}",
-                "type": "semantic_search",
-                "column": dimension["name"],
                 "metadata_filters": dimension.get("metadata_filters", {}),
+                "vector_parameters": vector_index
             }
-            searches.append(search)   
+            searches.append(search)
+        return searches
+            
+    async def _build_semantic_search_tools(
+        self,
+        llm_provider: LLMProvider,
+        semantic_model: SemanticModel,
+    ) -> list[SemanticSearchTool]:
+        tools: list[SemanticSearchTool] = []
+        vector_searches = self._get_vector_semantic_searches(semantic_model)
+        self._logger.info(
+            "Building %d semantic search tools for model %s",
+            len(vector_searches),
+            semantic_model.name,
+        )
+        for vector_search in vector_searches:
+            vector_params = vector_search.get("vector_parameters", {})
+            if not vector_params:
+                self._logger.warning(
+                    "Skipping semantic search tool for model %s due to missing vector parameters in %s",
+                    semantic_model.name, vector_search
+                )
+                continue
+            self._logger.info(
+                "Building semantic search tool for model %s with vector params %s",
+                semantic_model.name,
+                vector_params,
+            )
+            #TODO: Support other vector DB types (e.g., Pinecone, Weaviate) based on vector_params
+            tool = await self._build_semantic_search_tool(
+                llm_provider,
+                vector_type=VectorDBType.FAISS,
+                vector_params=vector_params,
+            )
+            tools.append(tool)
+        return tools
+
+    async def _build_semantic_search_tool(
+        self,
+        llm_provider: LLMProvider,
+        vector_type: VectorDBType,
+        vector_params: dict[str, Any],
+    ) -> SemanticSearchTool:
+        vector_managed_class_ref: Type[ManagedVectorDB] = (
+            self._vector_factory.get_managed_vector_db_class_reference(vector_type)
+        )
+        vector_store: ManagedVectorDB = await vector_managed_class_ref.create_managed_instance(
+            kwargs={
+                "index_name": vector_params.get("vector_namespace")
+            },
+            logger=self._logger,
+        )
+        return SemanticSearchTool(
+            semantic_name=vector_params.get("semantic_name", "default_search"),
+            llm=llm_provider,
+            vector_store=vector_store
+        )
     
 
     async def _summarize_response(

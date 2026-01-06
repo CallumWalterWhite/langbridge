@@ -1,7 +1,9 @@
 import asyncio
 import json
+import logging
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence
+import uuid
 
 import numpy as np
 
@@ -48,8 +50,12 @@ class FaissConnector(ManagedVectorDB):
             
     @staticmethod
     async def create_managed_instance(
-        index_name: str, # change to config param later
-        logger = None):
+        kwargs: Any,
+        logger: Optional[logging.Logger] = None,
+    ) -> "FaissConnector":
+        index_name: str = kwargs.get("index_name")
+        if not index_name:
+            raise ConnectorError("index_name is required to create a FAISS managed instance.")
         if logger is None:
             logger = get_root_logger()
         config = FaissConnectorConfig(location=f"~/langbridge/faiss_data/{index_name}")

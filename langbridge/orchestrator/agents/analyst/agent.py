@@ -90,9 +90,12 @@ class AnalystAgent:
         if self._search_tools:
             semantic_search_results = self.search_semantically(
                 query=request.question,
-                top_k=5,
+                top_k=10,
             )
+            self.logger.info("Semantic search results: %s", semantic_search_results)
             request.semantic_search_results = semantic_search_results
+        else:
+            self.logger.info("No semantic search tools available; skipping semantic search.")
         return tool.run(request)
         
     async def answer_async(
@@ -115,9 +118,12 @@ class AnalystAgent:
         if self._search_tools:
             semantic_search_results = await self.search_semantically_async(
                 query=request.question,
-                top_k=5,
+                top_k=10,
             )
+            self.logger.info("Semantic search results: %s", semantic_search_results)
             request.semantic_search_results = semantic_search_results
+        else:
+            self.logger.info("No semantic search tools available; skipping semantic search.")
         return await tool.arun(request)
 
 
