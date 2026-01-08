@@ -31,13 +31,13 @@ class EmbeddingProvider:
     configuration: dict
     embedding_model: str | None = None
     _client: Any | None = None  # type: ignore[name-defined]
-    _batch_size: int = 64
+    _batch_size: int = 1000
 
     def __post_init__(self) -> None:
         self.configuration = dict(self.configuration or {})
         self.embedding_model = self._resolve_embedding_model()
         self._client = self._build_client()
-        self._batch_size = int(self.configuration.get("embedding_batch_size", 64))
+        self._batch_size = int(self.configuration.get("embedding_batch_size", 1000))
 
     @classmethod
     def from_llm_connection(cls, connection: LLMConnectionSecretResponse) -> "EmbeddingProvider":

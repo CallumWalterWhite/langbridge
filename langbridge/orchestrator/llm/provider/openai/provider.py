@@ -90,6 +90,32 @@ class OpenAIProvider(LLMProvider):
         chat_model = self.create_chat_model(temperature=temperature, max_tokens=max_tokens)
         response = await chat_model.ainvoke(messages)
         return response
+    
+    async def create_embeddings(
+        self,
+        texts: list[str],
+    ) -> list[list[float]]:
+        if ChatOpenAI is None:  # pragma: no cover - optional dependency
+            raise ProviderConfigurationError(str(_IMPORT_ERROR))
+        
+        from langchain.embeddings.openai import OpenAIEmbeddings
+
+        if not texts:
+            return []
+
+        embedding_model = (
+            self.configuration.get("embedding_model")
+            or self.configuration.get("embedding_deployment")
+            or self.configuration.get("embedding")
+            or "text-embedding-3-small"
+        )
+        params = {key: self.configuration.get(key) for key in _ALLOWED_CONFIG_KEYS if key in self.configuration}
+        params = self._clean_kwargs(params)
+        params.setdefault("model", embedding_model)
+        params.setdefault("api_key", self.api_key)
+
+        embedding_model = OpenAIEmbeddings(**params)
+        embeddings = await embedding_model.aembed_documents(texts)
+        return embeddings
 
 __all__ = ["OpenAIProvider"]
-

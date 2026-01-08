@@ -31,7 +31,6 @@ from services.agent_service import AgentService
 from services.connector_service import ConnectorService
 from utils.embedding_provider import EmbeddingProvider, EmbeddingProviderError
 
-VECTOR_VALUE_LIMIT = 200
 VALUE_MAX_LENGTH = 256
 
 
@@ -383,10 +382,9 @@ class SemanticModelService:
                 f"SELECT DISTINCT {attempt['column']} "
                 f"FROM {attempt['table']} "
                 f"WHERE {attempt['column']} IS NOT NULL "
-                f"LIMIT {VECTOR_VALUE_LIMIT}"
             )
             try:
-                result = await sql_connector.execute(query, max_rows=VECTOR_VALUE_LIMIT)
+                result = await sql_connector.execute(query)
             except (ConnectorError, Exception) as exc:  # pragma: no cover - depends on connector runtime
                 last_error = exc
                 continue
@@ -446,6 +444,4 @@ class SemanticModelService:
                 continue
             seen.add(lowered)
             deduped.append(text)
-            if len(deduped) >= VECTOR_VALUE_LIMIT:
-                break
         return deduped

@@ -147,3 +147,10 @@ class LLMProvider(ABC):
         max_tokens: int | None = None,
     ) -> Union[dict[str, Any], BaseMessage]:
         """Asynchronously invoke the model with a list of messages and return the raw response."""
+        
+    @abstractmethod
+    async def create_embeddings(
+        self,
+        texts: list[str],
+    ) -> list[list[float]]:
+        """Asynchronously create embeddings for a list of texts."""

@@ -153,7 +153,7 @@ class FaissConnector(ManagedVectorDB):
                     f"Query vector dimension {query.shape[1]} does not match index dimension {self._dimension}."
                 )
             try:
-                distances, indices = self._index.search(query, top_k)
+                distances, indices = self._index.search(query.reshape(1, -1), top_k)
             except Exception as exc:  # pragma: no cover - relies on FAISS internals
                 raise ConnectorError(f"FAISS search failed: {exc}") from exc
 
@@ -259,16 +259,17 @@ class FaissConnector(ManagedVectorDB):
 
     @staticmethod
     def _normalize_matrix(matrix: np.ndarray) -> np.ndarray:
-        norms = np.linalg.norm(matrix, axis=1, keepdims=True)
-        norms[norms == 0] = 1.0
-        return matrix / norms
+        norm = np.linalg.norm(matrix)
+        if norm == 0:
+            return matrix
+        return matrix / norm
 
     @staticmethod
     def _to_matrix(vectors: Sequence[Sequence[float]]) -> np.ndarray:
         matrix = np.asarray(vectors, dtype="float32")
-        if matrix.ndim != 2:
-            raise ValueError("Vectors must describe a 2D matrix.")
-        return np.ascontiguousarray(matrix)
+        if len(matrix.shape) != 2:
+            raise ValueError("Vectors must be a 2D array.")
+        return matrix
 
     @staticmethod
     def _require_faiss() -> None:

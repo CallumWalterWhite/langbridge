@@ -25,6 +25,15 @@ class SemanticSearchTool:
         
     async def search(self, query: str, top_k: int = 5):
         self._logger.info(f"Performing semantic search for query: {query}")
-        results = await self._vector_store.search(query, top_k=top_k, metadata_filters=self._metadata_filters)
+        embeddings = await self._llm.create_embeddings([query])
+        if not embeddings:
+            self._logger.warning("No embeddings returned for query: %s", query)
+            return []
+        query_embedding = embeddings[0]
+        results = await self._vector_store.search(
+            query_embedding,
+            top_k=top_k,
+            metadata_filters=self._metadata_filters,
+        )
         self._logger.info(f"Found {len(results)} results")
         return results
