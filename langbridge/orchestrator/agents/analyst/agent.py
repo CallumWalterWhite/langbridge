@@ -3,12 +3,13 @@ Analyst agent that selects between multiple SQL analyst tools.
 """
 import asyncio
 import logging
-from typing import Any, Optional, Sequence
+from typing import Any, Dict, List, Optional, Sequence
 
 from orchestrator.llm.provider import LLMProvider
 from orchestrator.tools.sql_analyst.interfaces import AnalystQueryRequest, AnalystQueryResponse
 from orchestrator.tools.sql_analyst.tool import SqlAnalystTool
 from orchestrator.tools.semantic_search import SemanticSearchTool
+from orchestrator.tools.semantic_search.interfaces import ColumnValueSearchResultCollection
 from .selector import SemanticToolSelector
 
 
@@ -58,13 +59,13 @@ class AnalystAgent:
         query: str,
         top_k: int = 5,
         metadata_filters: Optional[dict[str, Any]] = None,
-    ) -> dict[str, list[dict[str, Any]]]:
+    ) -> Dict[str, ColumnValueSearchResultCollection]:
         """
         Perform semantic search across all available search tools.
         """
         results = {}
         for tool in self._search_tools:
-            tool_results = asyncio.run(tool.search(query, top_k=top_k))
+            tool_results = asyncio.run(tool.column_value_search(query, top_k=top_k))
             results[tool.name] = tool_results
         return results
     
@@ -73,13 +74,13 @@ class AnalystAgent:
         query: str,
         top_k: int = 5,
         metadata_filters: Optional[dict[str, Any]] = None,
-    ) -> dict[str, list[dict[str, Any]]]:
+    ) -> Dict[str, ColumnValueSearchResultCollection]:
         """
         Perform semantic search across all available search tools asynchronously.
         """
         results = {}
         for tool in self._search_tools:
-            tool_results = await tool.search(query, top_k=top_k)
+            tool_results = await tool.column_value_search(query, top_k=top_k)
             results[tool.name] = tool_results
         return results
 
@@ -88,12 +89,14 @@ class AnalystAgent:
         self.logger.info("AnalystAgent selected semantic model '%s'", tool.name)
         semantic_search_results = {}
         if self._search_tools:
-            semantic_search_results = self.search_semantically(
+            semantic_search_results: Dict[str, ColumnValueSearchResultCollection] = self.search_semantically(
                 query=request.question,
                 top_k=10,
             )
             self.logger.info("Semantic search results: %s", semantic_search_results)
-            request.semantic_search_results = semantic_search_results
+            request.semantic_search_result_prompts = self.__build_semantic_search_results_prompt(
+                semantic_search_results,
+            )
         else:
             self.logger.info("No semantic search tools available; skipping semantic search.")
         return tool.run(request)
@@ -121,10 +124,24 @@ class AnalystAgent:
                 top_k=10,
             )
             self.logger.info("Semantic search results: %s", semantic_search_results)
-            request.semantic_search_results = semantic_search_results
+            request.semantic_search_result_prompts = self.__build_semantic_search_results_prompt(
+                semantic_search_results,
+            )
         else:
             self.logger.info("No semantic search tools available; skipping semantic search.")
         return await tool.arun(request)
+    
+    def __build_semantic_search_results_prompt(
+        self,
+        semantic_search_results: Dict[str, ColumnValueSearchResultCollection],
+    ) -> str:
+        prompts = []
+        for tool_name, results in semantic_search_results.items():
+            prompt = f"Results from semantic search tool '{tool_name}':\n"
+            for result in results.results:
+                prompt += f"- {result.to_prompt_string()}\n"
+            prompts.append(prompt)
+        return "\n".join(prompts)
 
 
 __all__ = ["AnalystAgent"]

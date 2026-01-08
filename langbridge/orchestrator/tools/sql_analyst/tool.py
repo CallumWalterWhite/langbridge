@@ -208,7 +208,7 @@ class SqlAnalystTool:
                 read="postgres",
                 write=self.dialect,
             )[0]
-            self.logger.debug("Successful Transpile %s", transpiled_sql)
+            self.logger.info("Successful Transpile %s", transpiled_sql)
         except Exception as exc:  # pragma: no cover - sqlglot error path
             elapsed = int((time.perf_counter() - start_ts) * 1000)
             self.logger.exception("Transpile failed for model %s", exc)
@@ -285,13 +285,14 @@ class SqlAnalystTool:
             - Use ANSI-friendly constructs (CAST, COALESCE, CASE, DATE_PART, standard aggregates) that transpile cleanly.
             - Avoid Postgres-only syntax such as :: type casts, EXTRACT(... FROM ...), DATE_TRUNC, ILIKE, array operators, or JSON-specific features.
             - For date extracts, use strftime function instead.
-            - Use semantic search results to resolve ambiguous entity references.
+            - Use semantic search results to resolve ambiguous entity references. Incorporate them as explicit filters if relevant.
+            - Use table identifiers as defined in the model if semantic search results provide them.
             """
             f"{limit_hint}"
             f"{filters_text}"
             f"{conversation_text}"
             f"Semantic search results:\n"
-            f"{request.semantic_search_results or 'None'}\n"
+            f"{request.semantic_search_result_prompts or 'None'}\n"
             f"Question: {request.question}\n"
             "Return SQL in PostgreSQL dialect only. No comments or explanation."
         )

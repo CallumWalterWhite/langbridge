@@ -5,17 +5,11 @@ Tooling entry points for the orchestrator package.
 from .sql_analyst import (
     AnalystQueryRequest,
     AnalystQueryResponse,
-    LangChainLLMAdapter,
     QueryResult,
-    SQLAnalystError,
-    SQLAnalystService,
     SqlAnalystTool,
     SemanticModel,
     SemanticModelError,
-    create_mcp_server,
-    create_service,
-    load_semantic_model,
-    register_sql_analyst_tool,
+    load_semantic_model
 )
 
 __all__ = [
@@ -26,11 +20,4 @@ __all__ = [
     "SemanticModel",
     "SemanticModelError",
     "load_semantic_model",
-    # Legacy exports
-    "LangChainLLMAdapter",
-    "SQLAnalystService",
-    "SQLAnalystError",
-    "create_service",
-    "register_sql_analyst_tool",
-    "create_mcp_server",
 ]

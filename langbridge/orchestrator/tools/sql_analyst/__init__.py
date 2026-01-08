@@ -15,11 +15,6 @@ from .interfaces import (
 from .semantic_loader import SemanticModelError, load_semantic_model
 from .tool import SqlAnalystTool
 
-# Legacy interfaces (retain for compatibility with existing integrations)
-from .llm_adapter import LangChainLLMAdapter  # noqa: E402
-from .mcp import create_mcp_server, register_sql_analyst_tool  # noqa: E402
-from .service import SQLAnalystError, SQLAnalystService, create_service  # noqa: E402
-
 __all__ = [
     "AnalystQueryRequest",
     "AnalystQueryResponse",
@@ -29,11 +24,4 @@ __all__ = [
     "SemanticModelError",
     "load_semantic_model",
     "UnifiedSemanticModel",
-    # Legacy exports
-    "LangChainLLMAdapter",
-    "SQLAnalystService",
-    "SQLAnalystError",
-    "create_service",
-    "register_sql_analyst_tool",
-    "create_mcp_server",
 ]

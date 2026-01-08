@@ -3,7 +3,7 @@ Protocol and data model definitions for the SQL analyst tooling.
 """
 
 
-from typing import Any, Optional, Protocol, Sequence
+from typing import Any, List, Optional, Protocol, Sequence
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -91,11 +91,10 @@ class AnalystQueryRequest(BaseModel):
     )
     filters: dict[str, Any] | None = None
     limit: int | None = Field(default=1000, ge=1)
-    semantic_search_results: dict[str, list[dict[str, Any]]] | None = Field(
+    semantic_search_result_prompts: List[str] | None = Field(
         default=None,
-        description="Optional pre-fetched semantic search results to assist SQL generation.",
+        description="Optional list of formatted semantic search results to include in the prompt.",
     )
-
 
 class AnalystQueryResponse(BaseModel):
     """
