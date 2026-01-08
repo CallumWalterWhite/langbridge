@@ -14,13 +14,17 @@ class SemanticSearchTool:
         self,
         semantic_name: str,
         llm: LLMProvider,
+        embedding_model: str,
         vector_store: ManagedVectorDB,
+        entity_reconignition: bool = False,
         metadata_filters: Optional[dict] = None,
         logger: Optional[logging.Logger] = None,
     ):
         self._name = semantic_name
         self._llm = llm
         self._vector_store = vector_store
+        self._embedding_model = embedding_model
+        self._entity_recognition = entity_reconignition
         self._logger = logger or logging.getLogger(__name__)
         self._metadata_filters = metadata_filters or {}
         
@@ -30,7 +34,7 @@ class SemanticSearchTool:
         
     async def search(self, query: str, top_k: int = 5) -> SemanticSearchResultCollection:
         self._logger.info(f"Performing semantic search for query: {query}")
-        embeddings = await self._llm.create_embeddings([query])
+        embeddings = await self._llm.create_embeddings([query], model=self._embedding_model)
         if not embeddings:
             self._logger.warning("No embeddings returned for query: %s", query)
             return SemanticSearchResultCollection()

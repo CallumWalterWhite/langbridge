@@ -94,6 +94,7 @@ class OpenAIProvider(LLMProvider):
     async def create_embeddings(
         self,
         texts: list[str],
+        embedding_model: str | None = None,
     ) -> list[list[float]]:
         if ChatOpenAI is None:  # pragma: no cover - optional dependency
             raise ProviderConfigurationError(str(_IMPORT_ERROR))
@@ -103,12 +104,7 @@ class OpenAIProvider(LLMProvider):
         if not texts:
             return []
 
-        embedding_model = (
-            self.configuration.get("embedding_model")
-            or self.configuration.get("embedding_deployment")
-            or self.configuration.get("embedding")
-            or "text-embedding-3-small"
-        )
+        embedding_model = embedding_model or self.configuration.get("embedding_model") or "text-embedding-3-small"
         params = {key: self.configuration.get(key) for key in _ALLOWED_CONFIG_KEYS if key in self.configuration}
         params = self._clean_kwargs(params)
         params.setdefault("model", embedding_model)

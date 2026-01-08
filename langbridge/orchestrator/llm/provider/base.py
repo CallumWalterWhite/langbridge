@@ -152,5 +152,6 @@ class LLMProvider(ABC):
     async def create_embeddings(
         self,
         texts: list[str],
+        embedding_model: str | None = None,
     ) -> list[list[float]]:
         """Asynchronously create embeddings for a list of texts."""

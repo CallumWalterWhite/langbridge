@@ -566,6 +566,7 @@ class OrchestratorService:
         return SemanticSearchTool(
             semantic_name=vector_params.get("semantic_name", "default_search"),
             llm=llm_provider,
+            embedding_model=vector_params.get("model"),
             vector_store=vector_store
         )
     
