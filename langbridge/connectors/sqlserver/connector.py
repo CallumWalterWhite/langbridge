@@ -6,44 +6,65 @@ from connectors.connector import SqlConnector
 from connectors.metadata import ColumnMetadata, ForeignKeyMetadata, TableMetadata
 from errors.connector_errors import ConnectorError
 
-from .config import SnowflakeConnectorConfig
+from .config import SQLServerConnectorConfig
 
 try:  # pragma: no cover - optional dependency
-    import snowflake.connector  # type: ignore
-    from snowflake.connector import ProgrammingError, DatabaseError, OperationalError  # type: ignore
+    import pyodbc  # type: ignore
 except ImportError:  # pragma: no cover - optional dependency
-    snowflake = None  # type: ignore
-    ProgrammingError = DatabaseError = OperationalError = Exception  # type: ignore
-else:  # pragma: no cover - optional dependency
-    snowflake = snowflake.connector  # type: ignore
+    pyodbc = None  # type: ignore
+
+try:  # pragma: no cover - optional dependency
+    import pymssql  # type: ignore
+except ImportError:  # pragma: no cover - optional dependency
+    pymssql = None  # type: ignore
 
 
-class SnowflakeConnector(SqlConnector):
+class SQLServerConnector(SqlConnector):
     """
-    Snowflake connector implementation.
+    Microsoft SQL Server connector implementation.
     """
 
-    DIALECT = SqlDialetcs.SNOWFLAKE
+    DIALECT = SqlDialetcs.SQLSERVER
 
     def __init__(
         self,
-        config: SnowflakeConnectorConfig,
+        config: SQLServerConnectorConfig,
         logger: Optional[logging.Logger] = None,
     ) -> None:
         super().__init__(config=config, logger=logger)
         self._config = config
+        self._driver = self._select_driver()
+
+    def _select_driver(self) -> str:
+        if pyodbc is not None:
+            return "pyodbc"
+        if pymssql is not None:
+            return "pymssql"
+        raise ConnectorError(
+            "Install pyodbc or pymssql to enable SQL Server support."
+        )
 
     def _connect(self):
-        if snowflake is None:
-            raise ConnectorError("snowflake-connector-python is required for Snowflake support.")
-        return snowflake.connect(  # type: ignore[union-attr]
-            account=self._config.account,
-            user=self._config.user,
+        if self._driver == "pyodbc":
+            encrypt = "yes" if self._config.encrypt else "no"
+            trust = "yes" if self._config.trust_server_certificate else "no"
+            driver = "ODBC Driver 18 for SQL Server"
+            conn_str = (
+                f"DRIVER={{{driver}}};"
+                f"SERVER={self._config.host},{self._config.port};"
+                f"DATABASE={self._config.database};"
+                f"UID={self._config.username};"
+                f"PWD={self._config.password};"
+                f"Encrypt={encrypt};"
+                f"TrustServerCertificate={trust}"
+            )
+            return pyodbc.connect(conn_str)  # type: ignore[union-attr]
+        return pymssql.connect(  # type: ignore[union-attr]
+            server=self._config.host,
+            port=self._config.port,
+            user=self._config.username,
             password=self._config.password,
             database=self._config.database,
-            warehouse=self._config.warehouse,
-            schema=self._config.schema,
-            role=self._config.role,
         )
 
     async def test_connection(self) -> None:
@@ -53,47 +74,43 @@ class SnowflakeConnector(SqlConnector):
             cursor.execute("SELECT 1")
             cursor.close()
             conn.close()
-        except (ProgrammingError, DatabaseError, OperationalError, Exception) as exc:
+        except Exception as exc:
             self.logger.error("Connection test failed: %s", exc)
-            raise ConnectorError(f"Unable to connect to Snowflake: {exc}") from exc
+            raise ConnectorError(f"Unable to connect to SQL Server: {exc}") from exc
 
     async def fetch_schemas(self) -> list[str]:
-        sql = """
-            SELECT schema_name
-            FROM information_schema.schemata
-            WHERE catalog_name = %s
-            ORDER BY schema_name
-        """
+        sql = "SELECT schema_name FROM information_schema.schemata ORDER BY schema_name"
         try:
             conn = self._connect()
             cursor = conn.cursor()
-            cursor.execute(sql, (self._config.database,))
+            cursor.execute(sql)
             schemas = [row[0] for row in cursor.fetchall()]
             cursor.close()
             conn.close()
             return schemas
-        except (ProgrammingError, DatabaseError, OperationalError, Exception) as exc:
+        except Exception as exc:
             self.logger.error("Failed to fetch schemas: %s", exc)
-            raise ConnectorError(f"Unable to fetch schemas from Snowflake: {exc}") from exc
+            raise ConnectorError(f"Unable to fetch schemas from SQL Server: {exc}") from exc
 
     async def fetch_tables(self, schema: str) -> list[str]:
         sql = """
             SELECT table_name
             FROM information_schema.tables
-            WHERE table_schema = %s
+            WHERE table_schema = {placeholder}
             ORDER BY table_name
         """
+        placeholder = "?" if self._driver == "pyodbc" else "%s"
         try:
             conn = self._connect()
             cursor = conn.cursor()
-            cursor.execute(sql, (schema,))
+            cursor.execute(sql.format(placeholder=placeholder), (schema,))
             tables = [row[0] for row in cursor.fetchall()]
             cursor.close()
             conn.close()
             return tables
-        except (ProgrammingError, DatabaseError, OperationalError, Exception) as exc:
+        except Exception as exc:
             self.logger.error("Failed to fetch tables: %s", exc)
-            raise ConnectorError(f"Unable to fetch tables from Snowflake: {exc}") from exc
+            raise ConnectorError(f"Unable to fetch tables from SQL Server: {exc}") from exc
 
     def _fetch_primary_keys(self, conn, schema: str, table: str) -> set[str]:
         sql = """
@@ -103,11 +120,12 @@ class SnowflakeConnector(SqlConnector):
               ON tc.constraint_name = kcu.constraint_name
              AND tc.table_schema = kcu.table_schema
             WHERE tc.constraint_type = 'PRIMARY KEY'
-              AND tc.table_schema = %s
-              AND tc.table_name = %s
+              AND tc.table_schema = {placeholder}
+              AND tc.table_name = {placeholder}
         """
+        placeholder = "?" if self._driver == "pyodbc" else "%s"
         cursor = conn.cursor()
-        cursor.execute(sql, (schema, table))
+        cursor.execute(sql.format(placeholder=placeholder), (schema, table))
         keys = {row[0] for row in cursor.fetchall()}
         cursor.close()
         return keys
@@ -116,20 +134,21 @@ class SnowflakeConnector(SqlConnector):
         sql = """
             SELECT column_name, data_type, is_nullable
             FROM information_schema.columns
-            WHERE table_schema = %s AND table_name = %s
+            WHERE table_schema = {placeholder} AND table_name = {placeholder}
             ORDER BY ordinal_position
         """
+        placeholder = "?" if self._driver == "pyodbc" else "%s"
         try:
             conn = self._connect()
             primary_keys = self._fetch_primary_keys(conn, schema, table)
             cursor = conn.cursor()
-            cursor.execute(sql, (schema, table))
+            cursor.execute(sql.format(placeholder=placeholder), (schema, table))
             columns = []
             for name, data_type, is_nullable in cursor.fetchall():
                 columns.append(
                     ColumnMetadata(
                         name=name,
-                        data_type=str(data_type),
+                        data_type=data_type,
                         is_nullable=is_nullable == "YES",
                         is_primary_key=name in primary_keys,
                     )
@@ -137,9 +156,9 @@ class SnowflakeConnector(SqlConnector):
             cursor.close()
             conn.close()
             return columns
-        except (ProgrammingError, DatabaseError, OperationalError, Exception) as exc:
+        except Exception as exc:
             self.logger.error("Failed to fetch columns: %s", exc)
-            raise ConnectorError(f"Unable to fetch columns from Snowflake: {exc}") from exc
+            raise ConnectorError(f"Unable to fetch columns from SQL Server: {exc}") from exc
 
     async def fetch_table_metadata(self, schema: str, table: str) -> TableMetadata:
         columns = await self.fetch_columns(schema, table)
@@ -161,13 +180,14 @@ class SnowflakeConnector(SqlConnector):
               ON ccu.constraint_name = tc.constraint_name
              AND ccu.table_schema = tc.table_schema
             WHERE tc.constraint_type = 'FOREIGN KEY'
-              AND tc.table_schema = %s
-              AND tc.table_name = %s
+              AND tc.table_schema = {placeholder}
+              AND tc.table_name = {placeholder}
         """
+        placeholder = "?" if self._driver == "pyodbc" else "%s"
         try:
             conn = self._connect()
             cursor = conn.cursor()
-            cursor.execute(sql, (schema, table))
+            cursor.execute(sql.format(placeholder=placeholder), (schema, table))
             foreign_keys = [
                 ForeignKeyMetadata(
                     name=row[0],
@@ -181,9 +201,9 @@ class SnowflakeConnector(SqlConnector):
             cursor.close()
             conn.close()
             return foreign_keys
-        except (ProgrammingError, DatabaseError, OperationalError, Exception) as exc:
+        except Exception as exc:
             self.logger.error("Failed to fetch foreign keys: %s", exc)
-            raise ConnectorError(f"Unable to fetch foreign keys from Snowflake: {exc}") from exc
+            raise ConnectorError(f"Unable to fetch foreign keys from SQL Server: {exc}") from exc
 
     async def _execute_select(
         self,
@@ -195,16 +215,14 @@ class SnowflakeConnector(SqlConnector):
         try:
             conn = self._connect()
             cursor = conn.cursor()
-            if timeout_s:
-                cursor.execute(
-                    f"ALTER SESSION SET STATEMENT_TIMEOUT_IN_SECONDS = {int(timeout_s)}"
-                )
+            if timeout_s and self._driver == "pyodbc":
+                conn.timeout = int(timeout_s)
             cursor.execute(sql, params or None)
             columns = [description[0] for description in cursor.description]
             rows = cursor.fetchall()
             cursor.close()
             conn.close()
             return columns, rows
-        except (ProgrammingError, DatabaseError, OperationalError, Exception) as exc:
+        except Exception as exc:
             self.logger.error("SQL execution failed: %s", exc)
-            raise ConnectorError(f"SQL execution failed on Snowflake: {exc}") from exc
+            raise ConnectorError(f"SQL execution failed on SQL Server: {exc}") from exc

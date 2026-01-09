@@ -6,45 +6,52 @@ from connectors.connector import SqlConnector
 from connectors.metadata import ColumnMetadata, ForeignKeyMetadata, TableMetadata
 from errors.connector_errors import ConnectorError
 
-from .config import SnowflakeConnectorConfig
+from .config import PostgresConnectorConfig
 
 try:  # pragma: no cover - optional dependency
-    import snowflake.connector  # type: ignore
-    from snowflake.connector import ProgrammingError, DatabaseError, OperationalError  # type: ignore
+    import psycopg  # type: ignore
 except ImportError:  # pragma: no cover - optional dependency
-    snowflake = None  # type: ignore
-    ProgrammingError = DatabaseError = OperationalError = Exception  # type: ignore
-else:  # pragma: no cover - optional dependency
-    snowflake = snowflake.connector  # type: ignore
+    psycopg = None  # type: ignore
+
+try:  # pragma: no cover - optional dependency
+    import psycopg2  # type: ignore
+except ImportError:  # pragma: no cover - optional dependency
+    psycopg2 = None  # type: ignore
 
 
-class SnowflakeConnector(SqlConnector):
+class PostgresConnector(SqlConnector):
     """
-    Snowflake connector implementation.
+    PostgreSQL connector implementation.
     """
 
-    DIALECT = SqlDialetcs.SNOWFLAKE
+    DIALECT = SqlDialetcs.POSTGRES
 
     def __init__(
         self,
-        config: SnowflakeConnectorConfig,
+        config: PostgresConnectorConfig,
         logger: Optional[logging.Logger] = None,
     ) -> None:
         super().__init__(config=config, logger=logger)
         self._config = config
 
+    def _connection_kwargs(self) -> Dict[str, Any]:
+        kwargs: Dict[str, Any] = {
+            "host": self._config.host,
+            "port": self._config.port,
+            "dbname": self._config.database,
+            "user": self._config.user,
+            "password": self._config.password,
+        }
+        if self._config.ssl_mode:
+            kwargs["sslmode"] = self._config.ssl_mode
+        return kwargs
+
     def _connect(self):
-        if snowflake is None:
-            raise ConnectorError("snowflake-connector-python is required for Snowflake support.")
-        return snowflake.connect(  # type: ignore[union-attr]
-            account=self._config.account,
-            user=self._config.user,
-            password=self._config.password,
-            database=self._config.database,
-            warehouse=self._config.warehouse,
-            schema=self._config.schema,
-            role=self._config.role,
-        )
+        if psycopg is not None:
+            return psycopg.connect(**self._connection_kwargs())  # type: ignore[attr-defined]
+        if psycopg2 is not None:
+            return psycopg2.connect(**self._connection_kwargs())  # type: ignore[attr-defined]
+        raise ConnectorError("psycopg or psycopg2 is required for PostgreSQL support.")
 
     async def test_connection(self) -> None:
         try:
@@ -53,28 +60,28 @@ class SnowflakeConnector(SqlConnector):
             cursor.execute("SELECT 1")
             cursor.close()
             conn.close()
-        except (ProgrammingError, DatabaseError, OperationalError, Exception) as exc:
+        except Exception as exc:
             self.logger.error("Connection test failed: %s", exc)
-            raise ConnectorError(f"Unable to connect to Snowflake: {exc}") from exc
+            raise ConnectorError(f"Unable to connect to PostgreSQL: {exc}") from exc
 
     async def fetch_schemas(self) -> list[str]:
         sql = """
             SELECT schema_name
             FROM information_schema.schemata
-            WHERE catalog_name = %s
+            WHERE schema_name NOT IN ('pg_catalog', 'information_schema')
             ORDER BY schema_name
         """
         try:
             conn = self._connect()
             cursor = conn.cursor()
-            cursor.execute(sql, (self._config.database,))
+            cursor.execute(sql)
             schemas = [row[0] for row in cursor.fetchall()]
             cursor.close()
             conn.close()
             return schemas
-        except (ProgrammingError, DatabaseError, OperationalError, Exception) as exc:
+        except Exception as exc:
             self.logger.error("Failed to fetch schemas: %s", exc)
-            raise ConnectorError(f"Unable to fetch schemas from Snowflake: {exc}") from exc
+            raise ConnectorError(f"Unable to fetch schemas from PostgreSQL: {exc}") from exc
 
     async def fetch_tables(self, schema: str) -> list[str]:
         sql = """
@@ -91,9 +98,9 @@ class SnowflakeConnector(SqlConnector):
             cursor.close()
             conn.close()
             return tables
-        except (ProgrammingError, DatabaseError, OperationalError, Exception) as exc:
+        except Exception as exc:
             self.logger.error("Failed to fetch tables: %s", exc)
-            raise ConnectorError(f"Unable to fetch tables from Snowflake: {exc}") from exc
+            raise ConnectorError(f"Unable to fetch tables from PostgreSQL: {exc}") from exc
 
     def _fetch_primary_keys(self, conn, schema: str, table: str) -> set[str]:
         sql = """
@@ -129,7 +136,7 @@ class SnowflakeConnector(SqlConnector):
                 columns.append(
                     ColumnMetadata(
                         name=name,
-                        data_type=str(data_type),
+                        data_type=data_type,
                         is_nullable=is_nullable == "YES",
                         is_primary_key=name in primary_keys,
                     )
@@ -137,9 +144,9 @@ class SnowflakeConnector(SqlConnector):
             cursor.close()
             conn.close()
             return columns
-        except (ProgrammingError, DatabaseError, OperationalError, Exception) as exc:
+        except Exception as exc:
             self.logger.error("Failed to fetch columns: %s", exc)
-            raise ConnectorError(f"Unable to fetch columns from Snowflake: {exc}") from exc
+            raise ConnectorError(f"Unable to fetch columns from PostgreSQL: {exc}") from exc
 
     async def fetch_table_metadata(self, schema: str, table: str) -> TableMetadata:
         columns = await self.fetch_columns(schema, table)
@@ -181,9 +188,9 @@ class SnowflakeConnector(SqlConnector):
             cursor.close()
             conn.close()
             return foreign_keys
-        except (ProgrammingError, DatabaseError, OperationalError, Exception) as exc:
+        except Exception as exc:
             self.logger.error("Failed to fetch foreign keys: %s", exc)
-            raise ConnectorError(f"Unable to fetch foreign keys from Snowflake: {exc}") from exc
+            raise ConnectorError(f"Unable to fetch foreign keys from PostgreSQL: {exc}") from exc
 
     async def _execute_select(
         self,
@@ -196,15 +203,13 @@ class SnowflakeConnector(SqlConnector):
             conn = self._connect()
             cursor = conn.cursor()
             if timeout_s:
-                cursor.execute(
-                    f"ALTER SESSION SET STATEMENT_TIMEOUT_IN_SECONDS = {int(timeout_s)}"
-                )
+                cursor.execute("SET statement_timeout = %s", (int(timeout_s * 1000),))
             cursor.execute(sql, params or None)
             columns = [description[0] for description in cursor.description]
             rows = cursor.fetchall()
             cursor.close()
             conn.close()
             return columns, rows
-        except (ProgrammingError, DatabaseError, OperationalError, Exception) as exc:
+        except Exception as exc:
             self.logger.error("SQL execution failed: %s", exc)
-            raise ConnectorError(f"SQL execution failed on Snowflake: {exc}") from exc
+            raise ConnectorError(f"SQL execution failed on PostgreSQL: {exc}") from exc

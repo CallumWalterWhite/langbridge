@@ -6,45 +6,64 @@ from connectors.connector import SqlConnector
 from connectors.metadata import ColumnMetadata, ForeignKeyMetadata, TableMetadata
 from errors.connector_errors import ConnectorError
 
-from .config import SnowflakeConnectorConfig
+from .config import MySQLConnectorConfig
 
 try:  # pragma: no cover - optional dependency
-    import snowflake.connector  # type: ignore
-    from snowflake.connector import ProgrammingError, DatabaseError, OperationalError  # type: ignore
+    import mysql.connector  # type: ignore
+    from mysql.connector import Error as MySqlError  # type: ignore
 except ImportError:  # pragma: no cover - optional dependency
-    snowflake = None  # type: ignore
-    ProgrammingError = DatabaseError = OperationalError = Exception  # type: ignore
-else:  # pragma: no cover - optional dependency
-    snowflake = snowflake.connector  # type: ignore
+    mysql = None  # type: ignore
+    MySqlError = Exception  # type: ignore
+
+try:  # pragma: no cover - optional dependency
+    import pymysql  # type: ignore
+    from pymysql.err import MySQLError as PyMySqlError  # type: ignore
+except ImportError:  # pragma: no cover - optional dependency
+    pymysql = None  # type: ignore
+    PyMySqlError = Exception  # type: ignore
 
 
-class SnowflakeConnector(SqlConnector):
+class MySqlConnector(SqlConnector):
     """
-    Snowflake connector implementation.
+    MySQL connector implementation.
     """
 
-    DIALECT = SqlDialetcs.SNOWFLAKE
+    DIALECT = SqlDialetcs.MYSQL
 
     def __init__(
         self,
-        config: SnowflakeConnectorConfig,
+        config: MySQLConnectorConfig,
         logger: Optional[logging.Logger] = None,
     ) -> None:
         super().__init__(config=config, logger=logger)
         self._config = config
+        self._driver = self._select_driver()
+
+    def _select_driver(self) -> str:
+        if mysql is not None:
+            return "mysql-connector"
+        if pymysql is not None:
+            return "pymysql"
+        raise ConnectorError(
+            "Install mysql-connector-python or PyMySQL to enable MySQL support."
+        )
+
+    def _connection_kwargs(self) -> Dict[str, Any]:
+        kwargs: Dict[str, Any] = {
+            "host": self._config.host,
+            "port": self._config.port,
+            "database": self._config.database,
+            "user": self._config.user,
+            "password": self._config.password,
+        }
+        if self._config.ssl_mode and self._driver == "mysql-connector":
+            kwargs["ssl_mode"] = self._config.ssl_mode
+        return kwargs
 
     def _connect(self):
-        if snowflake is None:
-            raise ConnectorError("snowflake-connector-python is required for Snowflake support.")
-        return snowflake.connect(  # type: ignore[union-attr]
-            account=self._config.account,
-            user=self._config.user,
-            password=self._config.password,
-            database=self._config.database,
-            warehouse=self._config.warehouse,
-            schema=self._config.schema,
-            role=self._config.role,
-        )
+        if self._driver == "mysql-connector":
+            return mysql.connector.connect(**self._connection_kwargs())  # type: ignore[union-attr]
+        return pymysql.connect(**self._connection_kwargs())  # type: ignore[union-attr]
 
     async def test_connection(self) -> None:
         try:
@@ -53,28 +72,23 @@ class SnowflakeConnector(SqlConnector):
             cursor.execute("SELECT 1")
             cursor.close()
             conn.close()
-        except (ProgrammingError, DatabaseError, OperationalError, Exception) as exc:
+        except (MySqlError, PyMySqlError, Exception) as exc:
             self.logger.error("Connection test failed: %s", exc)
-            raise ConnectorError(f"Unable to connect to Snowflake: {exc}") from exc
+            raise ConnectorError(f"Unable to connect to MySQL: {exc}") from exc
 
     async def fetch_schemas(self) -> list[str]:
-        sql = """
-            SELECT schema_name
-            FROM information_schema.schemata
-            WHERE catalog_name = %s
-            ORDER BY schema_name
-        """
+        sql = "SELECT schema_name FROM information_schema.schemata ORDER BY schema_name"
         try:
             conn = self._connect()
             cursor = conn.cursor()
-            cursor.execute(sql, (self._config.database,))
+            cursor.execute(sql)
             schemas = [row[0] for row in cursor.fetchall()]
             cursor.close()
             conn.close()
             return schemas
-        except (ProgrammingError, DatabaseError, OperationalError, Exception) as exc:
+        except (MySqlError, PyMySqlError, Exception) as exc:
             self.logger.error("Failed to fetch schemas: %s", exc)
-            raise ConnectorError(f"Unable to fetch schemas from Snowflake: {exc}") from exc
+            raise ConnectorError(f"Unable to fetch schemas from MySQL: {exc}") from exc
 
     async def fetch_tables(self, schema: str) -> list[str]:
         sql = """
@@ -91,9 +105,9 @@ class SnowflakeConnector(SqlConnector):
             cursor.close()
             conn.close()
             return tables
-        except (ProgrammingError, DatabaseError, OperationalError, Exception) as exc:
+        except (MySqlError, PyMySqlError, Exception) as exc:
             self.logger.error("Failed to fetch tables: %s", exc)
-            raise ConnectorError(f"Unable to fetch tables from Snowflake: {exc}") from exc
+            raise ConnectorError(f"Unable to fetch tables from MySQL: {exc}") from exc
 
     def _fetch_primary_keys(self, conn, schema: str, table: str) -> set[str]:
         sql = """
@@ -129,7 +143,7 @@ class SnowflakeConnector(SqlConnector):
                 columns.append(
                     ColumnMetadata(
                         name=name,
-                        data_type=str(data_type),
+                        data_type=data_type,
                         is_nullable=is_nullable == "YES",
                         is_primary_key=name in primary_keys,
                     )
@@ -137,9 +151,9 @@ class SnowflakeConnector(SqlConnector):
             cursor.close()
             conn.close()
             return columns
-        except (ProgrammingError, DatabaseError, OperationalError, Exception) as exc:
+        except (MySqlError, PyMySqlError, Exception) as exc:
             self.logger.error("Failed to fetch columns: %s", exc)
-            raise ConnectorError(f"Unable to fetch columns from Snowflake: {exc}") from exc
+            raise ConnectorError(f"Unable to fetch columns from MySQL: {exc}") from exc
 
     async def fetch_table_metadata(self, schema: str, table: str) -> TableMetadata:
         columns = await self.fetch_columns(schema, table)
@@ -148,21 +162,15 @@ class SnowflakeConnector(SqlConnector):
     async def fetch_foreign_keys(self, schema: str, table: str) -> list[ForeignKeyMetadata]:
         sql = """
             SELECT
-                tc.constraint_name,
-                kcu.column_name,
-                ccu.table_schema AS foreign_table_schema,
-                ccu.table_name AS foreign_table_name,
-                ccu.column_name AS foreign_column_name
-            FROM information_schema.table_constraints tc
-            JOIN information_schema.key_column_usage kcu
-              ON tc.constraint_name = kcu.constraint_name
-             AND tc.table_schema = kcu.table_schema
-            JOIN information_schema.constraint_column_usage ccu
-              ON ccu.constraint_name = tc.constraint_name
-             AND ccu.table_schema = tc.table_schema
-            WHERE tc.constraint_type = 'FOREIGN KEY'
-              AND tc.table_schema = %s
-              AND tc.table_name = %s
+                constraint_name,
+                column_name,
+                referenced_table_schema,
+                referenced_table_name,
+                referenced_column_name
+            FROM information_schema.key_column_usage
+            WHERE table_schema = %s
+              AND table_name = %s
+              AND referenced_table_name IS NOT NULL
         """
         try:
             conn = self._connect()
@@ -181,9 +189,9 @@ class SnowflakeConnector(SqlConnector):
             cursor.close()
             conn.close()
             return foreign_keys
-        except (ProgrammingError, DatabaseError, OperationalError, Exception) as exc:
+        except (MySqlError, PyMySqlError, Exception) as exc:
             self.logger.error("Failed to fetch foreign keys: %s", exc)
-            raise ConnectorError(f"Unable to fetch foreign keys from Snowflake: {exc}") from exc
+            raise ConnectorError(f"Unable to fetch foreign keys from MySQL: {exc}") from exc
 
     async def _execute_select(
         self,
@@ -195,16 +203,14 @@ class SnowflakeConnector(SqlConnector):
         try:
             conn = self._connect()
             cursor = conn.cursor()
-            if timeout_s:
-                cursor.execute(
-                    f"ALTER SESSION SET STATEMENT_TIMEOUT_IN_SECONDS = {int(timeout_s)}"
-                )
+            if timeout_s and self._driver == "mysql-connector":
+                cursor.execute(f"SET SESSION MAX_EXECUTION_TIME={int(timeout_s * 1000)}")
             cursor.execute(sql, params or None)
             columns = [description[0] for description in cursor.description]
             rows = cursor.fetchall()
             cursor.close()
             conn.close()
             return columns, rows
-        except (ProgrammingError, DatabaseError, OperationalError, Exception) as exc:
+        except (MySqlError, PyMySqlError, Exception) as exc:
             self.logger.error("SQL execution failed: %s", exc)
-            raise ConnectorError(f"SQL execution failed on Snowflake: {exc}") from exc
+            raise ConnectorError(f"SQL execution failed on MySQL: {exc}") from exc

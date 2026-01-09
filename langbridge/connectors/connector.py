@@ -250,8 +250,7 @@ class SqlConnector(Connector):
         logger: Optional[logging.Logger] = None,
     ) -> None:
         self.config = config
-        self.logger = logger or logging.getLogger(__name__
-    )
+        self.logger = logger or logging.getLogger(__name__)
 
     @abstractmethod
     async def test_connection(self) -> None:
