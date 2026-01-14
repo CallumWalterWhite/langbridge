@@ -363,21 +363,26 @@ export function AgentDefinitionForm({ mode, agentId, initialAgent, onComplete }:
     },
   });
 
-  useQuery<AgentDefinition>({
+  const agentDefinitionQuery = useQuery<AgentDefinition>({
     queryKey: ['agent-definition', agentId],
     enabled: mode === 'edit' && Boolean(agentId) && !initialAgent,
     queryFn: () => fetchAgentDefinition(agentId ?? ''),
-    onSuccess: (agent: AgentDefinition) => {
-      const base = defaultFormState();
-      setFormState({
-        ...hydrateFromDefinition(agent.definition, base),
-        name: agent.name,
-        description: agent.description ?? '',
-        llmConnectionId: agent.llmConnectionId,
-        isActive: agent.isActive,
-      });
-    },
   });
+
+  useEffect(() => {
+    if (initialAgent || !agentDefinitionQuery.data) {
+      return;
+    }
+    const agent = agentDefinitionQuery.data;
+    const base = defaultFormState();
+    setFormState({
+      ...hydrateFromDefinition(agent.definition, base),
+      name: agent.name,
+      description: agent.description ?? '',
+      llmConnectionId: agent.llmConnectionId,
+      isActive: agent.isActive,
+    });
+  }, [agentDefinitionQuery.data, initialAgent]);
 
   useEffect(() => {
     if (initialAgent) {
@@ -662,7 +667,7 @@ export function AgentDefinitionForm({ mode, agentId, initialAgent, onComplete }:
             </div>
             {mode === 'edit' ? (
               <Dialog>
-                <DialogTrigger asChild>
+                <DialogTrigger>
                   <Button variant="destructive" disabled={pending}>
                     <Trash2 className="h-4 w-4" />
                     <span>Delete agent</span>
@@ -676,7 +681,7 @@ export function AgentDefinitionForm({ mode, agentId, initialAgent, onComplete }:
                     </DialogDescription>
                   </DialogHeader>
                   <DialogFooter>
-                    <DialogClose asChild>
+                    <DialogClose>
                       <Button variant="destructive" disabled={pending} onClick={handleDelete}>
                         Delete
                       </Button>

@@ -7,11 +7,11 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
-# Copy the langbridge package so imports work when running the proxy module.
-COPY langbridge /app/langbridge
+# Copy the proxy sources into the image.
+COPY . /app
 
 # No external dependencies required for the proxy; if you add any, install here.
 
-EXPOSE 55432 53306
+EXPOSE 55432 53306 51433
 
-CMD ["python", "-m", "langbridge.proxy.app"]
+CMD ["python", "app.py"]

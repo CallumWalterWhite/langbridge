@@ -3,7 +3,7 @@ services:
   backend:
     build:
       context: ./langbridge
-      dockerfile: DockerFile
+      dockerfile: Dockerfile
     container_name: langbridge-backend
     env_file:
       - ./langbridge/.env
@@ -65,8 +65,8 @@ services:
       - redis_data:/data
   proxy:
     build:
-      context: .
-      dockerfile: langbridge/proxy/Dockerfile
+      context: ./proxy
+      dockerfile: Dockerfile
     container_name: langbridge-proxy
     environment:
       PROXY_LISTEN_HOST: "0.0.0.0"
