@@ -11,7 +11,7 @@ from .routing import route_database
 from .streams import pipe_streams
 
 
-def _read_tds_header(reader: asyncio.StreamReader) -> Tuple[int, int, bytes]:
+async def _read_tds_header(reader: asyncio.StreamReader) -> Tuple[int, int, bytes]:
     """Read TDS packet header and return (packet_type, packet_length, header_bytes)."""
     header = await reader.readexactly(8)
     packet_type = header[0]
