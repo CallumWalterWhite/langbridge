@@ -60,6 +60,7 @@ ConnectorRuntimeTypeSqlDialectMap: Dict[ConnectorRuntimeType, SqlDialetcs] = {
 
 ConnectorRuntimeTypeVectorDBMap: Dict[ConnectorRuntimeType, VectorDBType] = {
     ConnectorRuntimeType.FAISS: VectorDBType.FAISS,
+    ConnectorRuntimeType.QDRANT: VectorDBType.QDRANT,
 }
 
 @dataclass(slots=True)

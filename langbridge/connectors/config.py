@@ -15,6 +15,7 @@ class ConnectorRuntimeType(Enum):
     ORACLE = "ORACLE"
     SQLITE = "SQLITE"
     FAISS = "FAISS"
+    QDRANT = "QDRANT"
     TRINO = "TRINO"
 
 ConnectorType = ConnectorRuntimeType

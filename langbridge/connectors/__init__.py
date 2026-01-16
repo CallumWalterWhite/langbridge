@@ -48,6 +48,7 @@ from .sqlserver import *  # required for subclass registration
 from .oracle import *  # required for subclass registration
 from .sqlite import *  # required for subclass registration
 from .faiss import *  # required for subclass registration
+from .qdrant import *  # required for subclass registration
 
 __all__ = [
     "BaseConnectorConfig",
