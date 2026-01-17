@@ -4,6 +4,7 @@ import type {
   CreateSemanticModelPayload,
   SemanticModel,
   SemanticModelRecord,
+  UpdateSemanticModelPayload,
 } from './types';
 
 const BASE_PATH = '/api/v1/semantic-model';
@@ -36,6 +37,21 @@ export async function createSemanticModel(payload: CreateSemanticModelPayload): 
   }
   return apiFetch<SemanticModelRecord>(BASE_PATH, {
     method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function updateSemanticModel(
+  modelId: string,
+  organizationId: string,
+  payload: UpdateSemanticModelPayload,
+): Promise<SemanticModelRecord> {
+  if (payload.projectId?.length === 0) {
+    payload.projectId = undefined;
+  }
+  const params = new URLSearchParams({ organization_id: organizationId });
+  return apiFetch<SemanticModelRecord>(`${BASE_PATH}/${modelId}?${params.toString()}`, {
+    method: 'PUT',
     body: JSON.stringify(payload),
   });
 }

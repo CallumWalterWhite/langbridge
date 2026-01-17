@@ -24,7 +24,11 @@ from repositories.organization_repository import (
     ProjectRepository,
 )
 from repositories.semantic_model_repository import SemanticModelRepository
-from models.semantic import SemanticModelRecordResponse, SemanticModelCreateRequest
+from models.semantic import (
+    SemanticModelRecordResponse,
+    SemanticModelCreateRequest,
+    SemanticModelUpdateRequest,
+)
 from semantic.loader import SemanticModelError, load_semantic_model
 from semantic.model import SemanticModel
 from semantic.semantic_model_builder import SemanticModelBuilder
@@ -153,6 +157,86 @@ class SemanticModelService:
         self._repository.add(entry)
         return SemanticModelRecordResponse.model_validate(entry)
 
+    async def update_model(
+        self,
+        model_id: UUID,
+        organization_id: UUID,
+        request: SemanticModelUpdateRequest,
+    ) -> SemanticModelRecordResponse:
+        model = await self._get_model_entity(model_id=model_id, organization_id=organization_id)
+        organization = await self._organization_repository.get_by_id(organization_id)
+        if not organization:
+            raise BusinessValidationError("Organization not found")
+
+        project_id = model.project_id
+        if "project_id" in request.model_fields_set:
+            project_id = request.project_id
+        if project_id:
+            project = await self._project_repository.get_by_id(project_id)
+            if not project:
+                raise BusinessValidationError("Project not found")
+            if project.organization_id != organization.id:
+                raise BusinessValidationError(
+                    "Project does not belong to the specified organization"
+                )
+
+        connector_id = request.connector_id or model.connector_id
+
+        if request.name is not None and not request.name.strip():
+            raise BusinessValidationError("Semantic model name is required")
+
+        rebuild_content = bool(request.auto_generate or request.model_yaml is not None)
+        if rebuild_content:
+            if request.auto_generate or not request.model_yaml:
+                semantic_model = await self._builder.build_for_scope(
+                    connector_id=connector_id
+                )
+            else:
+                try:
+                    semantic_model = load_semantic_model(request.model_yaml)
+                except SemanticModelError as exc:
+                    raise BusinessValidationError(
+                        f"Semantic model failed validation: {exc}"
+                    ) from exc
+        else:
+            try:
+                semantic_model = load_semantic_model(model.content_yaml)
+            except SemanticModelError as exc:
+                raise BusinessValidationError(
+                    f"Semantic model failed validation: {exc}"
+                ) from exc
+
+        connector = await self._connector_service.get_connector(connector_id)
+        if connector and (request.connector_id is not None or not semantic_model.connector):
+            semantic_model.connector = connector.name if isinstance(connector.name, str) else connector.name.value
+
+        if request.name is not None:
+            model.name = request.name.strip()
+            if model.name and not semantic_model.name:
+                semantic_model.name = model.name
+        if request.description is not None:
+            model.description = request.description.strip() or None
+            if model.description and not semantic_model.description:
+                semantic_model.description = model.description
+
+        model.connector_id = connector_id
+        model.project_id = project_id
+
+        if rebuild_content:
+            await self._populate_vector_indexes(
+                semantic_model,
+                connector_id,
+                model.id,
+                reset_index=True,
+            )
+
+        payload = semantic_model.model_dump(by_alias=True, exclude_none=True)
+        model.content_yaml = yaml.safe_dump(payload, sort_keys=False)
+        model.content_json = json.dumps(payload)
+        model.updated_at = datetime.now(timezone.utc)
+
+        return SemanticModelRecordResponse.model_validate(model)
+
     async def _get_model_entity(self, model_id: UUID, organization_id: UUID) -> SemanticModelEntry:
         model = await self._repository.get_for_scope(
             model_id=model_id,
@@ -180,6 +264,7 @@ class SemanticModelService:
         semantic_model: SemanticModel,
         connector_id: UUID,
         semantic_id: UUID,
+        reset_index: bool = False,
     ) -> None:
         vector_targets = self._discover_vectorized_dimensions(semantic_model)
         if not vector_targets:
@@ -205,21 +290,16 @@ class SemanticModelService:
                 "No managed vector databases are configured; cannot vectorize semantic model."
             )
 
-        # For now pick the first available managed DB implementation. UI support for choosing one
-        # can be built later.
-        # vector_db_type = vector_db_types[0]
-        # vector_managed_class_ref: Type[ManagedVectorDB] = (
-        #     self._vector_factory.get_managed_vector_db_class_reference(vector_db_type)
-        # )
-        # vector_id: str = f"semantic_model_{connector_id.hex}_{semantic_id.hex}_idx"
-        # vector_managed_instance: ManagedVectorDB = await vector_managed_class_ref.create_managed_instance(
-        #     kwargs={
-        #         "index_name": vector_id
-        #     },
-        # )
-
         vector_managed_instance, connector_response = await self.__get_default_semantic_vecotr_connnector(connector.organization_id, semantic_id)
         await vector_managed_instance.test_connection()
+        if reset_index:
+            # Ensure the managed index can be recreated when updating an existing model.
+            try:
+                await vector_managed_instance.delete_index()
+            except Exception as exc:
+                message = str(exc).lower()
+                if "not found" not in message and "does not exist" not in message:
+                    raise
 
         index_initialized = False
         index_dimension: Optional[int] = None
@@ -269,17 +349,6 @@ class SemanticModelService:
                 raise BusinessValidationError(
                     f"Failed to persist vectors for {target['entity']}.{target['column']}: {exc}"
                 ) from exc
-
-            # vector_entries = []
-            # for idx, (value, vector) in enumerate(zip(values, embeddings, strict=False)):
-            #     entry: Dict[str, Any] = {"value": value, "embedding": vector}
-            #     if idx < len(vector_ids):
-            #         entry["vector_id"] = vector_ids[idx]
-            #     vector_entries.append(entry)
-
-            # if not vector_entries:
-            #     target["meta"].pop("vector_index", None)
-            #     continue
 
             vector_reference = self._build_vector_reference(
                 vector_db_type=vector_managed_instance.VECTOR_DB_TYPE,

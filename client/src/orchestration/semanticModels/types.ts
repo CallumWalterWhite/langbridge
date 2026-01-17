@@ -68,9 +68,18 @@ export interface SemanticModelRecord {
 
 export interface CreateSemanticModelPayload {
   organizationId: string;
-  projectId?: string;
+  projectId?: string | null;
   connectorId: string;
   name: string;
+  description?: string;
+  autoGenerate?: boolean;
+  modelYaml?: string;
+}
+
+export interface UpdateSemanticModelPayload {
+  projectId?: string | null;
+  connectorId?: string;
+  name?: string;
   description?: string;
   autoGenerate?: boolean;
   modelYaml?: string;

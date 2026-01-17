@@ -222,7 +222,7 @@ export function SemanticModelDetail({ modelId }: SemanticModelDetailProps): JSX.
           variant="outline"
           size="sm"
           className="gap-2"
-          onClick={() => router.push('/semantic-model/create')}
+          onClick={() => router.push(`/semantic-model/create?modelId=${modelId}`)}
         >
           <RefreshCw className="h-4 w-4" aria-hidden="true" />
           Edit in builder
@@ -256,8 +256,7 @@ export function SemanticModelDetail({ modelId }: SemanticModelDetailProps): JSX.
           className="font-mono text-xs"
         />
         <p className="text-xs text-[color:var(--text-muted)]">
-          Edits are currently managed in the builder. Copy the YAML into the builder to iterate on measures, dimensions,
-          and relationships.
+          Use the builder to update measures, dimensions, and relationships for this model.
         </p>
       </div>
     </div>
