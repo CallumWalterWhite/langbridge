@@ -7,6 +7,12 @@ from models.base import _Base
 
 class SemanticQueryMetaResponse(_Base):
     id: UUID
+    name: str
+    description: Optional[str] = None
+    connector_id: UUID
+    organization_id: UUID
+    project_id: Optional[UUID] = None
+    semantic_model: Dict[str, Any]
 
 class SemanticQueryRequest(_Base):
     organization_id: UUID

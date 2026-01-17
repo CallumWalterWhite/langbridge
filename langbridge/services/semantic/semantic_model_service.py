@@ -25,9 +25,9 @@ from repositories.organization_repository import (
 )
 from repositories.semantic_model_repository import SemanticModelRepository
 from models.semantic import SemanticModelRecordResponse, SemanticModelCreateRequest
+from semantic.loader import SemanticModelError, load_semantic_model
 from semantic.model import SemanticModel
 from semantic.semantic_model_builder import SemanticModelBuilder
-from semantic.unified_model import UnifiedSemanticModel
 from services.agent_service import AgentService
 from services.connector_service import ConnectorService
 from utils.embedding_provider import EmbeddingProvider, EmbeddingProviderError
@@ -70,11 +70,11 @@ class SemanticModelService:
             organization_id=organization_id,
             project_id=project_id,
         )
-        return [SemanticModelRecordResponse.model_validate(model) for model in models]
+        return [self._normalize_record(model) for model in models]
 
     async def list_all_models(self) -> list[SemanticModelRecordResponse]:
         models = await self._repository.get_all()
-        return [SemanticModelRecordResponse.model_validate(model) for model in models]
+        return [self._normalize_record(model) for model in models]
 
     async def get_model(
         self,
@@ -82,7 +82,7 @@ class SemanticModelService:
         organization_id: UUID,
     ) -> SemanticModelRecordResponse:
         model = await self._get_model_entity(model_id=model_id, organization_id=organization_id)
-        return SemanticModelRecordResponse.model_validate(model)
+        return self._normalize_record(model)
 
     async def delete_model(self, model_id: UUID, organization_id: UUID) -> None:
         model = await self._get_model_entity(model_id=model_id, organization_id=organization_id)
@@ -109,37 +109,31 @@ class SemanticModelService:
                 )
 
         if request.auto_generate or not request.model_yaml:
-            semantic_model: SemanticModel = await self._builder.build_for_scope(
+            semantic_model = await self._builder.build_for_scope(
                 connector_id=request.connector_id
             )
-            payload = self._builder.build_sql_analyst_payload(semantic_model)
         else:
             try:
-                raw = yaml.safe_load(request.model_yaml)
-                if not isinstance(raw, dict):
-                    raise BusinessValidationError("Semantic model YAML must represent a mapping.")
-
-                if "semantic_models" in raw:
-                    unified_model = UnifiedSemanticModel.model_validate(raw)
-                    payload = unified_model.model_dump(by_alias=True)
-                elif "entities" in raw:
-                    payload = raw
-                else:
-                    semantic_model = SemanticModel.model_validate(raw)
-                    payload = self._builder.build_sql_analyst_payload(semantic_model)
-            except yaml.YAMLError as exc:
-                raise BusinessValidationError(
-                    f"Invalid semantic model YAML: {exc}"
-                ) from exc
-            except ValueError as exc:
+                semantic_model = load_semantic_model(request.model_yaml)
+            except SemanticModelError as exc:
                 raise BusinessValidationError(
                     f"Semantic model failed validation: {exc}"
                 ) from exc
 
+        connector = await self._connector_service.get_connector(request.connector_id)
+        if connector and not semantic_model.connector:
+            semantic_model.connector = connector.name if isinstance(connector.name, str) else connector.name.value
+
+        if request.name and not semantic_model.name:
+            semantic_model.name = request.name
+        if request.description:
+            semantic_model.description = request.description
+
         semantic_id: UUID = uuid.uuid4()
 
-        await self._populate_vector_indexes(payload, request.connector_id, semantic_id)
+        await self._populate_vector_indexes(semantic_model, request.connector_id, semantic_id)
 
+        payload = semantic_model.model_dump(by_alias=True, exclude_none=True)
         model_yaml = yaml.safe_dump(payload, sort_keys=False)
         content_json = json.dumps(payload)
 
@@ -168,8 +162,26 @@ class SemanticModelService:
             raise BusinessValidationError("Semantic model not found")
         return model
 
-    async def _populate_vector_indexes(self, payload: Dict[str, Any], connector_id: UUID, semantic_id: UUID) -> None:
-        vector_targets = self._discover_vectorized_columns(payload)
+    def _normalize_record(self, model: SemanticModelEntry) -> SemanticModelRecordResponse:
+        response = SemanticModelRecordResponse.model_validate(model)
+        try:
+            semantic_model = load_semantic_model(response.content_yaml)
+        except SemanticModelError:
+            return response
+        if response.name and not semantic_model.name:
+            semantic_model.name = response.name
+        if response.description and not semantic_model.description:
+            semantic_model.description = response.description
+        response.content_yaml = semantic_model.yml_dump()
+        return response
+
+    async def _populate_vector_indexes(
+        self,
+        semantic_model: SemanticModel,
+        connector_id: UUID,
+        semantic_id: UUID,
+    ) -> None:
+        vector_targets = self._discover_vectorized_dimensions(semantic_model)
         if not vector_targets:
             return
 
@@ -221,12 +233,12 @@ class SemanticModelService:
             )
             values = self._prepare_vector_values(raw_values)
             if not values:
-                target["meta"].pop("vector_index", None)
+                target["dimension"].vector_index = None
                 continue
 
             embeddings = await embedder.embed(values)
             if not embeddings:
-                target["meta"].pop("vector_index", None)
+                target["dimension"].vector_index = None
                 continue
 
             vector_length = len(embeddings[0])
@@ -249,7 +261,7 @@ class SemanticModelService:
             ]
 
             try:
-                vector_ids = await vector_managed_instance.upsert_vectors(
+                await vector_managed_instance.upsert_vectors(
                     embeddings,
                     metadata=metadata_entries,
                 )
@@ -281,7 +293,7 @@ class SemanticModelService:
                 "model": embedder.embedding_model,
                 "dimension": vector_length,
                 "size": len(values),
-                "vector_namespace": connector_response.id,
+                "vector_namespace": str(connector_response.id),
             }
             # Persist the backing vector store metadata so the orchestrator can evolve to read from it.
             vector_index_meta["vector_store"] = {
@@ -297,9 +309,8 @@ class SemanticModelService:
                 "vector_reference": vector_reference,
             }
 
-            target["meta"]["vector_index"] = vector_index_meta
-            target["meta"]["vector_reference"] = vector_reference
-            self._set_dimension_vector_reference(payload, target["entity"], target["column"], vector_reference)
+            target["dimension"].vector_index = vector_index_meta
+            target["dimension"].vector_reference = vector_reference
 
     async def __get_default_semantic_vecotr_connnector(
             self,
@@ -331,30 +342,21 @@ class SemanticModelService:
 
         return vector_managed_instance, connector_response
 
-    def _discover_vectorized_columns(self, payload: Dict[str, Any]) -> List[Dict[str, Any]]:
-        entities = payload.get("entities") or {}
+    def _discover_vectorized_dimensions(self, semantic_model: SemanticModel) -> List[Dict[str, Any]]:
         targets: List[Dict[str, Any]] = []
-        for entity_name, entity_meta in entities.items():
-            columns = (entity_meta or {}).get("columns") or {}
-            if not columns:
-                continue
-            schema = entity_meta.get("schema")
-            table_name = entity_meta.get("name") or entity_meta.get("table")
-            if not table_name:
-                continue
-            if not schema and isinstance(table_name, str) and "." in table_name:
-                schema, table_name = table_name.split(".", 1)
-            for column_name, column_meta in columns.items():
-                if not isinstance(column_meta, dict) or not column_meta.get("vectorized"):
+        for entity_name, table in semantic_model.tables.items():
+            schema = table.schema or None
+            table_name = table.name
+            for dimension in table.dimensions or []:
+                if not dimension.vectorized:
                     continue
-                column_meta.pop("vector_index", None)
                 targets.append(
                     {
                         "entity": entity_name,
                         "schema": schema,
                         "table": table_name,
-                        "column": column_name,
-                        "meta": column_meta,
+                        "column": dimension.name,
+                        "dimension": dimension,
                     }
                 )
         return targets
@@ -376,20 +378,6 @@ class SemanticModelService:
         entity_component = entity.replace(" ", "_")
         column_component = column.replace(" ", "_")
         return f"{vector_db_type.value}:{location_token}:{connector_id}:{entity_component}.{column_component}"
-
-    def _set_dimension_vector_reference(
-        self,
-        payload: Dict[str, Any],
-        entity: str,
-        column: str,
-        vector_reference: str,
-    ) -> None:
-        dimensions = payload.get("dimensions")
-        if not isinstance(dimensions, dict):
-            return
-        dimension_meta = dimensions.get(f"{entity}.{column}")
-        if isinstance(dimension_meta, dict):
-            dimension_meta["vector_reference"] = vector_reference
 
     async def _build_embedding_provider(self) -> EmbeddingProvider:
         connections = await self._agent_service.list_llm_connection_secrets()

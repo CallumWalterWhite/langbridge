@@ -53,6 +53,11 @@ const NAV_ITEMS: NavItem[] = [
     ],
   },
   {
+    href: '/bi',
+    label: 'BI studio',
+    description: 'Compose semantic queries and shape lightweight dashboards.',
+  },
+  {
     href: '/agents',
     label: 'Agents',
     description: 'Build semantic layers and publish curated data models for agents.',

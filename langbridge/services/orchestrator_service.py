@@ -38,10 +38,7 @@ from orchestrator.llm.provider import (
     LLMProvider,
     create_provider
 )
-from orchestrator.tools.sql_analyst.interfaces import (
-    SemanticModel,
-    UnifiedSemanticModel,
-)
+from orchestrator.tools.sql_analyst.interfaces import SemanticModel
 from services.agent_service import AgentService
 from services.connector_service import ConnectorService
 from services.organization_service import OrganizationService
@@ -226,35 +223,25 @@ class OrchestratorService:
 
             sql_connector = connector_instances[connector_id]
             semantic_model = load_semantic_model(entry.content_yaml)
-            semantic_searches = []
-            base_dialect = None
-            if isinstance(semantic_model, UnifiedSemanticModel):
-                if not semantic_model.name:
-                    semantic_model.name = entry.name or f"model_{entry.id}"
-                if not semantic_model.connector:
-                    semantic_model.connector = connector_entry.name
-                base_dialect = semantic_model.dialect
-            elif isinstance(semantic_model, SemanticModel):
-                if not semantic_model.name:
-                    semantic_model.name = entry.name or f"model_{entry.id}"
-                if not semantic_model.connector:
-                    semantic_model.connector = connector_entry.name
-                base_dialect = semantic_model.dialect
+            if not semantic_model.name:
+                semantic_model.name = entry.name or f"model_{entry.id}"
+            if not semantic_model.connector:
+                semantic_model.connector = connector_entry.name
+            base_dialect = semantic_model.dialect
 
-                sematic_searches = await self._build_semantic_search_tools(
-                        llm_provider,
-                        semantic_model,
-                    )
-                semantic_search_tools.extend(sematic_searches)
+            semantic_searches = await self._build_semantic_search_tools(
+                llm_provider,
+                semantic_model,
+            )
+            semantic_search_tools.extend(semantic_searches)
                 
             dialect = (base_dialect or getattr(sql_connector.DIALECT, "name", "postgres")).lower()
             self._logger.debug(
-                "request_id=%s configured tool model=%s connector=%s dialect=%s unified=%s",
+                "request_id=%s configured tool model=%s connector=%s dialect=%s",
                 request_id,
-                semantic_model.name if hasattr(semantic_model, "name") else str(entry.id),
+                semantic_model.name or str(entry.id),
                 connector_entry.name,
                 dialect,
-                isinstance(semantic_model, UnifiedSemanticModel),
             )
 
             tool = SqlAnalystTool(
@@ -262,7 +249,7 @@ class OrchestratorService:
                 semantic_model=semantic_model,
                 connector=sql_connector,
                 dialect=dialect,
-                priority=1 if isinstance(semantic_model, UnifiedSemanticModel) else 0,
+                priority=0,
                 embedder=embedding_provider,
             )
             tools.append(tool)
@@ -499,17 +486,24 @@ class OrchestratorService:
     
     def _get_vector_semantic_searches(self, semantic_model: SemanticModel) -> list[dict[str, Any]]:
         searches = []
-        vectorised_dimensions = [semantic_model.dimensions[dim] for dim in semantic_model.dimensions if semantic_model.dimensions[dim]["vectorized"] is True] 
-        for dimension in vectorised_dimensions:
-            entity_name = dimension.get("entity")
-            column_name = dimension.get("column")
-            vector_index = semantic_model.entities[entity_name]["columns"][column_name].get("vector_index", {})
-            self._logger.info("Found vectorized dimension: %s", dimension)
-            search = {
-                "metadata_filters": dimension.get("metadata_filters", {}),
-                "vector_parameters": vector_index
-            }
-            searches.append(search)
+        for table_key, table in semantic_model.tables.items():
+            for dimension in table.dimensions or []:
+                if not dimension.vectorized:
+                    continue
+                vector_index = dimension.vector_index or {}
+                if not vector_index:
+                    continue
+                self._logger.info("Found vectorized dimension: %s.%s", table_key, dimension.name)
+                vector_parameters = {
+                    **vector_index,
+                    "semantic_name": f"{semantic_model.name or 'semantic_model'}::{table_key}.{dimension.name}",
+                }
+                searches.append(
+                    {
+                        "metadata_filters": {},
+                        "vector_parameters": vector_parameters,
+                    }
+                )
         return searches
             
     async def _build_semantic_search_tools(

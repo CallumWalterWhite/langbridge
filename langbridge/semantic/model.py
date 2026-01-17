@@ -1,5 +1,5 @@
 from enum import Enum
-from typing import Dict, List, Optional, Literal
+from typing import Any, Dict, List, Optional, Literal
 import yaml
 from pydantic import BaseModel, Field
 
@@ -21,6 +21,7 @@ class Dimension(BaseModel):
     # sample_data: Optional[List[str]] = None
     vectorized: bool = False
     vector_reference: Optional[str] = None
+    vector_index: Optional[Dict[str, Any]] = None
 
 
 class Measure(BaseModel):
@@ -60,7 +61,16 @@ class Relationship(BaseModel):
     name: str
     from_: str = Field(alias="from_")
     to: str
-    type: Literal["one_to_many", "many_to_one", "one_to_one", "many_to_many"]
+    type: Literal[
+        "one_to_many",
+        "many_to_one",
+        "one_to_one",
+        "many_to_many",
+        "inner",
+        "left",
+        "right",
+        "full",
+    ]
     join_on: str
 
 
@@ -71,8 +81,11 @@ class Metric(BaseModel):
 
 class SemanticModel(BaseModel):
     version: str
+    name: Optional[str] = None
     connector: Optional[str] = None
+    dialect: Optional[str] = None
     description: Optional[str] = None
+    tags: Optional[List[str]] = None
     tables: Dict[str, Table]
     relationships: Optional[List[Relationship]] = None
     metrics: Optional[Dict[str, Metric]] = None
@@ -80,4 +93,7 @@ class SemanticModel(BaseModel):
     def yml_dump(self) -> str:
         """Dump the semantic model to a YAML string."""
 
-        return yaml.dump(self.model_dump(by_alias=True), sort_keys=False)
+        return yaml.safe_dump(
+            self.model_dump(by_alias=True, exclude_none=True),
+            sort_keys=False,
+        )
