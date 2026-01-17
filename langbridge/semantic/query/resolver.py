@@ -1,3 +1,4 @@
+import logging
 import re
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Set, Tuple
@@ -47,6 +48,7 @@ class SemanticModelResolver:
         self._filters_by_name: Dict[str, List[Tuple[str, str, TableFilter]]] = {}
         self._table_keys: Set[str] = set(model.tables.keys())
         self._build_indexes()
+        self._logger = logging.getLogger(__name__)
 
     @property
     def table_keys(self) -> Set[str]:
@@ -78,8 +80,10 @@ class SemanticModelResolver:
 
     def resolve_measure_or_metric(self, member: str) -> MeasureRef | MetricRef:
         if member in self._metrics_by_key:
+            self._logger.info(f"Resolving metric: {member}")
             return self.resolve_metric(member)
         try:
+            self._logger.info(f"Resolving measure: {member}")
             return self.resolve_measure(member)
         except SemanticModelError:
             if member in self._metrics_by_key:
@@ -118,6 +122,7 @@ class SemanticModelResolver:
                 )
 
     def _resolve_dimension(self, member: str) -> Tuple[str, Dimension]:
+        self._logger.info(f"Resolving dimension: {member} in dimensions: {self._dimensions_by_key.keys()}")
         if "." in member:
             dimension = self._dimensions_by_key.get(member)
             if dimension is None:
@@ -135,6 +140,7 @@ class SemanticModelResolver:
         return table, dimension
 
     def _resolve_measure(self, member: str) -> Tuple[str, Measure]:
+        self._logger.info(f"Resolving measure: {member} in measures: {self._measures_by_key.keys()}")
         if "." in member:
             measure = self._measures_by_key.get(member)
             if measure is None:
@@ -152,6 +158,7 @@ class SemanticModelResolver:
         return table, measure
 
     def _resolve_filter(self, segment: str) -> Tuple[str, str, TableFilter]:
+        self._logger.info(f"Resolving filter: {segment} in filters: {self._filters_by_key.keys()}")
         if "." in segment:
             table_filter = self._filters_by_key.get(segment)
             if table_filter is None:

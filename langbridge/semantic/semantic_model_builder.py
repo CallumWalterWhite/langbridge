@@ -87,7 +87,7 @@ class SemanticModelBuilder:
                 )
 
         tables: Dict[str, Table] = self._build_semantic_tables(connector, scope_metadata)
-        relationships: List[Relationship] = self._infer_relationships(tables, scope_metadata)
+        relationships: List[Relationship] = self._infer_relationships(connector.name, tables, scope_metadata)
 
         return SemanticModel(
             version="1.0",
@@ -171,18 +171,18 @@ class SemanticModelBuilder:
                     column_meta["synonyms"] = measure.synonyms
                 table_columns[measure.name] = column_meta
 
-                metric_key = f"{entity_name}.{measure.name}"
-                if metric_key not in metrics:
-                    metric_entry: Dict[str, Any] = {
-                        "expression": self._build_metric_expression(table, measure),
-                    }
-                    if measure.aggregation:
-                        metric_entry["aggregation"] = measure.aggregation
-                    if measure.description:
-                        metric_entry["description"] = measure.description
-                    if measure.synonyms:
-                        metric_entry["synonyms"] = measure.synonyms
-                    metrics[metric_key] = metric_entry
+                # metric_key = f"{entity_name}.{measure.name}"
+                # if metric_key not in metrics:
+                #     metric_entry: Dict[str, Any] = {
+                #         "expression": self._build_metric_expression(table, measure),
+                #     }
+                #     if measure.aggregation:
+                #         metric_entry["aggregation"] = measure.aggregation
+                #     if measure.description:
+                #         metric_entry["description"] = measure.description
+                #     if measure.synonyms:
+                #         metric_entry["synonyms"] = measure.synonyms
+                #     metrics[metric_key] = metric_entry
 
             table_payload: Dict[str, Any] = {
                 "schema": table.schema,
@@ -279,7 +279,7 @@ class SemanticModelBuilder:
 
         return tables
 
-    def _infer_relationships(self, tables: Dict[str, Table], scope_metadata: List[ScopedTableMetadata]) -> List[Relationship]:
+    def _infer_relationships(self, connector_name: str, tables: Dict[str, Table], scope_metadata: List[ScopedTableMetadata]) -> List[Relationship]:
         relationships: List[Relationship] = []
         pk_index: Dict[str, List[Tuple[str, Dimension]]] = defaultdict(list)
 
@@ -291,12 +291,12 @@ class SemanticModelBuilder:
         for scoped in scope_metadata:
             for foreign_key in scoped.foreign_keys:
                 source_table_key = self._make_table_key(
-                    connector_name="",
+                    connector_name=connector_name,
                     schema=foreign_key.schema,
                     table_name=scoped.table_metadata.name,
                 )
                 target_table_key = self._make_table_key(
-                    connector_name="",
+                    connector_name=connector_name,
                     schema=foreign_key.schema,
                     table_name=foreign_key.table,
                 )

@@ -1,3 +1,4 @@
+import logging
 import re
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
@@ -34,6 +35,9 @@ class OrderItem:
 
 
 class TsqlSemanticTranslator:
+    def __init__(self):
+        self._logger = logging.getLogger(__name__)
+
     def translate(self, query: SemanticQuery | Dict[str, Any], model: SemanticModel) -> str:
         if isinstance(query, SemanticQuery):
             parsed = query
@@ -178,7 +182,7 @@ class TsqlSemanticTranslator:
         if measures:
             return measures[0].table
         if metrics:
-            for table in self._tables_from_expression(metrics[0].expression):
+            for table in self._tables_from_expression(metrics[0].key):
                 return table
         if time_dimensions:
             return time_dimensions[0].dimension.table
@@ -188,7 +192,7 @@ class TsqlSemanticTranslator:
             return next(iter(filter_targets[0].tables))
         if segments:
             return segments[0].table
-        raise SemanticQueryError("Semantic query did not reference any tables.")
+        raise SemanticQueryError(f"Semantic query did not reference any tables in {dimensions}, {time_dimensions}, {measures}, {metrics}, {filter_targets}, {segments}.")
 
     def _tables_from_expression(self, expression: str) -> List[str]:
         matches = re.findall(r"\b([A-Za-z_][A-Za-z0-9_]*)\.", expression)

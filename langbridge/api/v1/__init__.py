@@ -8,6 +8,7 @@ from .organizations import router as organizations_router
 from .connectors import router as connectors_router
 from .semantic_models import router as semantic_model_router
 from .threads import router as threads_router
+from .semantic_query import router as semantic_query_router
 
 v1_routes: List[APIRouter] = [
     auth_router,
@@ -16,6 +17,7 @@ v1_routes: List[APIRouter] = [
     connectors_router,
     semantic_model_router,
     threads_router,
+    semantic_query_router
 ]
 
 __all__ = [
@@ -25,5 +27,6 @@ __all__ = [
     "connectors_router",
     "semantic_model_router",
     "threads_router",
+    "semantic_query_router",
     "v1_routes",
 ]

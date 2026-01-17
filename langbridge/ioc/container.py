@@ -34,7 +34,8 @@ from services.agent_service import AgentService
 from semantic.semantic_model_builder import SemanticModelBuilder
 from services.semantic import (
     SemanticModelService,
-    SemanticSearchService
+    SemanticSearchService,
+    SemanticQueryService
 )
 from services.orchestrator_service import OrchestratorService
 from services.thread_service import ThreadService
@@ -157,6 +158,12 @@ class Container(containers.DeclarativeContainer):
         agent_service=agent_service,
         semantic_search_service=semantic_search_service,
         emvironment_service=environment_service
+    )
+
+    semantic_query_service = providers.Factory(
+        SemanticQueryService,
+        semantic_model_service=semantic_model_service,
+        connector_service=connector_service
     )
 
     thread_service = providers.Factory(

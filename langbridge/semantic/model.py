@@ -46,6 +46,15 @@ class Table(BaseModel):
     measures: Optional[List[Measure]] = None
     filters: Optional[Dict[str, TableFilter]] = None
 
+    def get_annotations(self) -> Dict[str, str]:
+        #Build object with dimensions and measures, where has the key value pairs like {'sqllite_main_customer.customer_id': 'Customer Id'}
+        annotations = {}
+        for dimension in self.dimensions or []:
+            annotations[f"{self.schema}.{self.name}.{dimension.name}"] = dimension.name
+        for measure in self.measures or []:
+            annotations[f"{self.schema}.{self.name}.{measure.name}"] = measure.name
+        return annotations
+
 
 class Relationship(BaseModel):
     name: str
