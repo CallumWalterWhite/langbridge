@@ -8,7 +8,7 @@ import yaml
 
 from pydantic import ConfigDict
 
-from .base import _Base
+from models.base import _Base
 
 
 class SemanticModelCreateRequest(_Base):

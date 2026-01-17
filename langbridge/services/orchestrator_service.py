@@ -9,7 +9,6 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Iterable, Optional, Sequence, Type
 
 from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
-from langchain_core.language_models import BaseChatModel
 
 from connectors.config import ConnectorRuntimeType
 from errors.application_errors import BusinessValidationError
@@ -40,14 +39,13 @@ from orchestrator.llm.provider import (
     create_provider
 )
 from orchestrator.tools.sql_analyst.interfaces import (
-    AnalystQueryResponse,
     SemanticModel,
     UnifiedSemanticModel,
 )
 from services.agent_service import AgentService
 from services.connector_service import ConnectorService
 from services.organization_service import OrganizationService
-from services.semantic_model_service import SemanticModelService
+from services.semantic import SemanticModelService
 from utils.embedding_provider import EmbeddingProvider, EmbeddingProviderError
 
 from models.llm_connections import LLMConnectionSecretResponse
@@ -177,7 +175,7 @@ class OrchestratorService:
                 request_id,
                 exc,
             )
-
+        #TODO: revist this logic for the agent builder 
         tool_config = self._build_agent_tool_config(agent_definition)
         semantic_entries = await self._semantic_model_service.list_all_models()
         filtered_entries = (

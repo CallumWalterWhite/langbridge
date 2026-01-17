@@ -18,8 +18,8 @@ from connectors import (
     get_connector_config_factory,
     get_connector_config_schema_factory,
 )
-from db.auth import Organization, Project
-from db.connector import Connector, DatabaseConnector
+from db.auth import Organization
+from db.connector import DatabaseConnector
 from errors.application_errors import BusinessValidationError
 from models.connectors import ConnectorResponse, CreateConnectorRequest, UpdateConnectorRequest
 from repositories.connector_repository import ConnectorRepository

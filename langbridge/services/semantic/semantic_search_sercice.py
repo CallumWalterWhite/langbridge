@@ -38,5 +38,5 @@ class SemanticSearchService:
     ) -> None:
         await self._vector_store_entry_repository.add_to_semantic_model(
             semantic_model_id=semantic_id,
-            vector_store_entry_id=vector_entry.id,
+            vector_entry_id=vector_entry.id,
         )

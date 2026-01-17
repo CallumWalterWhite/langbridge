@@ -32,10 +32,12 @@ from services.auth_service import AuthService
 from services.organization_service import OrganizationService
 from services.agent_service import AgentService
 from semantic.semantic_model_builder import SemanticModelBuilder
-from services.semantic_model_service import SemanticModelService
+from services.semantic import (
+    SemanticModelService,
+    SemanticSearchService
+)
 from services.orchestrator_service import OrchestratorService
 from services.thread_service import ThreadService
-from services.semantic_search_sercice import SemanticSearchService
 from config import settings
 
 

@@ -1,7 +1,7 @@
 import json
 import uuid
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional, Type
+from typing import Any, Dict, List, Optional, Tuple, Type
 from uuid import UUID
 
 import yaml
@@ -18,14 +18,14 @@ from errors.application_errors import BusinessValidationError
 from errors.connector_errors import ConnectorError
 from models.connectors import ConnectorResponse
 from services.environment_service import EnvironmentService, EnvironmentSettingKey
-from services.semantic_search_sercice import SemanticSearchService
+from .semantic_search_sercice import SemanticSearchService
 from repositories.organization_repository import (
     OrganizationRepository,
     ProjectRepository,
 )
 from repositories.semantic_model_repository import SemanticModelRepository
-from models.semantic_models import SemanticModelCreateRequest, SemanticModelRecordResponse
-from semantic import SemanticModel
+from models.semantic import SemanticModelRecordResponse, SemanticModelCreateRequest
+from semantic.model import SemanticModel
 from semantic.semantic_model_builder import SemanticModelBuilder
 from semantic.unified_model import UnifiedSemanticModel
 from services.agent_service import AgentService
@@ -206,7 +206,7 @@ class SemanticModelService:
         #     },
         # )
 
-        vector_managed_instance: ManagedVectorDB = await self.__get_default_semantic_vecotr_connnector(connector.organization_id, semantic_id)
+        vector_managed_instance, connector_response = await self.__get_default_semantic_vecotr_connnector(connector.organization_id, semantic_id)
         await vector_managed_instance.test_connection()
 
         index_initialized = False
@@ -270,7 +270,7 @@ class SemanticModelService:
             #     continue
 
             vector_reference = self._build_vector_reference(
-                vector_db_type=vector_db_type,
+                vector_db_type=vector_managed_instance.VECTOR_DB_TYPE,
                 connector_id=connector_id,
                 entity=target["entity"],
                 column=target["column"],
@@ -281,11 +281,11 @@ class SemanticModelService:
                 "model": embedder.embedding_model,
                 "dimension": vector_length,
                 "size": len(values),
-                "vector_namespace": vector_id,
+                "vector_namespace": connector_response.id,
             }
             # Persist the backing vector store metadata so the orchestrator can evolve to read from it.
             vector_index_meta["vector_store"] = {
-                "type": vector_db_type.value,
+                "type": vector_managed_instance.VECTOR_DB_TYPE.value,
             }
             config_dict = getattr(vector_managed_instance, "config", None)
             location = getattr(config_dict, "location", None)
@@ -305,7 +305,9 @@ class SemanticModelService:
             self,
             organization_id: UUID,
             semantic_id: UUID
-    ) -> ManagedVectorDB:
+    ) -> Tuple[ManagedVectorDB, ConnectorResponse]:
+        #TODO: revist this, currently only supports FAISS, will break on qdrant managed vector db
+
         default_vector_connector_id: str | None = await self._emvironment_service.get_setting(
             organization_id=organization_id,
             key=EnvironmentSettingKey.DEFAULT_SEMANTIC_VECTOR_CONNECTOR.value,
@@ -327,7 +329,7 @@ class SemanticModelService:
             },
         )
 
-        return vector_managed_instance
+        return vector_managed_instance, connector_response
 
     def _discover_vectorized_columns(self, payload: Dict[str, Any]) -> List[Dict[str, Any]]:
         entities = payload.get("entities") or {}

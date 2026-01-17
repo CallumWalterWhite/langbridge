@@ -9,11 +9,11 @@ from auth.dependencies import has_organization_access, has_project_access
 from errors.application_errors import BusinessValidationError
 from ioc import Container
 from models.auth import UserResponse
-from models.semantic_models import (
-    SemanticModelCreateRequest,
-    SemanticModelRecordResponse,
+from models.semantic import (
+    SemanticModelRecordResponse, 
+    SemanticModelCreateRequest
 )
-from services.semantic_model_service import SemanticModelService
+from services.semantic import SemanticModelService
 
 router = APIRouter(prefix="/semantic-model", tags=["semantic-model"])
 
