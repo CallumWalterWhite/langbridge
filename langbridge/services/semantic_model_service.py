@@ -16,8 +16,9 @@ from db.auth import Project
 from db.semantic import SemanticModelEntry
 from errors.application_errors import BusinessValidationError
 from errors.connector_errors import ConnectorError
+from models.connectors import ConnectorResponse
+from services.environment_service import EnvironmentService, EnvironmentSettingKey
 from services.semantic_search_sercice import SemanticSearchService
-from repositories.semantic_search_repository import SemanticVectorStoreEntryRepository
 from repositories.organization_repository import (
     OrganizationRepository,
     ProjectRepository,
@@ -44,6 +45,7 @@ class SemanticModelService:
         connector_service: ConnectorService,
         agent_service: AgentService,
         semantic_search_service: SemanticSearchService,
+        emvironment_service: EnvironmentService
     ) -> None:
         self._repository = repository
         self._builder = builder
@@ -52,6 +54,7 @@ class SemanticModelService:
         self._connector_service = connector_service
         self._agent_service = agent_service
         self._semantic_search_service = semantic_search_service
+        self._emvironment_service = emvironment_service
         
         self._vector_factory = VectorDBConnectorFactory()
 
@@ -192,16 +195,18 @@ class SemanticModelService:
 
         # For now pick the first available managed DB implementation. UI support for choosing one
         # can be built later.
-        vector_db_type = vector_db_types[0]
-        vector_managed_class_ref: Type[ManagedVectorDB] = (
-            self._vector_factory.get_managed_vector_db_class_reference(vector_db_type)
-        )
-        vector_id: str = f"semantic_model_{connector_id.hex}_{semantic_id.hex}_idx"
-        vector_managed_instance: ManagedVectorDB = await vector_managed_class_ref.create_managed_instance(
-            kwargs={
-                "index_name": vector_id
-            },
-        )
+        # vector_db_type = vector_db_types[0]
+        # vector_managed_class_ref: Type[ManagedVectorDB] = (
+        #     self._vector_factory.get_managed_vector_db_class_reference(vector_db_type)
+        # )
+        # vector_id: str = f"semantic_model_{connector_id.hex}_{semantic_id.hex}_idx"
+        # vector_managed_instance: ManagedVectorDB = await vector_managed_class_ref.create_managed_instance(
+        #     kwargs={
+        #         "index_name": vector_id
+        #     },
+        # )
+
+        vector_managed_instance: ManagedVectorDB = await self.__get_default_semantic_vecotr_connnector(connector.organization_id, semantic_id)
         await vector_managed_instance.test_connection()
 
         index_initialized = False
@@ -295,6 +300,34 @@ class SemanticModelService:
             target["meta"]["vector_index"] = vector_index_meta
             target["meta"]["vector_reference"] = vector_reference
             self._set_dimension_vector_reference(payload, target["entity"], target["column"], vector_reference)
+
+    async def __get_default_semantic_vecotr_connnector(
+            self,
+            organization_id: UUID,
+            semantic_id: UUID
+    ) -> ManagedVectorDB:
+        default_vector_connector_id: str | None = await self._emvironment_service.get_setting(
+            organization_id=organization_id,
+            key=EnvironmentSettingKey.DEFAULT_SEMANTIC_VECTOR_CONNECTOR.value,
+        )
+        if not default_vector_connector_id:
+            raise BusinessValidationError(
+                "Default semantic vector connector not configured"
+            )
+
+        connector_response: ConnectorResponse = await self._connector_service.get_connector(UUID(default_vector_connector_id))
+
+        vector_managed_class_ref: Type[ManagedVectorDB] = (
+            self._vector_factory.get_managed_vector_db_class_reference(VectorDBType(connector_response.connector_type))    
+        )
+        vector_id: str = f"semantic_model_{connector_response.id.hex}_{semantic_id.hex}_idx" # type: ignore
+        vector_managed_instance: ManagedVectorDB = await vector_managed_class_ref.create_managed_instance(
+            kwargs={
+                "index_name": vector_id
+            },
+        )
+
+        return vector_managed_instance
 
     def _discover_vectorized_columns(self, payload: Dict[str, Any]) -> List[Dict[str, Any]]:
         entities = payload.get("entities") or {}

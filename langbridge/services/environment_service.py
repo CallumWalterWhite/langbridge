@@ -14,6 +14,8 @@ class EnvironmentSettingKey(Enum):
     STAGING_DB_CONNECTION = "staging_db_connection"
     SUPPORT_EMAIL = "support_email"
     FEATURE_FLAG_NEW_DASHBOARD = "feature_flag_new_dashboard"
+    DEFAULT_SEMANTIC_VECTOR_CONNECTOR = "default_semantic_vector_connector"
+
 
 class EnvironmentService:
     def __init__(

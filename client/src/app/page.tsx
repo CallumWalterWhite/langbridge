@@ -1,11 +1,24 @@
 'use client';
 
+import * as React from 'react';
 import type { ReactNode } from 'react';
+import { useRouter } from 'next/navigation';
 
 import { ThemeToggle } from '@/components/ThemeToggle';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { cn } from '@/lib/utils';
 
 const BACKEND = process.env.NEXT_PUBLIC_BACKEND_URL ?? '';
+
+function withApiBase(path: string) {
+  if (!BACKEND) {
+    return path;
+  }
+  return `${BACKEND}${path}`;
+}
 
 const AUTH_PROVIDERS = [
   {
@@ -28,7 +41,113 @@ const AUTH_PROVIDERS = [
   },
 ];
 
+type NativeFormState = {
+  email: string;
+  password: string;
+  username?: string;
+  error: string | null;
+  isSubmitting: boolean;
+};
+
+async function resolveAuthError(response: Response, fallback: string) {
+  const text = await response.text();
+  if (!text) {
+    return fallback;
+  }
+  try {
+    const payload = JSON.parse(text) as { detail?: string; message?: string };
+    return payload.detail ?? payload.message ?? text;
+  } catch {
+    return text;
+  }
+}
+
 export default function Page() {
+  const router = useRouter();
+  const [loginState, setLoginState] = React.useState<NativeFormState>({
+    email: '',
+    password: '',
+    error: null,
+    isSubmitting: false,
+  });
+  const [registerState, setRegisterState] = React.useState<NativeFormState>({
+    email: '',
+    password: '',
+    username: '',
+    error: null,
+    isSubmitting: false,
+  });
+
+  const handleLoginSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const email = loginState.email.trim();
+    const password = loginState.password;
+
+    if (!email || !password) {
+      setLoginState((prev) => ({ ...prev, error: 'Email and password are required.' }));
+      return;
+    }
+
+    setLoginState((prev) => ({ ...prev, error: null, isSubmitting: true }));
+    try {
+      const response = await fetch(withApiBase('/api/v1/auth/login'), {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+        body: JSON.stringify({ email, password }),
+      });
+      if (!response.ok) {
+        throw new Error(await resolveAuthError(response, 'Unable to sign in.'));
+      }
+      router.push('/dashboard');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unable to sign in.';
+      setLoginState((prev) => ({ ...prev, error: message }));
+    } finally {
+      setLoginState((prev) => ({ ...prev, isSubmitting: false }));
+    }
+  };
+
+  const handleRegisterSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const email = registerState.email.trim();
+    const password = registerState.password;
+    const username = registerState.username?.trim() || undefined;
+
+    if (!email || !password) {
+      setRegisterState((prev) => ({ ...prev, error: 'Email and password are required.' }));
+      return;
+    }
+
+    if (password.length < 8) {
+      setRegisterState((prev) => ({ ...prev, error: 'Password must be at least 8 characters.' }));
+      return;
+    }
+
+    setRegisterState((prev) => ({ ...prev, error: null, isSubmitting: true }));
+    try {
+      const payload: { email: string; password: string; username?: string } = { email, password };
+      if (username) {
+        payload.username = username;
+      }
+      const response = await fetch(withApiBase('/api/v1/auth/register'), {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      if (!response.ok) {
+        throw new Error(await resolveAuthError(response, 'Unable to create account.'));
+      }
+      router.push('/dashboard');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unable to create account.';
+      setRegisterState((prev) => ({ ...prev, error: message }));
+    } finally {
+      setRegisterState((prev) => ({ ...prev, isSubmitting: false }));
+    }
+  };
+
   return (
     <main className="relative flex min-h-screen items-center justify-center overflow-hidden bg-[color:var(--shell-bg)] px-6 py-16 text-[color:var(--text-primary)] transition-colors">
       <div className="pointer-events-none absolute inset-0 -z-20 bg-[radial-gradient(circle_at_top,_var(--accent-soft),_transparent_60%)]" />
@@ -45,42 +164,169 @@ export default function Page() {
         <div className="space-y-4">
           <h1 className="text-4xl font-semibold tracking-tight">Sign in to continue</h1>
           <p className="text-base leading-relaxed text-[color:var(--text-secondary)]">
-            Choose the workspace identity that works best for you. Authenticate with GitHub for code-first flows or
-            Google to plug in your Workspace teams—no extra passwords required.
+            Start with SSO for the fastest setup, or use email below for a local account.
           </p>
         </div>
 
-        <div className="space-y-3">
-          {AUTH_PROVIDERS.map(({ id, label, Icon, className, iconClassName, description }) => {
-            const loginHref = `${BACKEND}/api/v1/auth/login/${id}`;
-            return (
-              <a
-                key={id}
-                href={loginHref}
-                className={cn(
-                  'inline-flex w-full items-center justify-between gap-3 rounded-full px-6 py-3 text-base font-semibold transition hover:-translate-y-0.5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[color:var(--accent)]',
-                  className,
-                )}
-              >
-                <div className="flex w-full flex-col gap-1">
-                  <span className="flex items-center gap-3">
-                    <span className="flex h-7 w-7 items-center justify-center rounded-full bg-white/10">
-                      <Icon className={cn('h-5 w-5', iconClassName)} />
+        <div className="rounded-2xl border border-[color:var(--panel-border)] bg-[color:var(--panel-bg)] p-6 shadow-soft">
+          <div className="flex items-center justify-between">
+            <p className="text-xs uppercase tracking-[0.2em] text-[color:var(--text-muted)]">Single sign-on</p>
+            <span className="text-xs text-[color:var(--text-muted)]">GitHub + Google</span>
+          </div>
+          <div className="mt-4 space-y-3">
+            {AUTH_PROVIDERS.map(({ id, label, Icon, className, iconClassName, description }) => {
+              const loginHref = `${BACKEND}/api/v1/auth/login/${id}`;
+              return (
+                <a
+                  key={id}
+                  href={loginHref}
+                  className={cn(
+                    'inline-flex w-full items-center justify-between gap-3 rounded-full px-6 py-3 text-base font-semibold transition hover:-translate-y-0.5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[color:var(--accent)]',
+                    className,
+                  )}
+                >
+                  <div className="flex w-full flex-col gap-1">
+                    <span className="flex items-center gap-3">
+                      <span className="flex h-7 w-7 items-center justify-center rounded-full bg-white/10">
+                        <Icon className={cn('h-5 w-5', iconClassName)} />
+                      </span>
+                      {label}
                     </span>
-                    {label}
+                    <span className="text-xs text-[color:var(--text-secondary)]">{description}</span>
+                  </div>
+                  <span aria-hidden className="text-sm text-[color:var(--text-secondary)]">
+                    -&gt;
                   </span>
-                  <span className="text-xs text-[color:var(--text-secondary)]">{description}</span>
-                </div>
-                <span aria-hidden className="text-sm text-[color:var(--text-secondary)]">
-                  ↗
-                </span>
-              </a>
-            );
-          })}
+                </a>
+              );
+            })}
+          </div>
         </div>
 
+        <div className="flex items-center gap-4 text-xs uppercase tracking-[0.2em] text-[color:var(--text-muted)]">
+          <span className="h-px flex-1 bg-[color:var(--panel-border)]" />
+          <span>or use email</span>
+          <span className="h-px flex-1 bg-[color:var(--panel-border)]" />
+        </div>
+
+        <Tabs defaultValue="sign-in" className="rounded-2xl border border-[color:var(--panel-border)] bg-[color:var(--panel-alt)] p-6 shadow-soft">
+          <div className="space-y-2">
+            <p className="text-xs uppercase tracking-[0.2em] text-[color:var(--text-muted)]">Email access</p>
+            <h2 className="text-lg font-semibold">Sign in or create an account</h2>
+            <p className="text-sm text-[color:var(--text-secondary)]">
+              Prefer passwords? Use email to access your workspace.
+            </p>
+          </div>
+
+          <TabsContent value="sign-in">
+            <form onSubmit={handleLoginSubmit} className="space-y-4">
+              <div className="space-y-2">
+                <Label htmlFor="login-email">Email</Label>
+                <Input
+                  id="login-email"
+                  type="email"
+                  value={loginState.email}
+                  autoComplete="email"
+                  onChange={(event) => setLoginState((prev) => ({ ...prev, email: event.target.value }))}
+                  placeholder="you@company.com"
+                  required
+                  disabled={loginState.isSubmitting}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="login-password">Password</Label>
+                <Input
+                  id="login-password"
+                  type="password"
+                  value={loginState.password}
+                  autoComplete="current-password"
+                  onChange={(event) => setLoginState((prev) => ({ ...prev, password: event.target.value }))}
+                  placeholder="********"
+                  required
+                  disabled={loginState.isSubmitting}
+                />
+              </div>
+              {loginState.error ? (
+                <p className="text-sm text-rose-500" role="alert">
+                  {loginState.error}
+                </p>
+              ) : null}
+              <Button type="submit" size="lg" className="w-full" isLoading={loginState.isSubmitting} loadingText="Signing in...">
+                Sign in
+              </Button>
+            </form>
+          </TabsContent>
+
+          <TabsContent value="create">
+            <form onSubmit={handleRegisterSubmit} className="space-y-4">
+              <div className="space-y-2">
+                <Label htmlFor="register-email">Email</Label>
+                <Input
+                  id="register-email"
+                  type="email"
+                  value={registerState.email}
+                  autoComplete="email"
+                  onChange={(event) => setRegisterState((prev) => ({ ...prev, email: event.target.value }))}
+                  placeholder="you@company.com"
+                  required
+                  disabled={registerState.isSubmitting}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="register-username">Workspace handle (optional)</Label>
+                <Input
+                  id="register-username"
+                  type="text"
+                  value={registerState.username ?? ''}
+                  autoComplete="username"
+                  onChange={(event) => setRegisterState((prev) => ({ ...prev, username: event.target.value }))}
+                  placeholder="jordan"
+                  disabled={registerState.isSubmitting}
+                />
+                <p className="text-xs text-[color:var(--text-muted)]">
+                  Leave this blank and we will generate one from your email.
+                </p>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="register-password">Password</Label>
+                <Input
+                  id="register-password"
+                  type="password"
+                  value={registerState.password}
+                  autoComplete="new-password"
+                  onChange={(event) => setRegisterState((prev) => ({ ...prev, password: event.target.value }))}
+                  placeholder="At least 8 characters"
+                  minLength={8}
+                  required
+                  disabled={registerState.isSubmitting}
+                />
+              </div>
+              {registerState.error ? (
+                <p className="text-sm text-rose-500" role="alert">
+                  {registerState.error}
+                </p>
+              ) : null}
+              <Button type="submit" size="lg" className="w-full" isLoading={registerState.isSubmitting} loadingText="Creating...">
+                Create account
+              </Button>
+            </form>
+          </TabsContent>
+
+          <div className="mt-6 flex flex-col gap-3 border-t border-[color:var(--panel-border)] pt-4 sm:flex-row sm:items-center sm:justify-between">
+            <p className="text-xs uppercase tracking-[0.2em] text-[color:var(--text-muted)]">Email options</p>
+            <TabsList className="w-full justify-between sm:w-auto sm:justify-start">
+              <TabsTrigger value="sign-in" className="flex-1 sm:min-w-[140px]">
+                Sign in
+              </TabsTrigger>
+              <TabsTrigger value="create" className="flex-1 sm:min-w-[140px]">
+                Sign up
+              </TabsTrigger>
+            </TabsList>
+          </div>
+        </Tabs>
+
         <div className="grid gap-4 text-sm text-[color:var(--text-secondary)] sm:grid-cols-2">
-          <Feature label="No extra passwords">Authenticate through GitHub or Google—your choice.</Feature>
+          <Feature label="Flexible access">Use email credentials or sign in with SSO providers.</Feature>
           <Feature label="Team-ready">Access shared organizations and projects instantly.</Feature>
           <Feature label="Secure by default">Session cookies stay encrypted and scoped to your workspace.</Feature>
           <Feature label="Quick onboarding">Sign in once and jump back into your agents and analytics.</Feature>

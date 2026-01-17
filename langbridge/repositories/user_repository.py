@@ -19,6 +19,14 @@ class UserRepository(AsyncBaseRepository[User]):
             .filter(User.username == username)
         )
         return (await self._session.scalars(stmt)).one_or_none()
+
+    async def get_by_email(self, email: str) -> User | None:
+        stmt = (
+            select(User)
+            .options(selectinload(User.oauth_accounts))
+            .filter(User.email == email)
+        )
+        return (await self._session.scalars(stmt)).one_or_none()
     
 class OAuthAccountRepository(AsyncBaseRepository[OAuthAccount]):
     """Data access helper for OAuth account entities."""

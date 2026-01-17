@@ -154,6 +154,7 @@ class Container(containers.DeclarativeContainer):
         connector_service=connector_service,
         agent_service=agent_service,
         semantic_search_service=semantic_search_service,
+        emvironment_service=environment_service
     )
 
     thread_service = providers.Factory(

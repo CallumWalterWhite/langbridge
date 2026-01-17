@@ -15,6 +15,15 @@ class RegisterRequest(LoginRequest):
     pass
 
 
+class NativeLoginRequest(_Base):
+    email: str = Field(min_length=3, max_length=255)
+    password: str = Field(min_length=8, max_length=255)
+
+
+class NativeRegisterRequest(NativeLoginRequest):
+    username: Optional[str] = Field(default=None, min_length=3, max_length=255)
+
+
 class LoginResponse(_Base):
     access_token: str
     token_type: str = "basic"
@@ -23,6 +32,7 @@ class LoginResponse(_Base):
 class UserResponse(_Base):
     id: uuid.UUID
     username: str
+    email: Optional[str] = None
     is_active: bool
     
     available_organizations: Optional[list[uuid.UUID]] = None

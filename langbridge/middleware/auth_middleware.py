@@ -15,6 +15,7 @@ from services.auth_service import AuthService
 PATHS_TO_EXCLUDE = [
     "/api/v1/auth/health",
     "/api/v1/auth/login",
+    "/api/v1/auth/register",
     "/api/v1/auth/github/callback",
     "/api/v1/auth/google/callback",
     "/api/v1/auth/logout",

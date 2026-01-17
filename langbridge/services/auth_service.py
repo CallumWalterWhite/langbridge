@@ -9,6 +9,7 @@ import httpx
 
 from db.auth import OAuthAccount, User
 from errors.application_errors import AuthenticationError, BusinessValidationError
+from auth.passwords import hash_password, verify_password
 from models.auth import OAuthAccountResponse, UserResponse
 from models.base import _Base
 from repositories.user_repository import OAuthAccountRepository, UserRepository
@@ -146,6 +147,21 @@ class AuthService:
             proj.id for proj_list in projects for proj in proj_list
         )
         return user
+
+    async def get_user_by_email(self, email: str) -> UserResponse:
+        user = await self._user_repository.get_by_email(email)
+        if not user:
+            raise BusinessValidationError("User not found")
+        user = UserResponse.model_validate(user)
+        orgs = await self._organization_service.list_user_organizations(user)
+        projects = [
+            await self._organization_service.list_projects_for_organization(org.id, user) for org in orgs
+        ]
+        user.available_organizations = list([org.id for org in orgs])
+        user.available_projects = list(
+            proj.id for proj_list in projects for proj in proj_list
+        )
+        return user
         
 
     async def authorize_redirect(
@@ -242,11 +258,59 @@ class AuthService:
         user = User(
             id=uuid.uuid4(),
             username=username,
+            email=user_info.email,
             is_active=True,
         )
         self._user_repository.add(user)
         oauth_account = self.create_oauth_account(user, user_info, oauth_provider)
         return user, oauth_account
+
+    async def register_native_user(
+        self,
+        email: str,
+        password: str,
+        *,
+        username: str | None = None,
+    ) -> UserResponse:
+        existing = await self._user_repository.get_by_email(email)
+        if existing:
+            raise BusinessValidationError("User with this email already exists.")
+
+        if username:
+            existing_username = await self._user_repository.get_by_username(username)
+            if existing_username:
+                raise BusinessValidationError("Username already taken.")
+            resolved_username = username
+        else:
+            resolved_username = await self._resolve_unique_username_for_email(email)
+
+        user = User(
+            id=uuid.uuid4(),
+            username=resolved_username,
+            email=email,
+            password_hash=hash_password(password),
+            is_active=True,
+        )
+        self._user_repository.add(user)
+        await self._organization_service.ensure_default_workspace_for_user(user)
+        return UserResponse.model_validate(user)
+
+    async def authenticate_native_user(self, email: str, password: str) -> UserResponse:
+        user = await self._user_repository.get_by_email(email)
+        if not user or not user.password_hash:
+            raise AuthenticationError("Invalid email or password.")
+        if not verify_password(password, user.password_hash):
+            raise AuthenticationError("Invalid email or password.")
+        user = UserResponse.model_validate(user)
+        orgs = await self._organization_service.list_user_organizations(user)
+        projects = [
+            await self._organization_service.list_projects_for_organization(org.id, user) for org in orgs
+        ]
+        user.available_organizations = list([org.id for org in orgs])
+        user.available_projects = list(
+            proj.id for proj_list in projects for proj in proj_list
+        )
+        return user
 
     async def _resolve_unique_username(self, user_info: OAuthProviderUserInfo) -> str:
         base_username = user_info.username or ""
@@ -267,4 +331,16 @@ class AuthService:
             candidate = f"{sanitized}{suffix}"
             suffix += 1
 
+        return candidate
+
+    async def _resolve_unique_username_for_email(self, email: str) -> str:
+        base_username = email.split("@")[0]
+        sanitized = re.sub(r"[^a-zA-Z0-9._-]", "", base_username).lower()
+        if not sanitized:
+            sanitized = "user"
+        candidate = sanitized
+        suffix = 1
+        while await self._user_repository.get_by_username(candidate):
+            candidate = f"{sanitized}{suffix}"
+            suffix += 1
         return candidate

@@ -8,7 +8,7 @@ from ioc import Container
 from auth.jwt import create_jwt, set_session_cookie, verify_jwt
 from services.auth_service import AuthService
 from config import settings
-from models.auth import UserResponse
+from models.auth import UserResponse, NativeLoginRequest, NativeRegisterRequest
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 security = HTTPBasic()
@@ -76,6 +76,48 @@ async def login_google(
         request: Request,
         auth_service: AuthService = Depends(Provide[Container.auth_service])):
     return await _authorize_with_provider("google", request, auth_service)
+
+
+@router.post("/login")
+@inject
+async def login_native(
+    payload: NativeLoginRequest,
+    auth_service: AuthService = Depends(Provide[Container.auth_service]),
+):
+    user = await auth_service.authenticate_native_user(payload.email, payload.password)
+    session_claims = {
+        "sub": str(user.id),
+        "username": user.username,
+        "email": user.email,
+        "provider": "native",
+    }
+    token = create_jwt(session_claims)
+    resp = JSONResponse({"ok": True, "user": session_claims})
+    set_session_cookie(resp, token)
+    return resp
+
+
+@router.post("/register")
+@inject
+async def register_native(
+    payload: NativeRegisterRequest,
+    auth_service: AuthService = Depends(Provide[Container.auth_service]),
+):
+    user = await auth_service.register_native_user(
+        payload.email,
+        payload.password,
+        username=payload.username,
+    )
+    session_claims = {
+        "sub": str(user.id),
+        "username": user.username,
+        "email": user.email,
+        "provider": "native",
+    }
+    token = create_jwt(session_claims)
+    resp = JSONResponse({"ok": True, "user": session_claims})
+    set_session_cookie(resp, token)
+    return resp
 
 @router.get("/login/{provider}")
 @inject
