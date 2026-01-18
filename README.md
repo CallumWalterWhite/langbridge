@@ -1,56 +1,16 @@
 # Langbridge
 
-Langbridge is a full-stack agent orchestration platform for building AI assistants
-that can plan, call tools, and answer questions with data-backed context. It ships
-with a FastAPI backend, a Next.js client, and an orchestrator that routes requests
-across tools like SQL analysis, web search, deep research, and visualization.
+Langbridge is an orchestration platform for agents that coordinate real data sources,
+run tool-backed workflows, and expose a shared UI for models, semantic data, and BI.
 
-## What it does
-- Build and manage agent definitions (prompt contract, memory strategy, tools, output schema).
-- Orchestrate multi-step workflows with a planner + supervisor loop.
-- Run tool-backed agents: SQL analyst, web search, deep research, visualization.
-- Store chat threads, messages, and tool-call logs.
-- Provide a UI for LLM connections, agent setup, and chats.
+## Getting going
+- Backend (FastAPI + DI + SQLAlchemy): install deps then `cd langbridge && fastapi run main.py`.
+- Frontend (Next.js app): `cd client && npm install && npm run dev`.
+- Docker: `docker compose up --build` and visit `http://localhost:3000` for the UI,
+  `http://localhost:8000/docs` for the API.
 
-## Architecture
-- Backend: FastAPI + SQLAlchemy + dependency-injector (`langbridge/`).
-- Orchestrator: planner + supervisor + agents (`langbridge/orchestrator/`).
-- Frontend: Next.js app (`client/`).
-- Storage: Postgres for data, Redis for caching/queues (via docker-compose).
-
-## Quick start (Docker)
-```bash
-docker compose up --build
-```
-
-Then open:
-- UI: `http://localhost:3000`
-- API docs: `http://localhost:8000/docs`
-
-## Local development (optional)
-Backend:
-```bash
-python -m venv .venv
-source .venv/bin/activate
-pip install -r langbridge/requirements.txt
-python langbridge/main.py
-```
-
-Frontend:
-```bash
-cd client
-npm install
-npm run dev
-```
-
-## Repo layout
-- `langbridge/`: FastAPI app, orchestration logic, connectors, services, models.
-- `client/`: Next.js UI.
-- `proxy/`: database proxy container config.
+## Repo structure
+- `langbridge/`: FastAPI services, orchestrator, semantic model handling.
+- `client/`: Next.js App Router experience.
 - `tests/`: backend tests.
-- `docker-compose.yml`: local dev stack (API, UI, Postgres, Redis).
-
-## Getting started in the UI
-1. Create an LLM connection.
-2. Create an agent definition (tools, prompts, memory, output schema).
-3. Start a chat thread and select your agent.
+- `docker-compose.yml`: brings up the full stack (API, UI, Postgres, Redis, etc.).
