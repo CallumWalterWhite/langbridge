@@ -98,6 +98,7 @@ export function AppShell({ children }: { children: ReactNode }): JSX.Element {
 
   const [openParent, setOpenParent] = useState<string | null>(null);
   const isChatRoute = pathname.startsWith('/chat');
+  const isBIRoute = pathname.startsWith('/bi');
 
   const activeNav = useMemo(() => {
     for (const item of NAV_ITEMS) {
@@ -267,7 +268,8 @@ export function AppShell({ children }: { children: ReactNode }): JSX.Element {
             <main
               className={cn(
                 'w-full px-6 py-8 page-enter',
-                isChatRoute ? 'max-w-none' : 'mx-auto max-w-[1200px]',
+                isChatRoute ? 'max-w-none' : 
+                isBIRoute ? 'max-w-none': 'mx-auto max-w-[1200px]',
               )}
             >
               {children}

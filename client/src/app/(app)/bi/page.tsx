@@ -63,6 +63,12 @@ type FilterDraft = {
   values: string;
 };
 
+type OrderByDraft = {
+  id: string;
+  member: string;
+  direction: 'asc' | 'desc';
+};
+
 type ChartType = 'table' | 'bar' | 'line' | 'pie';
 
 const FILTER_OPERATORS = [
@@ -84,6 +90,11 @@ const FILTER_LOGIC_OPTIONS = [
   { value: 'or', label: 'Match any' },
 ];
 
+const ORDER_DIRECTIONS = [
+  { value: 'asc', label: 'Ascending' },
+  { value: 'desc', label: 'Descending' },
+];
+
 const AGGREGATION_OPTIONS = [
   { value: 'sum', label: 'Sum' },
   { value: 'avg', label: 'Average' },
@@ -91,6 +102,15 @@ const AGGREGATION_OPTIONS = [
   { value: 'max', label: 'Maximum' },
   { value: 'count', label: 'Count' },
   { value: 'count_distinct', label: 'Count distinct' },
+];
+
+const TIME_GRAIN_OPTIONS = [
+  { value: '', label: 'No grain' },
+  { value: 'day', label: 'Day' },
+  { value: 'week', label: 'Week' },
+  { value: 'month', label: 'Month' },
+  { value: 'quarter', label: 'Quarter' },
+  { value: 'year', label: 'Year' },
 ];
 
 const DATE_PRESETS = [
@@ -126,9 +146,15 @@ export default function BiStudioPage() {
   const [selectedMeasures, setSelectedMeasures] = useState<string[]>([]);
   const [selectedDimensions, setSelectedDimensions] = useState<string[]>([]);
   const [selectedSegments, setSelectedSegments] = useState<string[]>([]);
+  const [selectedTimeDimension, setSelectedTimeDimension] = useState('');
+  const [timeGrain, setTimeGrain] = useState('');
+  const [timeRangePreset, setTimeRangePreset] = useState('');
+  const [timeRangeStart, setTimeRangeStart] = useState('');
+  const [timeRangeEnd, setTimeRangeEnd] = useState('');
   const [filters, setFilters] = useState<FilterDraft[]>([]);
   const [filterLogic, setFilterLogic] = useState<'and' | 'or'>('and');
   const [limit, setLimit] = useState(200);
+  const [orderBys, setOrderBys] = useState<OrderByDraft[]>([]);
   const [hasRunQuery, setHasRunQuery] = useState(false);
   const [queryResult, setQueryResult] = useState<SemanticQueryResponse | null>(null);
   const [chartType, setChartType] = useState<ChartType>('bar');
@@ -180,7 +206,13 @@ export default function BiStudioPage() {
     setSelectedMeasures([]);
     setSelectedDimensions([]);
     setSelectedSegments([]);
+    setSelectedTimeDimension('');
+    setTimeGrain('');
+    setTimeRangePreset('');
+    setTimeRangeStart('');
+    setTimeRangeEnd('');
     setFilters([]);
+    setOrderBys([]);
     setQueryResult(null);
     setHasRunQuery(false);
     setFieldAliases({});
@@ -192,7 +224,8 @@ export default function BiStudioPage() {
   }, [selectedModelId]);
 
   const semanticModel = semanticMetaQuery.data?.semanticModel;
-  const canRunQuery = selectedDimensions.length > 0 || selectedMeasures.length > 0;
+  const canRunQuery =
+    selectedDimensions.length > 0 || selectedMeasures.length > 0 || Boolean(selectedTimeDimension);
 
   const { dimensionOptions, measureOptions, segmentOptions, metricOptions } = useMemo(() => {
     return buildFieldOptions(semanticModel);
@@ -209,6 +242,14 @@ export default function BiStudioPage() {
     ];
   }, [dimensionOptions, measureOptions]);
 
+  const timeDimensionOptions = useMemo(() => {
+    return dimensionOptions.filter((option) => isTimeDimensionOption(option));
+  }, [dimensionOptions]);
+
+  const orderFieldOptions = useMemo(() => {
+    return [...dimensionOptions, ...measureOptions];
+  }, [dimensionOptions, measureOptions]);
+
   const fieldLookup = useMemo(() => {
     return new Map(
       [...dimensionOptions, ...measureOptions, ...segmentOptions].map((option) => [
@@ -219,6 +260,7 @@ export default function BiStudioPage() {
   }, [dimensionOptions, measureOptions, segmentOptions]);
 
   const modelOptions = semanticModelsQuery.data ?? [];
+  const selectedModel = modelOptions.find((model) => model.id === selectedModelId) ?? null;
   const filteredModels = useMemo(() => {
     if (!modelSearch.trim()) {
       return modelOptions;
@@ -238,8 +280,16 @@ export default function BiStudioPage() {
   }, [recentModelIds, modelOptions]);
 
   const selectedFieldIds = useMemo(() => {
-    return new Set([...selectedDimensions, ...selectedMeasures, ...selectedSegments]);
-  }, [selectedDimensions, selectedMeasures, selectedSegments]);
+    const next = new Set([
+      ...selectedDimensions,
+      ...selectedMeasures,
+      ...selectedSegments,
+    ]);
+    if (selectedTimeDimension) {
+      next.add(selectedTimeDimension);
+    }
+    return next;
+  }, [selectedDimensions, selectedMeasures, selectedSegments, selectedTimeDimension]);
 
   const omniboxResults = useMemo(() => {
     if (!omniboxSearch.trim()) {
@@ -253,7 +303,10 @@ export default function BiStudioPage() {
 
   const activeField = activeFieldId ? fieldLookup.get(activeFieldId) : undefined;
   const selectedFieldCount =
-    selectedDimensions.length + selectedMeasures.length + selectedSegments.length;
+    selectedDimensions.length +
+    selectedMeasures.length +
+    selectedSegments.length +
+    (selectedTimeDimension ? 1 : 0);
 
   useEffect(() => {
     setOmniboxIndex(0);
@@ -277,6 +330,7 @@ export default function BiStudioPage() {
     }
     return Object.keys(rows[0]);
   }, [queryResult]);
+  const resultCount = queryResult?.data?.length ?? 0;
 
   useEffect(() => {
     if (resultColumns.length === 0) {
@@ -284,7 +338,11 @@ export default function BiStudioPage() {
       setChartY('');
       return;
     }
+    const timeAlias = selectedTimeDimension
+      ? buildTimeDimensionAlias(selectedTimeDimension, timeGrain)
+      : '';
     const preferredX =
+      (timeAlias && resultColumns.includes(timeAlias) ? timeAlias : null) ??
       selectedDimensions.find((dimension) => resultColumns.includes(dimension)) ??
       resultColumns[0];
     const resolvedX = resultColumns.includes(chartX) ? chartX : preferredX;
@@ -299,13 +357,36 @@ export default function BiStudioPage() {
     if (!chartY || !resultColumns.includes(chartY)) {
       setChartY(resolvedY);
     }
-  }, [resultColumns, chartX, chartY, selectedDimensions, selectedMeasures]);
+  }, [
+    resultColumns,
+    chartX,
+    chartY,
+    selectedDimensions,
+    selectedMeasures,
+    selectedTimeDimension,
+    timeGrain,
+  ]);
 
   const handleRunQuery = () => {
     if (!selectedOrganizationId || !selectedModelId || !canRunQuery) {
       return;
     }
     setHasRunQuery(true);
+    const timeRange = buildTimeRange({
+      preset: timeRangePreset,
+      start: timeRangeStart,
+      end: timeRangeEnd,
+    });
+    const timeDimensions = selectedTimeDimension
+      ? [
+          {
+            dimension: selectedTimeDimension,
+            granularity: timeGrain || undefined,
+            dateRange: timeRange,
+          },
+        ]
+      : undefined;
+    const order = buildOrderPayload(orderBys);
     const payload: SemanticQueryRequestPayload = {
       organizationId: selectedOrganizationId,
       projectId: (selectedProjectId === '' ? null : selectedProjectId) ?? null,
@@ -313,6 +394,7 @@ export default function BiStudioPage() {
       query: {
         measures: selectedMeasures,
         dimensions: selectedDimensions,
+        timeDimensions,
         segments: selectedSegments,
         filters: filters
           .filter((filter) => filter.member && filter.operator)
@@ -321,6 +403,7 @@ export default function BiStudioPage() {
             operator: filter.operator,
             values: parseFilterValues(filter),
           })),
+        order,
         limit: limit || undefined,
       },
     };
@@ -405,26 +488,63 @@ export default function BiStudioPage() {
   }
 
   return (
-    <div className="space-y-6 text-[color:var(--text-secondary)]">
-      <header className="space-y-2">
-        <p className="text-xs font-semibold uppercase tracking-[0.3em] text-[color:var(--text-muted)]">
-          BI studio
-        </p>
-        <h1 className="text-2xl font-semibold text-[color:var(--text-primary)] md:text-3xl">
-          Build dashboards from semantic queries
-        </h1>
-        <p className="max-w-3xl text-sm">
-          Semantic-first dashboards with fast field search, inline filters, and flexible visualization controls.
-        </p>
-      </header>
+    <div className="relative space-y-8 text-[color:var(--text-secondary)]">
+      <div className="pointer-events-none absolute inset-0 -z-10">
+        <div className="absolute -top-28 right-6 h-72 w-72 rounded-full bg-[color:var(--accent-soft)] opacity-45 blur-3xl" />
+        <div className="absolute bottom-0 left-0 h-72 w-72 rounded-full bg-[color:var(--panel-alt)] opacity-70 blur-3xl" />
+      </div>
+      <section className="bi-fade-up rounded-3xl border border-[color:var(--panel-border)] bg-[color:var(--panel-bg)] p-6 shadow-soft">
+        <div className="flex flex-wrap items-start justify-between gap-6">
+          <div className="space-y-2">
+            <p className="text-xs font-semibold uppercase tracking-[0.32em] text-[color:var(--text-muted)]">
+              BI studio
+            </p>
+            <h1 className="text-2xl font-semibold text-[color:var(--text-primary)] md:text-3xl">
+              Visual query canvas
+            </h1>
+            <p className="max-w-3xl text-sm">
+              Assemble semantic fields, shape visuals, and publish lightweight dashboards.
+            </p>
+          </div>
+          <div className="flex flex-wrap items-center gap-3">
+            <div className="rounded-2xl border border-[color:var(--panel-border)] bg-[color:var(--panel-alt)] px-4 py-3">
+              <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-[color:var(--text-muted)]">
+                Active model
+              </p>
+              <p className="text-sm font-semibold text-[color:var(--text-primary)]">
+                {selectedModel?.name ?? 'Select a model'}
+              </p>
+              {selectedModel?.description ? (
+                <p className="text-xs text-[color:var(--text-muted)]">
+                  {selectedModel.description}
+                </p>
+              ) : null}
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <Badge variant="secondary">{selectedFieldCount} fields</Badge>
+              <Badge variant="secondary">{filters.length} filters</Badge>
+              <Badge variant="secondary">{selectedSegments.length} segments</Badge>
+            </div>
+            <Button
+              type="button"
+              size="sm"
+              isLoading={queryMutation.isPending}
+              disabled={!selectedModelId || queryMutation.isPending || !canRunQuery}
+              onClick={handleRunQuery}
+            >
+              Run query
+            </Button>
+          </div>
+        </div>
+      </section>
 
-      <div className="grid gap-6 xl:grid-cols-[minmax(240px,1fr)_minmax(420px,1.6fr)_minmax(320px,1.2fr)]">
-        <section className="space-y-6 rounded-3xl border border-[color:var(--panel-border)] bg-[color:var(--panel-bg)] p-6 shadow-soft">
+      <div className="grid gap-8 xl:grid-cols-12">
+        <aside className="bi-fade-up bi-stagger-1 space-y-6 rounded-3xl border border-[color:var(--panel-border)] bg-[color:var(--panel-bg)] p-5 shadow-soft xl:col-span-3">
           <div className="space-y-1">
             <p className="text-xs font-semibold uppercase tracking-[0.2em] text-[color:var(--text-muted)]">
-              Model explorer
+              Data
             </p>
-            <p className="text-sm">Search semantic models and drill into the schema.</p>
+            <p className="text-sm">Models, tables, and fields.</p>
           </div>
 
           <div className="space-y-3">
@@ -514,9 +634,9 @@ export default function BiStudioPage() {
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div>
                 <p className="text-xs font-semibold uppercase tracking-[0.2em] text-[color:var(--text-muted)]">
-                  Semantic explorer
+                  Fields
                 </p>
-                <p className="text-sm">Grouped fields, segments, and metrics.</p>
+                <p className="text-sm">Dimensions, measures, and segments.</p>
               </div>
               {semanticModel ? <Badge variant="secondary">{tableGroups.length} tables</Badge> : null}
             </div>
@@ -555,27 +675,20 @@ export default function BiStudioPage() {
               </div>
             )}
           </div>
-        </section>
+        </aside>
 
-        <section className="space-y-6 rounded-3xl border border-[color:var(--panel-border)] bg-[color:var(--panel-bg)] p-6 shadow-soft">
+        <main className="space-y-6 xl:col-span-6">
+          <section className="bi-fade-up bi-stagger-2 space-y-6 rounded-3xl border border-[color:var(--panel-border)] bg-[color:var(--panel-bg)] p-6 shadow-soft">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
               <p className="text-xs font-semibold uppercase tracking-[0.2em] text-[color:var(--text-muted)]">
-                Query builder
+                Query canvas
               </p>
               <p className="text-sm text-[color:var(--text-secondary)]">
-                Assemble fields, filters, and segments before running the query.
+                Drag fields from the data pane or use the omnibox to build your query.
               </p>
             </div>
-            <Button
-              type="button"
-              size="sm"
-              isLoading={queryMutation.isPending}
-              disabled={!selectedModelId || queryMutation.isPending || !canRunQuery}
-              onClick={handleRunQuery}
-            >
-              Run query
-            </Button>
+            <Badge variant="secondary">{selectedFieldCount} fields selected</Badge>
           </div>
 
           <div className="space-y-2">
@@ -815,67 +928,369 @@ export default function BiStudioPage() {
             )}
           </div>
 
-          <div className="grid gap-6 lg:grid-cols-[1.2fr_0.8fr]">
-            <div className="space-y-3">
-              <div className="flex items-center justify-between">
-                <p className="text-sm font-semibold text-[color:var(--text-primary)]">
-                  Segments
-                </p>
-                <Badge variant="secondary">{selectedSegments.length} active</Badge>
-              </div>
-              {segmentOptions.length === 0 ? (
-                <div className="rounded-2xl border border-dashed border-[color:var(--panel-border)] bg-[color:var(--panel-alt)] p-4 text-sm">
-                  No segments saved in this model.
-                </div>
-              ) : (
-                <div className="flex flex-wrap gap-2">
-                  {segmentOptions.map((segment) => {
-                    const active = selectedSegments.includes(segment.id);
-                    return (
-                      <button
-                        key={segment.id}
-                        type="button"
-                        onClick={() =>
-                          toggleSelection(segment.id, selectedSegments, setSelectedSegments)
-                        }
-                        aria-pressed={active}
-                        className={cn(
-                          'rounded-full border px-3 py-1 text-xs font-medium transition',
-                          active
-                            ? 'border-[color:var(--accent)] bg-[color:var(--accent-soft)] text-[color:var(--text-primary)]'
-                            : 'border-[color:var(--panel-border)] bg-[color:var(--panel-bg)] text-[color:var(--text-secondary)]',
-                        )}
-                      >
-                        {segment.label}
-                      </button>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
-            <div className="space-y-3">
-              <Label htmlFor="limit">Row limit</Label>
-              <Input
-                id="limit"
-                type="number"
-                min={1}
-                value={limit}
-                onChange={(event) => setLimit(Number(event.target.value))}
-              />
-              <p className="text-xs text-[color:var(--text-muted)]">
-                Smart default keeps results fast while previewing.
+        </section>
+
+        <section className="bi-fade-up bi-stagger-3 space-y-6 rounded-3xl border border-[color:var(--panel-border)] bg-[color:var(--panel-bg)] p-6 shadow-soft">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-[0.2em] text-[color:var(--text-muted)]">
+                Canvas preview
+              </p>
+              <p className="text-sm text-[color:var(--text-secondary)]">
+                Review the visualization and the data backing it.
               </p>
             </div>
+            <Badge variant="secondary">{resultCount} rows</Badge>
           </div>
 
-          <div className="space-y-4">
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <div>
-                <p className="text-sm font-semibold text-[color:var(--text-primary)]">Filters</p>
-                <p className="text-xs text-[color:var(--text-muted)]">
-                  Inline filters with type-aware inputs.
-                </p>
+          {queryMutation.isError ? (
+            <div className="rounded-2xl border border-rose-300 bg-rose-100/40 p-4 text-sm text-rose-700">
+              {queryMutation.error?.message ?? 'Query failed.'}
+            </div>
+          ) : null}
+
+          {queryMutation.isPending ? (
+            <div className="rounded-2xl border border-dashed border-[color:var(--panel-border)] bg-[color:var(--panel-alt)] p-4 text-sm">
+              Running query...
+            </div>
+          ) : null}
+
+          {queryResult && chartType !== 'table' ? (
+            <ChartPreview
+              chartType={chartType}
+              data={queryResult.data ?? []}
+              xKey={chartX}
+              yKey={chartY}
+            />
+          ) : null}
+
+          <div className="space-y-2">
+            <p className="text-xs font-semibold uppercase tracking-[0.2em] text-[color:var(--text-muted)]">
+              {chartType === 'table' ? 'Table view' : 'Data preview'}
+            </p>
+            <ResultsTable
+              rows={queryResult?.data ?? []}
+              hasRunQuery={hasRunQuery}
+              isLoading={queryMutation.isPending}
+            />
+          </div>
+        </section>
+      </main>
+
+      <aside className="bi-fade-up bi-stagger-4 space-y-6 xl:col-span-3">
+        <section className="space-y-4 rounded-3xl border border-[color:var(--panel-border)] bg-[color:var(--panel-bg)] p-5 shadow-soft">
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-[0.2em] text-[color:var(--text-muted)]">
+              Visualization
+            </p>
+            <p className="text-sm text-[color:var(--text-secondary)]">
+              Pick a chart and map the axes.
+            </p>
+          </div>
+          <div className="grid gap-2 sm:grid-cols-2">
+            {VIZ_OPTIONS.map((option) => (
+              <button
+                key={option.value}
+                type="button"
+                onClick={() => setChartType(option.value)}
+                className={cn(
+                  'flex items-center justify-between rounded-2xl border px-3 py-3 text-left text-sm transition',
+                  chartType === option.value
+                    ? 'border-[color:var(--accent)] bg-[color:var(--accent-soft)] text-[color:var(--text-primary)]'
+                    : 'border-[color:var(--panel-border)] bg-[color:var(--panel-alt)] text-[color:var(--text-secondary)] hover:bg-[color:var(--panel-bg)]',
+                )}
+              >
+                <span className="flex items-center gap-2">
+                  <span className="rounded-full border border-[color:var(--panel-border)] bg-[color:var(--panel-bg)] px-2 py-0.5 text-[11px] uppercase tracking-[0.12em] text-[color:var(--text-muted)]">
+                    {option.icon}
+                  </span>
+                  <span className="font-medium">{option.label}</span>
+                </span>
+                <span className="text-xs text-[color:var(--text-muted)]">{option.helper}</span>
+              </button>
+            ))}
+          </div>
+          <div className="grid gap-3">
+            <Select
+              value={chartX}
+              onChange={(event) => setChartX(event.target.value)}
+              disabled={resultColumns.length === 0 || chartType === 'table'}
+              placeholder="X axis"
+            >
+              {resultColumns.map((column) => (
+                <option key={column} value={column}>
+                  X: {column}
+                </option>
+              ))}
+            </Select>
+            <Select
+              value={chartY}
+              onChange={(event) => setChartY(event.target.value)}
+              disabled={resultColumns.length === 0 || chartType === 'table'}
+              placeholder="Y axis"
+            >
+              {resultColumns.map((column) => (
+                <option key={column} value={column}>
+                  Y: {column}
+                </option>
+              ))}
+            </Select>
+          </div>
+        </section>
+
+        <section className="space-y-4 rounded-3xl border border-[color:var(--panel-border)] bg-[color:var(--panel-bg)] p-5 shadow-soft">
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-[0.2em] text-[color:var(--text-muted)]">
+              Order by
+            </p>
+            <p className="text-sm text-[color:var(--text-secondary)]">
+              Sort results for ranking and leaderboards.
+            </p>
+          </div>
+          {orderBys.length === 0 ? (
+            <div className="rounded-2xl border border-dashed border-[color:var(--panel-border)] bg-[color:var(--panel-alt)] p-4 text-sm">
+              No ordering applied.
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {orderBys.map((orderBy) => (
+                <div
+                  key={orderBy.id}
+                  className="flex flex-wrap items-center gap-2 rounded-2xl border border-[color:var(--panel-border)] bg-[color:var(--panel-alt)] p-3"
+                >
+                  <Select
+                    value={orderBy.member}
+                    onChange={(event) => {
+                      const member = event.target.value;
+                      const field = fieldLookup.get(member);
+                      const direction =
+                        field?.kind === 'dimension'
+                          ? 'asc'
+                          : field
+                            ? 'desc'
+                            : orderBy.direction;
+                      setOrderBys((current) =>
+                        current.map((item) =>
+                          item.id === orderBy.id ? { ...item, member, direction } : item,
+                        ),
+                      );
+                    }}
+                    placeholder="Field"
+                    className="min-w-[180px]"
+                    disabled={orderFieldOptions.length === 0}
+                  >
+                    {orderFieldOptions.map((option) => (
+                      <option key={option.id} value={option.id}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </Select>
+                  <Select
+                    value={orderBy.direction}
+                    onChange={(event) =>
+                      setOrderBys((current) =>
+                        current.map((item) =>
+                          item.id === orderBy.id
+                            ? {
+                                ...item,
+                                direction: event.target.value as 'asc' | 'desc',
+                              }
+                            : item,
+                        ),
+                      )
+                    }
+                    className="min-w-[140px]"
+                  >
+                    {ORDER_DIRECTIONS.map((direction) => (
+                      <option key={direction.value} value={direction.value}>
+                        {direction.label}
+                      </option>
+                    ))}
+                  </Select>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    onClick={() =>
+                      setOrderBys((current) =>
+                        current.filter((item) => item.id !== orderBy.id),
+                      )
+                    }
+                  >
+                    Remove
+                  </Button>
+                </div>
+              ))}
+            </div>
+          )}
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() =>
+              setOrderBys((current) => [
+                ...current,
+                { id: createId('order'), member: '', direction: 'desc' },
+              ])
+            }
+            disabled={orderFieldOptions.length === 0}
+          >
+            Add order
+          </Button>
+        </section>
+
+        <section className="space-y-4 rounded-3xl border border-[color:var(--panel-border)] bg-[color:var(--panel-bg)] p-5 shadow-soft">
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-[0.2em] text-[color:var(--text-muted)]">
+              Filters
+            </p>
+            <p className="text-sm text-[color:var(--text-secondary)]">
+              Segment the data and apply ad-hoc rules.
+            </p>
+          </div>
+
+          <div className="space-y-3">
+            <div className="flex items-center justify-between gap-2">
+              <p className="text-sm font-semibold text-[color:var(--text-primary)]">
+                Time dimension
+              </p>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={() => {
+                  setSelectedTimeDimension('');
+                  setTimeGrain('');
+                  setTimeRangePreset('');
+                  setTimeRangeStart('');
+                  setTimeRangeEnd('');
+                }}
+                disabled={
+                  !selectedTimeDimension &&
+                  !timeRangePreset &&
+                  !timeRangeStart &&
+                  !timeRangeEnd
+                }
+              >
+                Clear
+              </Button>
+            </div>
+            <Select
+              value={selectedTimeDimension}
+              onChange={(event) => setSelectedTimeDimension(event.target.value)}
+              placeholder="Select time field"
+              disabled={timeDimensionOptions.length === 0}
+            >
+              {timeDimensionOptions.map((option) => (
+                <option key={option.id} value={option.id}>
+                  {option.label}
+                </option>
+              ))}
+            </Select>
+            <div className="grid gap-2 sm:grid-cols-2">
+              <Select
+                value={timeGrain}
+                onChange={(event) => setTimeGrain(event.target.value)}
+                disabled={!selectedTimeDimension}
+              >
+                {TIME_GRAIN_OPTIONS.map((option) => (
+                  <option key={option.value || 'none'} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </Select>
+              <Select
+                value={timeRangePreset}
+                onChange={(event) => {
+                  const value = event.target.value;
+                  setTimeRangePreset(value);
+                  if (value) {
+                    setTimeRangeStart('');
+                    setTimeRangeEnd('');
+                  }
+                }}
+                placeholder="Preset range"
+                disabled={!selectedTimeDimension}
+              >
+                {DATE_PRESETS.map((preset) => (
+                  <option key={preset.value} value={preset.value}>
+                    {preset.label}
+                  </option>
+                ))}
+              </Select>
+            </div>
+            <div className="grid gap-2 sm:grid-cols-2">
+              <Input
+                type="date"
+                value={timeRangeStart}
+                onChange={(event) => {
+                  setTimeRangeStart(event.target.value);
+                  if (event.target.value) {
+                    setTimeRangePreset('');
+                  }
+                }}
+                placeholder="Start"
+                disabled={!selectedTimeDimension || Boolean(timeRangePreset)}
+              />
+              <Input
+                type="date"
+                value={timeRangeEnd}
+                onChange={(event) => {
+                  setTimeRangeEnd(event.target.value);
+                  if (event.target.value) {
+                    setTimeRangePreset('');
+                  }
+                }}
+                placeholder="End"
+                disabled={!selectedTimeDimension || Boolean(timeRangePreset)}
+              />
+            </div>
+            <p className="text-xs text-[color:var(--text-muted)]">
+              Choose a grain to group time series and a date range for filtering.
+            </p>
+          </div>
+
+          <div className="space-y-3">
+            <div className="flex items-center justify-between">
+              <p className="text-sm font-semibold text-[color:var(--text-primary)]">Segments</p>
+              <Badge variant="secondary">{selectedSegments.length} active</Badge>
+            </div>
+            {segmentOptions.length === 0 ? (
+              <div className="rounded-2xl border border-dashed border-[color:var(--panel-border)] bg-[color:var(--panel-alt)] p-4 text-sm">
+                No segments saved in this model.
               </div>
+            ) : (
+              <div className="flex flex-wrap gap-2">
+                {segmentOptions.map((segment) => {
+                  const active = selectedSegments.includes(segment.id);
+                  return (
+                    <button
+                      key={segment.id}
+                      type="button"
+                      onClick={() =>
+                        toggleSelection(segment.id, selectedSegments, setSelectedSegments)
+                      }
+                      aria-pressed={active}
+                      className={cn(
+                        'rounded-full border px-3 py-1 text-xs font-medium transition',
+                        active
+                          ? 'border-[color:var(--accent)] bg-[color:var(--accent-soft)] text-[color:var(--text-primary)]'
+                          : 'border-[color:var(--panel-border)] bg-[color:var(--panel-bg)] text-[color:var(--text-secondary)]',
+                      )}
+                    >
+                      {segment.label}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
+          <div className="space-y-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <p className="text-sm font-semibold text-[color:var(--text-primary)]">
+                Filter rules
+              </p>
               <div className="flex flex-wrap items-center gap-2">
                 <Select
                   value={filterLogic}
@@ -1017,98 +1432,57 @@ export default function BiStudioPage() {
               </div>
             )}
           </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="limit">Row limit</Label>
+            <Input
+              id="limit"
+              type="number"
+              min={1}
+              value={limit}
+              onChange={(event) => setLimit(Number(event.target.value))}
+            />
+            <p className="text-xs text-[color:var(--text-muted)]">
+              Smart default keeps results fast while previewing.
+            </p>
+          </div>
         </section>
 
-        <section className="space-y-6 rounded-3xl border border-[color:var(--panel-border)] bg-[color:var(--panel-bg)] p-6 shadow-soft">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <div>
-              <p className="text-xs font-semibold uppercase tracking-[0.2em] text-[color:var(--text-muted)]">
-                Results and visualization
-              </p>
-              <p className="text-sm text-[color:var(--text-secondary)]">
-                Preview results, adjust charts, and export data.
-              </p>
-            </div>
-            <div className="flex flex-wrap gap-2">
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                onClick={handleExportCsv}
-                disabled={!queryResult?.data || queryResult.data.length === 0}
-              >
-                Export CSV
-              </Button>
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                onClick={() => setShowSqlPreview((current) => !current)}
-                disabled={!selectedModelId}
-              >
-                SQL preview
-              </Button>
+        <section className="space-y-4 rounded-3xl border border-[color:var(--panel-border)] bg-[color:var(--panel-bg)] p-5 shadow-soft">
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-[0.2em] text-[color:var(--text-muted)]">
+              Actions
+            </p>
+            <p className="text-sm text-[color:var(--text-secondary)]">
+              Export data or preview SQL before saving.
+            </p>
+          </div>
+          <div className="grid gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={handleExportCsv}
+              disabled={!queryResult?.data || queryResult.data.length === 0}
+            >
+              Export CSV
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => setShowSqlPreview((current) => !current)}
+              disabled={!selectedModelId}
+            >
+              SQL preview
+            </Button>
+            <div className="grid gap-2 sm:grid-cols-2">
               <Button type="button" variant="secondary" size="sm" disabled>
                 Save chart
               </Button>
               <Button type="button" variant="secondary" size="sm" disabled>
                 Save dashboard
               </Button>
-            </div>
-          </div>
-
-          <div className="space-y-3">
-            <p className="text-xs font-semibold uppercase tracking-[0.2em] text-[color:var(--text-muted)]">
-              Visualization
-            </p>
-            <div className="grid gap-2 sm:grid-cols-2">
-              {VIZ_OPTIONS.map((option) => (
-                <button
-                  key={option.value}
-                  type="button"
-                  onClick={() => setChartType(option.value)}
-                  className={cn(
-                    'flex items-center justify-between rounded-2xl border px-3 py-3 text-left text-sm transition',
-                    chartType === option.value
-                      ? 'border-[color:var(--accent)] bg-[color:var(--accent-soft)] text-[color:var(--text-primary)]'
-                      : 'border-[color:var(--panel-border)] bg-[color:var(--panel-alt)] text-[color:var(--text-secondary)] hover:bg-[color:var(--panel-bg)]',
-                  )}
-                >
-                  <span className="flex items-center gap-2">
-                    <span className="rounded-full border border-[color:var(--panel-border)] bg-[color:var(--panel-bg)] px-2 py-0.5 text-[11px] uppercase tracking-[0.12em] text-[color:var(--text-muted)]">
-                      {option.icon}
-                    </span>
-                    <span className="font-medium">{option.label}</span>
-                  </span>
-                  <span className="text-xs text-[color:var(--text-muted)]">{option.helper}</span>
-                </button>
-              ))}
-            </div>
-            <div className="grid gap-3 lg:grid-cols-2">
-              <Select
-                value={chartX}
-                onChange={(event) => setChartX(event.target.value)}
-                disabled={resultColumns.length === 0 || chartType === 'table'}
-                placeholder="X axis"
-              >
-                {resultColumns.map((column) => (
-                  <option key={column} value={column}>
-                    X: {column}
-                  </option>
-                ))}
-              </Select>
-              <Select
-                value={chartY}
-                onChange={(event) => setChartY(event.target.value)}
-                disabled={resultColumns.length === 0 || chartType === 'table'}
-                placeholder="Y axis"
-              >
-                {resultColumns.map((column) => (
-                  <option key={column} value={column}>
-                    Y: {column}
-                  </option>
-                ))}
-              </Select>
             </div>
           </div>
 
@@ -1123,6 +1497,12 @@ export default function BiStudioPage() {
                   selectedDimensions,
                   selectedMeasures,
                   selectedSegments,
+                  selectedTimeDimension,
+                  timeGrain,
+                  timeRangePreset,
+                  timeRangeStart,
+                  timeRangeEnd,
+                  orderBys,
                   filters,
                   limit,
                   filterLogic,
@@ -1133,41 +1513,42 @@ export default function BiStudioPage() {
               </p>
             </div>
           ) : null}
-
-          {queryMutation.isError ? (
-            <div className="rounded-2xl border border-rose-300 bg-rose-100/40 p-4 text-sm text-rose-700">
-              {queryMutation.error?.message ?? 'Query failed.'}
-            </div>
-          ) : null}
-
-          {queryMutation.isPending ? (
-            <div className="rounded-2xl border border-dashed border-[color:var(--panel-border)] bg-[color:var(--panel-alt)] p-4 text-sm">
-              Running query...
-            </div>
-          ) : null}
-
-          {queryResult && chartType !== 'table' ? (
-            <ChartPreview
-              chartType={chartType}
-              data={queryResult.data ?? []}
-              xKey={chartX}
-              yKey={chartY}
-            />
-          ) : null}
-
-          <div className="space-y-2">
-            <p className="text-xs font-semibold uppercase tracking-[0.2em] text-[color:var(--text-muted)]">
-              {chartType === 'table' ? 'Table view' : 'Data preview'}
-            </p>
-            <ResultsTable
-              rows={queryResult?.data ?? []}
-              hasRunQuery={hasRunQuery}
-              isLoading={queryMutation.isPending}
-            />
-          </div>
         </section>
-      </div>
+      </aside>
     </div>
+    <style jsx global>{`
+      @keyframes biFadeUp {
+        from {
+          opacity: 0;
+          transform: translateY(12px);
+        }
+        to {
+          opacity: 1;
+          transform: translateY(0);
+        }
+      }
+      .bi-fade-up {
+        animation: biFadeUp 0.7s ease both;
+      }
+      .bi-stagger-1 {
+        animation-delay: 0.04s;
+      }
+      .bi-stagger-2 {
+        animation-delay: 0.08s;
+      }
+      .bi-stagger-3 {
+        animation-delay: 0.12s;
+      }
+      .bi-stagger-4 {
+        animation-delay: 0.16s;
+      }
+      @media (prefers-reduced-motion: reduce) {
+        .bi-fade-up {
+          animation: none;
+        }
+      }
+    `}</style>
+  </div>
   );
 }
 
@@ -1814,6 +2195,30 @@ function getFilterInputType(type?: string): 'text' | 'number' | 'date' {
   return 'text';
 }
 
+function isTimeDimensionOption(option: FieldOption): boolean {
+  const normalized = option.type?.toLowerCase() ?? '';
+  if (normalized.includes('date') || normalized.includes('time') || normalized.includes('timestamp')) {
+    return true;
+  }
+  if (!normalized) {
+    const label = option.label.toLowerCase();
+    return /(^|\\W|_)date($|\\W|_)/.test(label) || /(^|\\W|_)time($|\\W|_)/.test(label);
+  }
+  return false;
+}
+
+function aliasForMember(value: string): string {
+  return value.replace(/\./g, '__').replace(/ /g, '_').replace(/[^A-Za-z0-9_]+/g, '_');
+}
+
+function buildTimeDimensionAlias(member: string, granularity: string): string {
+  if (!member) {
+    return '';
+  }
+  const base = aliasForMember(member);
+  return granularity ? `${base}_${granularity}` : base;
+}
+
 function reorderList(list: string[], fromId: string, toId: string): string[] {
   if (fromId === toId) {
     return list;
@@ -1860,6 +2265,12 @@ function buildSqlPreview({
   selectedDimensions,
   selectedMeasures,
   selectedSegments,
+  selectedTimeDimension,
+  timeGrain,
+  timeRangePreset,
+  timeRangeStart,
+  timeRangeEnd,
+  orderBys,
   filters,
   limit,
   filterLogic,
@@ -1868,11 +2279,23 @@ function buildSqlPreview({
   selectedDimensions: string[];
   selectedMeasures: string[];
   selectedSegments: string[];
+  selectedTimeDimension: string;
+  timeGrain: string;
+  timeRangePreset: string;
+  timeRangeStart: string;
+  timeRangeEnd: string;
+  orderBys: OrderByDraft[];
   filters: FilterDraft[];
   limit: number;
   filterLogic: 'and' | 'or';
 }): string {
   const selectFields = [...selectedDimensions, ...selectedMeasures];
+  if (selectedTimeDimension) {
+    const timeExpression = timeGrain
+      ? `date_trunc('${timeGrain}', ${selectedTimeDimension})`
+      : selectedTimeDimension;
+    selectFields.push(timeExpression);
+  }
   const selectClause = selectFields.length > 0 ? selectFields.join(', ') : '*';
   let sql = `select ${selectClause}\nfrom ${semanticModelName ?? 'semantic_model'}`;
 
@@ -1892,8 +2315,22 @@ function buildSqlPreview({
   if (filterClauses.length > 0) {
     sql += `\nwhere ${filterClauses.join(filterLogic === 'or' ? ' or ' : ' and ')}`;
   }
+  const timeRange = buildTimeRange({
+    preset: timeRangePreset,
+    start: timeRangeStart,
+    end: timeRangeEnd,
+  });
+  if (selectedTimeDimension && timeRange) {
+    sql += `\n-- time range: ${Array.isArray(timeRange) ? timeRange.join(' to ') : timeRange}`;
+  }
   if (selectedSegments.length > 0) {
     sql += `\n-- segments: ${selectedSegments.join(', ')}`;
+  }
+  const orderItems = orderBys
+    .filter((item) => item.member)
+    .map((item) => `${item.member} ${item.direction}`);
+  if (orderItems.length > 0) {
+    sql += `\norder by ${orderItems.join(', ')}`;
   }
   if (limit) {
     sql += `\nlimit ${limit}`;
@@ -1952,6 +2389,43 @@ function parseFilterValues(filter: FilterDraft): string[] | undefined {
     .map((value) => value.trim())
     .filter(Boolean);
   return values.length > 0 ? values : undefined;
+}
+
+function buildTimeRange({
+  preset,
+  start,
+  end,
+}: {
+  preset: string;
+  start: string;
+  end: string;
+}): string | string[] | undefined {
+  if (preset) {
+    return preset;
+  }
+  if (start && end) {
+    return [start, end];
+  }
+  if (start) {
+    return start;
+  }
+  if (end) {
+    return end;
+  }
+  return undefined;
+}
+
+function buildOrderPayload(
+  orderBys: OrderByDraft[],
+): Record<string, 'asc' | 'desc'> | Array<Record<string, 'asc' | 'desc'>> | undefined {
+  const items = orderBys.filter((item) => item.member);
+  if (items.length === 0) {
+    return undefined;
+  }
+  if (items.length === 1) {
+    return { [items[0].member]: items[0].direction };
+  }
+  return items.map((item) => ({ [item.member]: item.direction }));
 }
 
 function createId(prefix: string): string {

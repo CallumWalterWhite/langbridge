@@ -120,7 +120,7 @@ export default function SemanticModelsIndex(): JSX.Element {
               {models.map((model) => (
                 <li key={model.id}>
                   <Link
-                    href={`/semantic-model/${model.id}`}
+                    href={`/semantic-model/create?modelId=${model.id}`}
                     className="group flex items-center justify-between rounded-2xl border border-[color:var(--panel-border)] bg-[color:var(--panel-bg)] px-4 py-4 transition hover:border-[color:var(--border-strong)] hover:bg-[color:var(--panel-alt)]"
                   >
                     <div className="flex items-center gap-3">

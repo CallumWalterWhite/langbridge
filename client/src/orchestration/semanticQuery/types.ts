@@ -85,13 +85,17 @@ export interface SemanticQueryTimeDimension {
   compareDateRange?: string | string[];
 }
 
+export type SemanticQueryOrder =
+  | Record<string, 'asc' | 'desc'>
+  | Array<Record<string, 'asc' | 'desc'>>;
+
 export interface SemanticQueryPayload {
   measures?: string[];
   dimensions?: string[];
   timeDimensions?: SemanticQueryTimeDimension[];
   filters?: SemanticQueryFilter[];
   segments?: string[];
-  order?: Record<string, 'asc' | 'desc'>;
+  order?: SemanticQueryOrder;
   limit?: number;
   offset?: number;
   timezone?: string;
