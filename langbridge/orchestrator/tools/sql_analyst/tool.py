@@ -21,7 +21,6 @@ from .interfaces import (
     AnalystQueryResponse,
     QueryResult,
     SemanticModel,
-    UnifiedSemanticModel,
 )
 from utils.embedding_provider import EmbeddingProvider
 
@@ -61,7 +60,7 @@ class VectorMatch:
 VECTOR_SIMILARITY_THRESHOLD = 0.83
 
 
-SemanticModelLike = SemanticModel | UnifiedSemanticModel
+SemanticModelLike = SemanticModel
 
 
 class SqlAnalystTool:
@@ -96,46 +95,35 @@ class SqlAnalystTool:
     @property
     def name(self) -> str:
         name = getattr(self.semantic_model, "name", None)
-        if name:
-            return name
-        if isinstance(self.semantic_model, UnifiedSemanticModel) and self.semantic_model.semantic_models:
-            return self.semantic_model.semantic_models[0].name
-        return "semantic_model"
+        return name or "semantic_model"
 
     def _extract_vector_columns(self) -> List[VectorizedColumn]:
         catalog: List[VectorizedColumn] = []
-        for model in self._iter_semantic_models():
-            entities = model.entities or {}
-            for entity_name, entity_meta in entities.items():
-                if not isinstance(entity_meta, dict):
+        for table_key, table in self.semantic_model.tables.items():
+            for dimension in table.dimensions or []:
+                if not dimension.vectorized:
                     continue
-                columns = entity_meta.get("columns") or {}
-                for column_name, column_meta in columns.items():
-                    if not isinstance(column_meta, dict):
+                index_meta = dimension.vector_index or {}
+                values_meta = index_meta.get("values") or []
+                vector_values: List[VectorizedValue] = []
+                for entry in values_meta:
+                    value = str((entry or {}).get("value", "")).strip()
+                    embedding = (entry or {}).get("embedding")
+                    if not value or not isinstance(embedding, list):
                         continue
-                    if not column_meta.get("vectorized"):
+                    try:
+                        vector = [float(component) for component in embedding]
+                    except (TypeError, ValueError):
                         continue
-                    index_meta = column_meta.get("vector_index") or {}
-                    values_meta = index_meta.get("values") or []
-                    vector_values: List[VectorizedValue] = []
-                    for entry in values_meta:
-                        value = str((entry or {}).get("value", "")).strip()
-                        embedding = (entry or {}).get("embedding")
-                        if not value or not isinstance(embedding, list):
-                            continue
-                        try:
-                            vector = [float(component) for component in embedding]
-                        except (TypeError, ValueError):
-                            continue
-                        vector_values.append(VectorizedValue(value=value, embedding=vector))
-                    if vector_values:
-                        catalog.append(
-                            VectorizedColumn(
-                                entity=entity_name,
-                                column=column_name,
-                                values=vector_values,
-                            )
+                    vector_values.append(VectorizedValue(value=value, embedding=vector))
+                if vector_values:
+                    catalog.append(
+                        VectorizedColumn(
+                            entity=table_key,
+                            column=dimension.name,
+                            values=vector_values,
                         )
+                    )
         return catalog
 
     def run(self, query_request: AnalystQueryRequest) -> AnalystQueryResponse:
@@ -272,9 +260,10 @@ class SqlAnalystTool:
             "- Return a single SELECT statement.\n"
             "- The SQL must target PostgreSQL dialect.\n"
             "- Do not include comments, explanations, or additional text.\n"
-            "- Use only entities, joins, metrics, and dimensions defined above.\n"
+            "- Use only tables, relationships, measures, dimensions, and metrics defined above.\n"
             """
             - Fully qualify columns as table.column. No SELECT *.
+            - Use the physical table names shown in the model (schema.table); model keys are labels only.
             - Use only relationships defined in the model; INNER JOIN by default.
             - Expand metrics using their expression verbatim.
             - Apply table filters when the request mentions their name or synonyms.
@@ -403,6 +392,33 @@ class SqlAnalystTool:
         )
 
     @staticmethod
+    def _table_ref(model: SemanticModel, table_key: str) -> str:
+        table = model.tables.get(table_key)
+        if table is None:
+            return table_key
+        if table.schema:
+            return f"{table.schema}.{table.name}"
+        return table.name
+
+    @staticmethod
+    def _replace_table_refs(expression: str, table_refs: Dict[str, str]) -> str:
+        updated = expression
+        for table_key, table_ref in table_refs.items():
+            updated = re.sub(rf"\b{re.escape(table_key)}\.", f"{table_ref}.", updated)
+        return updated
+
+    @staticmethod
+    def _relationship_join_type(value: str | None) -> str:
+        if not value:
+            return "INNER"
+        normalized = value.strip().lower()
+        if normalized in {"left", "right", "full", "inner"}:
+            return normalized.upper()
+        if normalized in {"one_to_many", "many_to_one", "one_to_one"}:
+            return "LEFT"
+        return "INNER"
+
+    @staticmethod
     def _extract_sql(raw: str) -> str:
         match = SQL_FENCE_RE.search(raw)
         if match:
@@ -410,103 +426,63 @@ class SqlAnalystTool:
         return raw.strip()
 
     def _render_semantic_model(self) -> str:
-        if isinstance(self.semantic_model, UnifiedSemanticModel):
-            parts: list[str] = [f"Unified semantic model: {self.name}"]
-            if self.semantic_model.description:
-                parts.append(f"Description: {self.semantic_model.description}")
-            parts.append("Models:")
-            for model in self._iter_semantic_models():
-                parts.append(self._render_single_model(model, indent="  "))
-            if self.semantic_model.relationships:
-                parts.append("Cross-model relationships:")
-                for rel in self.semantic_model.relationships:
-                    left = rel.get("from") or rel.get("left")
-                    right = rel.get("to") or rel.get("right")
-                    condition = rel.get("on") or rel.get("join_on") or rel.get("condition")
-                    rel_type = rel.get("type", "inner")
-                    parts.append(f"  - {rel_type} join {left} -> {right} on {condition}")
-            if self.semantic_model.metrics:
-                parts.append("Unified metrics:")
-                for metric_name, metric in self.semantic_model.metrics.items():
-                    expression = metric.get("expression") or metric.get("sql")
-                    aggregation = metric.get("aggregation") or metric.get("agg")
-                    bits = [metric_name]
-                    if aggregation:
-                        bits.append(f"aggregation={aggregation}")
-                    if expression:
-                        bits.append(f"expression={expression}")
-                    parts.append(f"  - {' | '.join(bits)}")
-            if self.semantic_model.tags:
-                parts.append(f"Tags: {', '.join(self.semantic_model.tags)}")
-            return "\n".join(parts)
-
         return self._render_single_model(self.semantic_model)
 
-    def _render_single_model(self, model: SemanticModel, indent: str = "") -> str:
-        parts: list[str] = [f"{indent}Semantic model: {model.name}"]
+    def _render_single_model(self, model: SemanticModel) -> str:
+        parts: list[str] = [f"Semantic model: {model.name or 'semantic_model'}"]
         if model.description:
-            parts.append(f"{indent}Description: {model.description}")
+            parts.append(f"Description: {model.description}")
 
-        if model.entities:
-            parts.append(f"{indent}Entities:")
-            for entity_name, entity in model.entities.items():
-                parts.append(f"{indent}  - {entity_name}")
-                table_ref = entity.get("table") or entity.get("name")
-                if table_ref:
-                    parts.append(f"{indent}      table: {table_ref}")
-                if "grain" in entity:
-                    parts.append(f"{indent}      grain: {entity['grain']}")
-                columns = entity.get("columns") or entity.get("fields")
-                if columns:
-                    parts.append(f"{indent}      columns:")
-                    for column_name, column_meta in columns.items():
-                        if isinstance(column_meta, dict):
-                            dtype = column_meta.get("type") or column_meta.get("dtype") or ""
-                            role = column_meta.get("role")
-                            descriptor = f"{column_name} ({dtype})" if dtype else column_name
-                            if role:
-                                descriptor += f" [{role}]"
-                        else:
-                            descriptor = str(column_meta)
-                        parts.append(f"{indent}        * {descriptor}")
+        table_refs = {key: self._table_ref(model, key) for key in model.tables}
 
-        if model.joins:
-            parts.append(f"{indent}Joins:")
-            for join in model.joins:
-                lhs = join.get("left") or join.get("from")
-                rhs = join.get("right") or join.get("to")
-                condition = join.get("on") or join.get("condition")
-                join_type = join.get("type", "inner")
-                parts.append(f"{indent}  - {join_type} join {lhs} -> {rhs} on {condition}")
+        if model.tables:
+            parts.append("Tables:")
+            for table_key, table in model.tables.items():
+                table_ref = table_refs.get(table_key, table.name)
+                parts.append(f"  - {table_key} ({table_ref})")
+                if table.description:
+                    parts.append(f"      description: {table.description}")
+                if table.dimensions:
+                    parts.append("      dimensions:")
+                    for dimension in table.dimensions:
+                        label = f"{table_ref}.{dimension.name} ({dimension.type})"
+                        if dimension.primary_key:
+                            label = f"{label} [pk]"
+                        parts.append(f"        * {label}")
+                if table.measures:
+                    parts.append("      measures:")
+                    for measure in table.measures:
+                        label = f"{table_ref}.{measure.name} ({measure.type})"
+                        if measure.aggregation:
+                            label = f"{label} agg={measure.aggregation}"
+                        parts.append(f"        * {label}")
+                if table.filters:
+                    parts.append("      filters:")
+                    for filter_name, filter_meta in table.filters.items():
+                        parts.append(f"        * {filter_name}: {filter_meta.condition}")
+
+        if model.relationships:
+            parts.append("Relationships:")
+            for rel in model.relationships:
+                left = table_refs.get(rel.from_, rel.from_)
+                right = table_refs.get(rel.to, rel.to)
+                condition = self._replace_table_refs(rel.join_on, table_refs)
+                join_type = self._relationship_join_type(rel.type)
+                parts.append(f"  - {join_type} join {left} -> {right} on {condition}")
 
         if model.metrics:
-            parts.append(f"{indent}Metrics:")
+            parts.append("Metrics:")
             for metric_name, metric in model.metrics.items():
-                expression = metric.get("expression") or metric.get("sql")
-                aggregation = metric.get("aggregation") or metric.get("agg")
-                bits = [metric_name]
-                if aggregation:
-                    bits.append(f"aggregation={aggregation}")
-                if expression:
-                    bits.append(f"expression={expression}")
-                parts.append(f"{indent}  - {' | '.join(bits)}")
-
-        if model.dimensions:
-            parts.append(f"{indent}Dimensions:")
-            for dimension_name, dimension in model.dimensions.items():
-                dtype = dimension.get("type")
-                desc = f"{dimension_name} ({dtype})" if dtype else dimension_name
-                parts.append(f"{indent}  - {desc}")
+                expression = self._replace_table_refs(metric.expression, table_refs)
+                line = f"{metric_name}: {expression}"
+                if metric.description:
+                    line = f"{line} ({metric.description})"
+                parts.append(f"  - {line}")
 
         if model.tags:
-            parts.append(f"{indent}Tags: {', '.join(model.tags)}")
+            parts.append(f"Tags: {', '.join(model.tags)}")
 
         return "\n".join(parts)
-
-    def _iter_semantic_models(self) -> List[SemanticModel]:
-        if isinstance(self.semantic_model, UnifiedSemanticModel):
-            return list(self.semantic_model.semantic_models or [])
-        return [self.semantic_model]
 
     def _log_sql(self, telemetry: ToolTelemetry) -> None:
         self.logger.debug("Canonical SQL [%s]: %s", self.name, telemetry.canonical_sql)

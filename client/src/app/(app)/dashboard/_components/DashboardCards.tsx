@@ -1,17 +1,32 @@
 'use client';
 
-import type { FormEvent, ReactNode } from 'react';
+import type { ComponentType, FormEvent } from 'react';
 import { useCallback, useMemo, useState } from 'react';
 import Link from 'next/link';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Activity, ArrowRight, LineChart, Loader2, Plus, Send, ShieldCheck, Sparkles, Workflow } from 'lucide-react';
 import { useRouter } from 'next/navigation';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import {
+  ArrowRight,
+  Bot,
+  Database,
+  Layers,
+  LineChart,
+  Loader2,
+  MessageSquare,
+  Plus,
+  Send,
+  ShieldCheck,
+  Sparkles,
+} from 'lucide-react';
 
-import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
+import { Textarea } from '@/components/ui/textarea';
 import { useToast } from '@/components/ui/toast';
-import { cn, formatRelativeDate } from '@/lib/utils';
+import { formatRelativeDate } from '@/lib/utils';
+import { fetchAgentDefinitions, fetchLLMConnections } from '@/orchestration/agents';
+import type { AgentDefinition, LLMConnection } from '@/orchestration/agents';
 import { createThread } from '@/orchestration/threads';
 import type { Thread } from '@/orchestration/threads';
 
@@ -28,100 +43,69 @@ function withApiBase(path: string) {
   return `${API_BASE}${path}`;
 }
 
-const promptSuggestions = [
-  {
-    title: 'Investigate revenue variance',
-    description: 'Blend finance warehouse + product telemetry to find the drivers.',
-  },
-  {
-    title: 'Explain churn signals',
-    description: 'Review CRM cohorts and usage heatmaps to surface risk accounts.',
-  },
-  {
-    title: 'Summarise weekly ops health',
-    description: 'Combine Snowflake metrics with incident notes for leadership.',
-  },
-  {
-    title: 'Check data quality drifts',
-    description: 'Scan pipelines and document retrievers for schema changes.',
-  },
-];
-
-const connectorShortcuts = [
-  { label: 'Snowflake', href: '/datasources/new?snowflake' },
-  { label: 'Postgres', href: '/datasources/new?postgres' },
-  { label: 'BigQuery', href: '/datasources/new?bigquery' },
-];
-
-const templateRecommendations = [
-  {
-    title: 'SQL insight loops',
-    copy: 'Build reusable SQL chains with guardrailed summarisation.',
-    href: '/agents?template=sql-analyst',
-  },
-  {
-    title: 'Support intelligence',
-    copy: 'Blend docs + tickets to auto-answer product questions.',
-    href: '/agents?template=knowledge-concierge',
-  },
-  {
-    title: 'Ops automation',
-    copy: 'Trigger workflows when monitors spike or KPIs drift.',
-    href: '/agents?template=ops-automations',
-  },
-];
-
 const quickPrompts = [
-  'Rank revenue signals by expected impact for next quarter.',
-  'Create a retention deep-dive using product and CRM data.',
-  'Generate QA checks for the finance warehouse tables.',
+  'Investigate revenue variance across finance and product data.',
+  'Explain churn signals using CRM cohorts and usage.',
+  'Summarize weekly ops health across pipelines and incidents.',
 ];
 
-const sectionNav = [
-  { id: 'overview', label: 'Overview' },
-  { id: 'workspace', label: 'Workspace graph' },
-  { id: 'agents', label: 'Agent blueprints' },
-  { id: 'conversation', label: 'Conversation hub' },
-  { id: 'activity', label: 'Ops feed' },
-];
+type FeatureHighlight = {
+  title: string;
+  description: string;
+  href: string;
+  cta: string;
+  icon: ComponentType<{ className?: string }>;
+};
 
-const workspaceTimeline: Array<{ title: string; caption: string; time: string; icon: typeof LineChart }> = [
+const featureHighlights: FeatureHighlight[] = [
   {
-    title: 'Weekly metrics digest sent',
-    caption: 'Agent "Northstar" shared blended ARR + adoption snapshot.',
-    time: '3m ago',
+    title: 'Data connections',
+    description: 'Secure connectors for warehouses, SaaS tools, and APIs.',
+    href: '/datasources',
+    cta: 'Manage sources',
+    icon: Database,
+  },
+  {
+    title: 'Semantic models',
+    description: 'Define metrics, joins, and business language once.',
+    href: '/semantic-model',
+    cta: 'Build a model',
+    icon: Layers,
+  },
+  {
+    title: 'Agent blueprints',
+    description: 'Chain SQL, retrieval, and automations into agents.',
+    href: '/agents',
+    cta: 'Open agents',
+    icon: Bot,
+  },
+  {
+    title: 'BI studio',
+    description: 'Compose semantic queries and lightweight dashboards.',
+    href: '/bi',
+    cta: 'Launch studio',
     icon: LineChart,
   },
   {
-    title: 'Retriever tuned',
-    caption: 'Workflow "Support Radar" switched to semantic doc chunks.',
-    time: '25m ago',
-    icon: Workflow,
+    title: 'Threaded copilot',
+    description: 'Run investigations with grounded, iterative answers.',
+    href: '/chat',
+    cta: 'View threads',
+    icon: MessageSquare,
   },
   {
-    title: 'New source awaiting approval',
-    caption: 'Data team added Zendesk — auth pending security review.',
-    time: '1h ago',
+    title: 'Workspace governance',
+    description: 'Organize orgs, projects, and access controls.',
+    href: '/organizations',
+    cta: 'Manage workspace',
     icon: ShieldCheck,
-  },
-  {
-    title: 'Anomaly flagged',
-    caption: 'Ops agent spotted latency spike in ingestion pipeline.',
-    time: '2h ago',
-    icon: Activity,
   },
 ];
 
-const statusVariantMap: Record<DataSource['status'], 'success' | 'destructive' | 'warning' | 'secondary'> = {
+const statusVariantMap: Record<DataSource['status'], 'success' | 'destructive' | 'warning'> = {
   connected: 'success',
   error: 'destructive',
   pending: 'warning',
-};
-
-const statusToneMap: Record<DataSource['status'], string> = {
-  connected: 'border border-emerald-500/20 bg-emerald-500/10 text-emerald-600 dark:text-emerald-200',
-  pending: 'border border-amber-500/20 bg-amber-500/10 text-amber-600 dark:text-amber-200',
-  error: 'border border-rose-500/25 bg-rose-500/15 text-rose-600 dark:text-rose-100',
 };
 
 export function DashboardCards() {
@@ -144,6 +128,16 @@ export function DashboardCards() {
     },
   });
 
+  const agentDefinitionsQuery = useQuery<AgentDefinition[]>({
+    queryKey: ['agent-definitions'],
+    queryFn: () => fetchAgentDefinitions(),
+  });
+
+  const llmConnectionsQuery = useQuery<LLMConnection[]>({
+    queryKey: ['llm-connections'],
+    queryFn: () => fetchLLMConnections(),
+  });
+
   const startChatMutation = useMutation<Thread, Error>({
     mutationFn: () => createThread(),
     onError: (error) => {
@@ -153,7 +147,7 @@ export function DashboardCards() {
 
   const { recentSources, stats } = useMemo(() => {
     const list = sources ?? [];
-    const recent = list.slice(0, 4);
+    const recent = list.slice(0, 3);
 
     const connected = list.filter((source) => source.status === 'connected').length;
     const pending = list.filter((source) => source.status === 'pending').length;
@@ -171,6 +165,29 @@ export function DashboardCards() {
       },
     };
   }, [sources]);
+
+  const attentionCount = stats.pending + stats.error;
+  const hasAgents = (agentDefinitionsQuery.data ?? []).length > 0;
+  const hasConnections = (llmConnectionsQuery.data ?? []).length > 0;
+  const canUseChat = hasAgents && hasConnections;
+  const missingConnections = !hasConnections;
+  const missingAgents = !hasAgents;
+
+  const workspaceStatus = isLoading
+    ? 'Syncing sources and workspace health.'
+    : stats.total === 0
+      ? 'No sources connected yet. Add one to unlock cross-source answers.'
+      : `${stats.connected} connected, ${attentionCount} need attention across ${stats.total} sources.`;
+
+  const readinessLabel = stats.total === 0 ? 'No sources' : `${stats.readyPercentage}% ready`;
+  const readinessVariant: 'success' | 'destructive' | 'warning' | 'secondary' =
+    stats.total === 0
+      ? 'secondary'
+      : stats.error > 0
+        ? 'destructive'
+        : stats.pending > 0
+          ? 'warning'
+          : 'success';
 
   const handleSourceCreated = useCallback(async () => {
     await queryClient.invalidateQueries({ queryKey: ['datasources'] });
@@ -211,380 +228,182 @@ export function DashboardCards() {
     [draftPrompt, startChat],
   );
 
-  const metaLabel = isLoading
-    ? 'Syncing workspace...'
-    : stats.total === 0
-      ? 'No connectors yet — add one below to get started.'
-      : `${stats.total} sources • ${stats.connected} ready • ${stats.pending} pending`;
-
   return (
-    <div className="flex min-h-full flex-col">
-      <div className="flex-1 px-6 pb-32 pt-8 text-[color:var(--text-secondary)] transition-colors sm:px-10 lg:px-14">
-        <div className="flex flex-col gap-6" id="overview">
-          <nav className="flex w-full overflow-x-auto rounded-full border border-[color:var(--panel-border)] bg-[color:var(--panel-bg)] p-1 text-xs font-medium text-[color:var(--text-secondary)] shadow-soft">
-            {sectionNav.map((item) => (
-              <a
-                key={item.id}
-                href={`#${item.id}`}
-                className="flex-1 rounded-full px-4 py-2 text-center transition hover:bg-[color:var(--panel-alt)] hover:text-[color:var(--text-primary)]"
-              >
-                {item.label}
-              </a>
-            ))}
-          </nav>
+    <div className="relative flex min-h-full flex-col">
+      <div className="pointer-events-none absolute inset-0 -z-10">
+        <div className="absolute -left-24 top-0 h-72 w-72 rounded-full bg-[radial-gradient(circle,_var(--accent-soft),_transparent_70%)] blur-2xl" />
+        <div className="absolute right-[-140px] top-24 h-80 w-80 rounded-full bg-[radial-gradient(circle,_rgba(56,189,248,0.18),_transparent_70%)] blur-3xl" />
+      </div>
 
-          <AssistantMessage heading="Good to see you. What should we explore?" meta={metaLabel}>
-            {stats.total === 0 ? (
-              <p className="text-sm text-[color:var(--text-secondary)]">
-                Hook up Snowflake, BigQuery, internal APIs, or ticketing systems. I&apos;ll unify them into a single
-                retrieval layer so you can ask one question and reason across all of them.
-              </p>
-            ) : (
-              <p className="text-sm text-[color:var(--text-secondary)]">
-                I&apos;m monitoring your connected sources and retrievers. Ask a question, fire off a workflow, or drill
-                deeper with the quick starters below.
-              </p>
-            )}
-          </AssistantMessage>
-        </div>
+      <div className="flex-1 px-6 pb-20 pt-8 text-[color:var(--text-secondary)] transition-colors sm:px-10 lg:px-14">
+        <section>
+          <div className="space-y-6">
+            <div className="surface-panel page-enter relative overflow-hidden rounded-3xl p-8 shadow-soft">
+              <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top,_rgba(16,163,127,0.15),_transparent_60%)]" />
+              <div className="relative z-10 space-y-6">
+                <div className="inline-flex items-center gap-2 rounded-full border border-[color:var(--panel-border)] bg-[color:var(--panel-alt)] px-4 py-2 text-xs font-semibold uppercase tracking-[0.3em] text-[color:var(--text-muted)]">
+                  <Sparkles className="h-3.5 w-3.5 text-[color:var(--accent)]" aria-hidden="true" />
+                  LangBridge workspace
+                </div>
 
-        <div className="mt-8 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-          {promptSuggestions.map((suggestion) => (
-            <button
-              key={suggestion.title}
-              type="button"
-              onClick={() => startChat(suggestion.title)}
-              className="group rounded-2xl border border-[color:var(--panel-border)] bg-[color:var(--panel-bg)] p-5 text-left transition hover:-translate-y-0.5 hover:border-[color:var(--border-strong)] hover:bg-[color:var(--panel-alt)]"
-              disabled={startChatMutation.isPending}
-            >
-              <div className="flex items-center justify-between gap-2">
-                <h2 className="text-sm font-semibold text-[color:var(--text-primary)]">{suggestion.title}</h2>
-                <ArrowRight className="h-4 w-4 text-[color:var(--text-muted)] transition group-hover:translate-x-1 group-hover:text-[color:var(--text-primary)]" aria-hidden="true" />
-              </div>
-              <p className="mt-2 text-xs text-[color:var(--text-muted)]">{suggestion.description}</p>
-            </button>
-          ))}
-        </div>
+                <div className="space-y-3">
+                  <h2 className="text-3xl font-semibold text-[color:var(--text-primary)] sm:text-4xl">
+                    Your agentic analytics command center.
+                  </h2>
+                  <p className="text-sm leading-relaxed text-[color:var(--text-secondary)]">
+                    {stats.total === 0
+                      ? 'Connect data, define semantics, and launch agents from one place.'
+                      : 'Keep data, models, and agents in sync so every answer is grounded.'}
+                  </p>
+                </div>
 
-        <div className="mt-12 grid gap-6 xl:grid-cols-12">
-          <AssistantPanel
-            id="workspace"
-            title="Workspace graph"
-            description="Connect, monitor, and score the sources feeding your agentic BI copilot."
-            actions={
-              <AddSourceDialog onCreated={handleSourceCreated}>
-                <Button
-                  type="button"
-                  size="sm"
-                  className="gap-2"
-                >
-                  <Plus className="h-4 w-4" aria-hidden="true" />
-                  Add source
-                </Button>
-              </AddSourceDialog>
-            }
-            className="xl:col-span-7"
-          >
-            <div>
-              <p className="text-xs font-semibold uppercase tracking-[0.2em] text-[color:var(--text-muted)]">Recent sources</p>
-              <div className="mt-4 space-y-3" aria-live="polite">
-                {isLoading ? (
+                <div className="flex flex-wrap gap-3">
+                  {canUseChat ? (
+                    <Button size="lg" onClick={() => startChat()} disabled={startChatMutation.isPending}>
+                      New chat
+                    </Button>
+                  ) : null}
+                  <AddSourceDialog onCreated={handleSourceCreated}>
+                    <Button size="lg" variant="secondary" className="gap-2">
+                      <Plus className="h-4 w-4" aria-hidden="true" />
+                      Add source
+                    </Button>
+                  </AddSourceDialog>
+                  <Button size="lg" variant="outline" onClick={() => router.push('/bi')}>
+                    Open BI studio
+                  </Button>
+                </div>
+
+                {canUseChat ? (
                   <>
-                    {Array.from({ length: 3 }).map((_, index) => (
-                      <div key={index} className="space-y-2 rounded-2xl border border-[color:var(--panel-border)] bg-[color:var(--panel-alt)] p-4">
-                        <Skeleton className="h-4 w-1/3 bg-[color:var(--surface-muted)]" />
-                        <Skeleton className="h-3 w-1/2 bg-[color:var(--surface-muted)]" />
-                      </div>
-                    ))}
-                  </>
-                ) : isError ? (
-                  <div className="rounded-2xl border border-dashed border-[color:var(--panel-border)] bg-[color:var(--panel-alt)] px-5 py-6 text-sm">
-                    Unable to load data sources.
-                    <button
-                      type="button"
-                      className="ml-2 text-[color:var(--text-primary)] underline-offset-4 hover:underline"
-                      onClick={() => refetch()}
+                    <form
+                      onSubmit={handleDraftSubmit}
+                      className="rounded-2xl border border-[color:var(--panel-border)] bg-[color:var(--panel-bg)] p-4 shadow-sm"
                     >
-                      Retry
-                    </button>
-                  </div>
-                ) : recentSources.length === 0 ? (
-                  <div className="rounded-2xl border border-dashed border-[color:var(--panel-border)] bg-[color:var(--panel-alt)] px-5 py-6 text-sm">
-                    No sources yet. Plug in a warehouse or SaaS system to unlock cross-source answering.
-                  </div>
-                ) : (
-                  <ul className="space-y-3" aria-label="Recent data sources">
-                    {recentSources.map((source) => (
-                      <li
-                        key={source.id}
-                        className="flex items-center justify-between gap-3 rounded-2xl border border-[color:var(--panel-border)] bg-[color:var(--panel-bg)] px-4 py-3"
-                      >
-                        <div className="flex items-center gap-3">
-                          <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-[color:var(--chip-bg)] text-xs font-semibold uppercase text-[color:var(--text-primary)]">
-                            {source.type.slice(0, 2)}
-                          </span>
-                          <div>
-                            <p className="text-sm font-semibold text-[color:var(--text-primary)]">{source.name}</p>
-                            <p className="text-xs text-[color:var(--text-muted)]">
-                              {source.type.toUpperCase()} · {formatRelativeDate(source.createdAt)}
-                            </p>
-                          </div>
-                        </div>
-                        <Badge
-                          variant={statusVariantMap[source.status]}
-                          className={statusToneMap[source.status]}
+                      <p className="text-xs font-semibold uppercase tracking-[0.2em] text-[color:var(--text-muted)]">
+                        Ask the copilot
+                      </p>
+                      <Textarea
+                        value={draftPrompt}
+                        onChange={(event) => setDraftPrompt(event.target.value)}
+                        placeholder="Ask about revenue shifts, churn drivers, or pipeline health..."
+                        rows={3}
+                        className="mt-3 min-h-[88px] resize-none border-none bg-transparent p-0 shadow-none focus-visible:ring-0 focus-visible:ring-offset-0"
+                        aria-label="Ask the copilot"
+                      />
+                      <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
+                        <span className="text-xs text-[color:var(--text-muted)]">
+                          Use a starter below or send your own question.
+                        </span>
+                        <Button
+                          type="submit"
+                          size="sm"
+                          className="gap-2"
+                          disabled={startChatMutation.isPending || draftPrompt.trim().length === 0}
                         >
-                          {statusLabel(source.status)}
-                        </Badge>
-                      </li>
-                    ))}
-                  </ul>
+                          {startChatMutation.isPending ? (
+                            <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+                          ) : (
+                            <Send className="h-4 w-4" aria-hidden="true" />
+                          )}
+                          Send
+                        </Button>
+                      </div>
+                    </form>
+
+                    <div className="flex flex-wrap gap-2 text-xs">
+                      {quickPrompts.map((prompt) => (
+                        <button
+                          key={prompt}
+                          type="button"
+                          onClick={() => startChat(prompt)}
+                          className="rounded-full border border-[color:var(--panel-border)] bg-[color:var(--panel-alt)] px-3 py-1 text-[color:var(--text-secondary)] transition hover:border-[color:var(--border-strong)] hover:text-[color:var(--text-primary)]"
+                          disabled={startChatMutation.isPending}
+                        >
+                          {prompt}
+                        </button>
+                      ))}
+                    </div>
+                  </>
+                ) : (
+                  <div className="rounded-2xl border border-dashed border-[color:var(--panel-border)] bg-[color:var(--panel-alt)] p-4">
+                    <p className="text-xs font-semibold uppercase tracking-[0.2em] text-[color:var(--text-muted)]">
+                      Analytics chat locked
+                    </p>
+                    <p className="mt-2 text-sm text-[color:var(--text-secondary)]">
+                      Add an LLM connection and create an agent to unlock chat-driven analytics.
+                    </p>
+                    <div className="mt-4 flex flex-wrap items-center gap-2 text-xs">
+                      {missingConnections ? (
+                        <Button size="sm" onClick={() => router.push('/agents/llm/create')} className="gap-2">
+                          Add LLM connection
+                        </Button>
+                      ) : (
+                        <Badge variant="success">LLM connected</Badge>
+                      )}
+                      {missingAgents ? (
+                        <Button
+                          size="sm"
+                          variant="secondary"
+                          onClick={() => router.push('/agents/definitions/create')}
+                          className="gap-2"
+                        >
+                          Create agent
+                        </Button>
+                      ) : (
+                        <Badge variant="success">Agent ready</Badge>
+                      )}
+                    </div>
+                  </div>
                 )}
               </div>
             </div>
-
-            <div className="grid gap-3 rounded-2xl border border-[color:var(--panel-border)] bg-[color:var(--panel-bg)] p-5 sm:grid-cols-3">
-              <div>
-                <p className="text-xs text-[color:var(--text-muted)]">Ready for agents</p>
-                <div className="mt-2 h-2 w-full overflow-hidden rounded-full bg-[color:var(--surface-muted)]">
-                  <div
-                    className="h-full rounded-full bg-emerald-500"
-                    style={{ width: `${stats.readyPercentage}%` }}
-                  />
-                </div>
-                <p className="mt-2 text-sm font-semibold text-[color:var(--text-primary)]">{stats.readyPercentage}%</p>
-              </div>
-              <div>
-                <p className="text-xs text-[color:var(--text-muted)]">Connected</p>
-                <p className="mt-2 text-2xl font-semibold text-[color:var(--text-primary)]">{stats.connected}</p>
-              </div>
-              <div>
-                <p className="text-xs text-[color:var(--text-muted)]">Pending / issues</p>
-                <p className="mt-2 text-2xl font-semibold text-[color:var(--text-primary)]">
-                  {stats.pending + stats.error}
-                </p>
-              </div>
-            </div>
-
-            <div className="flex flex-wrap gap-2">
-              {connectorShortcuts.map((shortcut) => (
-                <Link
-                  key={shortcut.label}
-                  href={shortcut.href}
-                  className="inline-flex items-center gap-2 rounded-full border border-[color:var(--panel-border)] bg-[color:var(--panel-alt)] px-4 py-2 text-xs font-medium text-[color:var(--text-secondary)] transition hover:border-[color:var(--border-strong)] hover:text-[color:var(--text-primary)]"
-                >
-                  {shortcut.label}
-                  <ArrowRight className="h-3.5 w-3.5" aria-hidden="true" />
-                </Link>
-              ))}
-            </div>
-          </AssistantPanel>
-
-          <AssistantPanel
-            id="agents"
-            title="Agent blueprints"
-            description="Spin up orchestrations that chain retrieval, SQL, and automations for every business unit."
-            actions={
-              <Button
-                size="sm"
-                variant="secondary"
-                onClick={() => router.push('/agents')}
-                className="gap-2"
-              >
-                Manage agents
-              </Button>
-            }
-            className="xl:col-span-5"
-          >
-            <QuickAgentCreateDrawer
-              sources={sources ?? []}
-              onCreated={(agentId) => router.push(`/agents/${agentId}`)}
-            />
-
-            <div className="inline-flex items-center gap-2 rounded-full border border-[color:var(--border-strong)] bg-[color:var(--chip-bg)] px-3 py-1 text-xs font-medium text-[color:var(--text-secondary)]">
-              <Sparkles className="h-3.5 w-3.5 text-[color:var(--accent)]" aria-hidden="true" />
-              Recommended playbooks
-            </div>
-
-            <div className="grid gap-3 sm:grid-cols-3">
-              {templateRecommendations.map((template) => (
-                <button
-                  key={template.title}
-                  type="button"
-                  onClick={() => router.push(template.href)}
-                  className="group flex h-full flex-col justify-between gap-2 rounded-2xl border border-[color:var(--panel-border)] bg-[color:var(--panel-bg)] px-4 py-4 text-left text-sm text-[color:var(--text-secondary)] transition hover:border-[color:var(--border-strong)] hover:bg-[color:var(--panel-alt)] hover:text-[color:var(--text-primary)]"
-                >
-                  <span className="text-sm font-semibold text-[color:var(--text-primary)]">{template.title}</span>
-                  <span className="text-xs leading-relaxed text-[color:var(--text-muted)]">{template.copy}</span>
-                  <span className="mt-3 inline-flex items-center gap-1 text-xs font-semibold text-[color:var(--accent)]">
-                    Open template
-                    <ArrowRight className="h-3.5 w-3.5 transition group-hover:translate-x-0.5" aria-hidden="true" />
-                  </span>
-                </button>
-              ))}
-            </div>
-          </AssistantPanel>
-
-          <AssistantPanel
-            id="conversation"
-            title="Conversation hub"
-            description="Jump into a new investigation or revisit a thread. Responses stay grounded in your authorised sources."
-            actions={
-              <Button
-                size="sm"
-                variant="secondary"
-                onClick={() => router.push('/chat')}
-                className="gap-2"
-              >
-                History
-              </Button>
-            }
-            className="xl:col-span-7"
-          >
-            <div className="flex flex-col gap-3 sm:flex-row">
-              <Button
-                size="lg"
-                className="w-full rounded-2xl shadow-soft"
-                onClick={() => startChat()}
-                disabled={startChatMutation.isPending}
-              >
-                Start a new chat
-              </Button>
-              <Button
-                variant="ghost"
-                className="w-full rounded-2xl border border-[color:var(--panel-border)] bg-[color:var(--panel-bg)] text-[color:var(--text-secondary)] transition hover:border-[color:var(--border-strong)] hover:bg-[color:var(--panel-alt)] hover:text-[color:var(--text-primary)]"
-                onClick={() => router.push('/chat')}
-              >
-                View recent chats
-              </Button>
-            </div>
-
-            <div className="rounded-2xl border border-[color:var(--panel-border)] bg-[color:var(--panel-bg)] p-4">
-              <p className="text-xs font-semibold uppercase tracking-[0.2em] text-[color:var(--text-muted)]">Quick prompts</p>
-              <ul className="mt-3 space-y-3 text-sm text-[color:var(--text-secondary)]">
-                {quickPrompts.map((prompt) => (
-                  <li key={prompt}>
-                    <button
-                      type="button"
-                      onClick={() => startChat(prompt)}
-                      className="group flex w-full items-start gap-2 rounded-xl border border-transparent px-3 py-2 text-left transition hover:border-[color:var(--border-strong)] hover:bg-[color:var(--chip-bg)]"
-                      disabled={startChatMutation.isPending}
-                    >
-                      <span className="mt-[2px] text-[color:var(--accent)]">&gt;</span>
-                      <span className="group-hover:text-[color:var(--text-primary)]">{prompt}</span>
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          </AssistantPanel>
-
-          <AssistantPanel
-            id="activity"
-            title="Ops & activity feed"
-            description="Keep tabs on what the copilot shipped, queued, or flagged across the workspace."
-            className="xl:col-span-5"
-          >
-            <ol className="space-y-4">
-              {workspaceTimeline.map(({ title, caption, time, icon: Icon }) => (
-                <li key={title} className="flex items-start gap-3 rounded-2xl border border-[color:var(--panel-border)] bg-[color:var(--panel-bg)] px-4 py-3 transition hover:border-[color:var(--border-strong)]">
-                  <span className="mt-1 flex h-9 w-9 items-center justify-center rounded-full bg-[color:var(--chip-bg)] text-[color:var(--accent)]">
-                    <Icon className="h-5 w-5" aria-hidden="true" />
-                  </span>
-                  <div className="space-y-1">
-                    <p className="text-sm font-semibold text-[color:var(--text-primary)]">{title}</p>
-                    <p className="text-xs text-[color:var(--text-muted)]">{caption}</p>
-                    <p className="text-xs text-[color:var(--text-muted)]">{time}</p>
-                  </div>
-                </li>
-              ))}
-            </ol>
-          </AssistantPanel>
-        </div>
-      </div>
-
-      <form
-        onSubmit={handleDraftSubmit}
-        className="pointer-events-auto sticky bottom-6 flex justify-center px-4 sm:px-6"
-      >
-        <div className="w-full max-w-3xl rounded-3xl border border-[color:var(--panel-border)] bg-[color:var(--panel-bg)] p-2 shadow-soft">
-          <textarea
-            value={draftPrompt}
-            onChange={(event) => setDraftPrompt(event.target.value)}
-            placeholder="Send a message..."
-            rows={1}
-            className="min-h-[24px] w-full resize-none bg-transparent px-3 py-2 text-sm text-[color:var(--text-primary)] placeholder:text-[color:var(--text-muted)] focus:outline-none"
-            aria-label="Message the copilot"
-          />
-          <div className="flex items-center justify-end gap-2 px-3 pb-1">
-            <Button
-              type="submit"
-              size="sm"
-              className="inline-flex items-center gap-2 rounded-full px-4 py-2 text-sm font-semibold"
-              disabled={startChatMutation.isPending || draftPrompt.trim().length === 0}
-            >
-              {startChatMutation.isPending ? (
-                <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
-              ) : (
-                <Send className="h-4 w-4" aria-hidden="true" />
-              )}
-              Send
-            </Button>
           </div>
-        </div>
-      </form>
-    </div>
-  );
-}
 
-function AssistantMessage({ heading, meta, children }: { heading: string; meta?: string; children: ReactNode }) {
-  return (
-    <div className="surface-panel rounded-3xl p-6 shadow-soft">
-      <div className="flex items-start gap-4">
-        <span className="flex h-11 w-11 items-center justify-center rounded-full bg-[color:var(--accent-soft)] text-[color:var(--accent)]">
-          <Sparkles className="h-5 w-5" aria-hidden="true" />
-        </span>
-        <div className="space-y-2">
-          <div>
-            <p className="text-sm font-semibold text-[color:var(--text-primary)]">{heading}</p>
-            {meta ? <p className="text-xs text-[color:var(--text-muted)]">{meta}</p> : null}
+        </section>
+
+        <section className="mt-10">
+          <div className="flex flex-wrap items-end justify-between gap-4">
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-[0.2em] text-[color:var(--text-muted)]">
+                Platform features
+              </p>
+              <h2 className="mt-2 text-2xl font-semibold text-[color:var(--text-primary)]">
+                Everything you can do in LangBridge
+              </h2>
+            </div>
+            <p className="text-sm text-[color:var(--text-secondary)]">Pick a lane and keep moving.</p>
           </div>
-          {children}
-        </div>
+          <div className="mt-6 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+            {featureHighlights.map((feature) => (
+              <FeatureCard key={feature.title} {...feature} />
+            ))}
+          </div>
+        </section>
       </div>
     </div>
   );
 }
 
-function AssistantPanel({
-  title,
-  description,
-  actions,
-  children,
-  id,
-  className,
-}: {
-  title: string;
-  description?: string;
-  actions?: ReactNode;
-  children: ReactNode;
-  id?: string;
-  className?: string;
-}) {
+function FeatureCard({ title, description, href, cta, icon: Icon }: FeatureHighlight) {
   return (
-    <section
-      id={id}
-      className={cn('surface-panel rounded-3xl p-6 text-[color:var(--text-secondary)] transition-colors', className)}
+    <Link
+      href={href}
+      className="group relative overflow-hidden rounded-3xl border border-[color:var(--panel-border)] bg-[color:var(--panel-bg)] p-6 text-sm text-[color:var(--text-secondary)] shadow-soft transition hover:-translate-y-0.5 hover:border-[color:var(--border-strong)]"
     >
-      <div className="flex flex-wrap items-start justify-between gap-4">
-        <div>
-          <p className="text-xs font-semibold uppercase tracking-[0.2em] text-[color:var(--text-muted)]">{title}</p>
-          {description ? <p className="mt-2 text-sm">{description}</p> : null}
-        </div>
-        {actions ? <div className="flex items-center gap-2 text-[color:var(--text-secondary)]">{actions}</div> : null}
+      <div className="pointer-events-none absolute -right-10 -top-10 h-24 w-24 rounded-full bg-[radial-gradient(circle,_var(--accent-soft),_transparent_70%)] opacity-0 transition group-hover:opacity-100" />
+      <span className="inline-flex h-11 w-11 items-center justify-center rounded-2xl bg-[color:var(--chip-bg)] text-[color:var(--accent)]">
+        <Icon className="h-5 w-5" aria-hidden="true" />
+      </span>
+      <div className="mt-4 space-y-2">
+        <h3 className="text-base font-semibold text-[color:var(--text-primary)]">{title}</h3>
+        <p className="text-sm text-[color:var(--text-muted)]">{description}</p>
       </div>
-      <div className="mt-5 space-y-5 text-sm text-[color:var(--text-secondary)]">{children}</div>
-    </section>
+      <div className="mt-4 inline-flex items-center gap-2 text-xs font-semibold text-[color:var(--accent)]">
+        {cta}
+        <ArrowRight className="h-3.5 w-3.5 transition group-hover:translate-x-0.5" aria-hidden="true" />
+      </div>
+    </Link>
   );
 }
 

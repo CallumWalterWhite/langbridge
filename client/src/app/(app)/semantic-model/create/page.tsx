@@ -1,5 +1,6 @@
 'use client';
 
+import { useSearchParams } from 'next/navigation';
 import { JSX, useCallback, useEffect, useMemo, useState } from 'react';
 import yaml from 'js-yaml';
 
@@ -13,9 +14,11 @@ import { useWorkspaceScope } from '@/context/workspaceScope';
 import {
   createSemanticModel,
   deleteSemanticModel,
+  fetchSemanticModel,
   fetchSemanticModelYaml,
   generateSemanticModelYaml,
   listSemanticModels,
+  updateSemanticModel,
 } from '@/orchestration/semanticModels';
 import type {
   SemanticDimension,
@@ -75,12 +78,17 @@ const DEFAULT_MODEL_VERSION = '1.0';
 
 export default function SemanticModelPage(): JSX.Element {
   const { selectedOrganizationId, selectedProjectId, organizations, loading: scopeLoading } = useWorkspaceScope();
+  const searchParams = useSearchParams();
+  const editingModelId = searchParams.get('modelId') ?? '';
+  const isEditMode = Boolean(editingModelId);
 
   const [formState, setFormState] = useState<FormState>({ name: '', description: '' });
   const [connectors, setConnectors] = useState<ConnectorResponse[]>([]);
   const [connectorsLoading, setConnectorsLoading] = useState(false);
   const [selectedConnectorId, setSelectedConnectorId] = useState('');
   const [builder, setBuilder] = useState<BuilderModel>(() => createEmptyBuilderModel());
+  const [editingModel, setEditingModel] = useState<SemanticModelRecord | null>(null);
+  const [loadingModel, setLoadingModel] = useState(false);
   const [storedModels, setStoredModels] = useState<SemanticModelRecord[]>([]);
   const [storedLoading, setStoredLoading] = useState(false);
   const [autoGenerating, setAutoGenerating] = useState(false);
@@ -89,6 +97,11 @@ export default function SemanticModelPage(): JSX.Element {
   const [isClient, setIsClient] = useState(false);
 
   const organizationAvailable = Boolean(selectedOrganizationId);
+  const headerTitle = isEditMode ? 'Edit semantic model' : 'Semantic model builder';
+  const headerDescription = isEditMode
+    ? 'Update the semantic layer for a connector and save changes to the existing model.'
+    : 'Describe the semantic layer for a connector and LangBridge will persist the YAML definition for your agents.';
+  const submitLabel = isEditMode ? 'Update semantic model' : 'Save semantic model';
 
   const currentOrganizationName = useMemo(() => {
     if (!selectedOrganizationId) {
@@ -176,6 +189,48 @@ export default function SemanticModelPage(): JSX.Element {
   }, [selectedOrganizationId, loadConnectors]);
 
   useEffect(() => {
+    if (!isEditMode) {
+      setEditingModel(null);
+      return;
+    }
+    if (!selectedOrganizationId || !editingModelId) {
+      return;
+    }
+    const organizationId = selectedOrganizationId;
+    let cancelled = false;
+    const loadModel = async () => {
+      setLoadingModel(true);
+      setError(null);
+      try {
+        const model = await fetchSemanticModel(editingModelId, organizationId);
+        if (cancelled) {
+          return;
+        }
+        const parsedBuilder = parseYamlToBuilderModel(model.contentYaml);
+        setEditingModel(model);
+        setFormState({
+          name: model.name ?? '',
+          description: model.description ?? '',
+        });
+        setSelectedConnectorId(model.connectorId ?? '');
+        setBuilder(parsedBuilder);
+      } catch (err) {
+        if (!cancelled) {
+          setError(resolveError(err));
+        }
+      } finally {
+        if (!cancelled) {
+          setLoadingModel(false);
+        }
+      }
+    };
+    void loadModel();
+    return () => {
+      cancelled = true;
+    };
+  }, [editingModelId, isEditMode, selectedOrganizationId]);
+
+  useEffect(() => {
     if (!selectedOrganizationId) {
       setStoredModels([]);
       return;
@@ -184,8 +239,14 @@ export default function SemanticModelPage(): JSX.Element {
   }, [selectedOrganizationId, selectedProjectId, refreshStoredModels]);
 
   useEffect(() => {
-    setBuilder(createEmptyBuilderModel());
-  }, [selectedConnectorId]);
+    if (!selectedConnectorId) {
+      setBuilder(createEmptyBuilderModel());
+      return;
+    }
+    if (!isEditMode) {
+      setBuilder(createEmptyBuilderModel());
+    }
+  }, [isEditMode, selectedConnectorId]);
 
   useEffect(() => {
     setIsClient(true);
@@ -217,19 +278,48 @@ export default function SemanticModelPage(): JSX.Element {
       return;
     }
 
+    const trimmedName = formState.name.trim();
+    const trimmedDescription = formState.description.trim();
+
     setSubmitting(true);
     setError(null);
     try {
       const yamlPayload = serializeBuilderModel(builder, selectedConnector?.name);
-      await createSemanticModel({
-        organizationId: selectedOrganizationId,
-        projectId: selectedProjectId ?? null,
-        connectorId: selectedConnectorId,
-        name: formState.name.trim(),
-        description: formState.description.trim() || undefined,
-        modelYaml: yamlPayload,
-        autoGenerate: false,
-      });
+      if (isEditMode) {
+        if (!editingModelId) {
+          setError('Choose a semantic model to update.');
+          return;
+        }
+        await updateSemanticModel(editingModelId, selectedOrganizationId, {
+          projectId: selectedProjectId ?? null,
+          connectorId: selectedConnectorId,
+          name: trimmedName,
+          description: trimmedDescription,
+          modelYaml: yamlPayload,
+          autoGenerate: false,
+        });
+        setEditingModel((current) =>
+          current
+            ? {
+                ...current,
+                name: trimmedName,
+                description: trimmedDescription || null,
+                connectorId: selectedConnectorId,
+                updatedAt: new Date().toISOString(),
+              }
+            : current,
+        );
+      } else {
+        await createSemanticModel({
+          organizationId: selectedOrganizationId,
+          projectId: selectedProjectId ?? null,
+          connectorId: selectedConnectorId,
+          name: trimmedName,
+          description: trimmedDescription || undefined,
+          modelYaml: yamlPayload,
+          autoGenerate: false,
+        });
+      }
       await refreshStoredModels();
     } catch (err) {
       setError(resolveError(err));
@@ -291,11 +381,21 @@ export default function SemanticModelPage(): JSX.Element {
   return (
     <div className="space-y-6 text-[color:var(--text-secondary)]">
       <header className="flex flex-col gap-2">
-        <h1 className="text-2xl font-semibold text-[color:var(--text-primary)]">Semantic model builder</h1>
+        <h1 className="text-2xl font-semibold text-[color:var(--text-primary)]">{headerTitle}</h1>
         <p className="max-w-3xl text-sm">
-          Describe the semantic layer for a connector and LangBridge will persist the YAML definition for your agents.
-          Choose a connector, tune dimensions and measures, then review the YAML output before saving.
+          {headerDescription}
+          {isEditMode
+            ? ' Review the YAML output before saving.'
+            : ' Choose a connector, tune dimensions and measures, then review the YAML output before saving.'}
         </p>
+        {isEditMode && editingModel ? (
+          <div className="text-xs text-[color:var(--text-muted)]">
+            Editing:{' '}
+            <span className="font-medium text-[color:var(--text-primary)]">
+              {formState.name.trim() || editingModel.name}
+            </span>
+          </div>
+        ) : null}
         <div className="text-xs text-[color:var(--text-muted)]">
           Scope: <span className="font-medium text-[color:var(--text-primary)]">{currentOrganizationName}</span>
           {selectedProjectId ? ' · project scoped' : ' · organization scoped'}
@@ -305,13 +405,18 @@ export default function SemanticModelPage(): JSX.Element {
       {error ? (
         <div className="rounded-lg border border-rose-300 bg-rose-100/40 px-4 py-3 text-sm text-rose-700">{error}</div>
       ) : null}
+      {isEditMode && loadingModel ? (
+        <div className="rounded-lg border border-[color:var(--panel-border)] bg-[color:var(--panel-bg)] px-4 py-3 text-sm">
+          Loading semantic model details...
+        </div>
+      ) : null}
 
       {!organizationAvailable && !scopeLoading ? (
         <div className="rounded-xl border border-dashed border-[color:var(--panel-border)] bg-[color:var(--panel-bg)] p-6 text-center text-sm">
           Choose an organization from the scope selector to begin modeling.
         </div>
       ) : (
-        <div className="grid gap-6 lg:grid-cols-[2fr_1fr]">
+        <div className="grid">
           <section className="space-y-6 rounded-3xl border border-[color:var(--panel-border)] bg-[color:var(--panel-bg)] p-6 shadow-soft">
             <form className="space-y-6" onSubmit={(event) => void handleSave(event)}>
               <div className="space-y-3">
@@ -1185,15 +1290,20 @@ export default function SemanticModelPage(): JSX.Element {
                       <p className="text-xs text-rose-600">{builderYamlPreview.error}</p>
                     ) : null}
                     <Textarea rows={12} readOnly value={builderYamlPreview.yaml} className="font-mono text-xs" />
-                    <Button type="submit" className="w-full" isLoading={submitting} disabled={!selectedConnectorId}>
-                      Save semantic model
+                    <Button
+                      type="submit"
+                      className="w-full"
+                      isLoading={submitting}
+                      disabled={!selectedConnectorId || loadingModel}
+                    >
+                      {submitLabel}
                     </Button>
                   </div>
                 </>
               )}
             </form>
           </section>
-          <aside className="space-y-4 rounded-3xl border border-[color:var(--panel-border)] bg-[color:var(--panel-bg)] p-6 shadow-soft">
+          {/* <aside className="space-y-4 rounded-3xl border border-[color:var(--panel-border)] bg-[color:var(--panel-bg)] p-6 shadow-soft">
             <div className="flex items-center justify-between">
               <h2 className="text-lg font-semibold text-[color:var(--text-primary)]">Saved models</h2>
               <Badge variant="secondary">{storedModels.length}</Badge>
@@ -1238,7 +1348,7 @@ export default function SemanticModelPage(): JSX.Element {
                 ))}
               </ul>
             )}
-          </aside>
+          </aside> */}
         </div>
       )}
     </div>

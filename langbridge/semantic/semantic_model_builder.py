@@ -3,7 +3,6 @@
 from dataclasses import dataclass
 import logging
 import re
-import yaml
 from collections import defaultdict
 from typing import Any, Dict, List, Optional, Tuple
 from uuid import UUID
@@ -18,6 +17,7 @@ from connectors import (
 from orchestrator.tools.sql_analyst.interfaces import QueryResult
 from semantic.model import MeasureAggregation
 from semantic import Dimension, Measure, Relationship, SemanticModel, Table
+from semantic.loader import load_semantic_model
 from services.connector_service import ConnectorService
 from models.connectors import ConnectorResponse
 
@@ -102,129 +102,10 @@ class SemanticModelBuilder:
         connector_id: UUID,
     ) -> str:
         semantic_model = await self.build_for_scope(connector_id)
-        payload = self.build_sql_analyst_payload(semantic_model)
-        return yaml.safe_dump(payload, sort_keys=False)
+        return semantic_model.yml_dump()
         
     def parse_yaml_to_model(self, yaml_content: str) -> SemanticModel:
-        parsed_dict = yaml.safe_load(yaml_content)
-        return SemanticModel.model_validate(parsed_dict)
-
-    def build_sql_analyst_payload(self, semantic_model: SemanticModel) -> Dict[str, Any]:
-        """
-        Convert a legacy semantic model into the entities-first structure expected by the SQL analyst tool.
-        """
-
-        payload: Dict[str, Any] = semantic_model.model_dump(by_alias=True, exclude_none=True)
-
-        entities: Dict[str, Any] = {}
-        metrics: Dict[str, Any] = dict(payload.get("metrics") or {})
-        dimensions: Dict[str, Any] = dict(payload.get("dimensions") or {})
-        joins: List[Dict[str, Any]] = []
-
-        for entity_name, table in semantic_model.tables.items():
-            table_columns: Dict[str, Any] = {}
-            primary_keys: List[str] = []
-
-            for dimension in table.dimensions or []:
-                column_meta: Dict[str, Any] = {
-                    "type": dimension.type,
-                }
-                if dimension.description:
-                    column_meta["description"] = dimension.description
-                if dimension.synonyms:
-                    column_meta["synonyms"] = dimension.synonyms
-                if dimension.primary_key:
-                    column_meta["role"] = "primary_key"
-                    primary_keys.append(dimension.name)
-                if dimension.vectorized:
-                    column_meta["vectorized"] = True
-                    if dimension.vector_reference:
-                        column_meta["vector_reference"] = dimension.vector_reference
-                table_columns[dimension.name] = column_meta
-
-                dimension_key = f"{entity_name}.{dimension.name}"
-                if dimension_key not in dimensions:
-                    dimension_entry: Dict[str, Any] = {
-                        "entity": entity_name,
-                        "column": dimension.name,
-                        "type": dimension.type,
-                        "vectorized": dimension.vectorized,
-                    }
-                    if dimension.description:
-                        dimension_entry["description"] = dimension.description
-                if dimension.synonyms:
-                    dimension_entry["synonyms"] = dimension.synonyms
-                if dimension.vectorized and dimension.vector_reference:
-                    dimension_entry["vector_reference"] = dimension.vector_reference
-                dimensions[dimension_key] = dimension_entry
-
-            for measure in table.measures or []:
-                column_meta = {
-                    "type": measure.type,
-                    "role": "measure",
-                }
-                if measure.aggregation:
-                    column_meta["aggregation"] = measure.aggregation
-                if measure.description:
-                    column_meta["description"] = measure.description
-                if measure.synonyms:
-                    column_meta["synonyms"] = measure.synonyms
-                table_columns[measure.name] = column_meta
-
-                # metric_key = f"{entity_name}.{measure.name}"
-                # if metric_key not in metrics:
-                #     metric_entry: Dict[str, Any] = {
-                #         "expression": self._build_metric_expression(table, measure),
-                #     }
-                #     if measure.aggregation:
-                #         metric_entry["aggregation"] = measure.aggregation
-                #     if measure.description:
-                #         metric_entry["description"] = measure.description
-                #     if measure.synonyms:
-                #         metric_entry["synonyms"] = measure.synonyms
-                #     metrics[metric_key] = metric_entry
-
-            table_payload: Dict[str, Any] = {
-                "schema": table.schema,
-                "name": table.name,
-                "table": f"{table.schema}.{table.name}" if table.schema else table.name,
-            }
-            if table.description:
-                table_payload["description"] = table.description
-            if table.synonyms:
-                table_payload["synonyms"] = table.synonyms
-            if table_columns:
-                table_payload["columns"] = table_columns
-            if primary_keys:
-                table_payload["primary_key"] = primary_keys
-            if table.filters:
-                table_payload["filters"] = {
-                    filter_key: filter_value.model_dump(exclude_none=True)
-                    for filter_key, filter_value in table.filters.items()
-                }
-
-            entities[entity_name] = table_payload
-
-        for relationship in semantic_model.relationships or []:
-            join_entry: Dict[str, Any] = {
-                "name": relationship.name,
-                "left": relationship.from_,
-                "right": relationship.to,
-                "on": relationship.join_on,
-                "type": "inner",
-                "cardinality": relationship.type,
-            }
-            joins.append(join_entry)
-
-        payload["entities"] = entities
-        if joins:
-            payload["joins"] = joins
-        else:
-            payload.pop("joins", None)
-        payload["metrics"] = metrics
-        payload["dimensions"] = dimensions
-
-        return payload
+        return load_semantic_model(yaml_content)
     
     def _build_semantic_tables(
         self,

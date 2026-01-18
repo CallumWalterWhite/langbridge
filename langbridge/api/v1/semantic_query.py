@@ -43,6 +43,15 @@ async def semantic_query(
 @inject
 async def semantic_query_meta(
     semantic_model_id: UUID,
+    organization_id: UUID,
     service: SemanticQueryService = Depends(Provide[Container.semantic_query_service]),
 ) -> SemanticQueryMetaResponse:
-    pass
+    try:
+        return await service.get_meta(
+            semantic_model_id=semantic_model_id,
+            organization_id=organization_id,
+        )
+    except BusinessValidationError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
+        ) from exc

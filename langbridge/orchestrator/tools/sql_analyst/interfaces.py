@@ -3,9 +3,11 @@ Protocol and data model definitions for the SQL analyst tooling.
 """
 
 
-from typing import Any, List, Optional, Protocol, Sequence
+from typing import Any, List, Protocol, Sequence
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field
+
+from semantic.model import SemanticModel
 
 
 class ConnectorQueryResult(Protocol):
@@ -40,43 +42,6 @@ class QueryResult(BaseModel):
             elapsed_ms=getattr(result, "elapsed_ms", None),
             source_sql=getattr(result, "sql", None),
         )
-
-
-class SemanticModel(BaseModel):
-    """
-    Lightweight semantic model descriptor consumed by the SQL analyst tool.
-    """
-
-    name: str
-    description: str | None = None
-    connector: str | None = None
-    dialect: str | None = None
-    entities: dict[str, dict[str, Any]] = Field(default_factory=dict)
-    joins: list[dict[str, Any]] = Field(default_factory=list)
-    metrics: dict[str, dict[str, Any]] = Field(default_factory=dict)
-    dimensions: dict[str, dict[str, Any]] = Field(default_factory=dict)
-    tags: list[str] = Field(default_factory=list)
-
-    @field_validator("entities", mode="after")
-    @classmethod
-    def _normalise_entity_keys(cls, value: dict[str, dict[str, Any]]) -> dict[str, dict[str, Any]]:
-        return {str(key): entity for key, entity in (value or {}).items()}
-    
-    
-class UnifiedSemanticModel(BaseModel):
-    """
-    Wrapper that stitches multiple semantic models together for cross-model querying.
-    """
-
-    semantic_models: list[SemanticModel]
-    version: str
-    name: str | None = None
-    description: Optional[str] = None
-    dialect: str | None = None
-    connector: str | None = None
-    relationships: Optional[list[dict[str, Any]]] = None
-    metrics: Optional[dict[str, dict[str, Any]]] = None
-    tags: list[str] = Field(default_factory=list)
 
 
 class AnalystQueryRequest(BaseModel):

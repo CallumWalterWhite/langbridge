@@ -11,7 +11,7 @@ The tool is configured with four dependencies:
 | Dependency | Purpose |
 |------------|---------|
 | `LLMProvider` | Generates canonical PostgreSQL SQL from structured prompts. |
-| `SemanticModel` | Describes entities, joins, metrics, and dimensions. Used to craft prompts and validate routing. |
+| `SemanticModel` | Describes tables, relationships, measures, metrics, and dimensions. Used to craft prompts and validate routing. |
 | `DatabaseConnector` | Executes SQL against the backing data warehouse. |
 | `dialect` | Target dialect for the connector (`"snowflake"`, `"bigquery"`, `"postgres"`, etc.). |
 
@@ -25,4 +25,3 @@ When `run()` (or `arun()`) is called with an `AnalystQueryRequest`, the tool:
 6. Returns an `AnalystQueryResponse` containing canonical SQL, executable SQL, execution metadata, and query results.
 
 Errors detected during validation, transpilation, or execution are wrapped into the response with a descriptive message while preserving canonical SQL for diagnosis.
-

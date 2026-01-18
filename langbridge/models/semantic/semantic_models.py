@@ -21,6 +21,15 @@ class SemanticModelCreateRequest(_Base):
     auto_generate: bool = False
 
 
+class SemanticModelUpdateRequest(_Base):
+    connector_id: Optional[UUID] = None
+    project_id: Optional[UUID] = None
+    name: Optional[str] = None
+    description: Optional[str] = None
+    model_yaml: Optional[str] = None
+    auto_generate: bool = False
+
+
 class SemanticModelRecordResponse(_Base):
     id: UUID
     organization_id: UUID
