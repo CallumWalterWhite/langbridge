@@ -3,11 +3,10 @@ import re
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 
-import yaml
-
 from semantic.errors import SemanticModelError, SemanticQueryError
 from .join_planner import JoinPlanner
 from semantic.model import SemanticModel
+from semantic.loader import load_semantic_model
 from .query_model import FilterItem, SemanticQuery
 from .resolver import DimensionRef, MeasureRef, MetricRef, SemanticModelResolver, SegmentRef
 from .tsql import build_date_range_condition, date_trunc, format_literal, quote_compound, quote_identifier
@@ -140,8 +139,7 @@ class TsqlSemanticTranslator:
         return "\n".join(sql_parts).strip() + ";"
 
     def load_semantic_model(self, yaml_text: str) -> SemanticModel:
-        payload = yaml.safe_load(yaml_text)
-        return SemanticModel.model_validate(payload)
+        return load_semantic_model(yaml_text)
 
     def _collect_required_tables(
         self,
@@ -606,6 +604,8 @@ class TsqlSemanticTranslator:
         return "DESC" if value == "desc" else "ASC"
 
     def _join_type(self, relationship_type: Optional[str]) -> str:
+        if relationship_type in {"left", "right", "full", "inner"}:
+            return relationship_type.upper()
         if relationship_type in {"one_to_many", "many_to_one", "one_to_one"}:
             return "LEFT"
         return "INNER"

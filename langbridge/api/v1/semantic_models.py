@@ -10,8 +10,9 @@ from errors.application_errors import BusinessValidationError
 from ioc import Container
 from models.auth import UserResponse
 from models.semantic import (
-    SemanticModelRecordResponse, 
-    SemanticModelCreateRequest
+    SemanticModelRecordResponse,
+    SemanticModelCreateRequest,
+    SemanticModelUpdateRequest,
 )
 from services.semantic import SemanticModelService
 
@@ -96,6 +97,26 @@ async def get_semantic_model_yaml(
     except BusinessValidationError as exc:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)
+        ) from exc
+
+
+@router.put("/{model_id}", response_model=SemanticModelRecordResponse)
+@inject
+async def update_semantic_model(
+    model_id: UUID,
+    organization_id: UUID,
+    request: SemanticModelUpdateRequest,
+    service: SemanticModelService = Depends(Provide[Container.semantic_model_service]),
+) -> SemanticModelRecordResponse:
+    try:
+        return await service.update_model(
+            model_id=model_id,
+            organization_id=organization_id,
+            request=request,
+        )
+    except BusinessValidationError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
         ) from exc
 
 

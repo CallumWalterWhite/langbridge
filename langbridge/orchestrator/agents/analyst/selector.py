@@ -155,38 +155,38 @@ Available tools and their semantic models:
         tags = list(getattr(semantic_model, "tags", []) or [])
         keywords = sorted(self._keywords.get(tool, []))
 
-        entities = []
+        tables = []
         metrics = []
         dimensions = []
+        measures = []
 
         if semantic_model is not None:
-            # entities
-            for entity_name, entity in (getattr(semantic_model, "entities", {}) or {}).items():
-                entity_desc = {
-                    "name": str(entity_name),
-                    "aliases": [],
-                    "synonyms": [],
-                    "columns": [],
+            for table_key, table in getattr(semantic_model, "tables", {}).items():
+                table_desc = {
+                    "name": str(table_key),
+                    "schema": str(getattr(table, "schema", "") or ""),
+                    "table": str(getattr(table, "name", "") or ""),
+                    "synonyms": list(getattr(table, "synonyms", []) or []),
+                    "dimensions": [],
+                    "measures": [],
                 }
-                if isinstance(entity, dict):
-                    entity_desc["aliases"] = list(entity.get("aliases", []) or [])
-                    entity_desc["synonyms"] = list(entity.get("synonyms", []) or [])
-                    entity_desc["columns"] = list((entity.get("columns") or {}).keys())
-                entities.append(entity_desc)
+                for dimension in table.dimensions or []:
+                    table_desc["dimensions"].append(
+                        {"name": dimension.name, "synonyms": list(dimension.synonyms or [])}
+                    )
+                    dimensions.append({"name": dimension.name, "synonyms": list(dimension.synonyms or [])})
+                for measure in table.measures or []:
+                    table_desc["measures"].append(
+                        {"name": measure.name, "synonyms": list(measure.synonyms or [])}
+                    )
+                    measures.append({"name": measure.name, "synonyms": list(measure.synonyms or [])})
+                tables.append(table_desc)
 
-            # metrics
             for metric_name, metric in (getattr(semantic_model, "metrics", {}) or {}).items():
                 metric_desc = {"name": str(metric_name), "synonyms": []}
-                if isinstance(metric, dict):
-                    metric_desc["synonyms"] = list(metric.get("synonyms", []) or [])
+                if hasattr(metric, "synonyms"):
+                    metric_desc["synonyms"] = list(getattr(metric, "synonyms", []) or [])
                 metrics.append(metric_desc)
-
-            # dimensions
-            for dim_name, dim in (getattr(semantic_model, "dimensions", {}) or {}).items():
-                dim_desc = {"name": str(dim_name), "synonyms": []}
-                if isinstance(dim, dict):
-                    dim_desc["synonyms"] = list(dim.get("synonyms", []) or [])
-                dimensions.append(dim_desc)
 
         return {
             "id": str(idx),
@@ -195,9 +195,10 @@ Available tools and their semantic models:
             "description": str(description),
             "tags": tags,
             "keywords": keywords,
-            "entities": entities,
+            "tables": tables,
             "metrics": metrics,
             "dimensions": dimensions,
+            "measures": measures,
         }
 
     # -------------------------------------------------------------------------
@@ -266,36 +267,31 @@ Available tools and their semantic models:
                 keywords.add(str(name).lower())
             for tag in getattr(model, "tags", []) or []:
                 _consume_values([tag])
+            for table_key, table in getattr(model, "tables", {}).items():
+                keywords.add(str(table_key).lower())
+                if getattr(table, "schema", None):
+                    _consume_values([table.schema])
+                if getattr(table, "name", None):
+                    _consume_values([table.name])
+                _consume_values(table.synonyms or [])
 
-            entities = getattr(model, "entities", {}) or {}
-            for entity_name, entity in entities.items():
-                keywords.add(str(entity_name).lower())
-                if isinstance(entity, dict):
-                    _consume_values(entity.get("aliases", []) or [])
-                    _consume_values(entity.get("synonyms", []) or [])
-                    for column_name, column_meta in (entity.get("columns") or {}).items():
-                        keywords.add(str(column_name).lower())
-                        if isinstance(column_meta, dict):
-                            _consume_values(column_meta.get("synonyms", []) or [])
+                for dimension in table.dimensions or []:
+                    keywords.add(str(dimension.name).lower())
+                    _consume_values(dimension.synonyms or [])
+
+                for measure in table.measures or []:
+                    keywords.add(str(measure.name).lower())
+                    _consume_values(measure.synonyms or [])
 
             for metric_name, metric in (getattr(model, "metrics", {}) or {}).items():
                 keywords.add(str(metric_name).lower())
-                if isinstance(metric, dict):
-                    _consume_values(metric.get("synonyms", []) or [])
+                if hasattr(metric, "synonyms"):
+                    _consume_values(getattr(metric, "synonyms", []) or [])
 
-            for dimension_name, dimension in (getattr(model, "dimensions", {}) or {}).items():
-                keywords.add(str(dimension_name).lower())
-                if isinstance(dimension, dict):
-                    _consume_values(dimension.get("synonyms", []) or [])
+            for rel in getattr(model, "relationships", []) or []:
+                _consume_values([rel.name, rel.from_, rel.to])
 
-        if hasattr(semantic_model, "semantic_models"):
-            for model in getattr(semantic_model, "semantic_models") or []:
-                _collect_from_model(model)
-            relationships = getattr(semantic_model, "relationships", None) or []
-            for rel in relationships:
-                _consume_values([rel.get("name"), rel.get("from"), rel.get("to")])
-        else:
-            _collect_from_model(semantic_model)
+        _collect_from_model(semantic_model)
 
         return keywords
 

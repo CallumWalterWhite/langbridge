@@ -10,7 +10,6 @@ from .interfaces import (
     AnalystQueryResponse,
     QueryResult,
     SemanticModel,
-    UnifiedSemanticModel,
 )
 from .semantic_loader import SemanticModelError, load_semantic_model
 from .tool import SqlAnalystTool
@@ -23,5 +22,4 @@ __all__ = [
     "SqlAnalystTool",
     "SemanticModelError",
     "load_semantic_model",
-    "UnifiedSemanticModel",
 ]

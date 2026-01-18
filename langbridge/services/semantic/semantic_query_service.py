@@ -1,16 +1,12 @@
-import json
 import logging
 from typing import Any, Dict, List
 from uuid import UUID
 import uuid
 import sqlglot
-import yaml
 from errors.application_errors import BusinessValidationError
 from connectors.config import ConnectorRuntimeType
 from connectors.connector import QueryResult, SqlConnector
-from semantic.semantic_model_builder import SemanticModelBuilder
 from models.connectors import ConnectorResponse
-from semantic.query.query_model import SemanticQuery
 from services.connector_service import ConnectorService
 from .semantic_model_service import SemanticModelService
 from semantic.query import (
@@ -20,8 +16,10 @@ from semantic.query import (
 from models.semantic import (
     SemanticQueryRequest,
     SemanticQueryResponse,
+    SemanticQueryMetaResponse,
     SemanticModelRecordResponse
 )
+from semantic.loader import SemanticModelError, load_semantic_model
 from semantic.model import SemanticModel
 
 class SemanticQueryService:
@@ -32,7 +30,6 @@ class SemanticQueryService:
         self._semantic_model_service = semantic_model_service
         self._translator = TsqlSemanticTranslator
         self._connector_service = connector_service
-        self._semantic_model_builder = SemanticModelBuilder(connector_service)
         self._logger = logging.getLogger(__name__)
 
     async def query_request(
@@ -47,8 +44,10 @@ class SemanticQueryService:
         if semantic_model_record is None:
             raise BusinessValidationError("Semantic model not found")
         
-        parsed_dict = yaml.safe_load(semantic_model_record.content_yaml)
-        semantic_model: SemanticModel = SemanticModel.model_validate(parsed_dict)
+        try:
+            semantic_model: SemanticModel = load_semantic_model(semantic_model_record.content_yaml)
+        except SemanticModelError as exc:
+            raise BusinessValidationError(f"Semantic model failed validation: {exc}") from exc
         semantic_query: SemanticQuery = SemanticQuery.model_validate(semantic_query_request.query)
 
         self._logger.info(f"Semantic model: {semantic_model}")
@@ -84,6 +83,32 @@ class SemanticQueryService:
             semantic_model_id=semantic_query_request.semantic_model_id,
             data=self.__format_data_response(result),
             annotations=self.__format_annotations_response(semantic_query, semantic_model)
+        )
+
+    async def get_meta(
+            self,
+            semantic_model_id: UUID,
+            organization_id: UUID,
+    ) -> SemanticQueryMetaResponse:
+        semantic_model_record: SemanticModelRecordResponse = await self._semantic_model_service.get_model(
+            model_id=semantic_model_id,
+            organization_id=organization_id,
+        )
+
+        try:
+            semantic_model = load_semantic_model(semantic_model_record.content_yaml)
+        except SemanticModelError as exc:
+            raise BusinessValidationError(f"Semantic model failed validation: {exc}") from exc
+
+        payload = semantic_model.model_dump(by_alias=True, exclude_none=True)
+        return SemanticQueryMetaResponse(
+            id=semantic_model_id,
+            name=semantic_model_record.name,
+            description=semantic_model_record.description,
+            connector_id=semantic_model_record.connector_id,
+            organization_id=semantic_model_record.organization_id,
+            project_id=semantic_model_record.project_id,
+            semantic_model=payload,
         )
 
     def __transpile(self, sql: str, target_dialect: str) -> str:
