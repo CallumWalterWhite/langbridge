@@ -3,13 +3,16 @@ import re
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 
+import sqlglot
+from sqlglot import exp
+
 from semantic.errors import SemanticModelError, SemanticQueryError
 from .join_planner import JoinPlanner
 from semantic.model import SemanticModel
 from semantic.loader import load_semantic_model
 from .query_model import FilterItem, SemanticQuery
 from .resolver import DimensionRef, MeasureRef, MetricRef, SemanticModelResolver, SegmentRef
-from .tsql import build_date_range_condition, date_trunc, format_literal, quote_compound, quote_identifier
+from .tsql import build_date_range_condition, date_trunc, format_literal
 
 
 @dataclass(frozen=True)
@@ -22,7 +25,7 @@ class TimeDimensionRef:
 @dataclass(frozen=True)
 class FilterTarget:
     kind: str
-    expression: str
+    expression: exp.Expression
     data_type: Optional[str]
     tables: Set[str]
 
@@ -36,8 +39,15 @@ class OrderItem:
 class TsqlSemanticTranslator:
     def __init__(self):
         self._logger = logging.getLogger(__name__)
+        self._dialect = "tsql"
 
-    def translate(self, query: SemanticQuery | Dict[str, Any], model: SemanticModel) -> str:
+    def translate(
+        self,
+        query: SemanticQuery | Dict[str, Any],
+        model: SemanticModel,
+        dialect: str = "tsql",
+    ) -> exp.Select:
+        self._dialect = (dialect or "tsql").lower()
         if isinstance(query, SemanticQuery):
             parsed = query
         else:
@@ -112,31 +122,24 @@ class TsqlSemanticTranslator:
             metrics,
         )
 
-        sql_parts: List[str] = []
-        sql_parts.append("SELECT")
-        sql_parts.append(self._indent(",\n".join(select_clauses)))
-        sql_parts.append(self._render_from(model, base_table, alias_map, join_steps))
+        query_expr = exp.select(*select_clauses)
+        query_expr = self._apply_from(query_expr, model, base_table, alias_map, join_steps)
 
         if where_conditions:
-            sql_parts.append("WHERE")
-            sql_parts.append(self._indent(" AND\n".join(where_conditions)))
+            query_expr = query_expr.where(self._combine_conditions(where_conditions))
 
         if group_by_expressions:
-            sql_parts.append("GROUP BY")
-            sql_parts.append(self._indent(",\n".join(group_by_expressions)))
+            query_expr = query_expr.group_by(*group_by_expressions)
 
         if having_conditions:
-            sql_parts.append("HAVING")
-            sql_parts.append(self._indent(" AND\n".join(having_conditions)))
+            query_expr = query_expr.having(self._combine_conditions(having_conditions))
 
         if order_clause:
-            sql_parts.append(order_clause)
+            query_expr = query_expr.order_by(*order_clause)
 
-        limit_clause = self._build_limit_clause(parsed.limit, parsed.offset, bool(order_clause))
-        if limit_clause:
-            sql_parts.append(limit_clause)
+        query_expr = self._apply_limit(query_expr, parsed.limit, parsed.offset)
 
-        return "\n".join(sql_parts).strip() + ";"
+        return query_expr
 
     def load_semantic_model(self, yaml_text: str) -> SemanticModel:
         return load_semantic_model(yaml_text)
@@ -216,15 +219,15 @@ class TsqlSemanticTranslator:
         measures: Sequence[MeasureRef],
         metrics: Sequence[MetricRef],
         resolver: SemanticModelResolver,
-    ) -> Tuple[List[str], List[str], Dict[str, str]]:
-        select_clauses: List[str] = []
-        group_by_expressions: List[str] = []
+    ) -> Tuple[List[exp.Expression], List[exp.Expression], Dict[str, str]]:
+        select_clauses: List[exp.Expression] = []
+        group_by_expressions: List[exp.Expression] = []
         order_aliases: Dict[str, str] = {}
 
         for dimension in dimensions:
             expr = self._column_expression(alias_map, dimension.table, dimension.column)
             alias = self._alias_for_member(f"{dimension.table}.{dimension.column}")
-            select_clauses.append(f"{expr} AS {quote_identifier(alias)}")
+            select_clauses.append(exp.alias_(expr, alias, quoted=True))
             group_by_expressions.append(expr)
             order_aliases[alias] = alias
             order_aliases[f"{dimension.table}.{dimension.column}"] = alias
@@ -237,13 +240,13 @@ class TsqlSemanticTranslator:
             )
             expr = base_expr
             if time_dimension.granularity:
-                expr = date_trunc(time_dimension.granularity, base_expr)
+                expr = date_trunc(time_dimension.granularity, base_expr, dialect=self._dialect)
             alias = self._alias_for_time_dimension(
                 time_dimension.dimension.table,
                 time_dimension.dimension.column,
                 time_dimension.granularity,
             )
-            select_clauses.append(f"{expr} AS {quote_identifier(alias)}")
+            select_clauses.append(exp.alias_(expr, alias, quoted=True))
             group_by_expressions.append(expr)
             order_aliases[alias] = alias
             order_aliases[f"{time_dimension.dimension.table}.{time_dimension.dimension.column}"] = alias
@@ -255,14 +258,14 @@ class TsqlSemanticTranslator:
         for measure in measures:
             expr = self._measure_expression(alias_map, measure)
             alias = self._alias_for_member(f"{measure.table}.{measure.column}")
-            select_clauses.append(f"{expr} AS {quote_identifier(alias)}")
+            select_clauses.append(exp.alias_(expr, alias, quoted=True))
             order_aliases[alias] = alias
             order_aliases[f"{measure.table}.{measure.column}"] = alias
 
         for metric in metrics:
             expr = self._replace_table_refs(metric.expression, alias_map)
             alias = self._alias_for_member(metric.key)
-            select_clauses.append(f"{expr} AS {quote_identifier(alias)}")
+            select_clauses.append(exp.alias_(expr, alias, quoted=True))
             order_aliases[alias] = alias
             order_aliases[metric.key] = alias
 
@@ -277,8 +280,8 @@ class TsqlSemanticTranslator:
         filter_targets: Sequence[FilterTarget],
         time_dimensions: Sequence[TimeDimensionRef],
         segments: Sequence[SegmentRef],
-    ) -> List[str]:
-        conditions: List[str] = []
+    ) -> List[exp.Expression]:
+        conditions: List[exp.Expression] = []
         for target in filter_targets:
             if target.kind == "measure" or target.kind == "metric":
                 continue
@@ -297,6 +300,7 @@ class TsqlSemanticTranslator:
                     column_expr,
                     time_dimension.date_range,
                     time_dimension.dimension.data_type,
+                    dialect=self._dialect,
                 )
             )
 
@@ -310,8 +314,8 @@ class TsqlSemanticTranslator:
         self,
         alias_map: Dict[str, str],
         filter_targets: Sequence[FilterTarget],
-    ) -> List[str]:
-        conditions: List[str] = []
+    ) -> List[exp.Expression]:
+        conditions: List[exp.Expression] = []
         for target in filter_targets:
             if target.kind in {"measure", "metric"}:
                 conditions.append(self._replace_table_refs(target.expression, alias_map))
@@ -327,26 +331,29 @@ class TsqlSemanticTranslator:
         time_dimensions: Sequence[TimeDimensionRef],
         measures: Sequence[MeasureRef],
         metrics: Sequence[MetricRef],
-    ) -> str:
+    ) -> List[exp.Expression]:
         if not order_items:
-            return ""
+            return []
 
-        clauses: List[str] = []
+        clauses: List[exp.Expression] = []
         for item in order_items:
             key = item.member
             alias = order_aliases.get(key)
             if alias:
-                clauses.append(f"{quote_identifier(alias)} {item.direction}")
+                clauses.append(
+                    exp.Ordered(
+                        this=exp.Identifier(this=alias, quoted=True),
+                        desc=item.direction == "DESC",
+                    )
+                )
                 continue
 
             resolved = self._resolve_order_member(
                 key, alias_map, resolver, dimensions, time_dimensions, measures, metrics
             )
-            clauses.append(f"{resolved} {item.direction}")
+            clauses.append(exp.Ordered(this=resolved, desc=item.direction == "DESC"))
 
-        if not clauses:
-            return ""
-        return "ORDER BY " + ", ".join(clauses)
+        return clauses
 
     def _resolve_order_member(
         self,
@@ -357,7 +364,7 @@ class TsqlSemanticTranslator:
         time_dimensions: Sequence[TimeDimensionRef],
         measures: Sequence[MeasureRef],
         metrics: Sequence[MetricRef],
-    ) -> str:
+    ) -> exp.Expression:
         for time_dimension in time_dimensions:
             if member == f"{time_dimension.dimension.table}.{time_dimension.dimension.column}":
                 expr = self._column_expression(
@@ -366,7 +373,7 @@ class TsqlSemanticTranslator:
                     time_dimension.dimension.column,
                 )
                 if time_dimension.granularity:
-                    return date_trunc(time_dimension.granularity, expr)
+                    return date_trunc(time_dimension.granularity, expr, dialect=self._dialect)
                 return expr
 
         try:
@@ -387,35 +394,43 @@ class TsqlSemanticTranslator:
 
         raise SemanticQueryError(f"Unable to resolve order member '{member}'.")
 
-    def _build_limit_clause(self, limit: Optional[int], offset: Optional[int], has_order: bool) -> str:
+    def _apply_limit(self, query: exp.Select, limit: Optional[int], offset: Optional[int]) -> exp.Select:
         if limit is None and offset is None:
-            return ""
+            return query
 
         safe_limit = limit if limit is not None else 2147483647
         safe_offset = offset or 0
-        if not has_order:
-            return f"ORDER BY (SELECT 1)\nOFFSET {safe_offset} ROWS FETCH NEXT {safe_limit} ROWS ONLY"
-        return f"OFFSET {safe_offset} ROWS FETCH NEXT {safe_limit} ROWS ONLY"
+        return query.limit(safe_limit).offset(safe_offset)
 
-    def _render_from(
+    def _combine_conditions(self, conditions: Sequence[exp.Expression]) -> exp.Expression:
+        return exp.and_(*conditions)
+
+    def _ensure_expression(self, expression: exp.Expression | str) -> exp.Expression:
+        if isinstance(expression, exp.Expression):
+            return expression
+        try:
+            return sqlglot.parse_one(expression, read=self._dialect)
+        except sqlglot.ParseError:
+            return sqlglot.parse_one(expression, read="tsql")
+
+    def _apply_from(
         self,
+        query: exp.Select,
         model: SemanticModel,
         base_table: str,
         alias_map: Dict[str, str],
         join_steps: Sequence[Any],
-    ) -> str:
-        base_ref = self._table_ref(model, base_table)
-        base_alias = alias_map[base_table]
-        lines = [f"FROM {base_ref} AS {base_alias}"]
+    ) -> exp.Select:
+        base_ref = self._table_ref(model, base_table, alias=alias_map[base_table])
+        query = query.from_(base_ref)
 
         for step in join_steps:
-            right_ref = self._table_ref(model, step.right_table)
-            right_alias = alias_map[step.right_table]
+            right_ref = self._table_ref(model, step.right_table, alias=alias_map[step.right_table])
             join_on = self._replace_table_refs(step.relationship.join_on, alias_map)
-            join_type = self._join_type(step.relationship.type)
-            lines.append(f"{join_type} JOIN {right_ref} AS {right_alias} ON {join_on}")
+            join_type = self._join_type(step.relationship.type).lower()
+            query = query.join(right_ref, on=join_on, join_type=join_type)
 
-        return "\n".join(lines)
+        return query
 
     def _resolve_filter_target(self, resolver: SemanticModelResolver, item: FilterItem) -> FilterTarget:
         member = item.member or item.dimension or item.measure or item.time_dimension
@@ -428,102 +443,158 @@ class TsqlSemanticTranslator:
         if item.dimension or item.time_dimension:
             dimension = resolver.resolve_dimension(member)
             expr = self._column_expression({}, dimension.table, dimension.column, allow_placeholder=True)
-            sql = self._build_filter_expression(expr, operator, values, dimension.data_type)
-            return FilterTarget(kind="dimension", expression=sql, data_type=dimension.data_type, tables={dimension.table})
+            condition = self._build_filter_expression(expr, operator, values, dimension.data_type)
+            return FilterTarget(
+                kind="dimension",
+                expression=condition,
+                data_type=dimension.data_type,
+                tables={dimension.table},
+            )
 
         if item.measure:
             resolved = resolver.resolve_measure_or_metric(member)
             if isinstance(resolved, MetricRef):
                 expr = resolved.expression
-                sql = self._build_filter_expression(expr, operator, values, None)
-                return FilterTarget(kind="metric", expression=sql, data_type=None, tables=resolver.extract_tables_from_expression(expr))
+                condition = self._build_filter_expression(expr, operator, values, None)
+                return FilterTarget(
+                    kind="metric",
+                    expression=condition,
+                    data_type=None,
+                    tables=resolver.extract_tables_from_expression(expr),
+                )
             expr = self._measure_expression({}, resolved, allow_placeholder=True)
-            sql = self._build_filter_expression(expr, operator, values, resolved.data_type)
-            return FilterTarget(kind="measure", expression=sql, data_type=resolved.data_type, tables={resolved.table})
+            condition = self._build_filter_expression(expr, operator, values, resolved.data_type)
+            return FilterTarget(
+                kind="measure",
+                expression=condition,
+                data_type=resolved.data_type,
+                tables={resolved.table},
+            )
 
         if member in (resolver.model.metrics or {}):
             metric = resolver.resolve_metric(member)
             expr = metric.expression
-            sql = self._build_filter_expression(expr, operator, values, None)
-            return FilterTarget(kind="metric", expression=sql, data_type=None, tables=resolver.extract_tables_from_expression(expr))
+            condition = self._build_filter_expression(expr, operator, values, None)
+            return FilterTarget(
+                kind="metric",
+                expression=condition,
+                data_type=None,
+                tables=resolver.extract_tables_from_expression(expr),
+            )
 
         try:
             dimension = resolver.resolve_dimension(member)
             expr = self._column_expression({}, dimension.table, dimension.column, allow_placeholder=True)
-            sql = self._build_filter_expression(expr, operator, values, dimension.data_type)
-            return FilterTarget(kind="dimension", expression=sql, data_type=dimension.data_type, tables={dimension.table})
+            condition = self._build_filter_expression(expr, operator, values, dimension.data_type)
+            return FilterTarget(
+                kind="dimension",
+                expression=condition,
+                data_type=dimension.data_type,
+                tables={dimension.table},
+            )
         except SemanticModelError:
             pass
 
         resolved = resolver.resolve_measure_or_metric(member)
         if isinstance(resolved, MetricRef):
             expr = resolved.expression
-            sql = self._build_filter_expression(expr, operator, values, None)
-            return FilterTarget(kind="metric", expression=sql, data_type=None, tables=resolver.extract_tables_from_expression(expr))
+            condition = self._build_filter_expression(expr, operator, values, None)
+            return FilterTarget(
+                kind="metric",
+                expression=condition,
+                data_type=None,
+                tables=resolver.extract_tables_from_expression(expr),
+            )
         expr = self._measure_expression({}, resolved, allow_placeholder=True)
-        sql = self._build_filter_expression(expr, operator, values, resolved.data_type)
-        return FilterTarget(kind="measure", expression=sql, data_type=resolved.data_type, tables={resolved.table})
+        condition = self._build_filter_expression(expr, operator, values, resolved.data_type)
+        return FilterTarget(
+            kind="measure",
+            expression=condition,
+            data_type=resolved.data_type,
+            tables={resolved.table},
+        )
 
     def _build_filter_expression(
-        self, expression: str, operator: str, values: Sequence[Any], data_type: Optional[str]
-    ) -> str:
+        self,
+        expression: exp.Expression | str,
+        operator: str,
+        values: Sequence[Any],
+        data_type: Optional[str],
+    ) -> exp.Expression:
         op = operator.strip().lower()
-        formatted_values = [format_literal(value, data_type) for value in values]
+        expr = self._ensure_expression(expression)
+        formatted_values = [format_literal(value, data_type, dialect=self._dialect) for value in values]
 
         if op in {"equals", "equal", "eq"}:
             if len(formatted_values) == 1:
-                return f"{expression} = {formatted_values[0]}"
-            return f"{expression} IN ({', '.join(formatted_values)})"
+                return exp.EQ(this=expr, expression=formatted_values[0])
+            return exp.In(this=expr, expressions=formatted_values)
         if op in {"notequals", "not_equals", "ne"}:
             if len(formatted_values) == 1:
-                return f"{expression} <> {formatted_values[0]}"
-            return f"{expression} NOT IN ({', '.join(formatted_values)})"
+                return exp.NEQ(this=expr, expression=formatted_values[0])
+            return exp.Not(this=exp.In(this=expr, expressions=formatted_values))
         if op == "contains":
-            return f"{expression} LIKE {format_literal(f'%{values[0]}%', None)}"
+            return exp.Like(
+                this=expr,
+                expression=format_literal(f"%{values[0]}%", None, dialect=self._dialect),
+            )
         if op == "notcontains":
-            return f"{expression} NOT LIKE {format_literal(f'%{values[0]}%', None)}"
+            return exp.Not(
+                this=exp.Like(
+                    this=expr,
+                    expression=format_literal(f"%{values[0]}%", None, dialect=self._dialect),
+                )
+            )
         if op == "startswith":
-            return f"{expression} LIKE {format_literal(f'{values[0]}%', None)}"
+            return exp.Like(
+                this=expr,
+                expression=format_literal(f"{values[0]}%", None, dialect=self._dialect),
+            )
         if op == "endswith":
-            return f"{expression} LIKE {format_literal(f'%{values[0]}', None)}"
+            return exp.Like(
+                this=expr,
+                expression=format_literal(f"%{values[0]}", None, dialect=self._dialect),
+            )
         if op in {"gt", "greater"}:
-            return f"{expression} > {formatted_values[0]}"
+            return exp.GT(this=expr, expression=formatted_values[0])
         if op in {"gte", "gteq", "greater_or_equal"}:
-            return f"{expression} >= {formatted_values[0]}"
+            return exp.GTE(this=expr, expression=formatted_values[0])
         if op in {"lt", "less"}:
-            return f"{expression} < {formatted_values[0]}"
+            return exp.LT(this=expr, expression=formatted_values[0])
         if op in {"lte", "lteq", "less_or_equal"}:
-            return f"{expression} <= {formatted_values[0]}"
+            return exp.LTE(this=expr, expression=formatted_values[0])
         if op == "beforedate":
-            return f"{expression} < {formatted_values[0]}"
+            return exp.LT(this=expr, expression=formatted_values[0])
         if op == "afterdate":
-            return f"{expression} > {formatted_values[0]}"
+            return exp.GT(this=expr, expression=formatted_values[0])
         if op == "indaterange":
             if len(values) == 1:
                 date_range = values[0]
             else:
                 date_range = list(values)
-            return build_date_range_condition(expression, date_range, data_type)
+            return build_date_range_condition(expr, date_range, data_type, dialect=self._dialect)
         if op == "notindaterange":
             if len(values) == 1:
                 date_range = values[0]
             else:
                 date_range = list(values)
-            return f"NOT ({build_date_range_condition(expression, date_range, data_type)})"
+            return exp.Not(
+                this=build_date_range_condition(expr, date_range, data_type, dialect=self._dialect)
+            )
         if op == "set":
-            return f"{expression} IS NOT NULL"
+            return exp.Not(this=exp.Is(this=expr, expression=exp.Null()))
         if op == "notset":
-            return f"{expression} IS NULL"
+            return exp.Is(this=expr, expression=exp.Null())
         if op == "in":
-            return f"{expression} IN ({', '.join(formatted_values)})"
+            return exp.In(this=expr, expressions=formatted_values)
         if op == "notin":
-            return f"{expression} NOT IN ({', '.join(formatted_values)})"
+            return exp.Not(this=exp.In(this=expr, expressions=formatted_values))
 
         raise SemanticQueryError(f"Unsupported filter operator '{operator}'.")
 
     def _measure_expression(
         self, alias_map: Dict[str, str], measure: MeasureRef, allow_placeholder: bool = False
-    ) -> str:
+    ) -> exp.Expression:
         column_expr = self._column_expression(
             alias_map,
             measure.table,
@@ -535,10 +606,20 @@ class TsqlSemanticTranslator:
             aggregation = "sum" if (measure.data_type or "").lower() in {"integer", "decimal", "float", "number"} else "count"
 
         if aggregation in {"count_distinct", "countdistinct"}:
-            return f"COUNT(DISTINCT {column_expr})"
+            return exp.Count(this=column_expr, distinct=True)
         if aggregation == "count":
-            return f"COUNT({column_expr})"
-        return f"{aggregation.upper()}({column_expr})"
+            return exp.Count(this=column_expr)
+
+        aggregator = aggregation.lower()
+        if aggregator == "sum":
+            return exp.Sum(this=column_expr)
+        if aggregator == "avg":
+            return exp.Avg(this=column_expr)
+        if aggregator == "min":
+            return exp.Min(this=column_expr)
+        if aggregator == "max":
+            return exp.Max(this=column_expr)
+        return exp.func(aggregator.upper(), column_expr)
 
     def _column_expression(
         self,
@@ -546,27 +627,45 @@ class TsqlSemanticTranslator:
         table: str,
         column: str,
         allow_placeholder: bool = False,
-    ) -> str:
+    ) -> exp.Expression:
         if not alias_map:
             if not allow_placeholder:
                 raise SemanticQueryError("Column expression requested before aliases are available.")
-            return f"{table}.{quote_identifier(column)}"
-        alias = alias_map[table]
-        return f"{alias}.{quote_identifier(column)}"
+            alias = table
+        else:
+            alias = alias_map[table]
+        return exp.Column(
+            this=exp.Identifier(this=column, quoted=True),
+            table=exp.Identifier(this=alias, quoted=False),
+        )
 
-    def _replace_table_refs(self, expression: str, alias_map: Dict[str, str]) -> str:
-        updated = expression
-        for table, alias in alias_map.items():
-            updated = re.sub(rf"\b{re.escape(table)}\.", f"{alias}.", updated)
-        return updated
+    def _replace_table_refs(
+        self, expression: exp.Expression | str, alias_map: Dict[str, str]
+    ) -> exp.Expression:
+        expr = self._ensure_expression(expression)
 
-    def _table_ref(self, model: SemanticModel, table_key: str) -> str:
+        def _replace(node: exp.Expression) -> exp.Expression:
+            if isinstance(node, exp.Column):
+                table = node.table
+                if table in alias_map:
+                    return exp.Column(
+                        this=node.this.copy() if isinstance(node.this, exp.Identifier) else node.this,
+                        table=exp.Identifier(this=alias_map[table], quoted=False),
+                    )
+            return node
+
+        return expr.transform(_replace)
+
+    def _table_ref(self, model: SemanticModel, table_key: str, alias: Optional[str] = None) -> exp.Expression:
         table = model.tables.get(table_key)
         if table is None:
             raise SemanticQueryError(f"Unknown table '{table_key}'.")
-        if table.schema:
-            return quote_compound(f"{table.schema}.{table.name}")
-        return quote_identifier(table.name)
+        return exp.table_(
+            table.name,
+            db=table.schema,
+            quoted=True,
+            alias=alias,
+        )
 
     def _alias_for_member(self, member: str) -> str:
         alias = member.replace(".", "__").replace(" ", "_")
@@ -609,7 +708,3 @@ class TsqlSemanticTranslator:
         if relationship_type in {"one_to_many", "many_to_one", "one_to_one"}:
             return "LEFT"
         return "INNER"
-
-    def _indent(self, text: str, spaces: int = 2) -> str:
-        padding = " " * spaces
-        return "\n".join(f"{padding}{line}" for line in text.splitlines())

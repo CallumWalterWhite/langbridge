@@ -8,6 +8,8 @@ from errors.connector_errors import ConnectorError
 
 from .config import PostgresConnectorConfig
 
+from sqlglot import exp
+
 try:  # pragma: no cover - optional dependency
     import psycopg  # type: ignore
 except ImportError:  # pragma: no cover - optional dependency
@@ -25,6 +27,7 @@ class PostgresConnector(SqlConnector):
     """
 
     DIALECT = SqlDialetcs.POSTGRES
+    EXPRESSION_REWRITE = True
 
     def __init__(
         self,
@@ -202,8 +205,8 @@ class PostgresConnector(SqlConnector):
         try:
             conn = self._connect()
             cursor = conn.cursor()
-            if timeout_s:
-                cursor.execute("SET statement_timeout = %s", (int(timeout_s * 1000),))
+            # if timeout_s:
+            #     cursor.execute("SET statement_timeout = %s", (int(timeout_s * 1000),))
             cursor.execute(sql, params or None)
             columns = [description[0] for description in cursor.description]
             rows = cursor.fetchall()
@@ -213,3 +216,29 @@ class PostgresConnector(SqlConnector):
         except Exception as exc:
             self.logger.error("SQL execution failed: %s", exc)
             raise ConnectorError(f"SQL execution failed on PostgreSQL: {exc}") from exc
+        
+    def rewrite_expression(self, node: exp.Expression) -> exp.Expression:
+        if isinstance(node, exp.DateAdd):
+            unit = node.args.get("unit")
+            date = node.args.get("this")         # 3rd arg in TSQL DATEADD(unit, number, date)
+            number = node.args.get("expression") # 2nd arg
+
+            if (
+                unit and unit.name and unit.name.lower() == "month"
+                and self.__is_zero_literal(date)
+                and isinstance(number, exp.DateDiff)
+            ):
+                dd_unit = number.args.get("unit")
+                dd_start = number.args.get("this")       # start date (2nd arg in DATEDIFF)
+                dd_end = number.args.get("expression")   # end date (3rd arg)
+
+                if dd_unit and dd_unit.name and dd_unit.name.lower() == "month" and self.__is_zero_literal(dd_start):
+                    return exp.DateTrunc(
+                        this=exp.Literal.string("month"),
+                        expression=dd_end,
+                    )
+        return node
+
+    
+    def __is_zero_literal(self, e):
+        return isinstance(e, exp.Literal) and e.is_number and e.this == "0"

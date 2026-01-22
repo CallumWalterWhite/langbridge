@@ -8,6 +8,8 @@ import time
 from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 import re
 
+import sqlglot
+
 from errors.connector_errors import AuthError, ConnectorError, QueryValidationError
 from connectors.config import BaseConnectorConfig, ConnectorRuntimeType
 from connectors.metadata import TableMetadata, ColumnMetadata, ForeignKeyMetadata
@@ -145,14 +147,14 @@ def ensure_select_statement(sql: str) -> None:
         raise QueryValidationError("Query contains prohibited keywords for read-only access.")
 
 
-def apply_limit(sql: str, max_rows: Optional[int]) -> str:
-    if not max_rows or max_rows <= 0:
-        return sql
-    if SQL_LIMIT_RE.search(sql):
-        return sql
-    terminating_semicolon = ";" if sql.strip().endswith(";") else ""
-    base = sql.strip().rstrip(";")
-    return f"{base}\nLIMIT {max_rows}{terminating_semicolon}"
+# def apply_limit(sql: str, max_rows: Optional[int]) -> str:
+#     if not max_rows or max_rows <= 0:
+#         return sql
+#     if SQL_LIMIT_RE.search(sql):
+#         return sql
+#     terminating_semicolon = ";" if sql.strip().endswith(";") else ""
+#     base = sql.strip().rstrip(";")
+#     return f"{base}\nLIMIT {max_rows}{terminating_semicolon}"
 
 
 class Connector(ABC):
@@ -244,6 +246,7 @@ class SqlConnector(Connector):
     
     CONNECTOR_TYPE: ConnectorType = ConnectorType.SQL
     DIALECT: SqlDialetcs
+    EXPRESSION_REWRITE: bool = False
     
     def __init__(
         self,
@@ -318,6 +321,14 @@ class SqlConnector(Connector):
     async def fetch_foreign_keys(self, schema:str, table:str) -> List[ForeignKeyMetadata]:
         raise NotImplementedError
     
+    # @abstractmethod
+    # def rewrite_expression(self, expression: "sqlglot.Expression") -> "sqlglot.Expression":
+    #     """
+    #     Rewrite a sqlglot Expression to be compatible with the target SQL dialect.
+    #     Must be implemented by subclasses that support expression rewriting.
+    #     """
+    #     raise NotImplementedError
+    
     def fetch_foreign_keys_sync(self, schema:str, table:str) -> List[ForeignKeyMetadata]:
         try:
             return asyncio.run(self.fetch_foreign_keys(schema, table))
@@ -334,19 +345,19 @@ class SqlConnector(Connector):
         timeout_s: Optional[int] = 30,
     ) -> QueryResult:
         ensure_select_statement(sql)
-        prepared_sql = apply_limit(sql, max_rows)
+        # prepared_sql = apply_limit(sql, max_rows)
         
         self.logger.debug(
             "Executing SQL (max_rows=%s timeout_s=%s): %s",
             max_rows,
             timeout_s,
-            prepared_sql,
+            sql,
         )
         
         start = time.perf_counter()
         try:
             columns, rows = await self._execute_select(
-                prepared_sql,
+                sql,
                 params or {},
                 timeout_s=timeout_s,
             )
@@ -368,7 +379,7 @@ class SqlConnector(Connector):
         self.logger.debug(
             "Execution completed (rows=%s elapsed_ms=%s)", rowcount, elapsed_ms
         )
-        return QueryResult(columns=columns, rows=rows, rowcount=rowcount, elapsed_ms=elapsed_ms, sql=prepared_sql)
+        return QueryResult(columns=columns, rows=rows, rowcount=rowcount, elapsed_ms=elapsed_ms, sql=sql)
 
     @abstractmethod
     async def _execute_select(

@@ -3,6 +3,7 @@ from typing import Any, Dict, List
 from uuid import UUID
 import uuid
 import sqlglot
+import sqlglot.expressions as exp
 from errors.application_errors import BusinessValidationError
 from connectors.config import ConnectorRuntimeType
 from connectors.connector import QueryResult, SqlConnector
@@ -53,12 +54,6 @@ class SemanticQueryService:
         self._logger.info(f"Semantic model: {semantic_model}")
         self._logger.info(f"Semantic query: {semantic_query}")
 
-        try:
-            sql = self._translator().translate(semantic_query, semantic_model)
-        except Exception as e:
-            raise BusinessValidationError(f"Semantic query translation failed: {e}")
-        
-
         connector_response: ConnectorResponse = await self._connector_service.get_connector(semantic_model_record.connector_id)
 
         connector_type: ConnectorRuntimeType = ConnectorRuntimeType(connector_response.connector_type.upper()) # type: ignore
@@ -67,10 +62,17 @@ class SemanticQueryService:
             connector_type, 
             connector_response.config, # type: ignore (not null)
         )
-        
-        self._logger.info(f"Generated SQL {sql}")
 
-        dialect_sql: str = self.__transpile(sql, sql_connector.DIALECT.value.lower())
+        try:
+            tree: exp.Select = self._translator().translate(
+                semantic_query,
+                semantic_model,
+                dialect=sql_connector.DIALECT.value.lower(),
+            )
+        except Exception as e:
+            raise BusinessValidationError(f"Semantic query translation failed: {e}")
+        
+        dialect_sql: str = self.__transpile(tree, sql_connector)
 
         self._logger.info(f"Translated SQL {dialect_sql}")
 
@@ -111,12 +113,22 @@ class SemanticQueryService:
             semantic_model=payload,
         )
 
-    def __transpile(self, sql: str, target_dialect: str) -> str:
-        try:
-            dialect_sql = sqlglot.transpile(sql, read="tsql", write=target_dialect)[0]
-        except Exception as exc:
-            raise BusinessValidationError(f"Semantic query translation failed: {exc}")
-        return dialect_sql
+    def __transpile(self, tree: exp.Select, target_connector: SqlConnector) -> str:
+        if not isinstance(target_connector, SqlConnector):
+            raise BusinessValidationError("Only SQL connectors are supported for semantic queries.")
+        
+        if target_connector.EXPRESSION_REWRITE:
+            try:
+                rewritten_expression: sqlglot.Expression = tree.transform(
+                    lambda node: target_connector.rewrite_expression(node)  # type: ignore
+                )
+                self._logger.debug(f"Rewritten expression: {rewritten_expression}")
+                dialect_sql = rewritten_expression.sql(dialect=target_connector.DIALECT.value.lower())
+            except Exception as exc:
+                raise BusinessValidationError(f"Semantic query translation failed: {exc}") from exc
+            return dialect_sql
+        else:
+            return tree.sql(dialect=target_connector.DIALECT.value.lower())
 
     def __format_data_response(
             self,
