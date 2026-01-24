@@ -110,7 +110,7 @@ class OpenAIProvider(LLMProvider):
         params.setdefault("model", embedding_model)
         params.setdefault("api_key", self.api_key)
 
-        embedding_model = OpenAIEmbeddings(**params)
+        embedding_model: OpenAIEmbeddings = OpenAIEmbeddings(**params)
         embeddings = await embedding_model.aembed_documents(texts)
         return embeddings
 

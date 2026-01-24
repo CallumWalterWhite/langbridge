@@ -15,7 +15,8 @@ Core flows:
    - `SemanticModelService.create_model` stores canonical YAML and JSON.
    - Legacy payloads are normalized via `semantic/loader.py`.
 2) Semantic query execution
-   - `SemanticQueryService.query_request` loads canonical model, translates semantic query to SQL, and runs it through a connector.
+   - `SemanticQueryService.query_request` loads canonical model and executes SQL via a connector.
+   - `SemanticQueryEngine.compile` in `semantic/query/engine.py` translates semantic query to SQL and builds annotations.
 3) Orchestrated SQL analyst
    - `SqlAnalystTool` consumes the canonical `SemanticModel` and generates SQL via the LLM.
 

@@ -85,6 +85,13 @@ export interface AgentDefinitionApiResponse {
   updated_at: string;
 }
 
+export interface AgentDefinitionApiResponseLegacy extends AgentDefinitionApiResponse {
+  llmConnectionId?: string;
+  isActive?: boolean;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
 export interface CreateAgentDefinitionPayload {
   name: string;
   description?: string;
@@ -111,7 +118,7 @@ export interface FileRetriverDefinitionResponse {
   id: string;
   name: string;
   description?: string;
-  configurationSchema?: Record<string, any>;
+  configurationSchema?: Record<string, unknown>;
 }
 
 export interface WebSearchDefinitionResponse {

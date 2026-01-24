@@ -3,6 +3,17 @@
 import { JSX, useMemo, useState, type ReactNode } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
+import {
+  LayoutDashboard,
+  Database,
+  BrainCircuit,
+  BarChart3,
+  Bot,
+  Building2,
+  MessageSquareText,
+  Settings,
+  type LucideIcon,
+} from 'lucide-react';
 
 import { LogoutButton } from '@/components/LogoutButton';
 import { ThemeToggle } from '@/components/ThemeToggle';
@@ -15,6 +26,7 @@ interface NavItem {
   href: string;
   label: string;
   description: string;
+  icon: LucideIcon;
   children?: NavChild[];
 }
 
@@ -22,6 +34,7 @@ interface NavChild {
   href: string;
   label: string;
   description?: string;
+  icon?: LucideIcon;
 }
 
 const NAV_ITEMS: NavItem[] = [
@@ -29,16 +42,19 @@ const NAV_ITEMS: NavItem[] = [
     href: '/dashboard',
     label: 'Agentic workspace',
     description: 'Monitor automations and jump back into active orchestrations.',
+    icon: LayoutDashboard,
   },
   {
     href: '/datasources',
     label: 'Data connections',
     description: 'Manage structured connectors and retrievers powering your agents.',
+    icon: Database,
   },
   {
     href: '/semantic-model',
     label: 'Semantic models',
     description: 'Build semantic layers and publish curated data models for agents.',
+    icon: BrainCircuit,
     children: [
       {
         href: '/semantic-model',
@@ -56,11 +72,13 @@ const NAV_ITEMS: NavItem[] = [
     href: '/bi',
     label: 'BI studio',
     description: 'Compose semantic queries and shape lightweight dashboards.',
+    icon: BarChart3,
   },
   {
     href: '/agents',
     label: 'Agents',
     description: 'Build semantic layers and publish curated data models for agents.',
+    icon: Bot,
     children: [
       {
         href: '/agents',
@@ -78,30 +96,74 @@ const NAV_ITEMS: NavItem[] = [
     href: '/organizations',
     label: 'Organizations & projects',
     description: 'Group teammates and resources into collaborative workspaces.',
+    icon: Building2,
   },
   {
     href: '/chat',
     label: 'Threads',
     description: 'Revisit active threads and manage ongoing analysis sessions.',
+    icon: MessageSquareText,
   },
   {
     href: '/settings',
     label: 'Settings',
     description: 'Update your personal preferences, notifications, and profile.',
+    icon: Settings,
   },
 ];
 
 export function AppShell({ children }: { children: ReactNode }): JSX.Element {
   const pathname = usePathname();
   const router = useRouter();
-  const { selectedOrganization, selectedProject } = useWorkspaceScope();
+  const { selectedOrganization, selectedProject, selectedOrganizationId } = useWorkspaceScope();
 
   const [openParent, setOpenParent] = useState<string | null>(null);
   const isChatRoute = pathname.startsWith('/chat');
   const isBIRoute = pathname.startsWith('/bi');
 
+  const navItems = useMemo(() => {
+    const agentsBase = selectedOrganizationId ? `/agents/${selectedOrganizationId}` : '/agents';
+    const datasourcesBase = selectedOrganizationId ? `/datasources/${selectedOrganizationId}` : '/datasources';
+    const semanticModelBase = selectedOrganizationId ? `/semantic-model/${selectedOrganizationId}` : '/semantic-model';
+    const biBase = selectedOrganizationId ? `/bi/${selectedOrganizationId}` : '/bi';
+    const chatBase = selectedOrganizationId ? `/chat/${selectedOrganizationId}` : '/chat';
+
+    const remapChildren = (children: NavChild[] | undefined, base: string, prefix: string) =>
+      children?.map((child) => {
+        if (!child.href.startsWith(prefix)) {
+          return child;
+        }
+        if (child.href === prefix) {
+          return { ...child, href: base };
+        }
+        const suffix = child.href.replace(prefix, '');
+        return { ...child, href: `${base}${suffix}` };
+      });
+
+    return NAV_ITEMS.map((item) => {
+      if (item.href === '/agents') {
+        const children = remapChildren(item.children, agentsBase, '/agents');
+        return { ...item, href: agentsBase, children };
+      }
+      if (item.href === '/datasources') {
+        return { ...item, href: datasourcesBase };
+      }
+      if (item.href === '/semantic-model') {
+        const children = remapChildren(item.children, semanticModelBase, '/semantic-model');
+        return { ...item, href: semanticModelBase, children };
+      }
+      if (item.href === '/bi') {
+        return { ...item, href: biBase };
+      }
+      if (item.href === '/chat') {
+        return { ...item, href: chatBase };
+      }
+      return item;
+    });
+  }, [selectedOrganizationId]);
+
   const activeNav = useMemo(() => {
-    for (const item of NAV_ITEMS) {
+    for (const item of navItems) {
       if (pathname === item.href || pathname.startsWith(`${item.href}/`)) {
         return { parent: item, label: item.label, description: item.description };
       }
@@ -118,15 +180,15 @@ export function AppShell({ children }: { children: ReactNode }): JSX.Element {
         }
       }
     }
-    return { parent: NAV_ITEMS[0], label: NAV_ITEMS[0].label, description: NAV_ITEMS[0].description };
-  }, [pathname]);
+    return { parent: navItems[0], label: navItems[0].label, description: navItems[0].description };
+  }, [navItems, pathname]);
 
   const scopeSummary = useMemo(() => {
     if (!selectedOrganization) {
       return null;
     }
     if (selectedProject) {
-      return `${selectedOrganization.name} · ${selectedProject.name}`;
+      return `${selectedOrganization.name} - ${selectedProject.name}`;
     }
     return selectedOrganization.name;
   }, [selectedOrganization, selectedProject]);
@@ -142,7 +204,7 @@ export function AppShell({ children }: { children: ReactNode }): JSX.Element {
             LangBridge
           </Link>
           <nav className="mt-8 space-y-1">
-            {NAV_ITEMS.map((item) => {
+            {navItems.map((item) => {
               const hasChildren = Boolean(item.children && item.children.length > 0);
               const isParentActive =
                 item.href === activeNav.parent.href ||
@@ -157,12 +219,13 @@ export function AppShell({ children }: { children: ReactNode }): JSX.Element {
                     key={item.href}
                     href={item.href}
                     className={cn(
-                      'block rounded-xl px-3 py-2 transition hover:bg-[color:var(--panel-alt)] hover:text-[color:var(--text-primary)]',
+                      'flex items-center rounded-xl px-3 py-2 transition hover:bg-[color:var(--panel-alt)] hover:text-[color:var(--text-primary)]',
                       isParentActive
                         ? 'bg-[color:var(--panel-alt)] font-semibold text-[color:var(--text-primary)]'
                         : 'text-[color:var(--text-secondary)]',
                     )}
                   >
+                    <item.icon className="mr-3 h-4 w-4" />
                     {item.label}
                   </Link>
                 );
@@ -180,7 +243,10 @@ export function AppShell({ children }: { children: ReactNode }): JSX.Element {
                         : 'text-[color:var(--text-secondary)]',
                     )}
                   >
-                    <span>{item.label}</span>
+                    <div className="flex items-center">
+                      <item.icon className="mr-3 h-4 w-4" />
+                      <span>{item.label}</span>
+                    </div>
                     <span className="text-xs">{isOpen ? 'v' : '>'}</span>
                   </button>
                   {isOpen ? (
@@ -244,7 +310,7 @@ export function AppShell({ children }: { children: ReactNode }): JSX.Element {
             </div>
 
             <nav className="mt-4 flex gap-2 overflow-x-auto text-sm lg:hidden">
-              {[...NAV_ITEMS.flatMap((item) => item.children ?? [item])].map((item) => {
+              {[...navItems.flatMap((item) => item.children ?? [item])].map((item) => {
                 const isActive = pathname === item.href || pathname.startsWith(`${item.href}/`);
                 return (
                   <Link
@@ -331,7 +397,7 @@ function ScopeSelector(): JSX.Element {
         >
           {selectedOrganizationId ? (
             <option value="">
-              All projects{selectedOrganization ? ` · ${selectedOrganization.name}` : ''}
+              All projects{selectedOrganization ? ` - ${selectedOrganization.name}` : ''}
             </option>
           ) : null}
           {projectOptions.map((project) => (

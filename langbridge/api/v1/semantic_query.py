@@ -1,11 +1,9 @@
-from typing import Optional
 from uuid import UUID
 
 from dependency_injector.wiring import Provide, inject
 from fastapi import APIRouter, Depends, HTTPException, status
-from fastapi.responses import PlainTextResponse
 
-from auth.dependencies import has_organization_access, has_project_access
+from auth.dependencies import get_current_user, get_organization
 from errors.application_errors import BusinessValidationError
 from ioc import Container
 from models.auth import UserResponse
@@ -16,7 +14,7 @@ from models.semantic import (
 )
 from services.semantic import SemanticQueryService
 
-router = APIRouter(prefix="/semantic-query", tags=["semantic-query"])
+router = APIRouter(prefix="/semantic-query/{organization_id}", tags=["semantic-query"])
 
 @router.post(
     "/{semantic_model_id}/q",
@@ -26,6 +24,10 @@ router = APIRouter(prefix="/semantic-query", tags=["semantic-query"])
 @inject
 async def semantic_query(
     request: SemanticQueryRequest,
+    semantic_model_id: UUID,
+    organization_id: UUID,
+    current_user: UserResponse = Depends(get_current_user),
+    _org = Depends(get_organization),
     service: SemanticQueryService = Depends(Provide[Container.semantic_query_service]),
 ) -> SemanticQueryResponse:
     try:
@@ -44,6 +46,8 @@ async def semantic_query(
 async def semantic_query_meta(
     semantic_model_id: UUID,
     organization_id: UUID,
+    current_user: UserResponse = Depends(get_current_user),
+    _org = Depends(get_organization),
     service: SemanticQueryService = Depends(Provide[Container.semantic_query_service]),
 ) -> SemanticQueryMetaResponse:
     try:

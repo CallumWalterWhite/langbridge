@@ -1,12 +1,27 @@
 'use client';
 
-import { JSX } from 'react';
-import { LLMConnectionUpdate } from './_components/LLMConnectionUpdate';
+import { JSX, useEffect } from 'react';
+import { useRouter } from 'next/navigation';
 
-type LLMConnectionPageProps = {
+import { useWorkspaceScope } from '@/context/workspaceScope';
+
+type LLMConnectionRedirectProps = {
   params: { connectionId: string };
 };
 
-export default function LLMConnectionPage({ params }: LLMConnectionPageProps): JSX.Element {
-  return <LLMConnectionUpdate connectionId={params.connectionId} />;
+export default function LLMConnectionRedirect({ params }: LLMConnectionRedirectProps): JSX.Element {
+  const router = useRouter();
+  const { selectedOrganizationId } = useWorkspaceScope();
+
+  useEffect(() => {
+    if (selectedOrganizationId) {
+      router.replace(`/agents/${selectedOrganizationId}/llm/${params.connectionId}`);
+    }
+  }, [params.connectionId, router, selectedOrganizationId]);
+
+  return (
+    <div className="surface-panel rounded-3xl p-6 shadow-soft text-sm text-[color:var(--text-secondary)]">
+      Select an organization to continue.
+    </div>
+  );
 }

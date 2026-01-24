@@ -63,6 +63,7 @@ type ConversationTurn = {
 
 type ChatInterfaceProps = {
   threadId: string;
+  organizationId: string;
 };
 
 const readTextField = (value: unknown): string | undefined => {
@@ -116,7 +117,7 @@ const buildTurnsFromMessages = (messages: ThreadMessage[]): ConversationTurn[] =
     });
 };
 
-export function ChatInterface({ threadId }: ChatInterfaceProps) {
+export function ChatInterface({ threadId, organizationId }: ChatInterfaceProps) {
   const router = useRouter();
   const queryClient = useQueryClient();
   const { toast } = useToast();
@@ -131,18 +132,19 @@ export function ChatInterface({ threadId }: ChatInterfaceProps) {
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
 
   const agentDefinitionsQuery = useQuery<AgentDefinition[]>({
-    queryKey: ['agent-definitions'],
-    queryFn: () => fetchAgentDefinitions(),
+    queryKey: ['agent-definitions', organizationId],
+    enabled: Boolean(organizationId),
+    queryFn: () => fetchAgentDefinitions(organizationId),
   });
 
   const historyQuery = useQuery<ThreadMessage[]>({
-    queryKey: ['thread-messages', threadId],
-    queryFn: () => listThreadMessages(threadId),
+    queryKey: ['thread-messages', organizationId, threadId],
+    queryFn: () => listThreadMessages(organizationId, threadId),
   });
 
   const threadQuery = useQuery<Thread>({
-    queryKey: ['thread', threadId],
-    queryFn: () => fetchThread(threadId),
+    queryKey: ['thread', organizationId, threadId],
+    queryFn: () => fetchThread(organizationId, threadId),
   });
 
   const agentOptions = useMemo(() => {
@@ -162,7 +164,7 @@ export function ChatInterface({ threadId }: ChatInterfaceProps) {
     Error,
     { content: string; turnId: string; agentId: string }
   >({
-    mutationFn: ({ content, agentId }) => runThreadChat(threadId, content, agentId),
+    mutationFn: ({ content, agentId }) => runThreadChat(organizationId, threadId, content, agentId),
     onSuccess: (data, variables) => {
       setTurns((previous) =>
         previous.map((turn) =>
@@ -196,14 +198,14 @@ export function ChatInterface({ threadId }: ChatInterfaceProps) {
   });
 
   const renameThreadMutation = useMutation<Thread, Error, { title: string }>({
-    mutationFn: ({ title }) => updateThread(threadId, { title }),
+    mutationFn: ({ title }) => updateThread(organizationId, threadId, { title }),
     onSuccess: (updated) => {
       setThreadTitle(updated.title ?? null);
       setRenameOpen(false);
       setRenameValue('');
       setRenameError(null);
-      queryClient.invalidateQueries({ queryKey: ['thread', threadId] });
-      queryClient.invalidateQueries({ queryKey: ['chat-threads'] });
+      queryClient.invalidateQueries({ queryKey: ['thread', organizationId, threadId] });
+      queryClient.invalidateQueries({ queryKey: ['chat-threads', organizationId] });
       toast({ title: 'Thread renamed', description: 'Your thread title has been updated.' });
     },
     onError: (error) => {
@@ -262,6 +264,7 @@ export function ChatInterface({ threadId }: ChatInterfaceProps) {
   const isLoadingAgents = agentDefinitionsQuery.isLoading;
   const agentStatusLabel =
     selectedAgent?.name ?? (isLoadingAgents ? 'Loading agents...' : hasAgents ? 'Select an agent' : 'No agents available');
+  const agentsBasePath = organizationId ? `/agents/${organizationId}` : '/agents';
 
   const submitMessage = () => {
     const trimmed = composer.trim();
@@ -434,7 +437,7 @@ export function ChatInterface({ threadId }: ChatInterfaceProps) {
             type="button"
             variant="outline"
             size="sm"
-            onClick={() => router.push('/agents/definitions')}
+            onClick={() => router.push(`${agentsBasePath}/definitions`)}
             disabled={agentDefinitionsQuery.isLoading}
           >
             Manage agents
@@ -537,7 +540,7 @@ export function ChatInterface({ threadId }: ChatInterfaceProps) {
                       ))}
                     </div>
                   ) : isLoadingAgents ? null : (
-                    <Button type="button" size="sm" onClick={() => router.push('/agents/definitions')}>
+                    <Button type="button" size="sm" onClick={() => router.push(`${agentsBasePath}/definitions`)}>
                       Create an agent
                     </Button>
                   )}

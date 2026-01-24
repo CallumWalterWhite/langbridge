@@ -8,45 +8,67 @@ import type {
 
 const BASE_PATH = '/api/v1/connectors';
 
-export async function fetchConnectorTypes(): Promise<string[]> {
-  return apiFetch<string[]>(`${BASE_PATH}/schemas/type`);
+function requireOrganizationId(organizationId: string): string {
+  if (!organizationId) {
+    throw new Error('Organization id is required.');
+  }
+  return organizationId;
 }
 
-export async function fetchConnectorSchema(type: string): Promise<ConnectorConfigSchema> {
+function basePath(organizationId: string): string {
+  return `${BASE_PATH}/${requireOrganizationId(organizationId)}`;
+}
+
+export async function fetchConnectorTypes(organizationId: string): Promise<string[]> {
+  return apiFetch<string[]>(`${basePath(organizationId)}/schemas/type`);
+}
+
+export async function fetchConnectorSchema(
+  organizationId: string,
+  type: string,
+): Promise<ConnectorConfigSchema> {
   const normalized = type.trim();
   if (!normalized) {
     throw new Error('Connector type is required.');
   }
-  return apiFetch<ConnectorConfigSchema>(`${BASE_PATH}/schema/${encodeURIComponent(normalized)}`);
+  return apiFetch<ConnectorConfigSchema>(
+    `${basePath(organizationId)}/schema/${encodeURIComponent(normalized)}`,
+  );
 }
 
-export async function createConnector(payload: CreateConnectorPayload): Promise<ConnectorResponse> {
-  return apiFetch<ConnectorResponse>(BASE_PATH, {
+export async function createConnector(
+  organizationId: string,
+  payload: CreateConnectorPayload,
+): Promise<ConnectorResponse> {
+  return apiFetch<ConnectorResponse>(basePath(organizationId), {
     method: 'POST',
     body: JSON.stringify(payload),
   });
 }
 
 export async function fetchConnectors(organizationId: string): Promise<ConnectorResponse[]> {
-  const params = new URLSearchParams({ organization_id: organizationId });
-  return apiFetch<ConnectorResponse[]>(`${BASE_PATH}?${params.toString()}`);
+  return apiFetch<ConnectorResponse[]>(basePath(organizationId));
 }
 
-export async function fetchConnector(connectorId: string): Promise<ConnectorResponse> {
+export async function fetchConnector(
+  organizationId: string,
+  connectorId: string,
+): Promise<ConnectorResponse> {
   if (!connectorId) {
     throw new Error('Connector id is required.');
   }
-  return apiFetch<ConnectorResponse>(`${BASE_PATH}/${encodeURIComponent(connectorId)}`);
+  return apiFetch<ConnectorResponse>(`${basePath(organizationId)}/${encodeURIComponent(connectorId)}`);
 }
 
 export async function updateConnector(
+  organizationId: string,
   connectorId: string,
   payload: UpdateConnectorPayload,
 ): Promise<ConnectorResponse> {
   if (!connectorId) {
     throw new Error('Connector id is required.');
   }
-  return apiFetch<ConnectorResponse>(`${BASE_PATH}/${encodeURIComponent(connectorId)}`, {
+  return apiFetch<ConnectorResponse>(`${basePath(organizationId)}/${encodeURIComponent(connectorId)}`, {
     method: 'PUT',
     body: JSON.stringify(payload),
   });

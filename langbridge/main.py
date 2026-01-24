@@ -10,7 +10,7 @@ from starlette.middleware.sessions import SessionMiddleware
 from api import api_router_v1
 from config import settings
 from db import initialize_database
-from ioc import Container
+from ioc import build_container
 from ioc.wiring import wire_packages
 from utils.logger import setup_logging
 
@@ -22,7 +22,7 @@ load_dotenv()
 def custom_generate_unique_id(route: APIRoute) -> str:
     return f"{route.tags[0]}-{route.name}"
 
-container = Container()
+container = build_container(settings)
 wire_packages(
     container,
     package_names=["api", "services", "repositories", "auth", "middleware"],  # add more roots as needed

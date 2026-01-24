@@ -138,12 +138,17 @@ class ObservabilityConfig(BaseModel):
         description="Optional list of fields to include in audit logs (e.g., user_id, project_id).",
     )
 
+class AgentFeatures(BaseModel):
+    bi_copilot_enabled: bool = Field(
+        False, description="Enable the bi copilot feature for this agent."
+    )
 
 class AgentDefinitionModel(BaseModel):
     """Complete agent definition payload stored alongside the Agent record."""
 
     prompt: PromptContract
     memory: MemoryConfig
+    # features: AgentFeatures
     tools: List[ToolBinding] = Field(default_factory=list)
     access_policy: DataAccessPolicy = Field(default_factory=DataAccessPolicy)
     execution: ExecutionBehavior

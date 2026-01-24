@@ -1,4 +1,5 @@
 from .analyst import AnalystAgent, SemanticToolSelector, ToolSelectionError
+from .bi_copilot import BICopilotAgent
 from .deep_research import DeepResearchAgent, DeepResearchFinding, DeepResearchResult
 from .web_search import (
     DuckDuckGoInstantAnswerProvider,
@@ -26,6 +27,7 @@ __all__ = [
     "AnalystAgent",
     "SemanticToolSelector",
     "ToolSelectionError",
+    "BICopilotAgent",
     "DeepResearchAgent",
     "DeepResearchFinding",
     "DeepResearchResult",
@@ -45,3 +47,4 @@ __all__ = [
     "PlanStep",
     "RouteName",
 ]
+

@@ -1,6 +1,6 @@
 'use client';
 
-import { JSX, useEffect, useMemo, useState } from 'react';
+import { JSX, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ArrowLeft, Save } from 'lucide-react';
@@ -11,7 +11,6 @@ import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Textarea } from '@/components/ui/textarea';
 import { useToast } from '@/components/ui/toast';
-import { useWorkspaceScope } from '@/context/workspaceScope';
 import { ApiError } from '@/orchestration/http';
 import {
   fetchConnector,
@@ -22,9 +21,11 @@ import {
 
 interface ConnectorUpdateProps {
   connectorId: string;
+  organizationId: string;
 }
 
-const connectorQueryKey = (connectorId: string) => ['connector', connectorId] as const;
+const connectorQueryKey = (organizationId: string, connectorId: string) =>
+  ['connector', organizationId, connectorId] as const;
 
 function resolveError(error: unknown): string {
   if (error instanceof ApiError) {
@@ -36,11 +37,10 @@ function resolveError(error: unknown): string {
   return 'Something went wrong. Please try again.';
 }
 
-export function ConnectorUpdate({ connectorId }: ConnectorUpdateProps): JSX.Element {
+export function ConnectorUpdate({ connectorId, organizationId }: ConnectorUpdateProps): JSX.Element {
   const router = useRouter();
   const queryClient = useQueryClient();
   const { toast } = useToast();
-  const { selectedOrganizationId } = useWorkspaceScope();
 
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
@@ -48,8 +48,9 @@ export function ConnectorUpdate({ connectorId }: ConnectorUpdateProps): JSX.Elem
   const [localError, setLocalError] = useState<string | null>(null);
 
   const connectorQuery = useQuery({
-    queryKey: connectorQueryKey(connectorId),
-    queryFn: () => fetchConnector(connectorId),
+    queryKey: connectorQueryKey(organizationId, connectorId),
+    queryFn: () => fetchConnector(organizationId, connectorId),
+    enabled: Boolean(organizationId && connectorId),
   });
 
   const connector = connectorQuery.data;
@@ -63,18 +64,15 @@ export function ConnectorUpdate({ connectorId }: ConnectorUpdateProps): JSX.Elem
     setConfigText(JSON.stringify(connector.config ?? {}, null, 2));
   }, [connector]);
 
-  const organizationId = useMemo(() => {
-    return connector?.organizationId ?? selectedOrganizationId ?? '';
-  }, [connector?.organizationId, selectedOrganizationId]);
-
   const updateMutation = useMutation({
-    mutationFn: (payload: UpdateConnectorPayload) => updateConnector(connectorId, payload),
+    mutationFn: (payload: UpdateConnectorPayload) =>
+      updateConnector(organizationId, connectorId, payload),
     onSuccess: (updatedConnector: ConnectorResponse) => {
-      queryClient.setQueryData(connectorQueryKey(connectorId), updatedConnector);
-      queryClient.invalidateQueries({ queryKey: ['connectors'] });
+      queryClient.setQueryData(connectorQueryKey(organizationId, connectorId), updatedConnector);
+      queryClient.invalidateQueries({ queryKey: ['connectors', organizationId] });
       toast({
         title: 'Connector saved',
-        description: `“${updatedConnector.name}” has been updated.`,
+        description: `"${updatedConnector.name}" has been updated.`,
       });
     },
     onError: (error: unknown) => {
@@ -157,7 +155,7 @@ export function ConnectorUpdate({ connectorId }: ConnectorUpdateProps): JSX.Elem
           variant="ghost"
           size="sm"
           className="gap-2 text-[color:var(--text-secondary)] hover:text-[color:var(--text-primary)]"
-          onClick={() => router.push('/datasources')}
+          onClick={() => router.push(`/datasources/${organizationId}`)}
         >
           <ArrowLeft className="h-4 w-4" aria-hidden="true" />
           Back to connections

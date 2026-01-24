@@ -15,6 +15,7 @@ from errors.application_errors import BusinessValidationError
 from connectors.registry import VectorDBConnectorFactory
 from connectors.connector import ManagedVectorDB, VectorDBType
 from orchestrator.agents.analyst import AnalystAgent
+from orchestrator.agents.bi_copilot import BICopilotAgent
 from orchestrator.agents.deep_research import DeepResearchAgent
 from orchestrator.agents.planner import PlanningAgent, PlanningConstraints
 from orchestrator.agents.visual import VisualAgent
@@ -32,8 +33,13 @@ from orchestrator.definitions import (
     PromptContract,
     ResponseMode,
 )
-from orchestrator.tools.sql_analyst import SqlAnalystTool, load_semantic_model
+from orchestrator.tools.semantic_query_builder import (
+    QueryBuilderCopilotRequest,
+    QueryBuilderCopilotResponse,
+    SemanticQueryBuilderCopilotTool,
+)
 from orchestrator.tools.semantic_search import SemanticSearchTool
+from orchestrator.tools.sql_analyst import SqlAnalystTool, load_semantic_model
 from orchestrator.llm.provider import (
     LLMProvider,
     create_provider
@@ -42,7 +48,7 @@ from orchestrator.tools.sql_analyst.interfaces import SemanticModel
 from services.agent_service import AgentService
 from services.connector_service import ConnectorService
 from services.organization_service import OrganizationService
-from services.semantic import SemanticModelService
+from services.semantic import SemanticModelService, SemanticQueryService
 from utils.embedding_provider import EmbeddingProvider, EmbeddingProviderError
 
 from models.llm_connections import LLMConnectionSecretResponse
@@ -86,6 +92,10 @@ class OrchestratorService:
         self._thread_service = thread_service
         self._logger = logging.getLogger(__name__)
         self._vector_factory = VectorDBConnectorFactory()
+        self._semantic_query_service = SemanticQueryService(
+            semantic_model_service=semantic_model_service,
+            connector_service=connector_service,
+        )
 
     async def chat(
         self,
@@ -288,6 +298,7 @@ class OrchestratorService:
             reasoning_agent=reasoning_agent,
             deep_research_agent=deep_research_agent,
             web_search_agent=web_search_agent,
+            bi_copilot_agent=self._build_bi_copilot_agent(llm_provider),
         )
 
         response = await supervisor.handle(
@@ -312,6 +323,41 @@ class OrchestratorService:
         elapsed_ms = int((time.perf_counter() - start_ts) * 1000)
         self._logger.info("orchestrator.chat complete request_id=%s elapsed_ms=%d", request_id, elapsed_ms)
         return response
+
+    async def copilot(
+        self,
+        *,
+        agent_id: uuid.UUID,
+        copilot_request: QueryBuilderCopilotRequest,
+        current_user: UserResponse | None,
+    ) -> QueryBuilderCopilotResponse:
+        """Expose the BI copilot tool for the query builder UI."""
+
+        if current_user is None:
+            raise BusinessValidationError("User must be authenticated to use the BI copilot.")
+
+        agent_record = await self._agent_service.get_agent_definition(agent_id, current_user)
+        if not agent_record:
+            raise BusinessValidationError("Agent definition not found.")
+
+        llm_connections = await self._agent_service.list_llm_connection_secrets()
+        if not llm_connections:
+            raise BusinessValidationError("No LLM connections configured")
+
+        llm_connection = self._select_llm_connection(llm_connections, agent_record)
+        llm_provider: LLMProvider = create_provider(llm_connection)
+
+        supervisor = SupervisorOrchestrator(
+            analyst_agent=None,
+            visual_agent=VisualAgent(llm=llm_provider),
+            planning_agent=None,
+            reasoning_agent=None,
+            deep_research_agent=None,
+            web_search_agent=None,
+            bi_copilot_agent=self._build_bi_copilot_agent(llm_provider),
+        )
+
+        return await supervisor.run_copilot(copilot_request)
 
     async def _load_conversation_context(
         self,
@@ -718,6 +764,14 @@ class OrchestratorService:
                 return connection
 
         raise BusinessValidationError("LLM connection for the selected agent definition was not found.")
+
+    def _build_bi_copilot_agent(self, llm_provider: LLMProvider) -> BICopilotAgent:
+        tool = SemanticQueryBuilderCopilotTool(
+            llm=llm_provider,
+            semantic_query_service=self._semantic_query_service,
+            logger=self._logger,
+        )
+        return BICopilotAgent(tool=tool, logger=self._logger)
 
     def _build_agent_tool_config(
         self,

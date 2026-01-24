@@ -37,10 +37,11 @@ type AgentPayload = {
 
 export interface QuickAgentCreateDrawerProps {
   sources: DataSource[];
+  organizationId?: string;
   onCreated?: (agentId: string) => void;
 }
 
-export function QuickAgentCreateDrawer({ sources, onCreated }: QuickAgentCreateDrawerProps) {
+export function QuickAgentCreateDrawer({ sources, organizationId, onCreated }: QuickAgentCreateDrawerProps) {
   const { toast } = useToast();
   const [open, setOpen] = React.useState(false);
   const [template, setTemplate] = React.useState<TemplateValue | ''>('');
@@ -80,7 +81,10 @@ export function QuickAgentCreateDrawer({ sources, onCreated }: QuickAgentCreateD
 
   const mutation = useMutation<{ id: string }, Error, AgentPayload>({
     mutationFn: async (payload) => {
-      const response = await fetch(withApiBase('/api/v1/agents'), {
+      if (!organizationId) {
+        throw new Error('Select an organization before creating an agent.');
+      }
+      const response = await fetch(withApiBase(`/api/v1/agents/${organizationId}`), {
         method: 'POST',
         credentials: 'include',
         headers: { 'Content-Type': 'application/json', Accept: 'application/json' },

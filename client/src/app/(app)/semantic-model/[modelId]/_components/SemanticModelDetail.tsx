@@ -9,7 +9,6 @@ import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Textarea } from '@/components/ui/textarea';
 import { useToast } from '@/components/ui/toast';
-import { useWorkspaceScope } from '@/context/workspaceScope';
 import { ApiError } from '@/orchestration/http';
 import {
   deleteSemanticModel,
@@ -23,6 +22,7 @@ import {
 
 interface SemanticModelDetailProps {
   modelId: string;
+  organizationId: string;
 }
 
 const semanticModelQueryKey = (organizationId: string | null | undefined, modelId: string) =>
@@ -40,13 +40,11 @@ function resolveError(error: unknown): string {
   return 'Something went wrong. Please try again.';
 }
 
-export function SemanticModelDetail({ modelId }: SemanticModelDetailProps): JSX.Element {
+export function SemanticModelDetail({ modelId, organizationId }: SemanticModelDetailProps): JSX.Element {
   const router = useRouter();
   const { toast } = useToast();
-  const { selectedOrganizationId } = useWorkspaceScope();
   const queryClient = useQueryClient();
 
-  const organizationId = selectedOrganizationId ?? '';
   const organizationSelected = Boolean(organizationId);
 
   const semanticModelQuery = useQuery<SemanticModelRecord>({
@@ -64,12 +62,12 @@ export function SemanticModelDetail({ modelId }: SemanticModelDetailProps): JSX.
   const deleteMutation = useMutation({
     mutationFn: () => deleteSemanticModel(modelId, organizationId),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['semantic-models'] });
+      queryClient.invalidateQueries({ queryKey: ['semantic-models', organizationId] });
       toast({
         title: 'Semantic model removed',
         description: 'The model has been deleted.',
       });
-      router.push('/semantic-model');
+      router.push(`/semantic-model/${organizationId}`);
     },
     onError: (error: unknown) => {
       toast({
@@ -171,7 +169,7 @@ export function SemanticModelDetail({ modelId }: SemanticModelDetailProps): JSX.
           }}>
             Try again
           </Button>
-          <Button variant="ghost" size="sm" onClick={() => router.push('/semantic-model')}>
+          <Button variant="ghost" size="sm" onClick={() => router.push(`/semantic-model/${organizationId}`)}>
             Back to list
           </Button>
         </div>
@@ -187,7 +185,7 @@ export function SemanticModelDetail({ modelId }: SemanticModelDetailProps): JSX.
           variant="ghost"
           size="sm"
           className="gap-2 text-[color:var(--text-secondary)] hover:text-[color:var(--text-primary)]"
-          onClick={() => router.push('/semantic-model')}
+          onClick={() => router.push(`/semantic-model/${organizationId}`)}
         >
           <ArrowLeft className="h-4 w-4" aria-hidden="true" />
           Back to models
@@ -222,7 +220,7 @@ export function SemanticModelDetail({ modelId }: SemanticModelDetailProps): JSX.
           variant="outline"
           size="sm"
           className="gap-2"
-          onClick={() => router.push(`/semantic-model/create?modelId=${modelId}`)}
+          onClick={() => router.push(`/semantic-model/${organizationId}/create?modelId=${modelId}`)}
         >
           <RefreshCw className="h-4 w-4" aria-hidden="true" />
           Edit in builder

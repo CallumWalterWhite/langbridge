@@ -1,13 +1,16 @@
 
-from fastapi import HTTPException, Request, status
+import logging
+from typing import Optional, Any
+
+from fastapi import status
 from jose import JWTError
-from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 from starlette.requests import Request
-from starlette.responses import Response
+from starlette.responses import Response, JSONResponse
 from dependency_injector.wiring import Provide, inject
+
 from ioc import Container
 from config import settings
-import logging
 from auth.jwt import verify_jwt
 from models.auth import UserResponse
 from services.auth_service import AuthService
@@ -25,6 +28,9 @@ PATHS_TO_EXCLUDE = [
 ]
 
 class AuthMiddleware(BaseHTTPMiddleware):
+    """
+    Middleware to handle JWT authentication via cookies.
+    """
     def __init__(self, app):
         super().__init__(app)
         self.logger = logging.getLogger(__name__)
@@ -33,37 +39,48 @@ class AuthMiddleware(BaseHTTPMiddleware):
     async def dispatch(
         self,
         request: Request,
-        call_next,
+        call_next: RequestResponseEndpoint,
         auth_service: AuthService = Provide[Container.auth_service],
     ) -> Response:
         self.logger.debug(f"AuthMiddleware: Processing request {request.method} {request.url.path}")
         
-        if settings.IS_LOCAL:
-            self.logger.debug("AuthMiddleware: Skipping auth for local environment")
-            token = request.headers.get("Authorization")
-            if token == settings.LOCAL_TOKEN:
-                self.logger.debug("AuthMiddleware: Local token matched, setting test user")
-                request.state.username = "callumwalterwhite"
-                request.state.user = await auth_service.get_user_by_username("callumwalterwhite")
-                return await call_next(request)
         
         if any(request.url.path.startswith(path) for path in PATHS_TO_EXCLUDE):
             return await call_next(request)
 
         token = request.cookies.get(settings.COOKIE_NAME)
         if not token:
-            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Unauthenticated")
+            return JSONResponse(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                content={"error": "Unauthenticated", "message": "Missing authentication cookie"}
+            )
 
         try:
             claims = verify_jwt(token)
         except JWTError as exc:
-            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid session") from exc
+            self.logger.warning(f"Invalid JWT: {exc}")
+            return JSONResponse(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                content={"error": "InvalidSession", "message": "Invalid authentication session"}
+            )
 
         username = claims.get("username") if isinstance(claims, dict) else None
         if not username:
-            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid session payload")
+             return JSONResponse(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                content={"error": "InvalidToken", "message": "Token payload is missing username"}
+            )
 
-        request.state.username = username
-        user: UserResponse = await auth_service.get_user_by_username(username)
-        request.state.user = user
+        # Set user context
+        try:
+            request.state.username = username
+            user: UserResponse = await auth_service.get_user_by_username(username)
+            request.state.user = user
+        except Exception as e:
+            self.logger.error(f"Failed to load user '{username}': {e}")
+            return JSONResponse(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                content={"error": "UserNotFound", "message": "Authenticated user could not be found"}
+            )
+
         return await call_next(request)

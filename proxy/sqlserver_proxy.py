@@ -7,8 +7,8 @@ import logging
 import struct
 from typing import Dict, Optional, Tuple
 
-from .routing import route_database
-from .streams import pipe_streams
+from routing import route_database
+from streams import pipe_streams
 
 
 async def _read_tds_header(reader: asyncio.StreamReader) -> Tuple[int, int, bytes]:

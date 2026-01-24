@@ -5,9 +5,20 @@ from dependency_injector.wiring import Provide, inject
 from fastapi import APIRouter, Depends, HTTPException, status
 
 from ioc import Container
-from auth.dependencies import get_current_user
+from auth.dependencies import (
+    get_current_user,
+    get_organization,
+    get_project
+)
 from models.auth import UserResponse
-from models.agents import AgentDefinitionCreate, AgentDefinitionResponse, AgentDefinitionUpdate
+from models.agents import (
+    AgentDefinitionCreate, 
+    AgentDefinitionResponse, 
+    AgentDefinitionUpdate
+)
+from models.query import (
+    ModelSearchCollectionRequest
+)
 from models.llm_connections import (
     LLMConnectionCreate,
     LLMConnectionResponse,
@@ -17,14 +28,18 @@ from models.llm_connections import (
 from services.agent_service import AgentService
 from errors.application_errors import BusinessValidationError
 
-router = APIRouter(prefix="/agents", tags=["agents"])
+router = APIRouter(prefix="/agents/{organization_id}", tags=["agents"])
 
 
 @router.post("/llm-connections", response_model=LLMConnectionResponse)
 @inject
 async def create_llm_connection(
     request: LLMConnectionCreate,
+    organization_id: uuid.UUID,
+    project_id: Optional[uuid.UUID] = None,
     current_user: UserResponse = Depends(get_current_user),
+    _org = Depends(get_organization),
+    _proj = Depends(get_project),
     agent_service: AgentService = Depends(Provide[Container.agent_service]),
 ) -> LLMConnectionResponse:
     return await agent_service.create_llm_connection(request, current_user)
@@ -33,9 +48,11 @@ async def create_llm_connection(
 @router.get("/llm-connections", response_model=List[LLMConnectionResponse])
 @inject
 async def list_llm_connections(
-    organization_id: Optional[uuid.UUID] = None,
+    organization_id: uuid.UUID,
     project_id: Optional[uuid.UUID] = None,
     current_user: UserResponse = Depends(get_current_user),
+    _org = Depends(get_organization),
+    _proj = Depends(get_project),
     agent_service: AgentService = Depends(Provide[Container.agent_service]),
 ) -> List[LLMConnectionResponse]:
     return await agent_service.list_llm_connections(
@@ -49,7 +66,9 @@ async def list_llm_connections(
 @inject
 async def get_llm_connection(
     connection_id: uuid.UUID,
+    organization_id: uuid.UUID,
     current_user: UserResponse = Depends(get_current_user),
+    _org = Depends(get_organization),
     agent_service: AgentService = Depends(Provide[Container.agent_service]),
 ) -> LLMConnectionResponse:
     connection = await agent_service.get_llm_connection(
@@ -68,8 +87,10 @@ async def get_llm_connection(
 @inject
 async def update_llm_connection(
     connection_id: uuid.UUID,
+    organization_id: uuid.UUID,
     request: LLMConnectionUpdate,
     current_user: UserResponse = Depends(get_current_user),
+    _org = Depends(get_organization),
     agent_service: AgentService = Depends(Provide[Container.agent_service]),
 ) -> LLMConnectionResponse:
     connection = await agent_service.update_llm_connection(current_user, connection_id, request)
@@ -84,7 +105,10 @@ async def update_llm_connection(
 @router.post("/llm-connections/test", response_model=dict)
 @inject
 async def test_llm_connection(
+    organization_id: uuid.UUID,
     request: LLMConnectionTest,
+    current_user: UserResponse = Depends(get_current_user),
+    _org = Depends(get_organization),
     agent_service: AgentService = Depends(Provide[Container.agent_service]),
 ) -> dict:
     return agent_service.test_llm_connection(request)
@@ -92,8 +116,10 @@ async def test_llm_connection(
 @router.delete("/llm-connections/{connection_id}", status_code=status.HTTP_204_NO_CONTENT)
 @inject
 async def delete_llm_connection(
+    organization_id: uuid.UUID,
     connection_id: uuid.UUID,
     current_user: UserResponse = Depends(get_current_user),
+    _org = Depends(get_organization),
     agent_service: AgentService = Depends(Provide[Container.agent_service]),
 ) -> None:
     try:
@@ -104,22 +130,24 @@ async def delete_llm_connection(
 
 # Agent definitions CRUD
 
-
 @router.post("/definitions", response_model=AgentDefinitionResponse, status_code=status.HTTP_201_CREATED)
 @inject
 async def create_agent_definition(
     request: AgentDefinitionCreate,
+    organization_id: uuid.UUID,
     current_user: UserResponse = Depends(get_current_user),
+    _org = Depends(get_organization),
     agent_service: AgentService = Depends(Provide[Container.agent_service]),
 ) -> AgentDefinitionResponse:
-    # current_user available for future auth; service does not require it yet
     return await agent_service.create_agent_definition(request, current_user)
 
 
 @router.get("/definitions", response_model=List[AgentDefinitionResponse])
 @inject
 async def list_agent_definitions(
+    organization_id: uuid.UUID,
     current_user: UserResponse = Depends(get_current_user),
+    _org = Depends(get_organization),
     agent_service: AgentService = Depends(Provide[Container.agent_service]),
 ) -> List[AgentDefinitionResponse]:
     return await agent_service.list_agent_definitions(current_user)
@@ -129,7 +157,9 @@ async def list_agent_definitions(
 @inject
 async def get_agent_definition(
     agent_id: uuid.UUID,
+    organization_id: uuid.UUID,
     current_user: UserResponse = Depends(get_current_user),
+    _org = Depends(get_organization),
     agent_service: AgentService = Depends(Provide[Container.agent_service]),
 ) -> AgentDefinitionResponse:
     agent = await agent_service.get_agent_definition(agent_id, current_user)
@@ -142,8 +172,10 @@ async def get_agent_definition(
 @inject
 async def update_agent_definition(
     agent_id: uuid.UUID,
+    organization_id: uuid.UUID,
     request: AgentDefinitionUpdate,
     current_user: UserResponse = Depends(get_current_user),
+    _org = Depends(get_organization),
     agent_service: AgentService = Depends(Provide[Container.agent_service]),
 ) -> AgentDefinitionResponse:
     updated = await agent_service.update_agent_definition(current_user, agent_id, request)
@@ -156,7 +188,9 @@ async def update_agent_definition(
 @inject
 async def delete_agent_definition(
     agent_id: uuid.UUID,
+    organization_id: uuid.UUID,
     current_user: UserResponse = Depends(get_current_user),
+    _org = Depends(get_organization),
     agent_service: AgentService = Depends(Provide[Container.agent_service]),
 ) -> None:
     try:
@@ -165,10 +199,12 @@ async def delete_agent_definition(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
     return None
 
-@router.get("/definitions/tools/agents", response_model=List[AgentDefinitionResponse])
-@inject
-async def list_tool_compatible_agents(
-    current_user: UserResponse = Depends(get_current_user),
-    agent_service: AgentService = Depends(Provide[Container.agent_service]),
-) -> List[AgentDefinitionResponse]:
-    return await agent_service.list_tool_compatible_agents(current_user)
+
+# @router.post("/definitions/search", response_model=List[AgentDefinitionResponse])
+# @inject
+# async def search_agent_definitions(
+#     request: ModelSearchCollectionRequest,
+#     current_user: UserResponse = Depends(get_current_user),
+#     agent_service: AgentService = Depends(Provide[Container.agent_service]),
+# ) -> List[AgentDefinitionResponse]:
+#     return await agent_service.search_agent_definitions(request)

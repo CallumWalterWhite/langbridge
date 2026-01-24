@@ -41,10 +41,11 @@ type ApiAuthType = (typeof API_AUTH_TYPES)[number]['value'];
 
 export interface AddSourceDialogProps {
   children: React.ReactElement;
+  organizationId?: string;
   onCreated?: (source: DataSource | { id: string }) => void;
 }
 
-export function AddSourceDialog({ children, onCreated }: AddSourceDialogProps) {
+export function AddSourceDialog({ children, organizationId, onCreated }: AddSourceDialogProps) {
   const [open, setOpen] = React.useState(false);
   const [activeTab, setActiveTab] = React.useState<'databases' | 'apis'>('databases');
   const { toast } = useToast();
@@ -74,7 +75,10 @@ export function AddSourceDialog({ children, onCreated }: AddSourceDialogProps) {
 
   const mutation = useMutation({
     mutationFn: async (payload: Record<string, unknown>) => {
-      const response = await fetch(withApiBase('/api/v1/datasources'), {
+      if (!organizationId) {
+        throw new Error('Select an organization before adding a source.');
+      }
+      const response = await fetch(withApiBase(`/api/v1/datasources/${organizationId}`), {
         method: 'POST',
         credentials: 'include',
         headers: { 'Content-Type': 'application/json', Accept: 'application/json' },

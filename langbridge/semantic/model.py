@@ -25,7 +25,7 @@ class Dimension(BaseModel):
 
 
 class Measure(BaseModel):
-    _table: "Table" # forward reference
+    _table: "Table" # forward reference 
     name: str
     type: str
     description: Optional[str] = None
@@ -55,6 +55,12 @@ class Table(BaseModel):
         for measure in self.measures or []:
             annotations[f"{self.schema}.{self.name}.{measure.name}"] = measure.name
         return annotations
+    
+    def model_post_init(self, __context):
+        for dimension in self.dimensions or []:
+            dimension._table = self
+        for measure in self.measures or []:
+            measure._table = self
 
 
 class Relationship(BaseModel):

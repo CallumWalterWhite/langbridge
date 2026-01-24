@@ -47,6 +47,7 @@ class SemanticModelResolver:
         self._measures_by_name: Dict[str, List[Tuple[str, Measure]]] = {}
         self._filters_by_name: Dict[str, List[Tuple[str, str, TableFilter]]] = {}
         self._table_keys: Set[str] = set(model.tables.keys())
+        self._tables_by_compound: Dict[str, str] = {}
         self._build_indexes()
         self._logger = logging.getLogger(__name__)
 
@@ -104,6 +105,9 @@ class SemanticModelResolver:
 
     def _build_indexes(self) -> None:
         for table_key, table in self.model.tables.items():
+            compound = f"{table.schema}.{table.name}" if table.schema else table.name
+            if compound:
+                self._tables_by_compound[compound] = table_key
             for dimension in table.dimensions or []:
                 key = f"{table_key}.{dimension.name}"
                 self._dimensions_by_key[key] = dimension
@@ -121,11 +125,29 @@ class SemanticModelResolver:
                     (table_key, filter_key, table_filter)
                 )
 
+    def _resolve_compound_member(self, member: str) -> Tuple[str, str] | None:
+        parts = member.split(".")
+        if len(parts) < 3:
+            return None
+        compound = ".".join(parts[:2])
+        column = ".".join(parts[2:])
+        table_key = self._tables_by_compound.get(compound)
+        if not table_key or not column:
+            return None
+        return table_key, column
+
     def _resolve_dimension(self, member: str) -> Tuple[str, Dimension]:
         self._logger.info(f"Resolving dimension: {member} in dimensions: {self._dimensions_by_key.keys()}")
         if "." in member:
             dimension = self._dimensions_by_key.get(member)
             if dimension is None:
+                compound = self._resolve_compound_member(member)
+                if compound:
+                    table_key, column = compound
+                    compound_key = f"{table_key}.{column}"
+                    dimension = self._dimensions_by_key.get(compound_key)
+                    if dimension is not None:
+                        return table_key, dimension
                 raise SemanticModelError(f"Unknown dimension '{member}'.")
             table, _ = member.split(".", 1)
             return table, dimension
@@ -144,6 +166,13 @@ class SemanticModelResolver:
         if "." in member:
             measure = self._measures_by_key.get(member)
             if measure is None:
+                compound = self._resolve_compound_member(member)
+                if compound:
+                    table_key, column = compound
+                    compound_key = f"{table_key}.{column}"
+                    measure = self._measures_by_key.get(compound_key)
+                    if measure is not None:
+                        return table_key, measure
                 raise SemanticModelError(f"Unknown measure '{member}'.")
             table, _ = member.split(".", 1)
             return table, measure
@@ -162,6 +191,13 @@ class SemanticModelResolver:
         if "." in segment:
             table_filter = self._filters_by_key.get(segment)
             if table_filter is None:
+                compound = self._resolve_compound_member(segment)
+                if compound:
+                    table_key, column = compound
+                    compound_key = f"{table_key}.{column}"
+                    table_filter = self._filters_by_key.get(compound_key)
+                    if table_filter is not None:
+                        return table_key, column, table_filter
                 raise SemanticModelError(f"Unknown segment '{segment}'.")
             table, key = segment.split(".", 1)
             return table, key, table_filter

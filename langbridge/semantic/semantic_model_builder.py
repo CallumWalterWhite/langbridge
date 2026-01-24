@@ -1,12 +1,11 @@
-
-
 from dataclasses import dataclass
 import logging
 import re
 from collections import defaultdict
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 from uuid import UUID
 
+from services.connector_service import ConnectorService
 from connectors import (
     ConnectorRuntimeType,
     TableMetadata,
@@ -14,11 +13,9 @@ from connectors import (
     ForeignKeyMetadata,
     SqlConnector,
 )
-from orchestrator.tools.sql_analyst.interfaces import QueryResult
 from semantic.model import MeasureAggregation
 from semantic import Dimension, Measure, Relationship, SemanticModel, Table
 from semantic.loader import load_semantic_model
-from services.connector_service import ConnectorService
 from models.connectors import ConnectorResponse
 
 logger = logging.getLogger(__name__)
@@ -132,7 +129,7 @@ class SemanticModelBuilder:
                             aggregation=MeasureAggregation.sum.value,
                             description=f"Aggregate {column.name} from {scope.table_metadata.name}",
                             synonyms=[column.name],
-                        )
+                        ) # type: ignore
                     )
                 else:
                     is_pk = self._is_probable_primary_key(column.name, scope.table_metadata.name)
@@ -142,7 +139,7 @@ class SemanticModelBuilder:
                         primary_key=is_pk,
                         description=f"Column {column.name} from {scope.table_metadata.name}",
                         synonyms=[column.name],
-                    )
+                    ) # type: ignore
                     dimensions.append(dimension)
                     dimensions_column_names.add(column.name.lower())
 
@@ -195,21 +192,12 @@ class SemanticModelBuilder:
         
         return relationships
     
-    async def __get_column_values_vector(
-        self,
-        sql_connector: SqlConnector,
-        schema: str,
-        table_name: str,
-        column_name: str,
-    ) -> List[Any]:
-        query = f"SELECT DISTINCT {column_name} FROM {schema}.{table_name} WHERE {column_name} IS NOT NULL"
-        result: QueryResult = await sql_connector.execute(query)
-        return [row[0] for row in result.rows]
-    
     async def __get_connector(self, connector_id: UUID) -> ConnectorResponse:
         return await self._connector_service.get_connector(connector_id)
 
     async def _get_sql_connector(self, connector: ConnectorResponse) -> SqlConnector:
+        if not connector.connector_type:
+            raise Exception("Connector type is required")
         runtime_type = ConnectorRuntimeType(connector.connector_type.upper())
         connector_config = connector.config or {}
         return await self._connector_service.async_create_sql_connector(

@@ -67,6 +67,7 @@ interface FormState {
   description: string;
   llmConnectionId: string;
   isActive: boolean;
+  biCopilotEnabled: boolean;
   systemPrompt: string;
   userInstructions: string;
   styleGuidance: string;
@@ -175,6 +176,7 @@ function defaultFormState(): FormState {
     description: '',
     llmConnectionId: '',
     isActive: true,
+    biCopilotEnabled: false,
     systemPrompt: '',
     userInstructions: '',
     styleGuidance: '',
@@ -264,6 +266,7 @@ function hydrateFromDefinition(definition: unknown, base: FormState): FormState 
 
   return {
     ...base,
+    llmConnectionId: payload.llm_connection_id ?? base.llmConnectionId,
     systemPrompt: prompt.system_prompt ?? '',
     userInstructions: prompt.user_instructions ?? '',
     styleGuidance: prompt.style_guidance ?? '',
@@ -305,14 +308,22 @@ function hydrateFromDefinition(definition: unknown, base: FormState): FormState 
 interface AgentDefinitionFormProps {
   mode: 'create' | 'edit';
   agentId?: string;
+  organizationId: string;
   initialAgent?: AgentDefinition | null;
   onComplete?: () => void;
 }
 
-export function AgentDefinitionForm({ mode, agentId, initialAgent, onComplete }: AgentDefinitionFormProps): JSX.Element {
+export function AgentDefinitionForm({
+  mode,
+  agentId,
+  organizationId,
+  initialAgent,
+  onComplete,
+}: AgentDefinitionFormProps): JSX.Element {
   const queryClient = useQueryClient();
   const { toast } = useToast();
   const { selectedOrganizationId } = useWorkspaceScope();
+  const scopeOrganizationId = organizationId || selectedOrganizationId;
   const [formState, setFormState] = useState<FormState>(defaultFormState());
   const [pending, setPending] = useState(false);
   const [toolPickerOpen, setToolPickerOpen] = useState(false);
@@ -320,8 +331,9 @@ export function AgentDefinitionForm({ mode, agentId, initialAgent, onComplete }:
   const [selectedToolDefinitionId, setSelectedToolDefinitionId] = useState('');
 
   const connectionsQuery = useQuery<LLMConnection[]>({
-    queryKey: ['llm-connections'],
-    queryFn: () => fetchLLMConnections(),
+    queryKey: ['llm-connections', scopeOrganizationId],
+    enabled: Boolean(scopeOrganizationId),
+    queryFn: () => fetchLLMConnections(scopeOrganizationId),
   });
 
   const toolSupportsDefinitions = Boolean(
@@ -329,12 +341,12 @@ export function AgentDefinitionForm({ mode, agentId, initialAgent, onComplete }:
   );
 
   const toolDefinitionsQuery = useQuery<ToolDefinitionOption[]>({
-    queryKey: ['agent-tool-definitions', selectedToolType],
-    enabled: toolPickerOpen && toolSupportsDefinitions,
+    queryKey: ['agent-tool-definitions', scopeOrganizationId, selectedToolType],
+    enabled: toolPickerOpen && toolSupportsDefinitions && Boolean(scopeOrganizationId),
     queryFn: async () => {
       switch (selectedToolType) {
         case ToolType.sql_analyst: {
-          const models = await getAvailableSemanticModels(selectedOrganizationId ?? '');
+          const models = await getAvailableSemanticModels(scopeOrganizationId ?? '');
           return models.map((model) => ({
             id: model.id,
             name: model.name,
@@ -364,9 +376,9 @@ export function AgentDefinitionForm({ mode, agentId, initialAgent, onComplete }:
   });
 
   const agentDefinitionQuery = useQuery<AgentDefinition>({
-    queryKey: ['agent-definition', agentId],
-    enabled: mode === 'edit' && Boolean(agentId) && !initialAgent,
-    queryFn: () => fetchAgentDefinition(agentId ?? ''),
+    queryKey: ['agent-definition', scopeOrganizationId, agentId],
+    enabled: mode === 'edit' && Boolean(agentId) && Boolean(scopeOrganizationId) && !initialAgent,
+    queryFn: () => fetchAgentDefinition(scopeOrganizationId ?? '', agentId ?? ''),
   });
 
   useEffect(() => {
@@ -510,6 +522,10 @@ export function AgentDefinitionForm({ mode, agentId, initialAgent, onComplete }:
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+    if (!scopeOrganizationId) {
+      toast({ title: 'Select an organization', variant: 'destructive' });
+      return;
+    }
     if (!formState.name.trim()) {
       toast({ title: 'Name is required', variant: 'destructive' });
       return;
@@ -582,12 +598,12 @@ export function AgentDefinitionForm({ mode, agentId, initialAgent, onComplete }:
     setPending(true);
     try {
       if (mode === 'edit' && agentId) {
-        await updateAgentDefinition(agentId, payload as UpdateAgentDefinitionPayload);
+        await updateAgentDefinition(scopeOrganizationId, agentId, payload as UpdateAgentDefinitionPayload);
         toast({ title: 'Agent updated', description: 'Your agent definition has been saved.' });
-        queryClient.invalidateQueries({ queryKey: ['agent-definitions'] });
+        queryClient.invalidateQueries({ queryKey: ['agent-definitions', scopeOrganizationId] });
       } else {
-        await createAgentDefinition(payload as CreateAgentDefinitionPayload);
-        queryClient.invalidateQueries({ queryKey: ['agent-definitions'] });
+        await createAgentDefinition(scopeOrganizationId, payload as CreateAgentDefinitionPayload);
+        queryClient.invalidateQueries({ queryKey: ['agent-definitions', scopeOrganizationId] });
         toast({ title: 'Agent created', description: 'Your agent is ready to use.' });
       }
       if (onComplete) {
@@ -610,11 +626,15 @@ export function AgentDefinitionForm({ mode, agentId, initialAgent, onComplete }:
     if (mode !== 'edit' || !agentId) {
       return;
     }
+    if (!scopeOrganizationId) {
+      toast({ title: 'Select an organization', variant: 'destructive' });
+      return;
+    }
     try {
       setPending(true);
-      await deleteAgentDefinition(agentId);
+      await deleteAgentDefinition(scopeOrganizationId, agentId);
       toast({ title: 'Agent deleted', description: 'Your agent definition has been deleted.' });
-      queryClient.invalidateQueries({ queryKey: ['agent-definitions'] });
+      queryClient.invalidateQueries({ queryKey: ['agent-definitions', scopeOrganizationId] });
       if (onComplete) {
         onComplete();
       }
@@ -633,7 +653,7 @@ export function AgentDefinitionForm({ mode, agentId, initialAgent, onComplete }:
 
   const connections = connectionsQuery.data ?? [];
   const llmOptions = connections.filter((conn) =>
-    selectedOrganizationId ? conn.organizationId === selectedOrganizationId || !conn.organizationId : true,
+    scopeOrganizationId ? conn.organizationId === scopeOrganizationId || !conn.organizationId : true,
   );
 
   return (

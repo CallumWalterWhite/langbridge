@@ -5,7 +5,7 @@ from typing import List, Optional
 
 from db.agent import LLMConnection, AgentDefinition
 from errors.application_errors import AuthorizationError, BusinessValidationError
-from db.auth import Organization
+from orchestrator.definitions.factory import AgentDefinitionFactory
 from repositories.organization_repository import OrganizationRepository, ProjectRepository
 from services.service_utils import internal_service, is_internal_service_call
 from models.auth import UserResponse
@@ -19,10 +19,17 @@ from models.llm_connections import (
     LLMProvider,
 )
 from .user_auth_provider import UserAuthorizedProvider
-from models.agents import AgentDefinitionCreate, AgentDefinitionResponse, AgentDefinitionUpdate
+from models.agents import (
+    AgentDefinitionCreate, 
+    AgentDefinitionResponse, 
+    AgentDefinitionUpdate
+)
+from models.query import (
+    ModelSearchCollectionRequest
+)
 from orchestrator.definitions import AgentDefinitionModel
 from repositories.llm_connection_repository import LLMConnectionRepository
-from utils.llm.llm_tester import LLMConnectionTester
+from orchestrator.llm.provider.llm_tester import LLMConnectionTester
 
 
 class AgentService:
@@ -37,6 +44,7 @@ class AgentService:
         self._organization_repository = organization_repository
         self._project_repository = project_repository
         self._tester = LLMConnectionTester()
+        self._agent_definition_factory = AgentDefinitionFactory()
         self._logger = logging.getLogger(__name__)
 
     async def create_llm_connection(
@@ -52,7 +60,7 @@ class AgentService:
         
         if connection.project_id and not UserAuthorizedProvider.project_has_access(current_user, connection.project_id):
             raise AuthorizationError("User does not have access to the specified project")
-        
+
         test_result = self._tester.test_connection(
             provider=connection.provider,
             api_key=connection.api_key,
@@ -225,6 +233,8 @@ class AgentService:
         connection = await self._get_llm_connection(agent_definition.llm_connection_id)
         self.__check_authorized(current_user, connection)
 
+        self._agent_definition_factory.validate_agent_definition(agent_definition.definition)
+        
         new_agent = AgentDefinition(
             id=uuid.uuid4(),
             name=agent_definition.name,
@@ -289,6 +299,14 @@ class AgentService:
         self.__check_authorized(current_user, connection)
         await self._agent_definition_repository.delete(current_agent)
         
+    async def search_agent_definitions(self, 
+                                       agent_search: ModelSearchCollectionRequest, 
+                                       organization_id: Optional[uuid.UUID], 
+                                       project_id: Optional[uuid.UUID]) -> List[AgentDefinitionResponse]:
+        pass
+        # agents = await self._agent_definition_repository.search(agent_search)
+        # return [AgentDefinitionResponse.model_validate(agent) for agent in agents]
+
     def __check_authorized(
         self,
         current_user: Optional[UserResponse],

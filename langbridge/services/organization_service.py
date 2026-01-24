@@ -145,6 +145,18 @@ class OrganizationService:
         self._project_repository.add(project)
         await self._project_repository.add_member(project, db_requester)
         return self._serialize_project(project)
+    
+    async def get_organization(self, organization_id: uuid.UUID) -> OrganizationResponse:
+        organization = await self._organization_repository.get_by_id(organization_id)
+        if organization is None:
+            raise ResourceNotFound("Organization not found")
+        return self._serialize_organization(organization)
+    
+    async def get_project(self, project_id: uuid.UUID) -> ProjectResponse:
+        project = await self._project_repository.get_by_id(project_id)
+        if project is None:
+            raise ResourceNotFound("Project not found")
+        return self._serialize_project(project)
 
     async def invite_user_to_organization(
         self,

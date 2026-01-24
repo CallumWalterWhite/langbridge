@@ -52,7 +52,10 @@ class ConnectorService:
         organization = await self._organization_repository.get_by_id(organization_id)
         if not organization:
             raise BusinessValidationError("Organization not found")
-        return [ConnectorResponse.from_connector(connector) for connector in organization.connectors]
+        return [
+            ConnectorResponse.from_connector(connector, organization_id=organization_id)
+            for connector in organization.connectors
+        ]
 
     async def list_all_connectors(self) -> list[ConnectorResponse]:
         connectors = await self._connector_repository.get_all()
@@ -62,7 +65,14 @@ class ConnectorService:
         project = await self._project_repository.get_by_id(project_id)
         if not project:
             raise BusinessValidationError("Project not found")
-        return [ConnectorResponse.from_connector(connector) for connector in project.connectors]
+        return [
+            ConnectorResponse.from_connector(
+                connector,
+                organization_id=project.organization_id,
+                project_id=project_id,
+            )
+            for connector in project.connectors
+        ]
 
     def list_connector_types(self) -> list[str]:
         return [ct.value for ct in ConnectorRuntimeType]

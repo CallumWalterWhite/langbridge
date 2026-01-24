@@ -11,6 +11,21 @@ from db.base import Base
 ModelT = TypeVar("ModelT", bound=Base)
 
 
+FILTER_OPERATOR_MAPPING = {
+    "=": lambda field, value: field == value,
+    "!=": lambda field, value: field != value,
+    "<": lambda field, value: field < value,
+    "<=": lambda field, value: field <= value,
+    ">": lambda field, value: field > value,
+    ">=": lambda field, value: field >= value,
+}
+
+class ModelFilter:
+    def __init__(self, field: str, operator: str, value: object):
+        self.field = field
+        self.operator = operator
+        self.value = value
+
 class BaseRepository(Generic[ModelT]):
     def __init__(self, session: Session, model: type[ModelT]):
         self._session = session
@@ -55,3 +70,17 @@ class AsyncBaseRepository(Generic[ModelT]):
 
     async def flush(self) -> None:
         await self._session.flush()
+
+    async def search(
+        self,
+        filters: list[ModelFilter],
+        limit: int = 10,
+        offset: int = 0,
+    ) -> list[ModelT]:
+        base_query = select(self._model)
+        for filter in filters:
+            if filter.operator not in FILTER_OPERATOR_MAPPING.keys():
+                raise ValueError(f"Invalid operator: {filter.operator}")
+            base_query = base_query.where(FILTER_OPERATOR_MAPPING[filter.operator](getattr(self._model, filter.field), filter.value))
+        result = await self._session.scalars(base_query.limit(limit).offset(offset))
+        return list(result.all())

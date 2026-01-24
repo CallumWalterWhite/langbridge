@@ -1,5 +1,11 @@
+from __future__ import annotations
+
+from typing import Any
+
 from dependency_injector import containers, providers
 
+from auth.register import create_oauth_client
+from config import Settings, settings
 from db import (
     create_async_engine_for_url,
     create_async_session_factory,
@@ -8,38 +14,36 @@ from db import (
     session_scope,
 )
 from db.session_context import get_session
-from auth.register import create_oauth_client
+from repositories.agent_repository import AgentRepository
 from repositories.connector_repository import ConnectorRepository
 from repositories.environment_repository import OrganizationEnvironmentSettingRepository
-from services.connector_service import ConnectorService
-from services.environment_service import EnvironmentService
-from services.connector_schema_service import ConnectorSchemaService
-from repositories.user_repository import UserRepository, OAuthAccountRepository
+from repositories.llm_connection_repository import LLMConnectionRepository
 from repositories.organization_repository import (
     OrganizationInviteRepository,
     OrganizationRepository,
     ProjectInviteRepository,
-    ProjectRepository
+    ProjectRepository,
 )
-from repositories.llm_connection_repository import LLMConnectionRepository
 from repositories.semantic_model_repository import SemanticModelRepository
-from repositories.agent_repository import AgentRepository
+from repositories.semantic_search_repository import SemanticVectorStoreEntryRepository
 from repositories.thread_message_repository import ThreadMessageRepository
 from repositories.thread_repository import ThreadRepository
 from repositories.tool_call_repository import ToolCallRepository
-from repositories.semantic_search_repository import SemanticVectorStoreEntryRepository
-from services.auth_service import AuthService
-from services.organization_service import OrganizationService
-from services.agent_service import AgentService
+from repositories.user_repository import OAuthAccountRepository, UserRepository
 from semantic.semantic_model_builder import SemanticModelBuilder
+from services.agent_service import AgentService
+from services.auth_service import AuthService
+from services.connector_schema_service import ConnectorSchemaService
+from services.connector_service import ConnectorService
+from services.environment_service import EnvironmentService
+from services.organization_service import OrganizationService
+from services.orchestrator_service import OrchestratorService
 from services.semantic import (
     SemanticModelService,
+    SemanticQueryService,
     SemanticSearchService,
-    SemanticQueryService
 )
-from services.orchestrator_service import OrchestratorService
 from services.thread_service import ThreadService
-from config import settings
 
 
 class Container(containers.DeclarativeContainer):
@@ -48,23 +52,23 @@ class Container(containers.DeclarativeContainer):
     wiring_config = containers.WiringConfiguration()
 
     config = providers.Configuration()
-    
+
     engine = providers.Singleton(
         create_engine_for_url,
-        database_url=settings.SQLALCHEMY_DATABASE_URI,
-        echo=settings.IS_LOCAL,
-        pool_size=settings.SQLALCHEMY_POOL_SIZE,
-        max_overflow=settings.SQLALCHEMY_MAX_OVERFLOW,
-        pool_timeout=settings.SQLALCHEMY_POOL_TIMEOUT,
+        database_url=config.database.url,
+        echo=config.database.echo,
+        pool_size=config.database.pool_size,
+        max_overflow=config.database.max_overflow,
+        pool_timeout=config.database.pool_timeout,
     )
 
     async_engine = providers.Singleton(
         create_async_engine_for_url,
-        database_url=settings.SQLALCHEMY_ASYNC_DATABASE_URI,
-        echo=settings.IS_LOCAL,
-        pool_size=settings.SQLALCHEMY_POOL_SIZE,
-        max_overflow=settings.SQLALCHEMY_MAX_OVERFLOW,
-        pool_timeout=settings.SQLALCHEMY_POOL_TIMEOUT,
+        database_url=config.database.async_url,
+        echo=config.database.echo,
+        pool_size=config.database.pool_size,
+        max_overflow=config.database.max_overflow,
+        pool_timeout=config.database.pool_timeout,
     )
 
     oauth = providers.Singleton(create_oauth_client)
@@ -79,7 +83,7 @@ class Container(containers.DeclarativeContainer):
     async_session = providers.Factory(get_session)
 
     user_repository = providers.Factory(UserRepository, session=async_session)
-    
+
     oauth_account_repository = providers.Factory(OAuthAccountRepository, session=async_session)
     organization_repository = providers.Factory(OrganizationRepository, session=async_session)
     project_repository = providers.Factory(ProjectRepository, session=async_session)
@@ -99,7 +103,7 @@ class Container(containers.DeclarativeContainer):
         EnvironmentService,
         repository=environment_repository,
     )
-    
+
     organization_service = providers.Factory(
         OrganizationService,
         organization_repository=organization_repository,
@@ -117,7 +121,7 @@ class Container(containers.DeclarativeContainer):
         oauth=oauth,
         organization_service=organization_service,
     )
-    
+
     connector_service = providers.Factory(
         ConnectorService,
         connector_repository=connector_repository,
@@ -142,7 +146,7 @@ class Container(containers.DeclarativeContainer):
         SemanticModelBuilder,
         connector_service=connector_service,
     )
-    
+
     semantic_search_service = providers.Factory(
         SemanticSearchService,
         vector_store_entry_repository=semantic_vector_store_repository,
@@ -183,3 +187,23 @@ class Container(containers.DeclarativeContainer):
         agent_service=agent_service,
         thread_service=thread_service,
     )
+
+
+def _build_config(settings_obj: Settings) -> dict[str, Any]:
+    return {
+        "database": {
+            "url": settings_obj.SQLALCHEMY_DATABASE_URI,
+            "async_url": settings_obj.SQLALCHEMY_ASYNC_DATABASE_URI,
+            "echo": settings_obj.IS_LOCAL,
+            "pool_size": settings_obj.SQLALCHEMY_POOL_SIZE,
+            "max_overflow": settings_obj.SQLALCHEMY_MAX_OVERFLOW,
+            "pool_timeout": settings_obj.SQLALCHEMY_POOL_TIMEOUT,
+        },
+    }
+
+
+def build_container(settings_obj: Settings = settings) -> Container:
+    """Build a Container with settings bound to configuration providers."""
+    container = Container()
+    container.config.from_dict(_build_config(settings_obj))
+    return container

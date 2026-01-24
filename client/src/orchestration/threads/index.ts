@@ -2,6 +2,17 @@ import { apiFetch } from '../http';
 
 const BASE_PATH = '/api/v1/thread';
 
+function requireOrganizationId(organizationId: string): string {
+  if (!organizationId) {
+    throw new Error('Organization id is required.');
+  }
+  return organizationId;
+}
+
+function basePath(organizationId: string): string {
+  return `${BASE_PATH}/${requireOrganizationId(organizationId)}`;
+}
+
 export type Thread = {
   id: string;
   projectId: string | null;
@@ -65,49 +76,57 @@ export type ThreadHistoryResponse = {
   messages: ThreadMessage[];
 };
 
-export async function listThreads(): Promise<Thread[]> {
-  const response = await apiFetch<ThreadListResponse>(`${BASE_PATH}/`);
+export async function listThreads(organizationId: string): Promise<Thread[]> {
+  const response = await apiFetch<ThreadListResponse>(`${basePath(organizationId)}/`);
   return response.threads;
 }
 
-export async function createThread(payload: ThreadCreatePayload = {}): Promise<Thread> {
-  return apiFetch<Thread>(`${BASE_PATH}/`, {
+export async function createThread(
+  organizationId: string,
+  payload: ThreadCreatePayload = {},
+): Promise<Thread> {
+  return apiFetch<Thread>(`${basePath(organizationId)}/`, {
     method: 'POST',
     body: JSON.stringify(payload),
   });
 }
 
-export async function deleteThread(threadId: string): Promise<void> {
-  await apiFetch<void>(`${BASE_PATH}/${threadId}`, { method: 'DELETE', skipJsonParse: true });
+export async function deleteThread(organizationId: string, threadId: string): Promise<void> {
+  await apiFetch<void>(`${basePath(organizationId)}/${threadId}`, { method: 'DELETE', skipJsonParse: true });
 }
 
-export async function fetchThread(threadId: string): Promise<Thread> {
-  return apiFetch<Thread>(`${BASE_PATH}/${threadId}`);
+export async function fetchThread(organizationId: string, threadId: string): Promise<Thread> {
+  return apiFetch<Thread>(`${basePath(organizationId)}/${threadId}`);
 }
 
-export async function updateThread(threadId: string, payload: ThreadUpdatePayload): Promise<Thread> {
+export async function updateThread(
+  organizationId: string,
+  threadId: string,
+  payload: ThreadUpdatePayload,
+): Promise<Thread> {
   const body: Record<string, unknown> = {};
   if (payload.title !== undefined) body.title = payload.title;
   if (payload.metadataJson !== undefined) body.metadata_json = payload.metadataJson;
 
-  return apiFetch<Thread>(`${BASE_PATH}/${threadId}`, {
+  return apiFetch<Thread>(`${basePath(organizationId)}/${threadId}`, {
     method: 'PUT',
     body: JSON.stringify(body),
   });
 }
 
-export async function listThreadMessages(threadId: string): Promise<ThreadMessage[]> {
-  const response = await apiFetch<ThreadHistoryResponse>(`${BASE_PATH}/${threadId}/messages`);
+export async function listThreadMessages(organizationId: string, threadId: string): Promise<ThreadMessage[]> {
+  const response = await apiFetch<ThreadHistoryResponse>(`${basePath(organizationId)}/${threadId}/messages`);
   return response.messages;
 }
 
 export async function runThreadChat(
+  organizationId: string,
   threadId: string,
   message: string,
   agentId: string,
 ): Promise<ThreadChatResponse> {
   const body: Record<string, unknown> = { message, agent_id: agentId };
-  return apiFetch<ThreadChatResponse>(`${BASE_PATH}/${threadId}/chat`, {
+  return apiFetch<ThreadChatResponse>(`${basePath(organizationId)}/${threadId}/chat`, {
     method: 'POST',
     body: JSON.stringify(body),
   });

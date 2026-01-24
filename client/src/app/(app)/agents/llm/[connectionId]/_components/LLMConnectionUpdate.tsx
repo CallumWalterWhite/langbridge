@@ -21,10 +21,12 @@ import {
 } from '@/orchestration/agents';
 
 interface LLMConnectionUpdateProps {
+  organizationId: string;
   connectionId: string;
 }
 
-const llmConnectionQueryKey = (connectionId: string) => ['llm-connection', connectionId] as const;
+const llmConnectionQueryKey = (organizationId: string, connectionId: string) =>
+  ['llm-connection', organizationId, connectionId] as const;
 
 function resolveError(error: unknown): string {
   if (error instanceof ApiError) {
@@ -36,7 +38,7 @@ function resolveError(error: unknown): string {
   return 'Something went wrong. Please try again.';
 }
 
-export function LLMConnectionUpdate({ connectionId }: LLMConnectionUpdateProps): JSX.Element {
+export function LLMConnectionUpdate({ organizationId, connectionId }: LLMConnectionUpdateProps): JSX.Element {
   const router = useRouter();
   const queryClient = useQueryClient();
   const { toast } = useToast();
@@ -50,8 +52,8 @@ export function LLMConnectionUpdate({ connectionId }: LLMConnectionUpdateProps):
   const [localError, setLocalError] = useState<string | null>(null);
 
   const connectionQuery = useQuery({
-    queryKey: llmConnectionQueryKey(connectionId),
-    queryFn: () => fetchLLMConnection(connectionId),
+    queryKey: llmConnectionQueryKey(organizationId, connectionId),
+    queryFn: () => fetchLLMConnection(organizationId, connectionId),
   });
 
   const connection = connectionQuery.data;
@@ -68,13 +70,14 @@ export function LLMConnectionUpdate({ connectionId }: LLMConnectionUpdateProps):
   }, [connection]);
 
   const updateMutation = useMutation({
-    mutationFn: (payload: UpdateLLMConnectionPayload) => updateLLMConnection(connectionId, payload),
+    mutationFn: (payload: UpdateLLMConnectionPayload) =>
+      updateLLMConnection(organizationId, connectionId, payload),
     onSuccess: (updatedConnection: LLMConnection) => {
-      queryClient.setQueryData(llmConnectionQueryKey(connectionId), updatedConnection);
-      queryClient.invalidateQueries({ queryKey: ['llm-connections'] });
+      queryClient.setQueryData(llmConnectionQueryKey(organizationId, connectionId), updatedConnection);
+      queryClient.invalidateQueries({ queryKey: ['llm-connections', organizationId] });
       toast({
         title: 'Connection saved',
-        description: `“${updatedConnection.name}” has been updated.`,
+        description: `"${updatedConnection.name}" has been updated.`,
       });
       setApiKey('');
     },
@@ -138,14 +141,14 @@ export function LLMConnectionUpdate({ connectionId }: LLMConnectionUpdateProps):
   };
 
   const handleDelete = () => {
-    deleteLLMConnection(connectionId)
+    deleteLLMConnection(organizationId, connectionId)
       .then(() => {
         toast({
           title: 'Connection deleted',
           description: 'The LLM connection has been successfully deleted.',
         });
-        queryClient.invalidateQueries({ queryKey: ['llm-connections'] });
-        router.push('/agents/llm');
+        queryClient.invalidateQueries({ queryKey: ['llm-connections', organizationId] });
+        router.push(`/agents/${organizationId}/llm`);
       })
       .catch(() => {
         toast({
@@ -188,7 +191,7 @@ export function LLMConnectionUpdate({ connectionId }: LLMConnectionUpdateProps):
           variant="ghost"
           size="sm"
           className="gap-2 text-[color:var(--text-secondary)] hover:text-[color:var(--text-primary)]"
-          onClick={() => router.push('/agents')}
+          onClick={() => router.push(`/agents/${organizationId}/llm`)}
         >
           <ArrowLeft className="h-4 w-4" aria-hidden="true" />
           Back to connections

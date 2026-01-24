@@ -19,7 +19,11 @@ class ConnectorResponse(_Base):
     project_id: Optional[UUID] = None
     config: Optional[Dict[str, Any]] = None
     @staticmethod
-    def from_connector(connector: Connector) -> "ConnectorResponse":
+    def from_connector(
+        connector: Connector,
+        organization_id: Optional[UUID] = None,
+        project_id: Optional[UUID] = None,
+    ) -> "ConnectorResponse":
         raw_config = connector.config_json
         config: Optional[Dict[str, Any]] = None
         if isinstance(raw_config, (str, bytes)):
@@ -30,6 +34,13 @@ class ConnectorResponse(_Base):
         elif isinstance(raw_config, dict):
             config = raw_config
 
+        resolved_org_id = organization_id
+        if resolved_org_id is None and getattr(connector, "organizations", None):
+            resolved_org_id = cast(UUID, connector.organizations[0].id)
+
+        if resolved_org_id is None:
+            raise ValueError("ConnectorResponse requires organization_id")
+
         return ConnectorResponse(
             id=cast(Optional[UUID], connector.id),
             name=cast(str, connector.name),
@@ -38,8 +49,8 @@ class ConnectorResponse(_Base):
             label=cast(Optional[str], connector.name),
             icon="", # TODO: implement
             connector_type=cast(Optional[str], connector.connector_type),
-            organization_id=cast(UUID, connector.organizations[0].id),
-            project_id=None,
+            organization_id=resolved_org_id,
+            project_id=project_id,
             config=config,
         )
     

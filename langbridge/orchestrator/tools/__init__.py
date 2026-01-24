@@ -9,7 +9,12 @@ from .sql_analyst import (
     SqlAnalystTool,
     SemanticModel,
     SemanticModelError,
-    load_semantic_model
+    load_semantic_model,
+)
+from .semantic_query_builder import (
+    QueryBuilderCopilotRequest,
+    QueryBuilderCopilotResponse,
+    SemanticQueryBuilderCopilotTool,
 )
 
 __all__ = [
@@ -20,4 +25,7 @@ __all__ = [
     "SemanticModel",
     "SemanticModelError",
     "load_semantic_model",
+    "QueryBuilderCopilotRequest",
+    "QueryBuilderCopilotResponse",
+    "SemanticQueryBuilderCopilotTool",
 ]

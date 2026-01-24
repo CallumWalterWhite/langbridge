@@ -9,35 +9,59 @@ import type {
 
 const BASE_PATH = '/api/v1/semantic-model';
 
+function requireOrganizationId(organizationId: string): string {
+  if (!organizationId) {
+    throw new Error('Organization id is required.');
+  }
+  return organizationId;
+}
+
+function basePath(organizationId: string): string {
+  return `${BASE_PATH}/${requireOrganizationId(organizationId)}`;
+}
+
 export async function previewSemanticModel(
   organizationId: string,
   projectId?: string,
 ): Promise<SemanticModel> {
-  const params = new URLSearchParams({ organization_id: organizationId });
+  const params = new URLSearchParams();
   if (projectId) {
     params.set('project_id', projectId);
   }
-  return apiFetch<SemanticModel>(`${BASE_PATH}/preview?${params.toString()}`);
+  const suffix = params.toString();
+  return apiFetch<SemanticModel>(
+    `${basePath(organizationId)}/preview${suffix ? `?${suffix}` : ''}`,
+  );
 }
 
 export async function listSemanticModels(
   organizationId: string,
   projectId?: string,
 ): Promise<SemanticModelRecord[]> {
-  const params = new URLSearchParams({ organization_id: organizationId });
+  const params = new URLSearchParams();
   if (projectId) {
     params.set('project_id', projectId);
   }
-  return apiFetch<SemanticModelRecord[]>(`${BASE_PATH}?${params.toString()}`);
+  const suffix = params.toString();
+  return apiFetch<SemanticModelRecord[]>(
+    `${basePath(organizationId)}${suffix ? `?${suffix}` : ''}`,
+  );
 }
 
-export async function createSemanticModel(payload: CreateSemanticModelPayload): Promise<SemanticModelRecord> {
-  if (payload.projectId?.length === 0) {
-    payload.projectId = undefined;
+export async function createSemanticModel(
+  organizationId: string,
+  payload: CreateSemanticModelPayload,
+): Promise<SemanticModelRecord> {
+  const body: CreateSemanticModelPayload = {
+    ...payload,
+    organizationId: requireOrganizationId(organizationId),
+  };
+  if (body.projectId?.length === 0) {
+    body.projectId = undefined;
   }
-  return apiFetch<SemanticModelRecord>(BASE_PATH, {
+  return apiFetch<SemanticModelRecord>(basePath(organizationId), {
     method: 'POST',
-    body: JSON.stringify(payload),
+    body: JSON.stringify(body),
   });
 }
 
@@ -46,13 +70,13 @@ export async function updateSemanticModel(
   organizationId: string,
   payload: UpdateSemanticModelPayload,
 ): Promise<SemanticModelRecord> {
-  if (payload.projectId?.length === 0) {
-    payload.projectId = undefined;
+  const body: UpdateSemanticModelPayload = { ...payload };
+  if (body.projectId?.length === 0) {
+    body.projectId = undefined;
   }
-  const params = new URLSearchParams({ organization_id: organizationId });
-  return apiFetch<SemanticModelRecord>(`${BASE_PATH}/${modelId}?${params.toString()}`, {
+  return apiFetch<SemanticModelRecord>(`${basePath(organizationId)}/${modelId}`, {
     method: 'PUT',
-    body: JSON.stringify(payload),
+    body: JSON.stringify(body),
   });
 }
 
@@ -60,8 +84,7 @@ export async function deleteSemanticModel(
   modelId: string,
   organizationId: string,
 ): Promise<void> {
-  const params = new URLSearchParams({ organization_id: organizationId });
-  await apiFetch<void>(`${BASE_PATH}/${modelId}?${params.toString()}`, {
+  await apiFetch<void>(`${basePath(organizationId)}/${modelId}`, {
     method: 'DELETE',
     skipJsonParse: true,
   });
@@ -71,40 +94,43 @@ export async function fetchSemanticModel(
   modelId: string,
   organizationId: string,
 ): Promise<SemanticModelRecord> {
-  const params = new URLSearchParams({ organization_id: organizationId });
-  return apiFetch<SemanticModelRecord>(`${BASE_PATH}/${modelId}?${params.toString()}`);
+  return apiFetch<SemanticModelRecord>(`${basePath(organizationId)}/${modelId}`);
 }
 
 export async function fetchSemanticModels(
   organizationId: string,
 ): Promise<SemanticModelRecord[]> {
-  const params = new URLSearchParams({ organization_id: organizationId });
-  return apiFetch<SemanticModelRecord[]>(`${BASE_PATH}/all?${params.toString()}`);
+  return apiFetch<SemanticModelRecord[]>(basePath(organizationId));
 }
 
 export async function previewSemanticModelYaml(
   organizationId: string,
   projectId?: string,
 ): Promise<string> {
-  const params = new URLSearchParams({ organization_id: organizationId });
+  const params = new URLSearchParams();
   if (projectId) {
     params.set('project_id', projectId);
   }
-  return await apiFetch<string>(`${BASE_PATH}/preview/yaml?${params.toString()}`);
+  const suffix = params.toString();
+  return await apiFetch<string>(
+    `${basePath(organizationId)}/preview/yaml${suffix ? `?${suffix}` : ''}`,
+  );
 }
 
 export async function fetchSemanticModelYaml(
   modelId: string,
   organizationId: string,
 ): Promise<string> {
-  const params = new URLSearchParams({ organization_id: organizationId });
-  return await apiFetch<string>(`${BASE_PATH}/${modelId}/yaml?${params.toString()}`);
+  return await apiFetch<string>(`${basePath(organizationId)}/${modelId}/yaml`);
 }
 
-export async function generateSemanticModelYaml(connectorId: string): Promise<string> {
+export async function generateSemanticModelYaml(
+  organizationId: string,
+  connectorId: string,
+): Promise<string> {
   if (!connectorId) {
     throw new Error('Connector id is required to generate a semantic model.');
   }
   const params = new URLSearchParams({ connector_id: connectorId });
-  return apiFetch<string>(`${BASE_PATH}/generate/yaml?${params.toString()}`);
+  return apiFetch<string>(`${basePath(organizationId)}/generate/yaml?${params.toString()}`);
 }

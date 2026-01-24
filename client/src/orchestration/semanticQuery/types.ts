@@ -1,5 +1,6 @@
 export interface SemanticDimensionPayload {
   name: string;
+  full_path?: string;
   type: string;
   primary_key?: boolean;
   alias?: string | null;
@@ -12,6 +13,7 @@ export interface SemanticDimensionPayload {
 
 export interface SemanticMeasurePayload {
   name: string;
+  full_path?: string;
   type: string;
   description?: string | null;
   aggregation?: string | null;
@@ -115,4 +117,5 @@ export interface SemanticQueryResponse {
   semanticModelId: string;
   data: Array<Record<string, unknown>>;
   annotations: Array<Record<string, unknown>>;
+  metadata?: Array<Record<string, unknown>>;
 }

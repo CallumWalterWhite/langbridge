@@ -3,7 +3,7 @@ import uuid
 from dependency_injector.wiring import Provide, inject
 from fastapi import APIRouter, Depends, HTTPException, status
 
-from auth.dependencies import get_current_user
+from auth.dependencies import get_current_user, get_organization
 from models.auth import UserResponse
 from errors.application_errors import (
     BusinessValidationError,
@@ -23,13 +23,15 @@ from models.threads import (
 from services.orchestrator_service import OrchestratorService
 from services.thread_service import ThreadService
 
-router = APIRouter(prefix="/thread", tags=["threads"])
+router = APIRouter(prefix="/thread/{organization_id}", tags=["threads"])
 
 
 @router.get("/", response_model=ThreadListResponse)
 @inject
 async def list_threads(
+    organization_id: uuid.UUID,
     current_user: UserResponse = Depends(get_current_user),
+    _org = Depends(get_organization),
     thread_service: ThreadService = Depends(Provide[Container.thread_service]),
 ) -> ThreadListResponse:
     threads = await thread_service.list_threads_for_user(current_user)
@@ -40,7 +42,9 @@ async def list_threads(
 @inject
 async def create_thread(
     request: ThreadCreateRequest,
+    organization_id: uuid.UUID,
     current_user: UserResponse = Depends(get_current_user),
+    _org = Depends(get_organization),
     thread_service: ThreadService = Depends(Provide[Container.thread_service]),
 ) -> ThreadResponse:
     try:
@@ -57,7 +61,9 @@ async def create_thread(
 @inject
 async def delete_thread(
     thread_id: uuid.UUID,
+    organization_id: uuid.UUID,
     current_user: UserResponse = Depends(get_current_user),
+    _org = Depends(get_organization),
     thread_service: ThreadService = Depends(Provide[Container.thread_service]),
 ) -> None:
     try:
@@ -73,7 +79,9 @@ async def delete_thread(
 @inject
 async def get_thread(
     thread_id: uuid.UUID,
+    organization_id: uuid.UUID,
     current_user: UserResponse = Depends(get_current_user),
+    _org = Depends(get_organization),
     thread_service: ThreadService = Depends(Provide[Container.thread_service]),
 ) -> ThreadResponse:
     try:
@@ -90,7 +98,9 @@ async def get_thread(
 async def update_thread(
     thread_id: uuid.UUID,
     request: ThreadUpdateRequest,
+    organization_id: uuid.UUID,
     current_user: UserResponse = Depends(get_current_user),
+    _org = Depends(get_organization),
     thread_service: ThreadService = Depends(Provide[Container.thread_service]),
 ) -> ThreadResponse:
     try:
@@ -109,7 +119,9 @@ async def update_thread(
 async def chat_thread(
     thread_id: uuid.UUID,
     request: ThreadChatRequest,
+    organization_id: uuid.UUID,
     current_user: UserResponse = Depends(get_current_user),
+    _org = Depends(get_organization),
     thread_service: ThreadService = Depends(Provide[Container.thread_service]),
     orchestrator_service: OrchestratorService = Depends(Provide[Container.orchestrator_service]),
 ) -> ThreadChatResponse:
@@ -149,7 +161,9 @@ async def chat_thread(
 @inject
 async def list_thread_messages(
     thread_id: uuid.UUID,
+    organization_id: uuid.UUID,
     current_user: UserResponse = Depends(get_current_user),
+    _org = Depends(get_organization),
     thread_service: ThreadService = Depends(Provide[Container.thread_service]),
 ) -> ThreadHistoryResponse:
     try:

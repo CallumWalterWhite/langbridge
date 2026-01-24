@@ -1,9 +1,7 @@
 import logging
-from typing import Any, Dict, List
+from typing import Any
 from uuid import UUID
 import uuid
-import sqlglot
-import sqlglot.expressions as exp
 from errors.application_errors import BusinessValidationError
 from connectors.config import ConnectorRuntimeType
 from connectors.connector import QueryResult, SqlConnector
@@ -11,8 +9,8 @@ from models.connectors import ConnectorResponse
 from services.connector_service import ConnectorService
 from .semantic_model_service import SemanticModelService
 from semantic.query import (
-    TsqlSemanticTranslator,
-    SemanticQuery
+    SemanticQuery,
+    SemanticQueryEngine,
 )
 from models.semantic import (
     SemanticQueryRequest,
@@ -29,8 +27,8 @@ class SemanticQueryService:
                  connector_service: ConnectorService
     ):
         self._semantic_model_service = semantic_model_service
-        self._translator = TsqlSemanticTranslator
         self._connector_service = connector_service
+        self._engine = SemanticQueryEngine()
         self._logger = logging.getLogger(__name__)
 
     async def query_request(
@@ -63,28 +61,39 @@ class SemanticQueryService:
             connector_response.config, # type: ignore (not null)
         )
 
+        if not isinstance(sql_connector, SqlConnector):
+            raise BusinessValidationError("Only SQL connectors are supported for semantic queries.")
+
+        rewrite_expression = None
+        if sql_connector.EXPRESSION_REWRITE:
+            rewrite_expression = getattr(sql_connector, "rewrite_expression", None)
+            if rewrite_expression is None:
+                raise BusinessValidationError(
+                    "Semantic query translation failed: connector expression rewriter missing."
+                )
+
         try:
-            tree: exp.Select = self._translator().translate(
+            plan = self._engine.compile(
                 semantic_query,
                 semantic_model,
                 dialect=sql_connector.DIALECT.value.lower(),
+                rewrite_expression=rewrite_expression,
             )
-        except Exception as e:
-            raise BusinessValidationError(f"Semantic query translation failed: {e}")
-        
-        dialect_sql: str = self.__transpile(tree, sql_connector)
+        except Exception as exc:
+            raise BusinessValidationError(f"Semantic query translation failed: {exc}") from exc
 
-        self._logger.info(f"Translated SQL {dialect_sql}")
+        self._logger.info(f"Translated SQL {plan.sql}")
 
-        result: QueryResult = await sql_connector.execute(dialect_sql)
+        result: QueryResult = await sql_connector.execute(plan.sql)
 
         return SemanticQueryResponse(
             id=uuid.uuid4(),
             organization_id=semantic_query_request.organization_id,
             project_id=semantic_query_request.project_id,
             semantic_model_id=semantic_query_request.semantic_model_id,
-            data=self.__format_data_response(result),
-            annotations=self.__format_annotations_response(semantic_query, semantic_model)
+            data=self._engine.format_rows(result.columns, result.rows),
+            annotations=plan.annotations,
+            metadata=plan.metadata,
         )
 
     async def get_meta(
@@ -103,6 +112,7 @@ class SemanticQueryService:
             raise BusinessValidationError(f"Semantic model failed validation: {exc}") from exc
 
         payload = semantic_model.model_dump(by_alias=True, exclude_none=True)
+        self._attach_full_column_paths(payload)
         return SemanticQueryMetaResponse(
             id=semantic_model_id,
             name=semantic_model_record.name,
@@ -113,38 +123,28 @@ class SemanticQueryService:
             semantic_model=payload,
         )
 
-    def __transpile(self, tree: exp.Select, target_connector: SqlConnector) -> str:
-        if not isinstance(target_connector, SqlConnector):
-            raise BusinessValidationError("Only SQL connectors are supported for semantic queries.")
-        
-        if target_connector.EXPRESSION_REWRITE:
-            try:
-                rewritten_expression: sqlglot.Expression = tree.transform(
-                    lambda node: target_connector.rewrite_expression(node)  # type: ignore
-                )
-                self._logger.debug(f"Rewritten expression: {rewritten_expression}")
-                dialect_sql = rewritten_expression.sql(dialect=target_connector.DIALECT.value.lower())
-            except Exception as exc:
-                raise BusinessValidationError(f"Semantic query translation failed: {exc}") from exc
-            return dialect_sql
-        else:
-            return tree.sql(dialect=target_connector.DIALECT.value.lower())
+    @staticmethod
+    def _attach_full_column_paths(payload: dict[str, Any]) -> None:
+        tables = payload.get("tables")
+        if not isinstance(tables, dict):
+            return
+        for table in tables.values():
+            if not isinstance(table, dict):
+                continue
+            schema = str(table.get("schema") or "").strip()
+            table_name = str(table.get("name") or "").strip()
+            if not table_name:
+                continue
+            base = f"{schema}.{table_name}" if schema else table_name
+            for collection_key in ("dimensions", "measures"):
+                items = table.get(collection_key)
+                if not isinstance(items, list):
+                    continue
+                for item in items:
+                    if not isinstance(item, dict):
+                        continue
+                    column_name = str(item.get("name") or "").strip()
+                    if not column_name:
+                        continue
+                    item["full_path"] = f"{base}.{column_name}"
 
-    def __format_data_response(
-            self,
-            result: QueryResult
-    ) -> List[Dict[str, Any]]:
-        return [dict(zip(result.columns, row)) for row in result.rows]
-    
-    def __format_annotations_response(
-            self,
-            semantic_query: SemanticQuery,
-            semantic_model: SemanticModel) -> List[Dict[str, str]]:
-        annoinations: List[Dict[str, Any]] = []
-        for table in semantic_model.tables.values():
-            for annotation in table.get_annotations().items():
-                annoinations.append({
-                    "column": annotation[0],
-                    "name": annotation[1]
-                })
-        return annoinations

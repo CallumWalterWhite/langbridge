@@ -24,6 +24,7 @@ import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Textarea } from '@/components/ui/textarea';
 import { useToast } from '@/components/ui/toast';
+import { useWorkspaceScope } from '@/context/workspaceScope';
 import { formatRelativeDate } from '@/lib/utils';
 import { fetchAgentDefinitions, fetchLLMConnections } from '@/orchestration/agents';
 import type { AgentDefinition, LLMConnection } from '@/orchestration/agents';
@@ -31,7 +32,6 @@ import { createThread } from '@/orchestration/threads';
 import type { Thread } from '@/orchestration/threads';
 
 import { AddSourceDialog } from './AddSourceDialog';
-import { QuickAgentCreateDrawer } from './QuickAgentCreateDrawer';
 import type { DataSource } from '../types';
 
 const API_BASE = process.env.NEXT_PUBLIC_BACKEND_URL ?? '';
@@ -57,50 +57,6 @@ type FeatureHighlight = {
   icon: ComponentType<{ className?: string }>;
 };
 
-const featureHighlights: FeatureHighlight[] = [
-  {
-    title: 'Data connections',
-    description: 'Secure connectors for warehouses, SaaS tools, and APIs.',
-    href: '/datasources',
-    cta: 'Manage sources',
-    icon: Database,
-  },
-  {
-    title: 'Semantic models',
-    description: 'Define metrics, joins, and business language once.',
-    href: '/semantic-model',
-    cta: 'Build a model',
-    icon: Layers,
-  },
-  {
-    title: 'Agent blueprints',
-    description: 'Chain SQL, retrieval, and automations into agents.',
-    href: '/agents',
-    cta: 'Open agents',
-    icon: Bot,
-  },
-  {
-    title: 'BI studio',
-    description: 'Compose semantic queries and lightweight dashboards.',
-    href: '/bi',
-    cta: 'Launch studio',
-    icon: LineChart,
-  },
-  {
-    title: 'Threaded copilot',
-    description: 'Run investigations with grounded, iterative answers.',
-    href: '/chat',
-    cta: 'View threads',
-    icon: MessageSquare,
-  },
-  {
-    title: 'Workspace governance',
-    description: 'Organize orgs, projects, and access controls.',
-    href: '/organizations',
-    cta: 'Manage workspace',
-    icon: ShieldCheck,
-  },
-];
 
 const statusVariantMap: Record<DataSource['status'], 'success' | 'destructive' | 'warning'> = {
   connected: 'success',
@@ -112,12 +68,18 @@ export function DashboardCards() {
   const router = useRouter();
   const queryClient = useQueryClient();
   const { toast } = useToast();
+  const { selectedOrganizationId } = useWorkspaceScope();
   const [draftPrompt, setDraftPrompt] = useState('');
 
+  const dataSourcesQueryKey = ['datasources', selectedOrganizationId] as const;
   const { data: sources, isLoading, isError, refetch } = useQuery<DataSource[]>({
-    queryKey: ['datasources'],
+    queryKey: dataSourcesQueryKey,
+    enabled: Boolean(selectedOrganizationId),
     queryFn: async () => {
-      const response = await fetch(withApiBase('/api/v1/datasources'), {
+      if (!selectedOrganizationId) {
+        return [];
+      }
+      const response = await fetch(withApiBase(`/api/v1/datasources/${selectedOrganizationId}`), {
         credentials: 'include',
         headers: { Accept: 'application/json' },
       });
@@ -129,17 +91,24 @@ export function DashboardCards() {
   });
 
   const agentDefinitionsQuery = useQuery<AgentDefinition[]>({
-    queryKey: ['agent-definitions'],
-    queryFn: () => fetchAgentDefinitions(),
+    queryKey: ['agent-definitions', selectedOrganizationId],
+    enabled: Boolean(selectedOrganizationId),
+    queryFn: () => fetchAgentDefinitions(selectedOrganizationId),
   });
 
   const llmConnectionsQuery = useQuery<LLMConnection[]>({
-    queryKey: ['llm-connections'],
-    queryFn: () => fetchLLMConnections(),
+    queryKey: ['llm-connections', selectedOrganizationId],
+    enabled: Boolean(selectedOrganizationId),
+    queryFn: () => fetchLLMConnections(selectedOrganizationId),
   });
 
   const startChatMutation = useMutation<Thread, Error>({
-    mutationFn: () => createThread(),
+    mutationFn: () => {
+      if (!selectedOrganizationId) {
+        throw new Error('Select an organization before starting a thread.');
+      }
+      return createThread(selectedOrganizationId);
+    },
     onError: (error) => {
       toast({ title: 'Something went wrong', description: error.message, variant: 'destructive' });
     },
@@ -172,6 +141,55 @@ export function DashboardCards() {
   const canUseChat = hasAgents && hasConnections;
   const missingConnections = !hasConnections;
   const missingAgents = !hasAgents;
+  const agentsBasePath = selectedOrganizationId ? `/agents/${selectedOrganizationId}` : '/agents';
+  const dataSourcesBasePath = selectedOrganizationId ? `/datasources/${selectedOrganizationId}` : '/datasources';
+  const semanticModelsBasePath = selectedOrganizationId ? `/semantic-model/${selectedOrganizationId}` : '/semantic-model';
+  const biBasePath = selectedOrganizationId ? `/bi/${selectedOrganizationId}` : '/bi';
+  const chatBasePath = selectedOrganizationId ? `/chat/${selectedOrganizationId}` : '/chat';
+  const featureHighlights: FeatureHighlight[] = [
+    {
+      title: 'Data connections',
+      description: 'Secure connectors for warehouses, SaaS tools, and APIs.',
+      href: dataSourcesBasePath,
+      cta: 'Manage sources',
+      icon: Database,
+    },
+    {
+      title: 'Semantic models',
+      description: 'Define metrics, joins, and business language once.',
+      href: semanticModelsBasePath,
+      cta: 'Build a model',
+      icon: Layers,
+    },
+    {
+      title: 'Agent blueprints',
+      description: 'Chain SQL, retrieval, and automations into agents.',
+      href: agentsBasePath,
+      cta: 'Open agents',
+      icon: Bot,
+    },
+    {
+      title: 'BI studio',
+      description: 'Compose semantic queries and lightweight dashboards.',
+      href: biBasePath,
+      cta: 'Launch studio',
+      icon: LineChart,
+    },
+    {
+      title: 'Threaded copilot',
+      description: 'Run investigations with grounded, iterative answers.',
+      href: chatBasePath,
+      cta: 'View threads',
+      icon: MessageSquare,
+    },
+    {
+      title: 'Workspace governance',
+      description: 'Organize orgs, projects, and access controls.',
+      href: '/organizations',
+      cta: 'Manage workspace',
+      icon: ShieldCheck,
+    },
+  ];
 
   const workspaceStatus = isLoading
     ? 'Syncing sources and workspace health.'
@@ -190,13 +208,21 @@ export function DashboardCards() {
           : 'success';
 
   const handleSourceCreated = useCallback(async () => {
-    await queryClient.invalidateQueries({ queryKey: ['datasources'] });
+    await queryClient.invalidateQueries({ queryKey: dataSourcesQueryKey });
     await refetch();
-  }, [queryClient, refetch]);
+  }, [dataSourcesQueryKey, queryClient, refetch]);
 
   const startChat = useCallback(
     async (prompt?: string) => {
       if (startChatMutation.isPending) {
+        return;
+      }
+      if (!selectedOrganizationId) {
+        toast({
+          title: 'Select an organization',
+          description: 'Choose a workspace scope before starting a thread.',
+          variant: 'destructive',
+        });
         return;
       }
 
@@ -205,15 +231,15 @@ export function DashboardCards() {
         toast({ title: 'Thread ready', description: 'Opening the workspace.' });
         const href =
           prompt && prompt.trim().length > 0
-            ? `/chat/${thread.id}?prompt=${encodeURIComponent(prompt.trim())}`
-            : `/chat/${thread.id}`;
+            ? `${chatBasePath}/${thread.id}?prompt=${encodeURIComponent(prompt.trim())}`
+            : `${chatBasePath}/${thread.id}`;
         router.push(href);
       } catch (error) {
         // Error toast already handled by onError.
         console.error(error);
       }
     },
-    [router, startChatMutation, toast],
+    [chatBasePath, router, selectedOrganizationId, startChatMutation, toast],
   );
 
   const handleDraftSubmit = useCallback(
@@ -263,13 +289,13 @@ export function DashboardCards() {
                       New chat
                     </Button>
                   ) : null}
-                  <AddSourceDialog onCreated={handleSourceCreated}>
+                  <AddSourceDialog organizationId={selectedOrganizationId ?? undefined} onCreated={handleSourceCreated}>
                     <Button size="lg" variant="secondary" className="gap-2">
                       <Plus className="h-4 w-4" aria-hidden="true" />
                       Add source
                     </Button>
                   </AddSourceDialog>
-                  <Button size="lg" variant="outline" onClick={() => router.push('/bi')}>
+                  <Button size="lg" variant="outline" onClick={() => router.push(biBasePath)}>
                     Open BI studio
                   </Button>
                 </div>
@@ -335,7 +361,11 @@ export function DashboardCards() {
                     </p>
                     <div className="mt-4 flex flex-wrap items-center gap-2 text-xs">
                       {missingConnections ? (
-                        <Button size="sm" onClick={() => router.push('/agents/llm/create')} className="gap-2">
+                        <Button
+                          size="sm"
+                          onClick={() => router.push(`${agentsBasePath}/llm/create`)}
+                          className="gap-2"
+                        >
                           Add LLM connection
                         </Button>
                       ) : (
@@ -345,7 +375,7 @@ export function DashboardCards() {
                         <Button
                           size="sm"
                           variant="secondary"
-                          onClick={() => router.push('/agents/definitions/create')}
+                          onClick={() => router.push(`${agentsBasePath}/definitions/create`)}
                           className="gap-2"
                         >
                           Create agent

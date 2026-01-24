@@ -160,6 +160,8 @@ class ThreadService:
         self._thread_message_repository.add(user_message)
         self._thread_message_repository.add(assistant_message)
 
+        await self._thread_message_repository.flush()
+
         tool_calls = response.get("tool_calls")
         added_tool_calls = False
         if isinstance(tool_calls, list):
@@ -188,6 +190,5 @@ class ThreadService:
                     )
                 )
                 added_tool_calls = True
-        await self._thread_message_repository.flush()
         if added_tool_calls:
             await self._tool_call_repository.flush()

@@ -2,6 +2,7 @@ import { apiFetch } from '../http';
 import type {
   AgentDefinition,
   AgentDefinitionApiResponse,
+  AgentDefinitionApiResponseLegacy,
   CreateAgentDefinitionPayload,
   CreateLLMConnectionPayload,
   LLMConnection,
@@ -16,9 +17,23 @@ import type {
   SemanticSearchDefinitionResponse
 } from './types';
 
-const BASE_PATH = '/api/v1/agents/llm-connections';
-const DEF_BASE_PATH = '/api/v1/agents/definitions';
+const AGENTS_BASE_PATH = '/api/v1/agents';
 const SM_BASE_PATH = '/api/v1/semantic-model';
+
+function requireOrganizationId(organizationId: string): string {
+  if (!organizationId) {
+    throw new Error('Organization ID is required for agent operations.');
+  }
+  return organizationId;
+}
+
+function llmBasePath(organizationId: string): string {
+  return `${AGENTS_BASE_PATH}/${requireOrganizationId(organizationId)}/llm-connections`;
+}
+
+function definitionsBasePath(organizationId: string): string {
+  return `${AGENTS_BASE_PATH}/${requireOrganizationId(organizationId)}/definitions`;
+}
 
 function normalizeConnection(payload: LLMConnectionApiResponse): LLMConnection {
   return {
@@ -36,17 +51,20 @@ function normalizeConnection(payload: LLMConnectionApiResponse): LLMConnection {
   };
 }
 
-export async function fetchLLMConnections(): Promise<LLMConnection[]> {
-  const response = await apiFetch<LLMConnectionApiResponse[]>(BASE_PATH);
+export async function fetchLLMConnections(organizationId: string): Promise<LLMConnection[]> {
+  const response = await apiFetch<LLMConnectionApiResponse[]>(llmBasePath(organizationId));
   return response.map(normalizeConnection);
 }
 
-export async function fetchLLMConnection(connectionId: string): Promise<LLMConnection> {
-  const response = await apiFetch<LLMConnectionApiResponse>(`${BASE_PATH}/${connectionId}`);
+export async function fetchLLMConnection(organizationId: string, connectionId: string): Promise<LLMConnection> {
+  const response = await apiFetch<LLMConnectionApiResponse>(`${llmBasePath(organizationId)}/${connectionId}`);
   return normalizeConnection(response);
 }
 
-export async function createLLMConnection(payload: CreateLLMConnectionPayload): Promise<LLMConnection> {
+export async function createLLMConnection(
+  organizationId: string,
+  payload: CreateLLMConnectionPayload,
+): Promise<LLMConnection> {
   const body: Record<string, unknown> = {
     name: payload.name,
     provider: payload.provider,
@@ -64,7 +82,7 @@ export async function createLLMConnection(payload: CreateLLMConnectionPayload): 
     body.project_id = payload.projectId;
   }
 
-  const response = await apiFetch<LLMConnectionApiResponse>(BASE_PATH, {
+  const response = await apiFetch<LLMConnectionApiResponse>(llmBasePath(organizationId), {
     method: 'POST',
     body: JSON.stringify(body),
   });
@@ -73,6 +91,7 @@ export async function createLLMConnection(payload: CreateLLMConnectionPayload): 
 }
 
 export async function updateLLMConnection(
+  organizationId: string,
   connectionId: string,
   payload: UpdateLLMConnectionPayload,
 ): Promise<LLMConnection> {
@@ -94,16 +113,22 @@ export async function updateLLMConnection(
     body.project_id = payload.projectId;
   }
 
-  const response = await apiFetch<LLMConnectionApiResponse>(`${BASE_PATH}/${connectionId}`, {
-    method: 'PUT',
-    body: JSON.stringify(body),
-  });
+  const response = await apiFetch<LLMConnectionApiResponse>(
+    `${llmBasePath(organizationId)}/${connectionId}`,
+    {
+      method: 'PUT',
+      body: JSON.stringify(body),
+    },
+  );
 
   return normalizeConnection(response);
 }
 
-export async function testLLMConnection(payload: TestLLMConnectionPayload): Promise<LLMConnectionTestResult> {
-  return apiFetch<LLMConnectionTestResult>(`${BASE_PATH}/test`, {
+export async function testLLMConnection(
+  organizationId: string,
+  payload: TestLLMConnectionPayload,
+): Promise<LLMConnectionTestResult> {
+  return apiFetch<LLMConnectionTestResult>(`${llmBasePath(organizationId)}/test`, {
     method: 'POST',
     body: JSON.stringify({
       provider: payload.provider,
@@ -114,11 +139,14 @@ export async function testLLMConnection(payload: TestLLMConnectionPayload): Prom
   });
 }
 
-export async function deleteLLMConnection(connectionId: string): Promise<void> {
-  await apiFetch<void>(`${BASE_PATH}/${connectionId}`, { method: 'DELETE', skipJsonParse: true });
+export async function deleteLLMConnection(organizationId: string, connectionId: string): Promise<void> {
+  await apiFetch<void>(`${llmBasePath(organizationId)}/${connectionId}`, {
+    method: 'DELETE',
+    skipJsonParse: true,
+  });
 }
 
-function normalizeDefinition(payload: AgentDefinitionApiResponse): AgentDefinition {
+function normalizeDefinition(payload: AgentDefinitionApiResponse | AgentDefinitionApiResponseLegacy): AgentDefinition {
   let parsedDefinition: unknown = payload.definition;
   if (typeof parsedDefinition === 'string') {
     try {
@@ -128,16 +156,16 @@ function normalizeDefinition(payload: AgentDefinitionApiResponse): AgentDefiniti
     }
   }
 
-  const asAny = payload as any;
+  const legacy = payload as AgentDefinitionApiResponseLegacy;
   return {
     id: payload.id,
     name: payload.name,
     description: payload.description ?? null,
-    llmConnectionId: asAny.llm_connection_id ?? asAny.llmConnectionId ?? '',
+    llmConnectionId: payload.llm_connection_id ?? legacy.llmConnectionId ?? '',
     definition: parsedDefinition,
-    isActive: asAny.is_active ?? asAny.isActive ?? true,
-    createdAt: asAny.created_at ?? asAny.createdAt ?? '',
-    updatedAt: asAny.updated_at ?? asAny.updatedAt ?? '',
+    isActive: payload.is_active ?? legacy.isActive ?? true,
+    createdAt: payload.created_at ?? legacy.createdAt ?? '',
+    updatedAt: payload.updated_at ?? legacy.updatedAt ?? '',
   };
 }
 
@@ -152,17 +180,22 @@ function serializeDefinition(definition: unknown): string | unknown {
   }
 }
 
-export async function fetchAgentDefinitions(): Promise<AgentDefinition[]> {
-  const response = await apiFetch<AgentDefinitionApiResponse[]>(DEF_BASE_PATH);
+export async function fetchAgentDefinitions(organizationId: string): Promise<AgentDefinition[]> {
+  const response = await apiFetch<AgentDefinitionApiResponse[]>(definitionsBasePath(organizationId));
   return response.map(normalizeDefinition);
 }
 
-export async function fetchAgentDefinition(agentId: string): Promise<AgentDefinition> {
-  const response = await apiFetch<AgentDefinitionApiResponse>(`${DEF_BASE_PATH}/${agentId}`);
+export async function fetchAgentDefinition(organizationId: string, agentId: string): Promise<AgentDefinition> {
+  const response = await apiFetch<AgentDefinitionApiResponse>(
+    `${definitionsBasePath(organizationId)}/${agentId}`,
+  );
   return normalizeDefinition(response);
 }
 
-export async function createAgentDefinition(payload: CreateAgentDefinitionPayload): Promise<AgentDefinition> {
+export async function createAgentDefinition(
+  organizationId: string,
+  payload: CreateAgentDefinitionPayload,
+): Promise<AgentDefinition> {
   const body: Record<string, unknown> = {
     name: payload.name,
     description: payload.description,
@@ -171,7 +204,7 @@ export async function createAgentDefinition(payload: CreateAgentDefinitionPayloa
     is_active: payload.isActive ?? true,
   };
 
-  const response = await apiFetch<AgentDefinitionApiResponse>(DEF_BASE_PATH, {
+  const response = await apiFetch<AgentDefinitionApiResponse>(definitionsBasePath(organizationId), {
     method: 'POST',
     body: JSON.stringify(body),
   });
@@ -180,6 +213,7 @@ export async function createAgentDefinition(payload: CreateAgentDefinitionPayloa
 }
 
 export async function updateAgentDefinition(
+  organizationId: string,
   agentId: string,
   payload: UpdateAgentDefinitionPayload,
 ): Promise<AgentDefinition> {
@@ -190,23 +224,36 @@ export async function updateAgentDefinition(
   if (payload.definition !== undefined) body.definition = serializeDefinition(payload.definition);
   if (payload.isActive !== undefined) body.is_active = payload.isActive;
 
-  const response = await apiFetch<AgentDefinitionApiResponse>(`${DEF_BASE_PATH}/${agentId}`, {
-    method: 'PUT',
-    body: JSON.stringify(body),
-  });
+  const response = await apiFetch<AgentDefinitionApiResponse>(
+    `${definitionsBasePath(organizationId)}/${agentId}`,
+    {
+      method: 'PUT',
+      body: JSON.stringify(body),
+    },
+  );
 
   return normalizeDefinition(response);
 }
 
-export async function deleteAgentDefinition(agentId: string): Promise<void> {
-  await apiFetch<void>(`${DEF_BASE_PATH}/${agentId}`, { method: 'DELETE', skipJsonParse: true });
+export async function deleteAgentDefinition(organizationId: string, agentId: string): Promise<void> {
+  await apiFetch<void>(`${definitionsBasePath(organizationId)}/${agentId}`, {
+    method: 'DELETE',
+    skipJsonParse: true,
+  });
 }
 
 export async function getAvailableSemanticModels(
   organizationId: string,
   projectId?: string,
 ): Promise<SemanticModelResponse[]> {
-  return apiFetch<SemanticModelResponse[]>(`${SM_BASE_PATH}?organization_id=${organizationId}${projectId ? `&project_id=${projectId}` : ''}`);
+  const params = new URLSearchParams();
+  if (projectId) {
+    params.set('project_id', projectId);
+  }
+  const suffix = params.toString();
+  return apiFetch<SemanticModelResponse[]>(
+    `${SM_BASE_PATH}/${requireOrganizationId(organizationId)}${suffix ? `?${suffix}` : ''}`,
+  );
   // Stub response until backend is implemented
   return Promise.resolve([
     { id: 'semantic-model-1', name: 'Semantic Model 1', description: 'A powerful semantic model for understanding text.' },

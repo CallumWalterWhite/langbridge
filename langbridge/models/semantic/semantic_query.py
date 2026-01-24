@@ -27,3 +27,4 @@ class SemanticQueryResponse(_Base):
     semantic_model_id: UUID
     data: List[Dict[str, Any]]
     annotations: List[Dict[str, Any]]
+    metadata: Optional[List[Dict[str, Any]]] = None

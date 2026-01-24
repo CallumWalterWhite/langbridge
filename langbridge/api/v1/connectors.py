@@ -1,10 +1,13 @@
+from typing import Optional
 from uuid import UUID
 from dependency_injector.wiring import Provide, inject
 from fastapi import APIRouter, Depends, HTTPException, status
 
+from auth.dependencies import get_current_user, get_organization, get_project
 from connectors.config import ConnectorConfigSchema
 from errors.application_errors import BusinessValidationError
 from ioc import Container
+from models.auth import UserResponse
 from models.connectors import (
     ConnectorResponse,
     ConnectorSourceSchemaColumnResponse,
@@ -17,13 +20,18 @@ from models.connectors import (
 from services.connector_schema_service import ConnectorSchemaService
 from services.connector_service import ConnectorService
 
-router = APIRouter(prefix="/connectors", tags=["connectors"])
+router = APIRouter(prefix="/connectors/{organization_id}", tags=["connectors"])
 
 
 @router.post("/", response_model=ConnectorResponse)
 @inject
 async def create_connector(
     request: CreateConnectorRequest,
+    organization_id: UUID,
+    project_id: Optional[UUID] = None,
+    current_user: UserResponse = Depends(get_current_user),
+    _org = Depends(get_organization),
+    _proj = Depends(get_project),
     connector_service: ConnectorService = Depends(Provide[Container.connector_service]),
 ) -> ConnectorResponse:
     return await connector_service.create_connector(request)
@@ -33,6 +41,9 @@ async def create_connector(
 @inject
 async def get_connector(
     connector_id: UUID,
+    organization_id: UUID,
+    current_user: UserResponse = Depends(get_current_user),
+    _org = Depends(get_organization),
     connector_service: ConnectorService = Depends(Provide[Container.connector_service]),
 ) -> ConnectorResponse:
     return await connector_service.get_connector(connector_id)
@@ -42,6 +53,9 @@ async def get_connector(
 @inject
 async def get_connector_schemas(
     connector_id: UUID,
+    organization_id: UUID,
+    current_user: UserResponse = Depends(get_current_user),
+    _org = Depends(get_organization),
     connector_schema_service: ConnectorSchemaService = Depends(
         Provide[Container.connector_schema_service]
     ),
@@ -58,6 +72,9 @@ async def get_connector_schemas(
 async def get_connector_tables(
     connector_id: UUID,
     schema: str,
+    organization_id: UUID,
+    current_user: UserResponse = Depends(get_current_user),
+    _org = Depends(get_organization),
     connector_schema_service: ConnectorSchemaService = Depends(
         Provide[Container.connector_schema_service]
     ),
@@ -75,6 +92,9 @@ async def get_connector_table(
     connector_id: UUID,
     schema: str,
     table: str,
+    organization_id: UUID,
+    current_user: UserResponse = Depends(get_current_user),
+    _org = Depends(get_organization),
     connector_schema_service: ConnectorSchemaService = Depends(
         Provide[Container.connector_schema_service]
     ),
@@ -97,6 +117,9 @@ async def get_connector_table(
 @router.get("/schemas/type", response_model=list[str])
 @inject
 async def list_connector_types(
+    organization_id: UUID,
+    current_user: UserResponse = Depends(get_current_user),
+    _org = Depends(get_organization),
     connector_service: ConnectorService = Depends(Provide[Container.connector_service]),
 ) -> list[str]:
     return connector_service.list_connector_types()
@@ -106,6 +129,9 @@ async def list_connector_types(
 @inject
 async def get_connector_schema(
     connector_type: str,
+    organization_id: UUID,
+    current_user: UserResponse = Depends(get_current_user),
+    _org = Depends(get_organization),
     connector_service: ConnectorService = Depends(Provide[Container.connector_service]),
 ) -> ConnectorConfigSchema:
     try:
@@ -121,6 +147,9 @@ async def get_connector_schema(
 async def update_connector(
     connector_id: UUID,
     request: UpdateConnectorRequest,
+    organization_id: UUID,
+    current_user: UserResponse = Depends(get_current_user),
+    _org = Depends(get_organization),
     connector_service: ConnectorService = Depends(Provide[Container.connector_service]),
 ) -> ConnectorResponse:
     return await connector_service.update_connector(connector_id, request)
@@ -130,6 +159,9 @@ async def update_connector(
 @inject
 async def delete_connector(
     connector_id: UUID,
+    organization_id: UUID,
+    current_user: UserResponse = Depends(get_current_user),
+    _org = Depends(get_organization),
     connector_service: ConnectorService = Depends(Provide[Container.connector_service]),
 ) -> None:
     await connector_service.delete_connector(connector_id)
@@ -139,6 +171,13 @@ async def delete_connector(
 @router.get("/", response_model=list[ConnectorResponse])
 @inject
 async def list_connectors(
+    organization_id: UUID,
+    project_id: Optional[UUID] = None,
+    current_user: UserResponse = Depends(get_current_user),
+    _org = Depends(get_organization),
+    _proj = Depends(get_project),
     connector_service: ConnectorService = Depends(Provide[Container.connector_service]),
 ) -> list[ConnectorResponse]:
-    return await connector_service.list_all_connectors()
+    if project_id:
+        return await connector_service.list_project_connectors(project_id)
+    return await connector_service.list_organization_connectors(organization_id)

@@ -5,7 +5,7 @@ from dependency_injector.wiring import Provide, inject
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import PlainTextResponse
 
-from auth.dependencies import has_organization_access, has_project_access
+from auth.dependencies import get_current_user, get_organization, get_project
 from errors.application_errors import BusinessValidationError
 from ioc import Container
 from models.auth import UserResponse
@@ -16,13 +16,16 @@ from models.semantic import (
 )
 from services.semantic import SemanticModelService
 
-router = APIRouter(prefix="/semantic-model", tags=["semantic-model"])
+router = APIRouter(prefix="/semantic-model/{organization_id}", tags=["semantic-model"])
 
 
 @router.get("/generate/yaml")
 @inject
 async def preview_semantic_model_yaml(
+    organization_id: UUID,
     connector_id: UUID,
+    current_user: UserResponse = Depends(get_current_user),
+    _org = Depends(get_organization),
     service: SemanticModelService = Depends(Provide[Container.semantic_model_service]),
 ) -> PlainTextResponse:
     try:
@@ -43,6 +46,11 @@ async def preview_semantic_model_yaml(
 @inject
 async def create_semantic_model(
     request: SemanticModelCreateRequest,
+    organization_id: UUID,
+    project_id: Optional[UUID] = None,
+    current_user: UserResponse = Depends(get_current_user),
+    _org = Depends(get_organization),
+    _proj = Depends(get_project),
     service: SemanticModelService = Depends(Provide[Container.semantic_model_service]),
 ) -> SemanticModelRecordResponse:
     try:
@@ -58,8 +66,9 @@ async def create_semantic_model(
 async def list_semantic_models(
     organization_id: UUID,
     project_id: Optional[UUID] = None,
-    _: UserResponse = Depends(has_organization_access),
-    __: UserResponse = Depends(has_project_access),
+    current_user: UserResponse = Depends(get_current_user),
+    _org = Depends(get_organization),
+    _proj = Depends(get_project),
     service: SemanticModelService = Depends(Provide[Container.semantic_model_service]),
 ) -> list[SemanticModelRecordResponse]:
     models = await service.list_models(
@@ -74,6 +83,8 @@ async def list_semantic_models(
 async def get_semantic_model(
     model_id: UUID,
     organization_id: UUID,
+    current_user: UserResponse = Depends(get_current_user),
+    _org = Depends(get_organization),
     service: SemanticModelService = Depends(Provide[Container.semantic_model_service]),
 ) -> SemanticModelRecordResponse:
     try:
@@ -89,6 +100,8 @@ async def get_semantic_model(
 async def get_semantic_model_yaml(
     model_id: UUID,
     organization_id: UUID,
+    current_user: UserResponse = Depends(get_current_user),
+    _org = Depends(get_organization),
     service: SemanticModelService = Depends(Provide[Container.semantic_model_service]),
 ) -> PlainTextResponse:
     try:
@@ -106,6 +119,8 @@ async def update_semantic_model(
     model_id: UUID,
     organization_id: UUID,
     request: SemanticModelUpdateRequest,
+    current_user: UserResponse = Depends(get_current_user),
+    _org = Depends(get_organization),
     service: SemanticModelService = Depends(Provide[Container.semantic_model_service]),
 ) -> SemanticModelRecordResponse:
     try:
@@ -125,6 +140,8 @@ async def update_semantic_model(
 async def delete_semantic_model(
     model_id: UUID,
     organization_id: UUID,
+    current_user: UserResponse = Depends(get_current_user),
+    _org = Depends(get_organization),
     service: SemanticModelService = Depends(Provide[Container.semantic_model_service]),
 ) -> None:
     try:

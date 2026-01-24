@@ -14,6 +14,7 @@ from .model import (
     ResponseMode,
     ToolBinding,
 )
+from .factory import AgentDefinitionFactory
 
 __all__ = [
     "AgentDefinitionModel",
@@ -30,4 +31,5 @@ __all__ = [
     "PromptContract",
     "ResponseMode",
     "ToolBinding",
+    "AgentDefinitionFactory",
 ]
