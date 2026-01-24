@@ -22,7 +22,7 @@ PACKAGE_ROOT = REPO_ROOT / "langbridge"
 if str(PACKAGE_ROOT) not in sys.path:
     sys.path.insert(0, str(PACKAGE_ROOT))
 
-from orchestrator.agents.planner import (  # noqa: E402  (path adjustment)
+from langbridge.packages.orchestrator.langbridge_orchestrator.agents.planner import (  # noqa: E402  (path adjustment)
     PlanningAgent,
     PlannerRequest,
     PlanningConstraints,

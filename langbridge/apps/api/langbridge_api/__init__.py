@@ -1,0 +1,1 @@
+"""Langbridge API application."""

@@ -4,7 +4,7 @@ import re
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Set, Tuple
 
-from errors import SemanticModelError
+from langbridge.packages.common.langbridge_common.errors import SemanticModelError
 from model import Dimension, Measure, Metric, SemanticModel, TableFilter
 
 

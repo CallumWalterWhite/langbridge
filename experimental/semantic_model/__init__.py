@@ -1,4 +1,4 @@
-from errors import JoinPathError, SemanticModelError, SemanticQueryError
+from langbridge.packages.common.langbridge_common.errors import JoinPathError, SemanticModelError, SemanticQueryError
 from model import SemanticModel
 from query import FilterItem, SemanticQuery, TimeDimension
 from translator import TsqlSemanticTranslator

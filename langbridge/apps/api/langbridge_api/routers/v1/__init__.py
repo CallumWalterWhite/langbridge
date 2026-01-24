@@ -1,0 +1,38 @@
+from typing import List
+
+from fastapi import APIRouter
+
+from .agents import router as agents_router
+from .auth import router as auth_router
+from .organizations import router as organizations_router
+from .connectors import router as connectors_router
+from .semantic_models import router as semantic_model_router
+from .threads import router as threads_router
+from .semantic_query import router as semantic_query_router
+from .copilot import router as copilot_router
+from .messages import router as messages_router
+
+v1_routes: List[APIRouter] = [
+    auth_router,
+    agents_router,
+    organizations_router,
+    connectors_router,
+    semantic_model_router,
+    threads_router,
+    semantic_query_router,
+    copilot_router,
+    messages_router,
+]
+
+__all__ = [
+    "auth_router",
+    "agents_router",
+    "organizations_router",
+    "connectors_router",
+    "semantic_model_router",
+    "threads_router",
+    "semantic_query_router",
+    "copilot_router",
+    "messages_router",
+    "v1_routes",
+]

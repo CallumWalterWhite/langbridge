@@ -6,9 +6,9 @@ sys.path.append(str(pathlib.Path(__file__).resolve().parents[5] / "langbridge" /
 from typing import Any
 
 
-from orchestrator.agents.analyst.agent import AnalystAgent
-from orchestrator.tools.sql_analyst.interfaces import AnalystQueryRequest, SemanticModel
-from orchestrator.tools.sql_analyst.tool import SqlAnalystTool
+from langbridge.packages.orchestrator.langbridge_orchestrator.agents.analyst.agent import AnalystAgent
+from langbridge.packages.orchestrator.langbridge_orchestrator.tools.sql_analyst.interfaces import AnalystQueryRequest, SemanticModel
+from langbridge.packages.orchestrator.langbridge_orchestrator.tools.sql_analyst.tool import SqlAnalystTool
 
 
 class StaticLLM:

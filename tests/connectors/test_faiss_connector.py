@@ -8,9 +8,9 @@ pytest.importorskip("faiss")
 
 sys.path.append(str(pathlib.Path(__file__).resolve().parents[2] / "langbridge"))
 
-from connectors.faiss.config import FaissConnectorConfig  # noqa: E402
-from connectors.faiss.connector import FaissConnector  # noqa: E402
-from errors.connector_errors import ConnectorError  # noqa: E402
+from langbridge.packages.connectors.langbridge_connectors.api.faiss.config import FaissConnectorConfig  # noqa: E402
+from langbridge.packages.connectors.langbridge_connectors.api.faiss.connector import FaissConnector  # noqa: E402
+from langbridge.packages.common.langbridge_common.errors.connector_errors import ConnectorError  # noqa: E402
 
 
 def test_faiss_connector_upsert_and_search(tmp_path):

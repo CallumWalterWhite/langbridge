@@ -7,8 +7,8 @@ import sqlite3
 from typing import Any, Sequence
 
 
-from orchestrator.tools.sql_analyst.tool import SqlAnalystTool
-from orchestrator.tools.sql_analyst.interfaces import AnalystQueryRequest, QueryResult, SemanticModel
+from langbridge.packages.orchestrator.langbridge_orchestrator.tools.sql_analyst.tool import SqlAnalystTool
+from langbridge.packages.orchestrator.langbridge_orchestrator.tools.sql_analyst.interfaces import AnalystQueryRequest, QueryResult, SemanticModel
 
 
 class DummyLLM:

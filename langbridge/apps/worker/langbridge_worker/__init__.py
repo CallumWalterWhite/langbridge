@@ -1,0 +1,1 @@
+"""Langbridge worker application."""
