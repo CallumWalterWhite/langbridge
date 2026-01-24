@@ -1,0 +1,16 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "langbridge-connectors"
+version = "0.1.0"
+description = "Connector adapters"
+requires-python = ">=3.10"
+dependencies = [
+  "langbridge-common @ file:../common",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["langbridge_connectors*"]

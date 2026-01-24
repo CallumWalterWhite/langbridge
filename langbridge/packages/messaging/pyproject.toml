@@ -1,0 +1,17 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "langbridge-messaging"
+version = "0.1.0"
+description = "Messaging contracts and brokers"
+requires-python = ">=3.10"
+dependencies = [
+  "langbridge-common @ file:../common",
+  "redis>=5.0.0",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["langbridge_messaging*"]

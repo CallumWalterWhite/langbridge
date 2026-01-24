@@ -1,0 +1,18 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "langbridge-orchestrator"
+version = "0.1.0"
+description = "Agent orchestration and workflows"
+requires-python = ">=3.10"
+dependencies = [
+  "langbridge-common @ file:../common",
+  "langbridge-semantic @ file:../semantic",
+  "langbridge-connectors @ file:../connectors",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["langbridge_orchestrator*"]

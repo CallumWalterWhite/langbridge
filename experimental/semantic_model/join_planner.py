@@ -4,7 +4,7 @@ from collections import deque
 from dataclasses import dataclass
 from typing import Dict, Iterable, List, Optional, Set, Tuple
 
-from errors import JoinPathError
+from langbridge.packages.common.langbridge_common.errors import JoinPathError
 from model import Relationship
 
 

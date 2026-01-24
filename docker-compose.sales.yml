@@ -1,10 +1,10 @@
 version: "3.9"
 services:
-  backend:
+  api:
     build:
-      context: ./langbridge
-      dockerfile: Dockerfile
-    container_name: langbridge-backend
+      context: .
+      dockerfile: langbridge/Dockerfile
+    container_name: langbridge-api
     env_file:
       - ./langbridge/.env
     environment:
@@ -25,6 +25,42 @@ services:
         condition: service_started
     ports:
       - "8000:8000"
+  worker:
+    build:
+      context: .
+      dockerfile: langbridge/Dockerfile
+    container_name: langbridge-worker
+    env_file:
+      - ./langbridge/.env
+    environment:
+      ENVIRONMENT: development
+      POSTGRES_SERVER: db
+      POSTGRES_PORT: 5432
+      POSTGRES_USER: langbridge
+      POSTGRES_PASSWORD: langbridge
+      POSTGRES_DB: langbridge
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      WORKER_POLL_INTERVAL: 2.0
+    command: ["python", "-m", "langbridge.apps.worker.langbridge_worker.main"]
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
+  gateway:
+    build:
+      context: .
+      dockerfile: langbridge/Dockerfile
+    container_name: langbridge-gateway
+    env_file:
+      - ./langbridge/.env
+    environment:
+      TRINO_URL: ${TRINO_URL:-}
+      GATEWAY_PORT: 8001
+    command: ["uvicorn", "langbridge.apps.gateway.langbridge_gateway.main:app", "--host", "0.0.0.0", "--port", "8001"]
+    ports:
+      - "8001:8001"
   client:
     build:
       context: ./client
@@ -37,7 +73,7 @@ services:
       NEXT_PUBLIC_BACKEND_URL: http://localhost:8000
       PORT: 3000
     depends_on:
-      - backend
+      - api
     ports:
       - "3000:3000"
   db:
@@ -80,21 +116,6 @@ services:
       - "6379:6379"
     volumes:
       - redis_data:/data
-  proxy:
-    build:
-      context: ./proxy
-      dockerfile: Dockerfile
-    container_name: langbridge-proxy
-    environment:
-      PROXY_LISTEN_HOST: "0.0.0.0"
-      PROXY_PG_PORT: 55432
-      PROXY_MYSQL_PORT: 53306
-    ports:
-      - "55432:55432"
-      - "53306:53306"
-    depends_on:
-      - db
-      - redis
   qdrant:
     image: qdrant/qdrant:v1.9.4
     container_name: langbridge-qdrant

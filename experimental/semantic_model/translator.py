@@ -6,7 +6,7 @@ from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 
 import yaml
 
-from errors import SemanticModelError, SemanticQueryError
+from langbridge.packages.common.langbridge_common.errors import SemanticModelError, SemanticQueryError
 from join_planner import JoinPlanner
 from model import SemanticModel
 from query import FilterItem, SemanticQuery

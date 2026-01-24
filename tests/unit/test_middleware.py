@@ -4,8 +4,8 @@ from starlette.requests import Request
 from starlette.responses import Response
 from starlette.types import Scope, Receive, Send
 
-from middleware.error_middleware import ErrorMiddleware
-from errors.application_errors import ResourceNotFound, ApplicationError
+from langbridge.apps.api.langbridge_api.middleware.error_middleware import ErrorMiddleware
+from langbridge.packages.common.langbridge_common.errors.application_errors import ResourceNotFound, ApplicationError
 
 @pytest.fixture
 def anyio_backend():

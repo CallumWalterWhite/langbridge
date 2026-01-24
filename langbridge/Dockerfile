@@ -7,7 +7,7 @@ ENV PIP_NO_CACHE_DIR=1
 
 WORKDIR /app
 
-COPY requirements.txt ./
+COPY langbridge/requirements.txt ./
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends build-essential libpq-dev \
@@ -16,8 +16,9 @@ RUN apt-get update \
     && apt-get purge -y --auto-remove build-essential \
     && rm -rf /var/lib/apt/lists/*
 
-COPY . .
+COPY langbridge /app/langbridge
+COPY pyproject.toml /app/pyproject.toml
 
 EXPOSE 8000
 
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["uvicorn", "langbridge.apps.api.langbridge_api.main:app", "--host", "0.0.0.0", "--port", "8000"]

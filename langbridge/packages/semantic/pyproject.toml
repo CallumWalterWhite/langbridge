@@ -1,0 +1,17 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "langbridge-semantic"
+version = "0.1.0"
+description = "Semantic compiler and query handling"
+requires-python = ">=3.10"
+dependencies = [
+  "langbridge-common @ file:../common",
+  "langbridge-connectors @ file:../connectors",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["langbridge_semantic*"]
