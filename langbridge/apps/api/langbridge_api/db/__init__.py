@@ -1,5 +1,6 @@
 from .base import Base
 from .auth import User
+from langbridge.packages.common.langbridge_common.db.messages import MessageRecord
 from .session import (
     async_session_scope,
     create_async_engine_for_url,
@@ -13,6 +14,7 @@ from .session import (
 __all__ = [
     "Base",
     "User",
+    "MessageRecord",
     "async_session_scope",
     "create_async_engine_for_url",
     "create_async_session_factory",

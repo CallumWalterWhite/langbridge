@@ -6,13 +6,17 @@ from fastapi.routing import APIRoute
 from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 from starlette.middleware.cors import CORSMiddleware
 from starlette.middleware.sessions import SessionMiddleware
+from starlette.responses import Response
 
 from langbridge.apps.api.langbridge_api.routers import api_router_v1
 from langbridge.packages.common.langbridge_common.config import settings
-from langbridge.apps.api.langbridge_api.db import initialize_database
 from langbridge.apps.api.langbridge_api.ioc import build_container
 from langbridge.apps.api.langbridge_api.ioc.wiring import wire_packages
 from langbridge.packages.common.langbridge_common.logging.logger import setup_logging
+from langbridge.packages.common.langbridge_common.monitoring import (
+    PrometheusMiddleware,
+    metrics_response,
+)
 
 from langbridge.apps.api.langbridge_api.middleware import UnitOfWorkMiddleware, ErrorMiddleware, AuthMiddleware
 from dotenv import load_dotenv
@@ -41,7 +45,6 @@ async def lifespan(app: FastAPI):
     init_result = container.init_resources()
     if inspect.isawaitable(init_result):
         await init_result
-    initialize_database(container.engine())
     app.state.container = container
     yield
     shutdown_result = container.shutdown_resources()
@@ -67,6 +70,7 @@ app.add_middleware(
 )
 app.add_middleware(AuthMiddleware)
 app.add_middleware(UnitOfWorkMiddleware)
+app.add_middleware(PrometheusMiddleware, service_name="langbridge_api")
 
 if settings.CORS_ENABLED:
     app.add_middleware(
@@ -81,6 +85,11 @@ app.include_router(
     api_router_v1,
     prefix=settings.API_V1_STR,
 )
+
+
+@app.get("/metrics")
+def metrics() -> Response:
+    return metrics_response()
 
 FastAPIInstrumentor.instrument_app(app)
 

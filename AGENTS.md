@@ -1,14 +1,16 @@
 # Repository Guidelines
 
 ## Project Structure & Module Organization
-Langbridge pairs a FastAPI backend with a Next.js UI. Backend code lives under `langbridge/`: routers in `langbridge/api`, connectors and orchestrators under their domain folders, and shared DI/config in `config.py`, `ioc/`, `middleware/`, and `semantic/`. Frontend source sits in `client/src/app`, with shared UI in `client/src/components` and workflow helpers in `client/src/orchestration`. Core tests are grouped in `tests/` (api, connectors, orchestrator, unit), while module-specific fixtures may live in `langbridge/tests`. Docs and semantic/API references stay in `docs/`.
+Langbridge pairs a FastAPI backend with a Next.js UI. Backend apps live under `langbridge/apps` (`api`, `worker`, `gateway`), while shared Python packages live under `langbridge/packages` (`common`, `messaging`, `orchestrator`, `connectors`, `semantic`). API models and data access live in `langbridge/apps/api/langbridge_api/db` and repositories; shared DB models go in `langbridge/packages/common/langbridge_common/db`. Frontend source sits in `client/src/app`, with shared UI in `client/src/components` and workflow helpers in `client/src/orchestration`. Core tests are grouped in `tests/` (api, connectors, orchestrator, unit), while module-specific fixtures may live in `langbridge/tests`. Docs and semantic/API references stay in `docs/`.
 
 ## Build, Test, and Development Commands
 - `python -m venv .venv && ./.venv/Scripts/activate && pip install -r langbridge/requirements.txt` installs backend deps (use `source .venv/bin/activate` on macOS/Linux).
-- `python langbridge/main.py` starts the API via dependency injection; `fastapi run main.py` works if the FastAPI CLI is installed.
+- `python langbridge/main.py` (shim) or `uvicorn langbridge.apps.api.langbridge_api.main:app` starts the API via dependency injection.
+- `python -m langbridge.apps.worker.langbridge_worker.main` runs the Redis-backed worker.
 - `cd client && npm install && npm run dev` runs the Next.js dev server; `npm run build && npm run start` serves the production bundle.
 - `docker compose up --build` launches API, UI, Postgres, and Redis for integrated verification.
 - `pytest -q tests` executes backend suites; limit scope with subpaths such as `pytest tests/orchestrator`.
+- `alembic revision --autogenerate -m "describe change"` and `alembic upgrade head` manage schema migrations.
 - `cd client && npm run lint` must be clean before opening a PR.
 
 ## Coding Style & Naming Conventions

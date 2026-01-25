@@ -6,6 +6,12 @@ from typing import Any
 
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
+from starlette.responses import Response
+
+from langbridge.packages.common.langbridge_common.monitoring import (
+    PrometheusMiddleware,
+    metrics_response,
+)
 
 from .auth.secrets_provider import get_db_credentials
 from .trino_client.client import execute
@@ -30,6 +36,7 @@ class QueryResponse(BaseModel):
 
 
 app = FastAPI(title="Langbridge Gateway", version="0.1.0")
+app.add_middleware(PrometheusMiddleware, service_name="langbridge_gateway")
 
 
 @app.get("/health")
@@ -66,6 +73,11 @@ async def query(request: QueryRequest) -> QueryResponse:
         data=result.get("data", []),
         stats=result.get("stats"),
     )
+
+
+@app.get("/metrics")
+def metrics() -> Response:
+    return metrics_response()
 
 
 if __name__ == "__main__":

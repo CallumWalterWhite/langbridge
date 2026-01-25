@@ -23,6 +23,7 @@ PATHS_TO_EXCLUDE = [
     "/api/v1/auth/google/callback",
     "/api/v1/auth/logout",
     "/api/v1/auth/me",
+    "/metrics",
     "/docs",
     "/openapi.json",
 ]

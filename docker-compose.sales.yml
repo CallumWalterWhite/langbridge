@@ -1,9 +1,28 @@
 version: "3.9"
 services:
+  migrate:
+    build:
+      context: .
+      dockerfile: langbridge/Dockerfile.migrate
+    container_name: langbridge-migrate
+    env_file:
+      - ./langbridge/.env
+    environment:
+      ENVIRONMENT: development
+      POSTGRES_SERVER: db
+      POSTGRES_PORT: 5432
+      POSTGRES_USER: langbridge
+      POSTGRES_PASSWORD: langbridge
+      POSTGRES_DB: langbridge
+    depends_on:
+      db:
+        condition: service_healthy
+    command: ["alembic", "upgrade", "head"]
+    restart: "no"
   api:
     build:
       context: .
-      dockerfile: langbridge/Dockerfile
+      dockerfile: langbridge/Dockerfile.api
     container_name: langbridge-api
     env_file:
       - ./langbridge/.env
@@ -23,12 +42,14 @@ services:
         condition: service_healthy
       redis:
         condition: service_started
+      migrate:
+        condition: service_completed_successfully
     ports:
       - "8000:8000"
   worker:
     build:
       context: .
-      dockerfile: langbridge/Dockerfile
+      dockerfile: langbridge/Dockerfile.worker
     container_name: langbridge-worker
     env_file:
       - ./langbridge/.env
@@ -42,16 +63,19 @@ services:
       REDIS_HOST: redis
       REDIS_PORT: 6379
       WORKER_POLL_INTERVAL: 2.0
+      WORKER_METRICS_PORT: 9101
     command: ["python", "-m", "langbridge.apps.worker.langbridge_worker.main"]
     depends_on:
       db:
         condition: service_healthy
       redis:
         condition: service_started
+      migrate:
+        condition: service_completed_successfully
   gateway:
     build:
       context: .
-      dockerfile: langbridge/Dockerfile
+      dockerfile: langbridge/Dockerfile.gateway
     container_name: langbridge-gateway
     env_file:
       - ./langbridge/.env
@@ -124,8 +148,54 @@ services:
       - "6334:6334"
     volumes:
       - qdrant_data:/qdrant/storage
+  prometheus:
+    image: prom/prometheus:v2.55.1
+    container_name: langbridge-prometheus
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+    ports:
+      - "9090:9090"
+  loki:
+    image: grafana/loki:2.9.8
+    container_name: langbridge-loki
+    command: ["-config.file=/etc/loki/config.yml"]
+    volumes:
+      - ./monitoring/loki-config.yml:/etc/loki/config.yml:ro
+      - loki_data:/loki
+    ports:
+      - "3100:3100"
+  promtail:
+    image: grafana/promtail:2.9.8
+    container_name: langbridge-promtail
+    command: ["-config.file=/etc/promtail/config.yml"]
+    volumes:
+      - ./monitoring/promtail-config.yml:/etc/promtail/config.yml:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    depends_on:
+      - loki
+  grafana:
+    image: grafana/grafana:11.2.0
+    container_name: langbridge-grafana
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+    ports:
+      - "3001:3000"
+    depends_on:
+      - prometheus
+      - loki
 volumes:
   pg_data:
   sales_pg_data:
   redis_data:
   qdrant_data:
+  prometheus_data:
+  grafana_data:
+  loki_data:

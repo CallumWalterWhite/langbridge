@@ -1,0 +1,48 @@
+from typing import Callable, List, Sequence, Type
+
+from ..ioc import DependencyResolver
+from langbridge.packages.messaging.langbridge_messaging.contracts import MessageEnvelope
+from langbridge.packages.messaging.langbridge_messaging.handler import BaseMessageHandler
+
+
+class WorkerMessageHandler:
+
+    def __init__(
+            self
+    ):
+        self.handlers = self.__resolve_handlers()
+        self._handler_map: dict[str, Type[BaseMessageHandler]] = {
+            h.message_type: h for h in self.handlers
+        }
+        self.dependency_resolver = DependencyResolver()
+
+    async def handle_message(
+            self,
+            message: MessageEnvelope
+    ) -> Sequence[MessageEnvelope] | None:
+        handler_type: Type[BaseMessageHandler] = self._get_handler(message)
+        handler = self._initalize_handler(handler_type)
+        return await handler.handle(message.payload)
+
+    def _get_handler(
+        self,
+        message: MessageEnvelope
+    ) -> Type[BaseMessageHandler]:
+        try:
+            return self._handler_map[message.message_type]
+        except KeyError:
+            raise ValueError(
+                f"No handler registered for message type '{message.message_type}'"
+            )
+
+    def _initalize_handler(
+         self,
+         handler: Type[BaseMessageHandler]   
+    ) -> BaseMessageHandler:
+        return self.dependency_resolver.resolve(handler)
+
+    def __resolve_handlers(
+            self
+    ):
+        handlers: List[BaseMessageHandler] = BaseMessageHandler.__subclasses__()
+        return handlers
