@@ -24,6 +24,8 @@ from dotenv import load_dotenv
 load_dotenv()
 
 def custom_generate_unique_id(route: APIRoute) -> str:
+    if len(route.tags) == 0:
+        return route.name
     return f"{route.tags[0]}-{route.name}"
 
 container = build_container(settings)
