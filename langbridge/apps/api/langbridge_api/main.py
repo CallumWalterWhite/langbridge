@@ -18,7 +18,14 @@ from langbridge.packages.common.langbridge_common.monitoring import (
     metrics_response,
 )
 
-from langbridge.apps.api.langbridge_api.middleware import UnitOfWorkMiddleware, ErrorMiddleware, AuthMiddleware
+from langbridge.apps.api.langbridge_api.middleware import (
+    UnitOfWorkMiddleware, 
+    ErrorMiddleware, 
+    AuthMiddleware, 
+    RequestContextMiddleware,
+    CorrelationIdMiddleware,
+    MessageFlusherMiddleware
+)
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -61,8 +68,10 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# Order of middleware matters! UnitOfWork should be first to ensure DB session is available to all
-# subsequent middleware and route handlers.
+
+# Middleware
+# Middlewares are executed in the order they are added.
+# So the first added middleware is the outermost layer.
 app.add_middleware(ErrorMiddleware)
 app.add_middleware(
     SessionMiddleware,
@@ -71,8 +80,12 @@ app.add_middleware(
     https_only=False,
 )
 app.add_middleware(AuthMiddleware)
+app.add_middleware(RequestContextMiddleware)
+app.add_middleware(CorrelationIdMiddleware)
+# Unit of Work Middleware should be after Auth Middleware to have access to user info
 app.add_middleware(UnitOfWorkMiddleware)
 app.add_middleware(PrometheusMiddleware, service_name="langbridge_api")
+app.add_middleware(MessageFlusherMiddleware) 
 
 if settings.CORS_ENABLED:
     app.add_middleware(

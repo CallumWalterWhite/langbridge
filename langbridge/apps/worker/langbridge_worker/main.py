@@ -8,12 +8,14 @@ from typing import Sequence
 
 from redis.exceptions import RedisError
 
-from langbridge.packages.messaging.langbridge_messaging.broker.redis import RedisBroker
+from langbridge.apps.api.langbridge_api.db import async_session_scope
+from langbridge.apps.api.langbridge_api.db.session_context import reset_session, set_session
 from langbridge.packages.messaging.langbridge_messaging.contracts.messages import (
     MessageEnvelope,
 )
 from langbridge.packages.common.langbridge_common.monitoring import start_metrics_server
 from .handlers import WorkerMessageHandler
+from .ioc import create_container, DependencyResolver
 
 async def run_worker(poll_interval: float = 2.0) -> None:
     logger = logging.getLogger("langbridge.worker")
@@ -22,13 +24,16 @@ async def run_worker(poll_interval: float = 2.0) -> None:
     run_once = os.environ.get("WORKER_RUN_ONCE", "false").lower() in {"1", "true", "yes"}
     broker_mode = os.environ.get("WORKER_BROKER", "redis").lower()
 
-    worker_handler = WorkerMessageHandler()
+    container = create_container()
+    container.wire(packages=["langbridge.apps.worker.langbridge_worker"])
+    dependency_resolver = DependencyResolver(container)
+    worker_handler = WorkerMessageHandler(dependency_resolver=dependency_resolver)
 
     if broker_mode in {"none", "noop", "disabled"}:
         broker = _NoopBroker()
         logger.info("Worker broker disabled; running in noop mode")
     else:
-        broker = RedisBroker()
+        broker = container.message_broker()
 
     try:
         while True:
@@ -54,7 +59,12 @@ async def run_worker(poll_interval: float = 2.0) -> None:
                     envelope.message_type,
                 )
                 try:
-                    new_messages: Sequence[MessageEnvelope] | None = await worker_handler.handle_message(envelope)
+                    async with async_session_scope(container.async_session_factory()) as session:
+                        token = set_session(session)
+                        try:
+                            new_messages: Sequence[MessageEnvelope] | None = await worker_handler.handle_message(envelope)
+                        finally:
+                            reset_session(token)
                     if new_messages:
                         for new_message in new_messages:
                             await broker.publish(new_message)

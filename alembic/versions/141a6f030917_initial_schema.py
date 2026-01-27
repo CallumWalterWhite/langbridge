@@ -45,12 +45,13 @@ def upgrade() -> None:
     sa.Column('updated_at', sa.DateTime(), nullable=True),
     sa.PrimaryKeyConstraint('id')
     )
-    op.create_table('messages',
+    op.create_table('outbox_messages',
     sa.Column('id', sa.UUID(), nullable=False),
     sa.Column('message_type', sa.String(length=255), nullable=False),
     sa.Column('payload', sa.JSON(), nullable=False),
+    sa.Column('correlation_id', sa.String(length=255), nullable=True),
     sa.Column('headers', sa.JSON(), nullable=False),
-    sa.Column('status', sa.Enum('received', 'processing', 'completed', 'failed', 'dead_letter', name='message_status'), nullable=False),
+    sa.Column('status', sa.Enum('not_sent', 'sent', 'received', 'processing', 'completed', 'failed', 'dead_letter', name='message_status'), nullable=False),
     sa.Column('stream', sa.String(length=255), nullable=True),
     sa.Column('consumer_group', sa.String(length=255), nullable=True),
     sa.Column('consumer_name', sa.String(length=255), nullable=True),
@@ -62,9 +63,10 @@ def upgrade() -> None:
     sa.Column('updated_at', sa.DateTime(timezone=True), server_default=sa.text('(CURRENT_TIMESTAMP)'), nullable=False),
     sa.PrimaryKeyConstraint('id')
     )
-    op.create_index(op.f('ix_messages_created_at'), 'messages', ['created_at'], unique=False)
-    op.create_index(op.f('ix_messages_message_type'), 'messages', ['message_type'], unique=False)
-    op.create_index(op.f('ix_messages_status'), 'messages', ['status'], unique=False)
+    op.create_index(op.f('ix_outbox_messages_correlation_id'), 'outbox_messages', ['correlation_id'], unique=False)
+    op.create_index(op.f('ix_outbox_messages_created_at'), 'outbox_messages', ['created_at'], unique=False)
+    op.create_index(op.f('ix_outbox_messages_message_type'), 'outbox_messages', ['message_type'], unique=False)
+    op.create_index(op.f('ix_outbox_messages_status'), 'outbox_messages', ['status'], unique=False)
     op.create_table('organizations',
     sa.Column('id', sa.UUID(), nullable=False),
     sa.Column('name', sa.String(length=255), nullable=False),
@@ -294,6 +296,59 @@ def upgrade() -> None:
     sa.PrimaryKeyConstraint('id')
     )
     op.create_index(op.f('ix_tool_calls_message_id'), 'tool_calls', ['message_id'], unique=False)
+    op.create_table('jobs',
+    sa.Column('id', sa.UUID(), nullable=False),
+    sa.Column('organisation_id', sa.String(length=64), nullable=False),
+    sa.Column('job_type', sa.String(length=255), nullable=False),
+    sa.Column('payload', sa.JSON(), nullable=False),
+    sa.Column('headers', sa.JSON(), nullable=False),
+    sa.Column('status', sa.Enum('queued', 'running', 'succeeded', 'failed', 'cancelled', name='job_status'), nullable=False),
+    sa.Column('priority', sa.Enum('low', 'normal', 'high', name='job_priority'), nullable=False),
+    sa.Column('attempt', sa.Integer(), nullable=False),
+    sa.Column('max_attempts', sa.Integer(), nullable=False),
+    sa.Column('lock_owner', sa.String(length=255), nullable=True),
+    sa.Column('locked_until', sa.DateTime(timezone=True), nullable=True),
+    sa.Column('progress', sa.Integer(), nullable=False),
+    sa.Column('status_message', sa.String(length=1024), nullable=True),
+    sa.Column('result', sa.JSON(), nullable=True),
+    sa.Column('error', sa.JSON(), nullable=True),
+    sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.text('(CURRENT_TIMESTAMP)'), nullable=False),
+    sa.Column('queued_at', sa.DateTime(timezone=True), server_default=sa.text('(CURRENT_TIMESTAMP)'), nullable=False),
+    sa.Column('started_at', sa.DateTime(timezone=True), nullable=True),
+    sa.Column('finished_at', sa.DateTime(timezone=True), nullable=True),
+    sa.Column('updated_at', sa.DateTime(timezone=True), server_default=sa.text('(CURRENT_TIMESTAMP)'), nullable=False),
+    sa.PrimaryKeyConstraint('id')
+    )
+    op.create_index('ix_jobs_created_at', 'jobs', ['created_at'], unique=False)
+    op.create_index('ix_jobs_job_type', 'jobs', ['job_type'], unique=False)
+    op.create_index('ix_jobs_lock_owner', 'jobs', ['lock_owner'], unique=False)
+    op.create_index('ix_jobs_locked_until', 'jobs', ['locked_until'], unique=False)
+    op.create_index('ix_jobs_organisation_id', 'jobs', ['organisation_id'], unique=False)
+    op.create_index('ix_jobs_priority', 'jobs', ['priority'], unique=False)
+    op.create_index('ix_jobs_status', 'jobs', ['status'], unique=False)
+    op.create_index('ix_jobs_runnable', 'jobs', ['status', 'locked_until', 'priority', 'created_at'], unique=False)
+    op.create_table('job_events',
+    sa.Column('id', sa.UUID(), nullable=False),
+    sa.Column('job_id', sa.UUID(), nullable=False),
+    sa.Column('event_type', sa.String(length=255), nullable=False),
+    sa.Column('details', sa.JSON(), nullable=False),
+    sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.text('(CURRENT_TIMESTAMP)'), nullable=False),
+    sa.ForeignKeyConstraint(['job_id'], ['jobs.id'], ondelete='cascade'),
+    sa.PrimaryKeyConstraint('id')
+    )
+    op.create_index('ix_job_events_job_id', 'job_events', ['job_id'], unique=False)
+    op.create_table('job_tasks',
+    sa.Column('id', sa.UUID(), nullable=False),
+    sa.Column('job_id', sa.UUID(), nullable=False),
+    sa.Column('task_name', sa.String(length=255), nullable=False),
+    sa.Column('parameters', sa.JSON(), nullable=False),
+    sa.Column('result', sa.JSON(), nullable=True),
+    sa.Column('error', sa.JSON(), nullable=True),
+    sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.text('(CURRENT_TIMESTAMP)'), nullable=False),
+    sa.ForeignKeyConstraint(['job_id'], ['jobs.id'], ondelete='cascade'),
+    sa.PrimaryKeyConstraint('id')
+    )
+    op.create_index('ix_job_tasks_job_id', 'job_tasks', ['job_id'], unique=False)
     op.create_table('vector_entry_semantic',
     sa.Column('vector_store_entry_id', sa.UUID(), nullable=False),
     sa.Column('semantic_model_entry_id', sa.UUID(), nullable=False),
@@ -307,6 +362,19 @@ def upgrade() -> None:
 def downgrade() -> None:
     # ### commands auto generated by Alembic - please adjust! ###
     op.drop_table('vector_entry_semantic')
+    op.drop_index('ix_job_tasks_job_id', table_name='job_tasks')
+    op.drop_table('job_tasks')
+    op.drop_index('ix_job_events_job_id', table_name='job_events')
+    op.drop_table('job_events')
+    op.drop_index('ix_jobs_runnable', table_name='jobs')
+    op.drop_index('ix_jobs_status', table_name='jobs')
+    op.drop_index('ix_jobs_priority', table_name='jobs')
+    op.drop_index('ix_jobs_organisation_id', table_name='jobs')
+    op.drop_index('ix_jobs_locked_until', table_name='jobs')
+    op.drop_index('ix_jobs_lock_owner', table_name='jobs')
+    op.drop_index('ix_jobs_job_type', table_name='jobs')
+    op.drop_index('ix_jobs_created_at', table_name='jobs')
+    op.drop_table('jobs')
     op.drop_index(op.f('ix_tool_calls_message_id'), table_name='tool_calls')
     op.drop_table('tool_calls')
     op.drop_index(op.f('ix_runs_thread_id'), table_name='runs')
@@ -336,10 +404,11 @@ def downgrade() -> None:
     op.drop_table('users')
     op.drop_index(op.f('ix_organizations_name'), table_name='organizations')
     op.drop_table('organizations')
-    op.drop_index(op.f('ix_messages_status'), table_name='messages')
-    op.drop_index(op.f('ix_messages_message_type'), table_name='messages')
-    op.drop_index(op.f('ix_messages_created_at'), table_name='messages')
-    op.drop_table('messages')
+    op.drop_index(op.f('ix_outbox_messages_status'), table_name='outbox_messages')
+    op.drop_index(op.f('ix_outbox_messages_message_type'), table_name='outbox_messages')
+    op.drop_index(op.f('ix_outbox_messages_created_at'), table_name='outbox_messages')
+    op.drop_index(op.f('ix_outbox_messages_correlation_id'), table_name='outbox_messages')
+    op.drop_table('outbox_messages')
     op.drop_table('llm_connections')
     op.drop_index(op.f('ix_connectors_name'), table_name='connectors')
     op.drop_index(op.f('ix_connectors_id'), table_name='connectors')

@@ -1,5 +1,7 @@
 
 import logging
+import secrets
+import uuid
 from typing import Optional, Any
 
 from fastapi import status
@@ -14,6 +16,10 @@ from langbridge.packages.common.langbridge_common.config import settings
 from langbridge.apps.api.langbridge_api.auth.jwt import verify_jwt
 from langbridge.packages.common.langbridge_common.contracts.auth import UserResponse
 from langbridge.apps.api.langbridge_api.services.auth_service import AuthService
+from langbridge.apps.api.langbridge_api.services.service_utils import (
+    reset_internal_service_call,
+    set_internal_service_call,
+)
 
 PATHS_TO_EXCLUDE = [
     "/api/v1/auth/health",
@@ -27,6 +33,10 @@ PATHS_TO_EXCLUDE = [
     "/docs",
     "/openapi.json",
 ]
+
+INTERNAL_SERVICE_HEADER = "x-langbridge-service-token"
+INTERNAL_SERVICE_USERNAME = "internal-service"
+INTERNAL_SERVICE_USER_ID = uuid.UUID(int=0)
 
 class AuthMiddleware(BaseHTTPMiddleware):
     """
@@ -44,8 +54,35 @@ class AuthMiddleware(BaseHTTPMiddleware):
         auth_service: AuthService = Provide[Container.auth_service],
     ) -> Response:
         self.logger.debug(f"AuthMiddleware: Processing request {request.method} {request.url.path}")
-        
-        
+
+        internal_token = request.headers.get(INTERNAL_SERVICE_HEADER)
+        if internal_token:
+            if settings.SERVICE_USER_SECRET and secrets.compare_digest(
+                internal_token, settings.SERVICE_USER_SECRET
+            ):
+                request.state.is_internal = True
+                request.state.username = INTERNAL_SERVICE_USERNAME
+                request.state.user = UserResponse(
+                    id=INTERNAL_SERVICE_USER_ID,
+                    username=INTERNAL_SERVICE_USERNAME,
+                    email=None,
+                    is_active=True,
+                    available_organizations=[],
+                    available_projects=[],
+                )
+                if hasattr(request.state, "request_context"):
+                    request.state.request_context.user = request.state.user
+                ctx_token = set_internal_service_call(True)
+                try:
+                    return await call_next(request)
+                finally:
+                    reset_internal_service_call(ctx_token)
+            else:
+                self.logger.warning(
+                    "AuthMiddleware: invalid internal service token for %s",
+                    request.url.path,
+                )
+
         if any(request.url.path.startswith(path) for path in PATHS_TO_EXCLUDE):
             return await call_next(request)
 
@@ -77,6 +114,8 @@ class AuthMiddleware(BaseHTTPMiddleware):
             request.state.username = username
             user: UserResponse = await auth_service.get_user_by_username(username)
             request.state.user = user
+            if hasattr(request.state, "request_context"):
+                request.state.request_context.user = user
         except Exception as e:
             self.logger.error(f"Failed to load user '{username}': {e}")
             return JSONResponse(

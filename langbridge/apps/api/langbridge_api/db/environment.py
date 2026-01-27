@@ -1,6 +1,8 @@
 from sqlalchemy import String, Column, ForeignKey, UUID
 from sqlalchemy.orm import Mapped, relationship
 
+from .auth import Organization
+
 from .base import Base
 
 class OrganisationEnvironmentSetting(Base):

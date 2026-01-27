@@ -31,6 +31,18 @@ def is_internal_service_call() -> bool:
     return _INTERNAL_SERVICE_FLAG.get()
 
 
+def set_internal_service_call(value: bool) -> contextvars.Token[bool]:
+    """Set internal service context for the current execution scope."""
+
+    return _INTERNAL_SERVICE_FLAG.set(value)
+
+
+def reset_internal_service_call(token: contextvars.Token[bool]) -> None:
+    """Reset internal service context to the previous value."""
+
+    _INTERNAL_SERVICE_FLAG.reset(token)
+
+
 async def call_internal_service(
     func: Callable[..., R] | Callable[..., Awaitable[R]],
     *args: Any,

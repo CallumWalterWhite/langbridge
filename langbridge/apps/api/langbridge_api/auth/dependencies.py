@@ -7,6 +7,7 @@ from langbridge.apps.api.langbridge_api.ioc.container import Container
 from langbridge.packages.common.langbridge_common.contracts.auth import UserResponse
 from langbridge.packages.common.langbridge_common.contracts.organizations import OrganizationResponse, ProjectResponse
 from langbridge.apps.api.langbridge_api.services.organization_service import OrganizationService
+from langbridge.apps.api.langbridge_api.services.service_utils import is_internal_service_call
 
 
 @inject
@@ -14,6 +15,20 @@ def get_current_user(request: Request) -> UserResponse:
     user = getattr(request.state, "user", None)
     if user:
         return user
+    if getattr(request.state, "is_internal", False) or is_internal_service_call():
+        internal_user = UserResponse(
+            id=uuid.UUID(int=0),
+            username="internal-service",
+            email=None,
+            is_active=True,
+            available_organizations=[],
+            available_projects=[],
+        )
+        request.state.user = internal_user
+        request.state.username = internal_user.username
+        if hasattr(request.state, "request_context"):
+            request.state.request_context.user = internal_user
+        return internal_user
     raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Unauthenticated")
 
 
@@ -28,6 +43,8 @@ def has_organization_access(
     org_id = organization_id or request.path_params.get("organization_id")
     if org_id is None:
         return user  # endpoint doesn't use org scoping
+    if getattr(request.state, "is_internal", False) or is_internal_service_call():
+        return user
 
     allowed_org_ids = {str(o) for o in user.available_organizations} # type: ignore
     if str(org_id) not in allowed_org_ids:
@@ -47,6 +64,8 @@ def has_project_access(
     pid = project_id or request.query_params.get("project_id")
     if pid is None:
         return user
+    if getattr(request.state, "is_internal", False) or is_internal_service_call():
+        return user
 
     allowed_project_ids = {str(p) for p in user.available_projects}  # type: ignore
     if str(pid) not in allowed_project_ids:
@@ -56,7 +75,15 @@ def has_project_access(
 
 
 @inject
+def require_internal_service(request: Request) -> None:
+    if getattr(request.state, "is_internal", False) or is_internal_service_call():
+        return
+    raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
+
+
+@inject
 async def get_organization(
+    request: Request,
     organization_id: str = Path(...),
     _: UserResponse = Depends(has_organization_access),
     org_service: OrganizationService = Depends(Provide[Container.organization_service]),
@@ -71,10 +98,14 @@ async def get_organization(
     if org is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Organization not found")
 
+    if hasattr(request.state, "request_context"):
+        request.state.request_context.current_org_id = org_uuid
+
     return org
 
 @inject
 async def get_project(
+    request: Request,
     project_id: Optional[str] = Query(None, description="Optional project filter"),
     org: OrganizationResponse = Depends(get_organization),
     _: UserResponse = Depends(has_project_access),
@@ -94,5 +125,8 @@ async def get_project(
 
     if str(getattr(project, "organization_id", "")) != str(getattr(org, "id", "")):
         raise HTTPException(status_code=400, detail="project_id does not belong to organization_id")
+
+    if hasattr(request.state, "request_context"):
+        request.state.request_context.current_project_id = project_uuid
 
     return project

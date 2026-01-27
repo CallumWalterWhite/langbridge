@@ -79,6 +79,10 @@ class Settings(BaseSettings):
     REDIS_CONSUMER_GROUP: str = "langbridge-workers"
     REDIS_CONSUMER_NAME: str = ""
     REDIS_DEAD_LETTER_STREAM: str = "langbridge:dead-letter"
+    REDIS_WORKER_STREAM: str = "langbridge:worker"
+    REDIS_WORKER_CONSUMER_GROUP: str = "langbridge-worker"
+    REDIS_API_STREAM: str = "langbridge:api"
+    REDIS_API_CONSUMER_GROUP: str = "langbridge-api"
     
     AGENT_MEMORY_EXCHANGE_SIZE: int = 100
     

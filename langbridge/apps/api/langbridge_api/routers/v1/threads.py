@@ -174,3 +174,15 @@ async def list_thread_messages(
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc
 
     return ThreadHistoryResponse(messages=messages)
+
+
+@router.get("/test", response_model=dict[str, str])
+@inject
+async def create_thread(
+    organization_id: uuid.UUID,
+    current_user: UserResponse = Depends(get_current_user),
+    _org = Depends(get_organization),
+    orchestrator_service: OrchestratorService = Depends(Provide[Container.orchestrator_service]),
+) -> dict[str, str]:
+    await orchestrator_service.send_agent_job_request()
+    return {"message": "Test endpoint is working!"}

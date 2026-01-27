@@ -38,7 +38,6 @@ class SemanticVectorStoreEntryRepository(AsyncBaseRepository):
         entries = result.scalars().all()
         for entry in entries:
             await self._session.delete(entry)
-        await self._session.commit()
         
     async def get_by_namespace(
         self,

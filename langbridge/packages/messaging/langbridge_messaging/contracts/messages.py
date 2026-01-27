@@ -1,23 +1,16 @@
-from enum import Enum
 import uuid
 from datetime import datetime, timezone
 
 from pydantic import BaseModel, Field, field_validator
 
-from .base import BaseMessagePayload, get_payload_model
-
-class MessageType(str, Enum):
-    """Message types."""
-    TEST = "test"
-
-    def __str__(self) -> str:
-        return self.value
+from .base import BaseMessagePayload, MessageType, get_payload_model
 
 class MessageHeaders(BaseModel):
     """Standardized message headers for tracing and delivery metadata."""
 
     content_type: str = "application/json"
     schema_version: str | None = None
+    organisation_id: str | None = None
     correlation_id: str | None = None
     causation_id: str | None = None
     trace_id: str | None = None
@@ -26,6 +19,12 @@ class MessageHeaders(BaseModel):
     attempt: int = 0
     max_attempts: int | None = None
 
+    @staticmethod
+    def default() -> "MessageHeaders":
+        return MessageHeaders(
+            content_type="application/json",
+            attempt=0,
+        )
 
 class MessageEnvelope(BaseModel):
     """Envelope for queued messages."""

@@ -1,4 +1,4 @@
 from .base import Base
-from .messages import MessageRecord, MessageStatus
+from .messages import OutboxMessage, MessageStatus
 
-__all__ = ["Base", "MessageRecord", "MessageStatus"]
+__all__ = ["Base", "OutboxMessage", "MessageStatus"]

@@ -21,6 +21,7 @@ from langbridge.apps.api.langbridge_api.db import connector as _connector  # noq
 from langbridge.apps.api.langbridge_api.db import environment as _environment  # noqa: F401
 from langbridge.apps.api.langbridge_api.db import semantic as _semantic  # noqa: F401
 from langbridge.apps.api.langbridge_api.db import threads as _threads  # noqa: F401
+from langbridge.packages.common.langbridge_common.db import job as _job  # noqa: F401
 from langbridge.packages.common.langbridge_common.db import messages as _messages  # noqa: F401
 
 

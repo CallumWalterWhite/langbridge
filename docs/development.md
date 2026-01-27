@@ -9,6 +9,10 @@ This doc is aimed at quick onboarding for Codex and contributors.
   - `pip install -r langbridge/requirements.txt`
 - Run API:
   - `python langbridge/main.py`
+- Internal service auth:
+  - Set `SERVICE_USER_SECRET` in `.env` to enable internal service calls.
+  - Send `x-langbridge-service-token: <SERVICE_USER_SECRET>` to bypass cookie auth.
+  - Internal API client is available via DI (`InternalApiClient`) for self-calls with the token.
 
 ## Frontend
 - `cd client`

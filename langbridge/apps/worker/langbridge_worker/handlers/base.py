@@ -1,4 +1,4 @@
-from typing import Callable, List, Sequence, Type
+from typing import List, Sequence, Type
 
 from ..ioc import DependencyResolver
 from langbridge.packages.messaging.langbridge_messaging.contracts import MessageEnvelope
@@ -8,13 +8,14 @@ from langbridge.packages.messaging.langbridge_messaging.handler import BaseMessa
 class WorkerMessageHandler:
 
     def __init__(
-            self
+            self,
+            dependency_resolver: DependencyResolver,
     ):
         self.handlers = self.__resolve_handlers()
         self._handler_map: dict[str, Type[BaseMessageHandler]] = {
             h.message_type: h for h in self.handlers
         }
-        self.dependency_resolver = DependencyResolver()
+        self.dependency_resolver = dependency_resolver
 
     async def handle_message(
             self,

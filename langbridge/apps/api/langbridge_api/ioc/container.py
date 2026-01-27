@@ -30,20 +30,27 @@ from langbridge.apps.api.langbridge_api.repositories.thread_message_repository i
 from langbridge.apps.api.langbridge_api.repositories.thread_repository import ThreadRepository
 from langbridge.apps.api.langbridge_api.repositories.tool_call_repository import ToolCallRepository
 from langbridge.apps.api.langbridge_api.repositories.user_repository import OAuthAccountRepository, UserRepository
+from langbridge.packages.common.langbridge_common.repositories.message_repository import MessageRepository
 from langbridge.packages.semantic.langbridge_semantic.semantic_model_builder import SemanticModelBuilder
 from langbridge.apps.api.langbridge_api.services.agent_service import AgentService
 from langbridge.apps.api.langbridge_api.services.auth_service import AuthService
 from langbridge.apps.api.langbridge_api.services.connector_schema_service import ConnectorSchemaService
 from langbridge.apps.api.langbridge_api.services.connector_service import ConnectorService
 from langbridge.apps.api.langbridge_api.services.environment_service import EnvironmentService
+from langbridge.apps.api.langbridge_api.services.internal_api_client import InternalApiClient
 from langbridge.apps.api.langbridge_api.services.organization_service import OrganizationService
 from langbridge.apps.api.langbridge_api.services.orchestrator_service import OrchestratorService
+from langbridge.apps.api.langbridge_api.services.message.message_serivce import MessageService
+from langbridge.apps.api.langbridge_api.services.request_context_provider import RequestContextProvider
 from langbridge.apps.api.langbridge_api.services.semantic import (
     SemanticModelService,
     SemanticQueryService,
     SemanticSearchService,
 )
 from langbridge.apps.api.langbridge_api.services.thread_service import ThreadService
+from langbridge.packages.messaging.langbridge_messaging.broker.redis import RedisBroker
+from langbridge.packages.messaging.langbridge_messaging.flusher.flusher import MessageFlusher
+from langbridge.apps.api.langbridge_api.request_context import get_request_context
 
 
 class Container(containers.DeclarativeContainer):
@@ -73,6 +80,17 @@ class Container(containers.DeclarativeContainer):
 
     oauth = providers.Singleton(create_oauth_client)
 
+    internal_api_client = providers.Factory(
+        InternalApiClient,
+        base_url=settings.BACKEND_URL,
+        service_token=settings.SERVICE_USER_SECRET,
+    )
+    request_context = providers.Factory(get_request_context)
+    request_context_provider = providers.Factory(
+        RequestContextProvider,
+        request_context=request_context,
+    )
+
     session_factory = providers.Singleton(create_session_factory, engine=engine)
     async_session_factory = providers.Singleton(
         create_async_session_factory,
@@ -98,6 +116,8 @@ class Container(containers.DeclarativeContainer):
     tool_call_repository = providers.Factory(ToolCallRepository, session=async_session)
     agent_definition_repository = providers.Factory(AgentRepository, session=async_session)
     semantic_vector_store_repository = providers.Factory(SemanticVectorStoreEntryRepository, session=async_session)
+    message_repository = providers.Factory(MessageRepository, session=async_session)
+    message_broker = providers.Singleton(RedisBroker)
 
     environment_service = providers.Factory(
         EnvironmentService,
@@ -151,6 +171,12 @@ class Container(containers.DeclarativeContainer):
         SemanticSearchService,
         vector_store_entry_repository=semantic_vector_store_repository,
     )
+    
+    message_service = providers.Factory(
+        MessageService,
+        message_repository=message_repository,
+        request_context_provider=request_context_provider,
+    )
 
     semantic_model_service = providers.Factory(
         SemanticModelService,
@@ -186,6 +212,12 @@ class Container(containers.DeclarativeContainer):
         connector_service=connector_service,
         agent_service=agent_service,
         thread_service=thread_service,
+    )
+
+    message_flusher = providers.Factory(
+        MessageFlusher,
+        message_repository=message_repository,
+        message_bus=message_broker,
     )
 
 

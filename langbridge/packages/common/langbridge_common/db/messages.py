@@ -10,6 +10,8 @@ from .base import Base
 
 
 class MessageStatus(enum.Enum):
+    not_sent = "not_sent"
+    sent = "sent"
     received = "received"
     processing = "processing"
     completed = "completed"
@@ -17,17 +19,18 @@ class MessageStatus(enum.Enum):
     dead_letter = "dead_letter"
 
 
-class MessageRecord(Base):
-    __tablename__ = "messages"
+class OutboxMessage(Base):
+    __tablename__ = "outbox_messages"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     message_type: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
     payload: Mapped[Dict[str, Any]] = mapped_column(JSON, nullable=False)
+    correlation_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True, index=True)
     headers: Mapped[Dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
     status: Mapped[MessageStatus] = mapped_column(
         SAEnum(MessageStatus, name="message_status"),
         nullable=False,
-        default=MessageStatus.received,
+        default=MessageStatus.not_sent,
         index=True,
     )
 

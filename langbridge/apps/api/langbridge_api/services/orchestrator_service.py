@@ -10,6 +10,7 @@ from typing import Any, Iterable, Optional, Sequence, Type
 
 from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
 
+from langbridge.apps.api.langbridge_api.services.message.message_serivce import MessageService
 from langbridge.packages.connectors.langbridge_connectors.api.config import ConnectorRuntimeType
 from langbridge.packages.common.langbridge_common.errors.application_errors import BusinessValidationError
 from langbridge.packages.connectors.langbridge_connectors.api.registry import VectorDBConnectorFactory
@@ -57,7 +58,7 @@ from langbridge.packages.common.langbridge_common.contracts.auth import UserResp
 from langbridge.packages.common.langbridge_common.contracts.threads import ThreadMessageResponse
 from langbridge.apps.api.langbridge_api.db.threads import Role
 from langbridge.apps.api.langbridge_api.services.thread_service import ThreadService
-
+from langbridge.packages.messaging.langbridge_messaging.contracts.jobs.agent_job import AgentJobRequestMessage, AgentJobType
 
 @dataclass(slots=True)
 class _AgentToolConfig:
@@ -84,6 +85,7 @@ class OrchestratorService:
         connector_service: ConnectorService,
         agent_service: AgentService,
         thread_service: ThreadService,
+        message_serivice: MessageService,
     ):
         self._organization_service = organization_service
         self._semantic_model_service = semantic_model_service
@@ -96,6 +98,20 @@ class OrchestratorService:
             semantic_model_service=semantic_model_service,
             connector_service=connector_service,
         )
+        self._message_service = message_serivice
+        
+    async def send_agent_job_request(self) -> None:
+        """Send an agent job request message to the message bus."""
+        payload = AgentJobRequestMessage(
+            job_id=uuid.uuid4(),
+            job_type=AgentJobType.thread_request,
+        )
+        headers = {}
+        await self._message_service.create_outbox_message(
+            payload=payload,
+            headers=headers,
+            source_timestamp=datetime.now(tz=timezone.utc)
+        )
 
     async def chat(
         self,
@@ -105,6 +121,8 @@ class OrchestratorService:
         thread_id: uuid.UUID | None = None,
         current_user: UserResponse | None = None,
     ) -> dict[str, Any]:
+        """Process a chat message using the orchestrator and agents."""
+        
         request_id = str(uuid.uuid4())
         start_ts = time.perf_counter()
         self._logger.info("orchestrator.chat start request_id=%s", request_id)
