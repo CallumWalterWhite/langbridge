@@ -34,6 +34,9 @@ class MessageFlusher:
             sent_message_ids.append(message_record.id)
         await self._message_repository.mark_messages_as_sent(sent_message_ids)
         return sent_message_ids
+    
+    async def get_message_count_by_correlation_id(self, correlation_id: str) -> int:
+        return await self._message_repository.count_pending_messages(correlation_id)
             
     def _build_message_envelope(self, message_record: OutboxMessage) -> MessageEnvelope:
         return MessageEnvelope(

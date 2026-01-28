@@ -33,3 +33,8 @@ class MessageRepository(AsyncBaseRepository[OutboxMessage]):
         messages = result.scalars().all()
         for message in messages:
             message.status = MessageStatus.sent
+            
+    async def count_pending_messages(self, correlation_id: str) -> int:
+        query = select(OutboxMessage).filter(OutboxMessage.correlation_id == correlation_id and OutboxMessage.status == MessageStatus.not_sent)
+        result = await self._session.execute(query)
+        return result.rowcount

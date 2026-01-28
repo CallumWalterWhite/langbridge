@@ -28,7 +28,7 @@ class PublishCorrelationIdResponse(BaseModel):
 @inject
 async def publish_messages_by_correlation_id(
     request: PublishCorrelationIdRequest,
-    flusher: MessageFlusher = Provide[Container.message_flusher],
+    flusher: MessageFlusher = Depends(Provide[Container.message_flusher]),
 ):
     """
     Publish all messages with the given correlation ID.
