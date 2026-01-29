@@ -50,11 +50,10 @@ class MessageFlusher:
         return await self._message_repository.count_pending_messages(correlation_id)
             
     def _build_message_envelope(self, message_record: OutboxMessage) -> MessageEnvelope:
-        self._logger.info(f"Building message envelope for message ID: {message_record}")
         return MessageEnvelope(
             id=getattr(message_record, "id"),
             message_type=MessageType(getattr(message_record, "message_type")),
-            payload=get_payload_model(getattr(message_record, "message_type")).model_validate(message_record.payload),
+            payload=get_payload_model(getattr(message_record, "message_type")).model_validate(getattr(message_record, "payload")),
             headers=MessageHeaders(
                 **getattr(message_record, "headers")
             ),

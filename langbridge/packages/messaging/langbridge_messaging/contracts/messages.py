@@ -54,7 +54,8 @@ class MessageEnvelope(BaseModel):
         self.headers.attempt += 1
 
     def to_json(self) -> str:
-        return self.model_dump_json()
+        # Serialize payload using its concrete subclass fields.
+        return self.model_dump_json(serialize_as_any=True)
 
     @classmethod
     def from_json(cls, raw: str) -> "MessageEnvelope":

@@ -67,7 +67,7 @@ services:
       REDIS_PORT: 6379
       WORKER_POLL_INTERVAL: 2.0
       WORKER_METRICS_PORT: 9101
-    command: ["python", "-m", "langbridge.apps.worker.langbridge_worker.main"]
+    command: ["python", "-m", "langbridge.apps.worker.langbridge_worker.main", "--reload"]
     depends_on:
       db:
         condition: service_healthy
@@ -75,6 +75,8 @@ services:
         condition: service_started
       migrate:
         condition: service_completed_successfully
+    volumes:
+      - ./:/app
   gateway:
     build:
       context: .

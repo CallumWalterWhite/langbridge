@@ -4,6 +4,7 @@ import asyncio
 from enum import Enum
 import inspect
 import json
+import logging
 import os
 import socket
 from typing import Any, Sequence
@@ -26,6 +27,7 @@ from langbridge.packages.messaging.langbridge_messaging.contracts.base import (
 from langbridge.packages.messaging.langbridge_messaging.contracts.messages import (
     MessageEnvelope,
 )
+from langbridge.packages.messaging.langbridge_messaging.errors import PayloadDeserializationError
 
 class RedisStreams(str, Enum):
     """Predefined Redis Streams for LangBridge."""
@@ -56,6 +58,7 @@ class RedisBroker(MessageBroker):
         self._client = Redis.from_url(self._url, decode_responses=True)
         self._group_ready = False
         self._group_lock = asyncio.Lock()
+        self._logger = logging.getLogger(__name__)
 
     @property
     def stream(self) -> str:
@@ -78,7 +81,9 @@ class RedisBroker(MessageBroker):
 
     async def publish(self, message: MessageEnvelope, stream: RedisStreams | None) -> str:
         await self._ensure_group()
-        return await _maybe_await(self._client.xadd(stream.value or self._stream, _encode_message(message)))
+        message = _encode_message(message)
+        self._logger.info(f"Publishing message: {message}")
+        return await _maybe_await(self._client.xadd(stream.value or self._stream, message))
 
     async def consume(
         self, *, timeout_ms: int = 1000, count: int = 1
@@ -211,20 +216,19 @@ def _parse_results(
 
 
 def _decode_message(fields: dict[str, str]) -> MessageEnvelope:
-    raise ValueError(f"Invalid message payload, missing fields: {fields}")
     if "data" in fields:
         try:
             return MessageEnvelope.from_json(fields["data"])
         except ValidationError as exc:
-            raise ValueError("Invalid message payload") from exc
+            raise PayloadDeserializationError("Invalid message payload") from exc
     payload = fields.get("payload")
     message_type = fields.get("type", "unknown")
     if payload:
         try:
             return MessageEnvelope(message_type=message_type, payload=json.loads(payload))
         except json.JSONDecodeError as exc:
-            raise ValueError(f"Invalid message in payload {fields}: {exc}") from exc 
-    raise ValueError("Invalid message payload")
+            raise PayloadDeserializationError(f"Invalid message in payload {fields}: {exc}") from exc 
+    raise PayloadDeserializationError("Invalid message payload")
 
 
 def _build_redis_url() -> str:
