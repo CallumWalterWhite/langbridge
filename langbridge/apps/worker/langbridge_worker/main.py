@@ -61,7 +61,7 @@ async def run_worker(poll_interval: float = 2.0) -> None:
                     async with async_session_scope(container.async_session_factory()) as session:
                         token = set_session(session)
                         try:
-                            new_messages: Sequence[MessageEnvelope] | None = await worker_handler.handle_message(envelope.payload)
+                            new_messages: Sequence[MessageEnvelope] | None = await worker_handler.handle_message(envelope)
                         finally:
                             reset_session(token)
                     if new_messages:

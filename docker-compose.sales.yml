@@ -38,6 +38,7 @@ services:
       POSTGRES_DB: langbridge
       REDIS_HOST: redis
       REDIS_PORT: 6379
+      RELOAD: true
     depends_on:
       db:
         condition: service_healthy

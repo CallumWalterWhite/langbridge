@@ -1,5 +1,7 @@
 from contextlib import asynccontextmanager
 import inspect
+import logging
+from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.routing import APIRoute
@@ -7,6 +9,9 @@ from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 from starlette.middleware.cors import CORSMiddleware
 from starlette.middleware.sessions import SessionMiddleware
 from starlette.responses import Response
+
+from alembic import command
+from alembic.config import Config
 
 from langbridge.apps.api.langbridge_api.routers import api_router_v1
 from langbridge.packages.common.langbridge_common.config import settings
@@ -19,16 +24,57 @@ from langbridge.packages.common.langbridge_common.monitoring import (
 )
 
 from langbridge.apps.api.langbridge_api.middleware import (
-    UnitOfWorkMiddleware, 
-    ErrorMiddleware, 
-    AuthMiddleware, 
+    MessageFlusherMiddleware,
+    UnitOfWorkMiddleware,
+    ErrorMiddleware,
+    AuthMiddleware,
     RequestContextMiddleware,
     CorrelationIdMiddleware,
-    MessageFlusherMiddleware
 )
 from dotenv import load_dotenv
 
 load_dotenv()
+logger = logging.getLogger(__name__)
+ROOT_DIR = Path(__file__).resolve().parents[4]
+ALEMBIC_CONFIG_PATH = ROOT_DIR / "alembic.ini"
+
+
+def _resolve_sqlite_path(sqlite_url: str) -> Path | None:
+    if sqlite_url.startswith("sqlite:///"):
+        path = sqlite_url.removeprefix("sqlite:///")
+    elif sqlite_url.startswith("sqlite://"):
+        path = sqlite_url.removeprefix("sqlite://")
+    else:
+        return None
+    if not path or path == ":memory:":
+        return None
+    resolved = Path(path)
+    if not resolved.is_absolute():
+        resolved = ROOT_DIR / resolved
+    return resolved
+
+
+def _should_apply_local_sqlite_schema() -> bool:
+    return (
+        settings.ENVIRONMENT == "local"
+        and settings.SQLALCHEMY_DATABASE_URI.startswith("sqlite")
+    )
+
+
+def _ensure_local_sqlite_schema() -> None:
+    if not _should_apply_local_sqlite_schema():
+        return
+    sqlite_path = _resolve_sqlite_path(settings.SQLALCHEMY_DATABASE_URI)
+    if sqlite_path:
+        sqlite_path.parent.mkdir(parents=True, exist_ok=True)
+        logger.info("Ensuring local SQLite database directory exists at %s", sqlite_path.parent)
+    if not ALEMBIC_CONFIG_PATH.exists():
+        logger.warning("Skipping local migration: %s missing", ALEMBIC_CONFIG_PATH)
+        return
+    config = Config(str(ALEMBIC_CONFIG_PATH))
+    config.set_main_option("sqlalchemy.url", settings.SQLALCHEMY_DATABASE_URI)
+    logger.info("Running Alembic upgrade for local SQLite (%s)", settings.SQLALCHEMY_DATABASE_URI)
+    command.upgrade(config, "head")
 
 def custom_generate_unique_id(route: APIRoute) -> str:
     if len(route.tags) == 0:
@@ -51,6 +97,7 @@ wire_packages(
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Lifespan context manager to handle startup and shutdown events."""
+    _ensure_local_sqlite_schema()
     init_result = container.init_resources()
     if inspect.isawaitable(init_result):
         await init_result
@@ -72,7 +119,6 @@ app = FastAPI(
 # Middleware
 # Starlette executes middleware in reverse order of addition (last added runs first).
 # Add middleware from innermost to outermost to preserve the intended execution order.
-app.add_middleware(MessageFlusherMiddleware)
 app.add_middleware(PrometheusMiddleware, service_name="langbridge_api")
 app.add_middleware(AuthMiddleware)
 # Unit of Work should run before auth so DB access works during authentication.
@@ -85,7 +131,9 @@ app.add_middleware(
     same_site="lax",
     https_only=False,
 )
+app.add_middleware(MessageFlusherMiddleware)
 app.add_middleware(ErrorMiddleware)
+# Flush messages after the request commits.
 
 if settings.CORS_ENABLED:
     app.add_middleware(
@@ -117,6 +165,7 @@ if __name__ == "__main__":
     log_level = getattr(settings, "UVICORN_LOG_LEVEL", "info")
 
     # You can also set workers via env/CLI in production (e.g., `--workers 4`)
+
     uvicorn.run(
         "langbridge.apps.api.langbridge_api.main:app",
         host=host,

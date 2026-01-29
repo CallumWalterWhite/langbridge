@@ -28,6 +28,8 @@ class Settings(BaseSettings):
     
     IS_LOCAL: bool = ENVIRONMENT == "local"
     LOCAL_TOKEN: str = "localdevtoken"
+
+    UVICORN_RELOAD: bool = False
     
     @computed_field  # type: ignore[prop-decorator]
     @property

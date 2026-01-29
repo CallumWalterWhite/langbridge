@@ -185,4 +185,4 @@ async def create_thread(
     orchestrator_service: OrchestratorService = Depends(Provide[Container.orchestrator_service]),
 ) -> dict[str, str]:
     await orchestrator_service.send_agent_job_request()
-    return {"message": "Test endpoint is working!"}
+    return {"message": "OK"}

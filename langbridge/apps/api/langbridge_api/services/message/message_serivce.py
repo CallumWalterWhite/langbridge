@@ -76,6 +76,7 @@ class MessageService:
             consumer_name=message_route.consumer_name,
         )
         self._message_repository.add(outbox_message)
+        self._request_context_provider.mark_outbox_message()
         return outbox_message
 
     def _create_message_envelope(
