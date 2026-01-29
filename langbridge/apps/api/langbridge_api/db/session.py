@@ -1,6 +1,7 @@
 from collections.abc import AsyncGenerator, Generator
 from contextlib import asynccontextmanager
 from typing import Any
+import json
 
 from sqlalchemy import create_engine
 from sqlalchemy.engine import Engine
@@ -38,6 +39,8 @@ def _engine_kwargs(
         "future": True,
         "pool_pre_ping": True,
         "connect_args": _build_connect_args(database_url),
+        "json_serializer": lambda obj: json.dumps(obj, default=str),
+        "json_deserializer": json.loads,
     }
     if database_url.startswith("sqlite"):
         kwargs["poolclass"] = NullPool

@@ -212,6 +212,7 @@ class Container(containers.DeclarativeContainer):
         connector_service=connector_service,
         agent_service=agent_service,
         thread_service=thread_service,
+        message_service=message_service,
     )
 
     message_flusher = providers.Factory(

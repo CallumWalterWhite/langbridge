@@ -70,22 +70,22 @@ app = FastAPI(
 
 
 # Middleware
-# Middlewares are executed in the order they are added.
-# So the first added middleware is the outermost layer.
-app.add_middleware(ErrorMiddleware)
+# Starlette executes middleware in reverse order of addition (last added runs first).
+# Add middleware from innermost to outermost to preserve the intended execution order.
+app.add_middleware(MessageFlusherMiddleware)
+app.add_middleware(PrometheusMiddleware, service_name="langbridge_api")
+app.add_middleware(AuthMiddleware)
+# Unit of Work should run before auth so DB access works during authentication.
+app.add_middleware(UnitOfWorkMiddleware)
+app.add_middleware(CorrelationIdMiddleware)
+app.add_middleware(RequestContextMiddleware)
 app.add_middleware(
     SessionMiddleware,
     secret_key=settings.SESSION_SECRET,
     same_site="lax",
     https_only=False,
 )
-app.add_middleware(AuthMiddleware)
-app.add_middleware(RequestContextMiddleware)
-app.add_middleware(CorrelationIdMiddleware)
-# Unit of Work Middleware should be after Auth Middleware to have access to user info
-app.add_middleware(UnitOfWorkMiddleware)
-app.add_middleware(PrometheusMiddleware, service_name="langbridge_api")
-app.add_middleware(MessageFlusherMiddleware) 
+app.add_middleware(ErrorMiddleware)
 
 if settings.CORS_ENABLED:
     app.add_middleware(

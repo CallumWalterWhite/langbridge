@@ -8,6 +8,7 @@ from langbridge.packages.common.langbridge_common.repositories.message_repositor
 from langbridge.apps.api.langbridge_api.services.request_context_provider import RequestContextProvider
 from langbridge.packages.messaging.langbridge_messaging.contracts import BaseMessagePayload, MessageHeaders
 from langbridge.packages.messaging.langbridge_messaging.contracts.messages import MessageEnvelope, MessageType
+from langbridge.packages.messaging.langbridge_messaging.contracts.stream_mapping import STREAM_MAPPING
 
 
 @dataclass(frozen=True)
@@ -66,9 +67,9 @@ class MessageService:
         outbox_message: OutboxMessage = OutboxMessage(
             id=message_id,
             message_type=payload.message_type.value,
-            correlation_id=message_headers.correlation_id,
-            payload=outbox_message_envelope.payload.model_dump(),
-            headers=outbox_message_envelope.headers.model_dump(),
+            correlation_id=str(message_headers.correlation_id),
+            payload=outbox_message_envelope.payload.model_dump(mode="json"),
+            headers=outbox_message_envelope.headers.model_dump(mode="json"),
             status=MessageStatus.not_sent,
             stream=message_route.stream,
             consumer_group=message_route.consumer_group,
@@ -92,10 +93,13 @@ class MessageService:
         )
 
     def _resolve_message_route(self, message_type: MessageType) -> _MessageRoute:
+        mapped_stream = STREAM_MAPPING.get(message_type)
+        if not mapped_stream:
+            raise ValueError(f"No stream mapping found for message type {message_type}")
         return self._MESSAGE_ROUTES.get(
             message_type,
             _MessageRoute(
-                stream=settings.REDIS_API_STREAM,
+                stream=mapped_stream,
                 consumer_group=settings.REDIS_API_CONSUMER_GROUP,
                 consumer_name=settings.REDIS_CONSUMER_NAME or None,
             ),

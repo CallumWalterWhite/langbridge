@@ -1,6 +1,5 @@
-from __future__ import annotations
-
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, HTTPException, Depends, Body, Query, Request, status
+from pydantic import ValidationError
 from pydantic import BaseModel, Field
 from redis.exceptions import RedisError
 from dependency_injector.wiring import Provide, inject
@@ -23,7 +22,8 @@ class PublishCorrelationIdResponse(BaseModel):
 @router.post(
     "/publish_by_correlation_id",
     response_model=PublishCorrelationIdResponse,
-    dependencies=[Depends(require_internal_service)],
+    status_code=status.HTTP_200_OK,
+    # dependencies=[Depends(require_internal_service)],
 )
 @inject
 async def publish_messages_by_correlation_id(

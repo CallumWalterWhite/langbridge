@@ -85,7 +85,7 @@ class OrchestratorService:
         connector_service: ConnectorService,
         agent_service: AgentService,
         thread_service: ThreadService,
-        message_serivice: MessageService,
+        message_service: MessageService,
     ):
         self._organization_service = organization_service
         self._semantic_model_service = semantic_model_service
@@ -98,7 +98,7 @@ class OrchestratorService:
             semantic_model_service=semantic_model_service,
             connector_service=connector_service,
         )
-        self._message_service = message_serivice
+        self._message_service = message_service
         
     async def send_agent_job_request(self) -> None:
         """Send an agent job request message to the message bus."""

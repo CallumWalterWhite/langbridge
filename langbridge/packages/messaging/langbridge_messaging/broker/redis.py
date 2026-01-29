@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from enum import Enum
 import inspect
 import json
 import os
@@ -16,10 +17,22 @@ from langbridge.packages.messaging.langbridge_messaging.broker.base import (
     MessageReceipt,
     ReceivedMessage,
 )
+from pydantic import ValidationError
+
+from langbridge.packages.messaging.langbridge_messaging.contracts.base import (
+    MessageType,
+    TestMessagePayload,
+)
 from langbridge.packages.messaging.langbridge_messaging.contracts.messages import (
     MessageEnvelope,
 )
 
+class RedisStreams(str, Enum):
+    """Predefined Redis Streams for LangBridge."""
+
+    WORKER = "langbridge:worker_stream"
+    DEAD_LETTER = "langbridge:dead_letter_stream"
+    API = "langbridge:api_stream"
 
 class RedisBroker(MessageBroker):
     """Redis Streams broker with consumer group semantics."""
@@ -28,7 +41,7 @@ class RedisBroker(MessageBroker):
         self,
         *,
         url: str | None = None,
-        stream: str | None = None,
+        stream: RedisStreams | None = None,
         group: str | None = None,
         consumer: str | None = None,
         dead_letter_stream: str | None = None,
@@ -63,9 +76,9 @@ class RedisBroker(MessageBroker):
     async def ping(self) -> bool:
         return bool(await _maybe_await(self._client.ping()))
 
-    async def publish(self, message: MessageEnvelope) -> str:
+    async def publish(self, message: MessageEnvelope, stream: RedisStreams | None) -> str:
         await self._ensure_group()
-        return await _maybe_await(self._client.xadd(self._stream, _encode_message(message)))
+        return await _maybe_await(self._client.xadd(stream.value or self._stream, _encode_message(message)))
 
     async def consume(
         self, *, timeout_ms: int = 1000, count: int = 1
@@ -198,12 +211,19 @@ def _parse_results(
 
 
 def _decode_message(fields: dict[str, str]) -> MessageEnvelope:
+    raise ValueError(f"Invalid message payload, missing fields: {fields}")
     if "data" in fields:
-        return MessageEnvelope.from_json(fields["data"])
+        try:
+            return MessageEnvelope.from_json(fields["data"])
+        except ValidationError as exc:
+            raise ValueError("Invalid message payload") from exc
     payload = fields.get("payload")
     message_type = fields.get("type", "unknown")
     if payload:
-        return MessageEnvelope(message_type=message_type, payload=json.loads(payload))
+        try:
+            return MessageEnvelope(message_type=message_type, payload=json.loads(payload))
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"Invalid message in payload {fields}: {exc}") from exc 
     raise ValueError("Invalid message payload")
 
 

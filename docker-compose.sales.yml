@@ -24,6 +24,7 @@ services:
       context: .
       dockerfile: langbridge/Dockerfile.api
     container_name: langbridge-api
+    command: ["uvicorn", "langbridge.apps.api.langbridge_api.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
     env_file:
       - ./langbridge/.env
     environment:
@@ -46,6 +47,8 @@ services:
         condition: service_completed_successfully
     ports:
       - "8000:8000"
+    volumes:
+      - ./:/app
   worker:
     build:
       context: .
@@ -140,17 +143,19 @@ services:
       - "6379:6379"
     volumes:
       - redis_data:/data
-  qdrant:
-    image: qdrant/qdrant:v1.9.4
-    container_name: langbridge-qdrant
-    ports:
-      - "6333:6333"
-      - "6334:6334"
-    volumes:
-      - qdrant_data:/qdrant/storage
+  # qdrant:
+  #   image: qdrant/qdrant:v1.9.4
+  #   container_name: langbridge-qdrant
+  #   ports:
+  #     - "6333:6333"
+  #     - "6334:6334"
+  #   volumes:
+  #     - qdrant_data:/qdrant/storage
   prometheus:
     image: prom/prometheus:v2.55.1
     container_name: langbridge-prometheus
+    profiles:
+      - observability
     volumes:
       - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - prometheus_data:/prometheus
@@ -162,6 +167,8 @@ services:
   loki:
     image: grafana/loki:2.9.8
     container_name: langbridge-loki
+    profiles:
+      - observability
     command: ["-config.file=/etc/loki/config.yml"]
     volumes:
       - ./monitoring/loki-config.yml:/etc/loki/config.yml:ro
@@ -171,6 +178,8 @@ services:
   promtail:
     image: grafana/promtail:2.9.8
     container_name: langbridge-promtail
+    profiles:
+      - observability
     command: ["-config.file=/etc/promtail/config.yml"]
     volumes:
       - ./monitoring/promtail-config.yml:/etc/promtail/config.yml:ro
@@ -180,6 +189,8 @@ services:
   grafana:
     image: grafana/grafana:11.2.0
     container_name: langbridge-grafana
+    profiles:
+      - observability
     environment:
       GF_SECURITY_ADMIN_USER: admin
       GF_SECURITY_ADMIN_PASSWORD: admin
@@ -195,7 +206,7 @@ volumes:
   pg_data:
   sales_pg_data:
   redis_data:
-  qdrant_data:
+  # qdrant_data:
   prometheus_data:
   grafana_data:
   loki_data:

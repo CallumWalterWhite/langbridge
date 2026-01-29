@@ -1,11 +1,12 @@
 import uuid
 from datetime import datetime, timezone
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from .base import BaseMessagePayload, MessageType, get_payload_model
 
 class MessageHeaders(BaseModel):
+    model_config = ConfigDict(json_encoders={uuid.UUID: str})
     """Standardized message headers for tracing and delivery metadata."""
 
     content_type: str = "application/json"
@@ -27,6 +28,7 @@ class MessageHeaders(BaseModel):
         )
 
 class MessageEnvelope(BaseModel):
+    model_config = ConfigDict(json_encoders={uuid.UUID: str})
     """Envelope for queued messages."""
 
     id: uuid.UUID = Field(default_factory=uuid.uuid4)
