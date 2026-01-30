@@ -146,14 +146,16 @@ services:
       - "6379:6379"
     volumes:
       - redis_data:/data
-  # qdrant:
-  #   image: qdrant/qdrant:v1.9.4
-  #   container_name: langbridge-qdrant
-  #   ports:
-  #     - "6333:6333"
-  #     - "6334:6334"
-  #   volumes:
-  #     - qdrant_data:/qdrant/storage
+  qdrant:
+    image: qdrant/qdrant:v1.9.4
+    container_name: langbridge-qdrant
+    profiles: 
+      - vector_db
+    ports:
+      - "6333:6333"
+      - "6334:6334"
+    volumes:
+      - qdrant_data:/qdrant/storage
   prometheus:
     image: prom/prometheus:v2.55.1
     container_name: langbridge-prometheus
@@ -209,7 +211,7 @@ volumes:
   pg_data:
   sales_pg_data:
   redis_data:
-  # qdrant_data:
+  qdrant_data:
   prometheus_data:
   grafana_data:
   loki_data:
