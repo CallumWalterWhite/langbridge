@@ -75,22 +75,22 @@ async def delete_thread(
     return None
 
 
-@router.get("/{thread_id}", response_model=ThreadResponse)
-@inject
-async def get_thread(
-    thread_id: uuid.UUID,
-    organization_id: uuid.UUID,
-    current_user: UserResponse = Depends(get_current_user),
-    _org = Depends(get_organization),
-    thread_service: ThreadService = Depends(Provide[Container.thread_service]),
-) -> ThreadResponse:
-    try:
-        thread = await thread_service.get_thread_for_user(thread_id, current_user)
-    except ResourceNotFound as exc:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
-    except PermissionDeniedBusinessValidationError as exc:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc
-    return ThreadResponse.model_validate(thread)
+# @router.get("/{thread_id}", response_model=ThreadResponse)
+# @inject
+# async def get_thread(
+#     thread_id: uuid.UUID,
+#     organization_id: uuid.UUID,
+#     current_user: UserResponse = Depends(get_current_user),
+#     _org = Depends(get_organization),
+#     thread_service: ThreadService = Depends(Provide[Container.thread_service]),
+# ) -> ThreadResponse:
+#     try:
+#         thread = await thread_service.get_thread_for_user(thread_id, current_user)
+#     except ResourceNotFound as exc:
+#         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+#     except PermissionDeniedBusinessValidationError as exc:
+#         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc
+#     return ThreadResponse.model_validate(thread)
 
 
 @router.put("/{thread_id}", response_model=ThreadResponse)
@@ -185,4 +185,4 @@ async def create_thread(
     orchestrator_service: OrchestratorService = Depends(Provide[Container.orchestrator_service]),
 ) -> dict[str, str]:
     await orchestrator_service.send_agent_job_request()
-    return {"message": "Test endpoint is working!"}
+    return {"message": "OK"}

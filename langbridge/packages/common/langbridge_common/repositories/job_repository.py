@@ -1,4 +1,4 @@
-from db.job import JobRecord
+from ..db.job import JobRecord
 from sqlalchemy.ext.asyncio import AsyncSession
 from .base import AsyncBaseRepository
 

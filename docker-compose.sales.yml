@@ -24,6 +24,7 @@ services:
       context: .
       dockerfile: langbridge/Dockerfile.api
     container_name: langbridge-api
+    command: ["uvicorn", "langbridge.apps.api.langbridge_api.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
     env_file:
       - ./langbridge/.env
     environment:
@@ -37,6 +38,7 @@ services:
       POSTGRES_DB: langbridge
       REDIS_HOST: redis
       REDIS_PORT: 6379
+      RELOAD: true
     depends_on:
       db:
         condition: service_healthy
@@ -46,6 +48,8 @@ services:
         condition: service_completed_successfully
     ports:
       - "8000:8000"
+    volumes:
+      - ./:/app
   worker:
     build:
       context: .
@@ -64,7 +68,7 @@ services:
       REDIS_PORT: 6379
       WORKER_POLL_INTERVAL: 2.0
       WORKER_METRICS_PORT: 9101
-    command: ["python", "-m", "langbridge.apps.worker.langbridge_worker.main"]
+    command: ["python", "-m", "langbridge.apps.worker.langbridge_worker.main", "--reload"]
     depends_on:
       db:
         condition: service_healthy
@@ -72,6 +76,8 @@ services:
         condition: service_started
       migrate:
         condition: service_completed_successfully
+    volumes:
+      - ./:/app
   gateway:
     build:
       context: .
@@ -143,6 +149,8 @@ services:
   qdrant:
     image: qdrant/qdrant:v1.9.4
     container_name: langbridge-qdrant
+    profiles: 
+      - vector_db
     ports:
       - "6333:6333"
       - "6334:6334"
@@ -151,6 +159,8 @@ services:
   prometheus:
     image: prom/prometheus:v2.55.1
     container_name: langbridge-prometheus
+    profiles:
+      - observability
     volumes:
       - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - prometheus_data:/prometheus
@@ -162,6 +172,8 @@ services:
   loki:
     image: grafana/loki:2.9.8
     container_name: langbridge-loki
+    profiles:
+      - observability
     command: ["-config.file=/etc/loki/config.yml"]
     volumes:
       - ./monitoring/loki-config.yml:/etc/loki/config.yml:ro
@@ -171,6 +183,8 @@ services:
   promtail:
     image: grafana/promtail:2.9.8
     container_name: langbridge-promtail
+    profiles:
+      - observability
     command: ["-config.file=/etc/promtail/config.yml"]
     volumes:
       - ./monitoring/promtail-config.yml:/etc/promtail/config.yml:ro
@@ -180,6 +194,8 @@ services:
   grafana:
     image: grafana/grafana:11.2.0
     container_name: langbridge-grafana
+    profiles:
+      - observability
     environment:
       GF_SECURITY_ADMIN_USER: admin
       GF_SECURITY_ADMIN_PASSWORD: admin

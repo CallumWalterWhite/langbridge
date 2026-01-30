@@ -10,7 +10,7 @@ from langbridge.apps.api.langbridge_api.db import (
 )
 from langbridge.apps.api.langbridge_api.db.session_context import get_session
 from langbridge.packages.common.langbridge_common.config import Settings, settings
-from langbridge.packages.common.langbridge_common.repositories.message_repo import MessageRepository
+from langbridge.packages.common.langbridge_common.repositories.message_repository import MessageRepository
 from langbridge.packages.messaging.langbridge_messaging.broker.redis import RedisBroker
 from langbridge.packages.messaging.langbridge_messaging.flusher.flusher import MessageFlusher
 

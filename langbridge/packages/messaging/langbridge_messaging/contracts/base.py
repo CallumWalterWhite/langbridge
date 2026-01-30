@@ -1,6 +1,7 @@
 from enum import Enum
 from typing import Callable, TypeVar
-from pydantic import BaseModel
+import uuid
+from pydantic import BaseModel, ConfigDict
 
 
 class MessageType(str, Enum):
@@ -11,8 +12,10 @@ class MessageType(str, Enum):
     def __str__(self) -> str:
         return self.value
 
+class BaseMessagePayload(BaseModel):    
+    model_config = ConfigDict(json_encoders={uuid.UUID: str})
 
-class BaseMessagePayload(BaseModel):
+    
     """Base class for message payloads."""
     __message_type__: str | None = None
     

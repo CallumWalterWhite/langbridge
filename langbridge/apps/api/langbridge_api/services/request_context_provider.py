@@ -27,3 +27,10 @@ class RequestContextProvider:
     @property
     def correlation_id(self) -> str | None:
         return self._context.correlation_id
+
+    @property
+    def has_outbox_message(self) -> bool:
+        return self._context.has_outbox_message
+
+    def mark_outbox_message(self) -> None:
+        self._context.has_outbox_message = True

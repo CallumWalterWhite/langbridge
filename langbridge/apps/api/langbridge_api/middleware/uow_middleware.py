@@ -2,7 +2,6 @@ import logging
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 from starlette.requests import Request
 from starlette.responses import Response
-
 from langbridge.apps.api.langbridge_api.ioc import Container
 from langbridge.apps.api.langbridge_api.db.session_context import reset_session, set_session
 
@@ -39,7 +38,7 @@ class UnitOfWorkMiddleware(BaseHTTPMiddleware):
             else:
                 self.logger.debug("UnitOfWork: committing session")
                 await session.commit()
-                
+
             return response
             
         except BaseException as exc:

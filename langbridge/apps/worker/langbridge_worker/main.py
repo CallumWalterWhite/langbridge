@@ -1,6 +1,4 @@
-"""Worker entrypoint for async job execution."""
-from __future__ import annotations
-
+import argparse
 import asyncio
 import logging
 import os
@@ -16,6 +14,7 @@ from langbridge.packages.messaging.langbridge_messaging.contracts.messages impor
 from langbridge.packages.common.langbridge_common.monitoring import start_metrics_server
 from .handlers import WorkerMessageHandler
 from .ioc import create_container, DependencyResolver
+
 
 async def run_worker(poll_interval: float = 2.0) -> None:
     logger = logging.getLogger("langbridge.worker")
@@ -81,7 +80,7 @@ async def run_worker(poll_interval: float = 2.0) -> None:
         await broker.close()
 
 
-def main() -> None:
+def _run_once() -> None:
     logging.basicConfig(
         level=os.environ.get("WORKER_LOG_LEVEL", "INFO"),
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
@@ -90,6 +89,30 @@ def main() -> None:
     metrics_port = int(os.environ.get("WORKER_METRICS_PORT", "9101"))
     start_metrics_server(metrics_port)
     asyncio.run(run_worker(poll_interval=poll_interval))
+
+
+def _run_with_reload() -> None:
+    try:
+        from watchfiles import run_process
+    except ImportError as exc:
+        raise RuntimeError("`watchfiles` is required to run the worker in reload mode.") from exc
+
+    run_process(
+        # paths=["langbridge"],
+        target=_run_once,
+    )
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Run the LangBridge worker.")
+    parser.add_argument("--reload", action="store_true", help="Restart on source changes.")
+    args = parser.parse_args()
+    reload_env = os.environ.get("WORKER_RELOAD", "false").lower() in {"1", "true", "yes"}
+
+    if args.reload or reload_env:
+        _run_with_reload()
+    else:
+        _run_once()
 
 
 class _NoopBroker:

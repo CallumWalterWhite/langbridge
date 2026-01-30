@@ -13,6 +13,7 @@ class RequestContext:
     current_org_id: uuid.UUID | None = None
     current_project_id: uuid.UUID | None = None
     correlation_id: str | None = None
+    has_outbox_message: bool = False
 
 
 _REQUEST_CONTEXT: ContextVar[RequestContext | None] = ContextVar(

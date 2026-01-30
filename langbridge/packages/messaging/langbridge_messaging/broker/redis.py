@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import asyncio
+from enum import Enum
 import inspect
 import json
+import logging
 import os
 import socket
 from typing import Any, Sequence
@@ -16,10 +18,23 @@ from langbridge.packages.messaging.langbridge_messaging.broker.base import (
     MessageReceipt,
     ReceivedMessage,
 )
+from pydantic import ValidationError
+
+from langbridge.packages.messaging.langbridge_messaging.contracts.base import (
+    MessageType,
+    TestMessagePayload,
+)
 from langbridge.packages.messaging.langbridge_messaging.contracts.messages import (
     MessageEnvelope,
 )
+from langbridge.packages.messaging.langbridge_messaging.errors import PayloadDeserializationError
 
+class RedisStreams(str, Enum):
+    """Predefined Redis Streams for LangBridge."""
+
+    WORKER = "langbridge:worker_stream"
+    DEAD_LETTER = "langbridge:dead_letter_stream"
+    API = "langbridge:api_stream"
 
 class RedisBroker(MessageBroker):
     """Redis Streams broker with consumer group semantics."""
@@ -28,7 +43,7 @@ class RedisBroker(MessageBroker):
         self,
         *,
         url: str | None = None,
-        stream: str | None = None,
+        stream: RedisStreams | None = None,
         group: str | None = None,
         consumer: str | None = None,
         dead_letter_stream: str | None = None,
@@ -43,6 +58,7 @@ class RedisBroker(MessageBroker):
         self._client = Redis.from_url(self._url, decode_responses=True)
         self._group_ready = False
         self._group_lock = asyncio.Lock()
+        self._logger = logging.getLogger(__name__)
 
     @property
     def stream(self) -> str:
@@ -63,9 +79,11 @@ class RedisBroker(MessageBroker):
     async def ping(self) -> bool:
         return bool(await _maybe_await(self._client.ping()))
 
-    async def publish(self, message: MessageEnvelope) -> str:
+    async def publish(self, message: MessageEnvelope, stream: RedisStreams | None) -> str:
         await self._ensure_group()
-        return await _maybe_await(self._client.xadd(self._stream, _encode_message(message)))
+        message = _encode_message(message)
+        self._logger.info(f"Publishing message: {message}")
+        return await _maybe_await(self._client.xadd(stream.value or self._stream, message))
 
     async def consume(
         self, *, timeout_ms: int = 1000, count: int = 1
@@ -199,12 +217,18 @@ def _parse_results(
 
 def _decode_message(fields: dict[str, str]) -> MessageEnvelope:
     if "data" in fields:
-        return MessageEnvelope.from_json(fields["data"])
+        try:
+            return MessageEnvelope.from_json(fields["data"])
+        except ValidationError as exc:
+            raise PayloadDeserializationError("Invalid message payload") from exc
     payload = fields.get("payload")
     message_type = fields.get("type", "unknown")
     if payload:
-        return MessageEnvelope(message_type=message_type, payload=json.loads(payload))
-    raise ValueError("Invalid message payload")
+        try:
+            return MessageEnvelope(message_type=message_type, payload=json.loads(payload))
+        except json.JSONDecodeError as exc:
+            raise PayloadDeserializationError(f"Invalid message in payload {fields}: {exc}") from exc 
+    raise PayloadDeserializationError("Invalid message payload")
 
 
 def _build_redis_url() -> str:
