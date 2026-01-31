@@ -3,7 +3,7 @@ import uuid
 from datetime import datetime, timezone
 from fastapi.encoders import jsonable_encoder
 
-from langbridge.apps.api.langbridge_api.db.threads import Role, Thread, ThreadMessage, ThreadStatus, ToolCall
+from langbridge.packages.common.langbridge_common.db.threads import Role, Thread, ThreadMessage, ThreadStatus, ToolCall
 from langbridge.packages.common.langbridge_common.errors.application_errors import (
     BusinessValidationError,
     PermissionDeniedBusinessValidationError,
@@ -11,10 +11,10 @@ from langbridge.packages.common.langbridge_common.errors.application_errors impo
 )
 from langbridge.packages.common.langbridge_common.contracts.auth import UserResponse
 from langbridge.packages.common.langbridge_common.contracts.threads import ThreadCreateRequest, ThreadMessageResponse, ThreadResponse, ThreadUpdateRequest
-from langbridge.apps.api.langbridge_api.repositories.organization_repository import ProjectRepository
-from langbridge.apps.api.langbridge_api.repositories.thread_message_repository import ThreadMessageRepository
-from langbridge.apps.api.langbridge_api.repositories.thread_repository import ThreadRepository
-from langbridge.apps.api.langbridge_api.repositories.tool_call_repository import ToolCallRepository
+from langbridge.packages.common.langbridge_common.repositories.organization_repository import ProjectRepository
+from langbridge.packages.common.langbridge_common.repositories.thread_message_repository import ThreadMessageRepository
+from langbridge.packages.common.langbridge_common.repositories.thread_repository import ThreadRepository
+from langbridge.packages.common.langbridge_common.repositories.tool_call_repository import ToolCallRepository
 from langbridge.apps.api.langbridge_api.services.organization_service import OrganizationService
 
 

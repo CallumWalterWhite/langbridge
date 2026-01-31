@@ -5,7 +5,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session
 
-from langbridge.apps.api.langbridge_api.db.base import Base
+from langbridge.packages.common.langbridge_common.db.base import Base
 
 
 ModelT = TypeVar("ModelT", bound=Base)

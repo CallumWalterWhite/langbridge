@@ -87,6 +87,7 @@ wire_packages(
     package_names=[
         "langbridge.apps.api.langbridge_api.routers",
         "langbridge.apps.api.langbridge_api.services",
+        "langbridge.packages.common.langbridge_common.repositories",
         "langbridge.apps.api.langbridge_api.repositories",
         "langbridge.apps.api.langbridge_api.auth",
         "langbridge.apps.api.langbridge_api.middleware",

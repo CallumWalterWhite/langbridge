@@ -6,8 +6,8 @@ from typing import Sequence
 
 from redis.exceptions import RedisError
 
-from langbridge.apps.api.langbridge_api.db import async_session_scope
-from langbridge.apps.api.langbridge_api.db.session_context import reset_session, set_session
+from langbridge.packages.common.langbridge_common.db import async_session_scope
+from langbridge.packages.common.langbridge_common.db.session_context import reset_session, set_session
 from langbridge.packages.messaging.langbridge_messaging.contracts.messages import (
     MessageEnvelope,
 )

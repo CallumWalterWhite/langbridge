@@ -1,6 +1,6 @@
 import uuid
 from langbridge.packages.common.langbridge_common.contracts.auth import UserResponse
-from langbridge.apps.api.langbridge_api.db.auth import Organization, Project
+from langbridge.packages.common.langbridge_common.db.auth import Organization, Project
 from langbridge.apps.api.langbridge_api.services.service_utils import is_internal_service_call
 
 class UserAuthorizedProvider:

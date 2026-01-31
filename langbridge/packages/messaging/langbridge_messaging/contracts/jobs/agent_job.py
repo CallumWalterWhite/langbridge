@@ -1,15 +1,10 @@
 
-import enum
 import uuid
 from ..base import BaseMessagePayload, register_payload
-
-class AgentJobType(str, enum.Enum):
-    """Enumeration of agent job types."""
-    thread_request = "thread_request"
+from langbridge.packages.common.langbridge_common.contracts.jobs.type import JobType
 
 @register_payload("agent_job_request")
 class AgentJobRequestMessage(BaseMessagePayload):
     """Payload for requesting an agent job."""
-
     job_id: uuid.UUID
-    job_type: AgentJobType
+    job_type: JobType

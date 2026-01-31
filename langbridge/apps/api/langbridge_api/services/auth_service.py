@@ -7,12 +7,12 @@ from authlib.integrations.starlette_client import OAuth, OAuthError
 from fastapi import Request
 import httpx
 
-from langbridge.apps.api.langbridge_api.db.auth import OAuthAccount, User
+from langbridge.packages.common.langbridge_common.db.auth import OAuthAccount, User
 from langbridge.packages.common.langbridge_common.errors.application_errors import AuthenticationError, BusinessValidationError
 from langbridge.apps.api.langbridge_api.auth.passwords import hash_password, verify_password
 from langbridge.packages.common.langbridge_common.contracts.auth import OAuthAccountResponse, UserResponse
 from langbridge.packages.common.langbridge_common.contracts.base import _Base
-from langbridge.apps.api.langbridge_api.repositories.user_repository import OAuthAccountRepository, UserRepository
+from langbridge.packages.common.langbridge_common.repositories.user_repository import OAuthAccountRepository, UserRepository
 from langbridge.apps.api.langbridge_api.services.organization_service import OrganizationService
 
 ProviderLiteral = Literal['github', 'google']

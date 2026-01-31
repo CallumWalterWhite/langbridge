@@ -1,7 +1,7 @@
 from typing import Optional
 import uuid
-from langbridge.apps.api.langbridge_api.repositories.semantic_search_repository import SemanticVectorStoreEntryRepository
-from langbridge.apps.api.langbridge_api.db.semantic import SemanticVectorStoreEntry
+from langbridge.packages.common.langbridge_common.repositories.semantic_search_repository import SemanticVectorStoreEntryRepository
+from langbridge.packages.common.langbridge_common.db.semantic import SemanticVectorStoreEntry
 
 class SemanticSearchService:
     def __init__(self,

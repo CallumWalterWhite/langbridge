@@ -6,8 +6,8 @@ from typing import Any
 
 
 from langbridge.packages.common.langbridge_common.config import settings
-from langbridge.apps.api.langbridge_api.db.environment import OrganisationEnvironmentSetting
-from langbridge.apps.api.langbridge_api.repositories.environment_repository import OrganizationEnvironmentSettingRepository
+from langbridge.packages.common.langbridge_common.db.environment import OrganisationEnvironmentSetting
+from langbridge.packages.common.langbridge_common.repositories.environment_repository import OrganizationEnvironmentSettingRepository
 from langbridge.packages.common.langbridge_common.utils.encryptor import CipherRecord, ConfigCrypto, Keyring
 
 class EnvironmentSettingKey(Enum):

@@ -6,30 +6,30 @@ from dependency_injector import containers, providers
 
 from langbridge.apps.api.langbridge_api.auth.register import create_oauth_client
 from langbridge.packages.common.langbridge_common.config import Settings, settings
-from langbridge.apps.api.langbridge_api.db import (
+from langbridge.packages.common.langbridge_common.db import (
     create_async_engine_for_url,
     create_async_session_factory,
     create_engine_for_url,
     create_session_factory,
     session_scope,
 )
-from langbridge.apps.api.langbridge_api.db.session_context import get_session
-from langbridge.apps.api.langbridge_api.repositories.agent_repository import AgentRepository
-from langbridge.apps.api.langbridge_api.repositories.connector_repository import ConnectorRepository
-from langbridge.apps.api.langbridge_api.repositories.environment_repository import OrganizationEnvironmentSettingRepository
-from langbridge.apps.api.langbridge_api.repositories.llm_connection_repository import LLMConnectionRepository
-from langbridge.apps.api.langbridge_api.repositories.organization_repository import (
+from langbridge.packages.common.langbridge_common.db.session_context import get_session
+from langbridge.packages.common.langbridge_common.repositories.agent_repository import AgentRepository
+from langbridge.packages.common.langbridge_common.repositories.connector_repository import ConnectorRepository
+from langbridge.packages.common.langbridge_common.repositories.environment_repository import OrganizationEnvironmentSettingRepository
+from langbridge.packages.common.langbridge_common.repositories.llm_connection_repository import LLMConnectionRepository
+from langbridge.packages.common.langbridge_common.repositories.organization_repository import (
     OrganizationInviteRepository,
     OrganizationRepository,
     ProjectInviteRepository,
     ProjectRepository,
 )
-from langbridge.apps.api.langbridge_api.repositories.semantic_model_repository import SemanticModelRepository
-from langbridge.apps.api.langbridge_api.repositories.semantic_search_repository import SemanticVectorStoreEntryRepository
-from langbridge.apps.api.langbridge_api.repositories.thread_message_repository import ThreadMessageRepository
-from langbridge.apps.api.langbridge_api.repositories.thread_repository import ThreadRepository
-from langbridge.apps.api.langbridge_api.repositories.tool_call_repository import ToolCallRepository
-from langbridge.apps.api.langbridge_api.repositories.user_repository import OAuthAccountRepository, UserRepository
+from langbridge.packages.common.langbridge_common.repositories.semantic_model_repository import SemanticModelRepository
+from langbridge.packages.common.langbridge_common.repositories.semantic_search_repository import SemanticVectorStoreEntryRepository
+from langbridge.packages.common.langbridge_common.repositories.thread_message_repository import ThreadMessageRepository
+from langbridge.packages.common.langbridge_common.repositories.thread_repository import ThreadRepository
+from langbridge.packages.common.langbridge_common.repositories.tool_call_repository import ToolCallRepository
+from langbridge.packages.common.langbridge_common.repositories.user_repository import OAuthAccountRepository, UserRepository
 from langbridge.packages.common.langbridge_common.repositories.message_repository import MessageRepository
 from langbridge.packages.semantic.langbridge_semantic.semantic_model_builder import SemanticModelBuilder
 from langbridge.apps.api.langbridge_api.services.agent_service import AgentService

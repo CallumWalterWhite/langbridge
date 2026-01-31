@@ -3,7 +3,7 @@ import uuid
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from langbridge.apps.api.langbridge_api.db.threads import ToolCall
+from ..db.threads import ToolCall
 from .base import AsyncBaseRepository
 
 

@@ -2,7 +2,7 @@ from typing import Any, List
 import uuid
 from datetime import datetime, timezone
 
-from langbridge.apps.api.langbridge_api.db.auth import (
+from langbridge.packages.common.langbridge_common.db.auth import (
     InviteStatus,
     Organization,
     OrganizationInvite,
@@ -26,13 +26,13 @@ from langbridge.packages.common.langbridge_common.contracts.organizations import
     ProjectResponse,
     OrganizationEnvironmentSetting
 )
-from langbridge.apps.api.langbridge_api.repositories.organization_repository import (
+from langbridge.packages.common.langbridge_common.repositories.organization_repository import (
     OrganizationInviteRepository,
     OrganizationRepository,
     ProjectInviteRepository,
     ProjectRepository,
 )
-from langbridge.apps.api.langbridge_api.repositories.user_repository import UserRepository
+from langbridge.packages.common.langbridge_common.repositories.user_repository import UserRepository
 
 
 class OrganizationService:

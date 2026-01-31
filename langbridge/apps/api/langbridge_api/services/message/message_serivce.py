@@ -38,12 +38,13 @@ class MessageService:
     async def create_outbox_message(
         self,
         payload: BaseMessagePayload,
-        headers: dict,
+        headers: dict | None = None,
         source_timestamp: datetime | None = None,
     ) -> OutboxMessage:
         if source_timestamp is None:
             source_timestamp = datetime.now(tz=timezone.utc)
-        
+        if headers is None:
+            headers = {}
         message_headers: MessageHeaders = MessageHeaders.default().model_copy(update=headers)
         
         if message_headers.organisation_id is None:

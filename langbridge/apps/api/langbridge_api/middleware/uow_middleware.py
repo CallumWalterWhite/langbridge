@@ -3,7 +3,7 @@ from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoin
 from starlette.requests import Request
 from starlette.responses import Response
 from langbridge.apps.api.langbridge_api.ioc import Container
-from langbridge.apps.api.langbridge_api.db.session_context import reset_session, set_session
+from langbridge.packages.common.langbridge_common.db.session_context import reset_session, set_session
 
 
 class UnitOfWorkMiddleware(BaseHTTPMiddleware):

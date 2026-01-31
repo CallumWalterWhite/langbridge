@@ -4,11 +4,11 @@ from typing import Any
 
 from dependency_injector import containers, providers
 
-from langbridge.apps.api.langbridge_api.db import (
+from langbridge.packages.common.langbridge_common.db import (
     create_async_engine_for_url,
     create_async_session_factory,
 )
-from langbridge.apps.api.langbridge_api.db.session_context import get_session
+from langbridge.packages.common.langbridge_common.db.session_context import get_session
 from langbridge.packages.common.langbridge_common.config import Settings, settings
 from langbridge.packages.common.langbridge_common.repositories.message_repository import MessageRepository
 from langbridge.packages.messaging.langbridge_messaging.broker.redis import RedisBroker

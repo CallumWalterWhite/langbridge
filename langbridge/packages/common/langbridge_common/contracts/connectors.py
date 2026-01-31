@@ -2,7 +2,7 @@ from typing import Any, Dict, Optional, cast
 from uuid import UUID
 import json
 
-from langbridge.apps.api.langbridge_api.db.connector import Connector
+from langbridge.packages.common.langbridge_common.db.connector import Connector
 
 from .base import _Base
 

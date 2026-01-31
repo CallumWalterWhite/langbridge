@@ -8,6 +8,16 @@ class MessageType(str, Enum):
     """Message types."""
     TEST = "test"
     AGENT_JOB_REQUEST = "agent_job_request"
+    AGENT_JOB_TASK_EXECUTION = "agent_job_task_execution"
+    AGENT_JOB_PLAN_EXECUTION = "agent_job_plan_execution"
+    AGENT_JOB_SYNTHESIZE_RESPONSE = "agent_job_synthesize_response"
+    AGENT_JOB_COMPLETION = "agent_job_completion"
+    
+    SEMANTIC_QUERY_REQUEST = "semantic_query_request"
+    SEMANTIC_QUERY_RESPONSE = "semantic_query_response"
+    SEMANTIC_TASK_EXECUTION = "semantic_task_execution"
+    SEMANTIC_QUERY_COMPLETION = "semantic_query_completion"
+    
 
     def __str__(self) -> str:
         return self.value

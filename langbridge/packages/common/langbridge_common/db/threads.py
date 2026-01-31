@@ -5,7 +5,6 @@ from datetime import datetime
 from typing import Any, Dict, Optional
 
 from sqlalchemy import JSON, Column, String, Enum as SAEnum, ForeignKey, DateTime, Integer, UUID, func
-from sqlalchemy.dialects.postgresql import JSON
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .base import Base
@@ -77,31 +76,37 @@ class Run(Base):
     __tablename__ = "runs"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    thread_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("threads.id", ondelete="cascade"), index=True)
-    root_message_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("thread_messages.id", ondelete="cascade"))
+    thread_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("threads.id", ondelete="cascade"), index=True
+    )
+    root_message_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("thread_messages.id", ondelete="cascade")
+    )
 
-    graph: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON)
-    state_before: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON)
-    state_after: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON)
+    graph: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, nullable=True)
+    state_before: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, nullable=True)
+    state_after: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, nullable=True)
 
-    status: Mapped[RunStatus] = mapped_column(SAEnum(RunStatus, name="run_status"), default=RunStatus.running)
+    status: Mapped[RunStatus] = mapped_column(
+        SAEnum(RunStatus, name="run_status"), nullable=False
+    )
 
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     finished_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
-
-    latency_ms: Mapped[Optional[int]] = mapped_column(Integer)
+    latency_ms: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
 
 
 class ToolCall(Base):
     __tablename__ = "tool_calls"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    message_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("thread_messages.id", ondelete="cascade"), index=True)
-
-    tool_name: Mapped[str] = mapped_column(String)
-    arguments: Mapped[Dict[str, Any]] = mapped_column(JSON)
-    result: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON)
-    duration_ms: Mapped[Optional[int]] = mapped_column(Integer)
-    error: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON)
-
+    message_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("thread_messages.id", ondelete="cascade"), index=True
+    )
+    tool_name: Mapped[str] = mapped_column(String, nullable=False)
+    arguments: Mapped[Dict[str, Any]] = mapped_column(JSON, nullable=False)
+    result: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, nullable=True)
+    duration_ms: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    error: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+

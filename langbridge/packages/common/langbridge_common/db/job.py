@@ -63,8 +63,7 @@ class JobRecord(Base):
     job_type: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
     
     payload: Mapped[Dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
-    headers: Mapped[Dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
-
+    
     status: Mapped[JobStatus] = mapped_column(
         SAEnum(JobStatus, name="job_status"),
         nullable=False,

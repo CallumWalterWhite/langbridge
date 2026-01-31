@@ -12,18 +12,18 @@ from langbridge.packages.connectors.langbridge_connectors.api import (
     VectorDBType, 
     ManagedVectorDB
 )
-from langbridge.apps.api.langbridge_api.db.auth import Project
-from langbridge.apps.api.langbridge_api.db.semantic import SemanticModelEntry
+from langbridge.packages.common.langbridge_common.db.auth import Project
+from langbridge.packages.common.langbridge_common.db.semantic import SemanticModelEntry
 from langbridge.packages.common.langbridge_common.errors.application_errors import BusinessValidationError
 from langbridge.packages.common.langbridge_common.errors.connector_errors import ConnectorError
 from langbridge.packages.common.langbridge_common.contracts.connectors import ConnectorResponse
 from langbridge.apps.api.langbridge_api.services.environment_service import EnvironmentService, EnvironmentSettingKey
 from .semantic_search_sercice import SemanticSearchService
-from langbridge.apps.api.langbridge_api.repositories.organization_repository import (
+from langbridge.packages.common.langbridge_common.repositories.organization_repository import (
     OrganizationRepository,
     ProjectRepository,
 )
-from langbridge.apps.api.langbridge_api.repositories.semantic_model_repository import SemanticModelRepository
+from langbridge.packages.common.langbridge_common.repositories.semantic_model_repository import SemanticModelRepository
 from langbridge.packages.common.langbridge_common.contracts.semantic import (
     SemanticModelRecordResponse,
     SemanticModelCreateRequest,

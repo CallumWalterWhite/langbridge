@@ -11,9 +11,9 @@ from langbridge.packages.connectors.langbridge_connectors.api import (
     build_connector_config,
 )
 from langbridge.packages.connectors.langbridge_connectors.api.config import ConnectorType
-from langbridge.apps.api.langbridge_api.db.connector import Connector
+from langbridge.packages.common.langbridge_common.db.connector import Connector
 from langbridge.packages.common.langbridge_common.errors.application_errors import BusinessValidationError
-from langbridge.apps.api.langbridge_api.repositories.connector_repository import ConnectorRepository
+from langbridge.packages.common.langbridge_common.repositories.connector_repository import ConnectorRepository
 
 
 class ConnectorSchemaService:

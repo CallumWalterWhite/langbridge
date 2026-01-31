@@ -13,14 +13,14 @@ if str(ROOT) not in sys.path:
     sys.path.append(str(ROOT))
 
 from langbridge.packages.common.langbridge_common.config import settings
-from langbridge.apps.api.langbridge_api.db import Base
-from langbridge.apps.api.langbridge_api.db import agent as _agent  # noqa: F401
-from langbridge.apps.api.langbridge_api.db import associations as _associations  # noqa: F401
-from langbridge.apps.api.langbridge_api.db import auth as _auth  # noqa: F401
-from langbridge.apps.api.langbridge_api.db import connector as _connector  # noqa: F401
-from langbridge.apps.api.langbridge_api.db import environment as _environment  # noqa: F401
-from langbridge.apps.api.langbridge_api.db import semantic as _semantic  # noqa: F401
-from langbridge.apps.api.langbridge_api.db import threads as _threads  # noqa: F401
+from langbridge.packages.common.langbridge_common.db import Base
+from langbridge.packages.common.langbridge_common.db import agent as _agent  # noqa: F401
+from langbridge.packages.common.langbridge_common.db import associations as _associations  # noqa: F401
+from langbridge.packages.common.langbridge_common.db import auth as _auth  # noqa: F401
+from langbridge.packages.common.langbridge_common.db import connector as _connector  # noqa: F401
+from langbridge.packages.common.langbridge_common.db import environment as _environment  # noqa: F401
+from langbridge.packages.common.langbridge_common.db import semantic as _semantic  # noqa: F401
+from langbridge.packages.common.langbridge_common.db import threads as _threads  # noqa: F401
 from langbridge.packages.common.langbridge_common.db import job as _job  # noqa: F401
 from langbridge.packages.common.langbridge_common.db import messages as _messages  # noqa: F401
 

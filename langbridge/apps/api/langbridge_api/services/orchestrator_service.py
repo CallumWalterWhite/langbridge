@@ -56,9 +56,8 @@ from langbridge.packages.common.langbridge_common.contracts.llm_connections impo
 from langbridge.packages.common.langbridge_common.contracts.connectors import ConnectorResponse
 from langbridge.packages.common.langbridge_common.contracts.auth import UserResponse
 from langbridge.packages.common.langbridge_common.contracts.threads import ThreadMessageResponse
-from langbridge.apps.api.langbridge_api.db.threads import Role
+from langbridge.packages.common.langbridge_common.db.threads import Role
 from langbridge.apps.api.langbridge_api.services.thread_service import ThreadService
-from langbridge.packages.messaging.langbridge_messaging.contracts.jobs.agent_job import AgentJobRequestMessage, AgentJobType
 
 @dataclass(slots=True)
 class _AgentToolConfig:
@@ -99,19 +98,6 @@ class OrchestratorService:
             connector_service=connector_service,
         )
         self._message_service = message_service
-        
-    async def send_agent_job_request(self) -> None:
-        """Send an agent job request message to the message bus."""
-        payload = AgentJobRequestMessage(
-            job_id=uuid.uuid4(),
-            job_type=AgentJobType.thread_request,
-        )
-        headers = {}
-        await self._message_service.create_outbox_message(
-            payload=payload,
-            headers=headers,
-            source_timestamp=datetime.now(tz=timezone.utc)
-        )
 
     async def chat(
         self,

@@ -18,12 +18,12 @@ from langbridge.packages.connectors.langbridge_connectors.api import (
     get_connector_config_factory,
     get_connector_config_schema_factory,
 )
-from langbridge.apps.api.langbridge_api.db.auth import Organization
-from langbridge.apps.api.langbridge_api.db.connector import DatabaseConnector
+from langbridge.packages.common.langbridge_common.db.auth import Organization
+from langbridge.packages.common.langbridge_common.db.connector import DatabaseConnector
 from langbridge.packages.common.langbridge_common.errors.application_errors import BusinessValidationError
 from langbridge.packages.common.langbridge_common.contracts.connectors import ConnectorResponse, CreateConnectorRequest, UpdateConnectorRequest
-from langbridge.apps.api.langbridge_api.repositories.connector_repository import ConnectorRepository
-from langbridge.apps.api.langbridge_api.repositories.organization_repository import (
+from langbridge.packages.common.langbridge_common.repositories.connector_repository import ConnectorRepository
+from langbridge.packages.common.langbridge_common.repositories.organization_repository import (
     OrganizationRepository,
     ProjectRepository,
 )

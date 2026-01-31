@@ -3,13 +3,13 @@ import logging
 import uuid
 from typing import List, Optional
 
-from langbridge.apps.api.langbridge_api.db.agent import LLMConnection, AgentDefinition
+from langbridge.packages.common.langbridge_common.db.agent import LLMConnection, AgentDefinition
 from langbridge.packages.common.langbridge_common.errors.application_errors import AuthorizationError, BusinessValidationError
 from langbridge.packages.orchestrator.langbridge_orchestrator.definitions.factory import AgentDefinitionFactory
-from langbridge.apps.api.langbridge_api.repositories.organization_repository import OrganizationRepository, ProjectRepository
+from langbridge.packages.common.langbridge_common.repositories.organization_repository import OrganizationRepository, ProjectRepository
 from langbridge.apps.api.langbridge_api.services.service_utils import internal_service, is_internal_service_call
 from langbridge.packages.common.langbridge_common.contracts.auth import UserResponse
-from langbridge.apps.api.langbridge_api.repositories.agent_repository import AgentRepository
+from langbridge.packages.common.langbridge_common.repositories.agent_repository import AgentRepository
 from langbridge.packages.common.langbridge_common.contracts.llm_connections import (
     LLMConnectionCreate,
     LLMConnectionResponse,
@@ -28,7 +28,7 @@ from langbridge.packages.common.langbridge_common.contracts.query import (
     ModelSearchCollectionRequest
 )
 from langbridge.packages.orchestrator.langbridge_orchestrator.definitions import AgentDefinitionModel
-from langbridge.apps.api.langbridge_api.repositories.llm_connection_repository import LLMConnectionRepository
+from langbridge.packages.common.langbridge_common.repositories.llm_connection_repository import LLMConnectionRepository
 from langbridge.packages.orchestrator.langbridge_orchestrator.llm.provider.llm_tester import LLMConnectionTester
 
 

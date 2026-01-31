@@ -4,7 +4,7 @@ from datetime import datetime
 
 from pydantic import Field
 
-from langbridge.apps.api.langbridge_api.db.threads import Role
+from langbridge.packages.common.langbridge_common.db.threads import Role
 
 from .base import _Base
 
