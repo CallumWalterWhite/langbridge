@@ -1,9 +1,13 @@
 
+from typing import Optional
 import uuid
 from datetime import datetime, timezone
 from fastapi.encoders import jsonable_encoder
 
-from langbridge.packages.common.langbridge_common.db.threads import Role, Thread, ThreadMessage, ThreadStatus, ToolCall
+from langbridge.apps.api.langbridge_api.services.jobs.agent_job_request_service import AgentJobRequestService
+from langbridge.packages.common.langbridge_common.contracts.jobs.agent_job import CreateAgentJobRequest
+from langbridge.packages.common.langbridge_common.contracts.jobs.type import JobType
+from langbridge.packages.common.langbridge_common.db.threads import Role, Thread, ThreadMessage, ThreadState, ToolCall
 from langbridge.packages.common.langbridge_common.errors.application_errors import (
     BusinessValidationError,
     PermissionDeniedBusinessValidationError,
@@ -28,12 +32,14 @@ class ThreadService:
         tool_call_repository: ToolCallRepository,
         project_repository: ProjectRepository,
         organization_service: OrganizationService,
+        agent_job_request: AgentJobRequestService,
     ) -> None:
         self._thread_repository = thread_repository
         self._thread_message_repository = thread_message_repository
         self._tool_call_repository = tool_call_repository
         self._project_repository = project_repository
         self._organization_service = organization_service
+        self._agent_job_request_service = agent_job_request
 
     async def list_threads_for_user(self, user: UserResponse) -> list[ThreadResponse]:
         threads = await self._thread_repository.list_for_user(user.id)
@@ -71,11 +77,11 @@ class ThreadService:
             project_id=project_id,
             title=request.title,
             created_by=user.id,
-            status=ThreadStatus.active,
+            status=ThreadState.awaiting_user_input,
         )
 
         self._thread_repository.add(thread)
-        await self._thread_repository.flush()
+        
         return ThreadResponse.model_validate(thread)
 
     async def get_thread_for_user(self, thread_id: uuid.UUID, user: UserResponse) -> Thread:
@@ -87,7 +93,7 @@ class ThreadService:
     async def delete_thread(self, thread_id: uuid.UUID, user: UserResponse) -> None:
         thread = await self.get_thread_for_user(thread_id, user)
         await self._thread_repository.delete(thread)
-        await self._thread_repository.flush()
+        
 
     async def update_thread(
         self,
@@ -106,7 +112,6 @@ class ThreadService:
             thread.metadata_json = request.metadata_json
 
         thread.updated_at = datetime.now(timezone.utc)
-        await self._thread_repository.flush()
         return ThreadResponse.model_validate(thread)
 
     async def list_messages_for_thread(
@@ -117,6 +122,38 @@ class ThreadService:
         await self.get_thread_for_user(thread_id, user)
         messages = await self._thread_message_repository.list_for_thread(thread_id)
         return [ThreadMessageResponse.model_validate(message) for message in messages]
+
+    async def create_user_thread_message(
+        self,
+        thread_id: uuid.UUID,
+        user: UserResponse,
+        organisation_id: uuid.UUID,
+        agent_definition_id: uuid.UUID,
+        content: dict,
+        project_id: Optional[uuid.UUID] = None,
+    ) -> ThreadMessageResponse:
+        thread = await self.get_thread_for_user(thread_id, user)
+        
+        message = ThreadMessage(
+            id=uuid.uuid4(),
+            thread_id=thread.id,
+            role=Role.user,
+            content=content,
+        )
+
+        await self._thread_message_repository.add(message)
+        
+        await self._agent_job_request_service.create_agent_job_request(
+            request=CreateAgentJobRequest(
+                job_type=JobType.AGENT,
+                agent_definition_id=agent_definition_id,
+                organisation_id=organisation_id,
+                project_id=project_id,
+                thread_message_id=message.id,
+            )
+        )
+        
+        return ThreadMessageResponse.model_validate(message)
 
     async def record_chat_turn(
         self,

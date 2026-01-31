@@ -5,6 +5,7 @@ from typing import Any
 from dependency_injector import containers, providers
 
 from langbridge.apps.api.langbridge_api.auth.register import create_oauth_client
+from langbridge.apps.api.langbridge_api.services.jobs.agent_job_request_service import AgentJobRequestService
 from langbridge.packages.common.langbridge_common.config import Settings, settings
 from langbridge.packages.common.langbridge_common.db import (
     create_async_engine_for_url,
@@ -17,6 +18,7 @@ from langbridge.packages.common.langbridge_common.db.session_context import get_
 from langbridge.packages.common.langbridge_common.repositories.agent_repository import AgentRepository
 from langbridge.packages.common.langbridge_common.repositories.connector_repository import ConnectorRepository
 from langbridge.packages.common.langbridge_common.repositories.environment_repository import OrganizationEnvironmentSettingRepository
+from langbridge.packages.common.langbridge_common.repositories.job_repository import JobRepository
 from langbridge.packages.common.langbridge_common.repositories.llm_connection_repository import LLMConnectionRepository
 from langbridge.packages.common.langbridge_common.repositories.organization_repository import (
     OrganizationInviteRepository,
@@ -117,6 +119,7 @@ class Container(containers.DeclarativeContainer):
     agent_definition_repository = providers.Factory(AgentRepository, session=async_session)
     semantic_vector_store_repository = providers.Factory(SemanticVectorStoreEntryRepository, session=async_session)
     message_repository = providers.Factory(MessageRepository, session=async_session)
+    job_repository = providers.Factory(JobRepository, session=async_session)
     message_broker = providers.Singleton(RedisBroker)
 
     environment_service = providers.Factory(
@@ -195,6 +198,13 @@ class Container(containers.DeclarativeContainer):
         semantic_model_service=semantic_model_service,
         connector_service=connector_service
     )
+    
+    agent_job_request_service = providers.Factory(
+        AgentJobRequestService,
+        job_repository=job_repository,
+        agent_repository=agent_definition_repository,
+        message_service=message_service
+    )
 
     thread_service = providers.Factory(
         ThreadService,
@@ -203,6 +213,7 @@ class Container(containers.DeclarativeContainer):
         tool_call_repository=tool_call_repository,
         project_repository=project_repository,
         organization_service=organization_service,
+        agent_job_request_service=agent_job_request_service,
     )
 
     orchestrator_service = providers.Factory(

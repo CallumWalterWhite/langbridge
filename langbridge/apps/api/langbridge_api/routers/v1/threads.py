@@ -134,6 +134,15 @@ async def chat_thread(
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc
 
     try:
+        # new work implementation
+        await thread_service.create_user_thread_message(
+            thread_id,
+            current_user,
+            organization_id,
+            agent_definition_id = request.agent_id,
+            content=request.message
+        )
+        
         response = await orchestrator_service.chat(
             msg=request.message,
             agent_id=request.agent_id,

@@ -22,7 +22,7 @@ class AgentJobRequestService:
         self._message_service = message_service
         self._logger = logging.getLogger(__name__)
         
-    async def create_agent_job(
+    async def create_agent_job_request(
         self,
         request: CreateAgentJobRequest,
     ) -> JobRecord:

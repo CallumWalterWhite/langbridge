@@ -4,18 +4,15 @@ import uuid
 from datetime import datetime
 from typing import Any, Dict, Optional
 
-from sqlalchemy import JSON, Column, String, Enum as SAEnum, ForeignKey, DateTime, Integer, UUID, func
+from sqlalchemy import JSON, String, Enum as SAEnum, ForeignKey, DateTime, Integer, UUID, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .base import Base
 
 
-class ThreadStatus(enum.Enum):
-    active = "active"
-    archived = "archived"
-    error = "error"
-    completed = "completed"
-
+class ThreadState(enum.Enum):
+    awaiting_user_input = "awaiting_user_input"
+    processing = "processing"
 
 class Role(enum.Enum):
     system = "system"
@@ -28,14 +25,12 @@ class Thread(Base):
     __tablename__ = "threads"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    organisation_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), index=True)
     project_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), index=True)
     title: Mapped[Optional[str]] = mapped_column(String, nullable=True)
 
-    # Name enums in DB to avoid anonymous enum issues
-    status: Mapped[ThreadStatus] = mapped_column(SAEnum(ThreadStatus, name="thread_status"),
-                                                 default=ThreadStatus.active)
+    state: Mapped[ThreadState] = mapped_column(SAEnum(ThreadState, name="thread_state"), nullable=False, default=ThreadState.awaiting_user_input)
 
-    # Column name is "metadata" in DB, Python attr is metadata_json (avoids Base.metadata clash)
     metadata_json: Mapped[Optional[Dict[str, Any]]] = mapped_column("metadata", JSON, nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
@@ -56,7 +51,7 @@ class ThreadMessage(Base):
     parent_message_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), nullable=True)
 
     role: Mapped[Role] = mapped_column(SAEnum(Role, name="message_role"), nullable=False)
-
+    
     content: Mapped[Dict[str, Any]] = mapped_column(JSON, nullable=False)  # array-of-parts schema
     model_snapshot: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON)
     token_usage: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON)  # {prompt, completion, total, costs...}
