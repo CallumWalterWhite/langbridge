@@ -68,6 +68,12 @@ class ErrorMiddleware(BaseHTTPMiddleware):
                 status_code=500,
                 content={"error": "ApplicationError", "message": "An internal application error occurred."}
             )
+        except ValueError as e:
+            self.logger.warning(f"Value error: {e}")
+            return JSONResponse(
+                status_code=400,
+                content={"error": "ValueError", "message": str(e)}
+            )
         except Exception as e:
             self.logger.error("Unhandled exception", exc_info=True)
             return JSONResponse(

@@ -1,3 +1,4 @@
+import uuid
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -33,5 +34,10 @@ class ConnectorRepository(AsyncBaseRepository[Connector]):
 
     async def get_all(self) -> list[Connector]:
         stmt = self._select_with_relationships()
+        result = await self._session.scalars(stmt)
+        return list(result.all())
+
+    async def get_by_ids(self, connector_ids: list[uuid.UUID]) -> list[Connector]:
+        stmt = self._select_with_relationships().filter(Connector.id.in_(connector_ids))
         result = await self._session.scalars(stmt)
         return list(result.all())

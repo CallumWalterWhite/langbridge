@@ -29,6 +29,10 @@ class SemanticModelRepository(AsyncBaseRepository[SemanticModelEntry]):
             )
         ).one_or_none()
 
+    async def get_by_ids(self, model_ids: List[UUID]) -> List[SemanticModelEntry]:
+        return list(
+            (await self._session.scalars(select(SemanticModelEntry).filter(SemanticModelEntry.id.in_(model_ids)))).all()
+        )
 
 class SemanticVectorStoreRepository(AsyncBaseRepository[SemanticVectorStoreEntry]):
     def __init__(self, session: AsyncSession):

@@ -45,9 +45,9 @@ class AgentJobRequestService:
             ],
         )
         
-        job = await self._job_repository.add(job_record)
+        self._job_repository.add(job_record)
         
-        self._logger.info(f"Created agent job with ID {job.id} for agent definition ID {request.agent_definition_id}")
+        self._logger.info(f"Created agent job with ID {job_id} for agent definition ID {request.agent_definition_id}")
         
         agent_job_message = AgentJobRequestMessage(
             job_id=job_id,
@@ -55,8 +55,8 @@ class AgentJobRequestService:
         )
         
         await self._message_service.create_outbox_message(
-            message=agent_job_message
+            payload=agent_job_message
         )
         
-        return job
+        return job_record
         

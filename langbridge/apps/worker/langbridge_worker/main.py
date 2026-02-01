@@ -6,7 +6,6 @@ from typing import Sequence
 
 from redis.exceptions import RedisError
 
-from langbridge.packages.common.langbridge_common.db import async_session_scope
 from langbridge.packages.common.langbridge_common.db.session_context import reset_session, set_session
 from langbridge.packages.messaging.langbridge_messaging.contracts.messages import (
     MessageEnvelope,
@@ -58,12 +57,22 @@ async def run_worker(poll_interval: float = 2.0) -> None:
                     envelope.message_type,
                 )
                 try:
-                    async with async_session_scope(container.async_session_factory()) as session:
-                        token = set_session(session)
-                        try:
-                            new_messages: Sequence[MessageEnvelope] | None = await worker_handler.handle_message(envelope)
-                        finally:
-                            reset_session(token)
+                    session_factory = container.async_session_factory()
+                    session = session_factory()
+                    token = set_session(session)
+                    try:
+                        logger.debug("UnitOfWork: starting async DB session")
+                        new_messages: Sequence[MessageEnvelope] | None = await worker_handler.handle_message(envelope)
+                        logger.debug("UnitOfWork: committing session")
+                        await session.commit()
+                    except BaseException as exc:
+                        logger.error("UnitOfWork: rolling back due to exception: %s", exc)
+                        await session.rollback()
+                        raise
+                    finally:
+                        reset_session(token)
+                        await session.close()
+                        logger.debug("UnitOfWork: session closed")
                     if new_messages:
                         for new_message in new_messages:
                             await broker.publish(new_message)

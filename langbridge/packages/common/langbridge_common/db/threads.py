@@ -74,6 +74,7 @@ class Run(Base):
     thread_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("threads.id", ondelete="cascade"), index=True
     )
+    job_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("jobs.id", ondelete="cascade"), index=True)
     root_message_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("thread_messages.id", ondelete="cascade")
     )
