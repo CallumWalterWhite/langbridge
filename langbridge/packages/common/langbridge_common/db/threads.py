@@ -25,7 +25,7 @@ class Thread(Base):
     __tablename__ = "threads"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    organisation_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), index=True)
+    organization_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), index=True)
     project_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), index=True)
     title: Mapped[Optional[str]] = mapped_column(String, nullable=True)
 
@@ -41,6 +41,7 @@ class Thread(Base):
     messages: Mapped[list["ThreadMessage"]] = relationship(
         "ThreadMessage", backref="thread", cascade="all, delete-orphan", lazy="selectin"
     )
+    last_message_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), nullable=True)
 
 
 class ThreadMessage(Base):

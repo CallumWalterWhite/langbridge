@@ -3,12 +3,15 @@ import logging
 import uuid
 from langbridge.apps.api.langbridge_api.services.message.message_serivce import MessageService
 from langbridge.packages.common.langbridge_common.contracts.jobs.agent_job import CreateAgentJobRequest
-from langbridge.packages.common.langbridge_common.repositories.job_repository import JobRepository
 from langbridge.packages.common.langbridge_common.errors.application_errors import BusinessValidationError
 from langbridge.packages.common.langbridge_common.repositories.job_repository import JobRepository
 from langbridge.packages.common.langbridge_common.repositories.agent_repository import AgentRepository
 from langbridge.packages.common.langbridge_common.contracts.jobs.type import JobType
-from langbridge.packages.common.langbridge_common.db.job import JobRecord, JobEventRecord
+from langbridge.packages.common.langbridge_common.db.job import (
+    JobEventRecord,
+    JobEventVisibility,
+    JobRecord,
+)
 from langbridge.packages.messaging.langbridge_messaging.contracts.jobs.agent_job import AgentJobRequestMessage
 
 
@@ -34,13 +37,19 @@ class AgentJobRequestService:
         
         job_record = JobRecord(
             id=job_id,
-            job_type=JobType.AGENT,
-            payload=request.dict_json(),
-            organisation_id=request.organisation_id,
+            job_type=JobType.AGENT.value,
+            payload=request.model_dump(mode="json"),
+            organisation_id=str(request.organisation_id),
             job_events=[
                 JobEventRecord(
                     event_type="AgentJobCreated",
-                    details={"agent_definition_id": str(request.agent_definition_id)}
+                    visibility=JobEventVisibility.public,
+                    details={
+                        "visibility": "public",
+                        "message": "Job queued.",
+                        "source": "api",
+                        "details": {"agent_definition_id": str(request.agent_definition_id)},
+                    },
                 )
             ],
         )

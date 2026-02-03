@@ -28,19 +28,25 @@ type ChartRow = Record<string, string | number | null>;
 
 const CHART_COLORS = ['#6366F1', '#EC4899', '#10B981', '#F97316', '#0EA5E9', '#FBBF24', '#A855F7'];
 
-const stringifyOptions = (options?: Record<string, unknown> | null): string | null => {
-  if (!options || Object.keys(options).length === 0) {
-    return null;
-  }
-  return JSON.stringify(options, null, 2);
-};
-
 const toNumber = (value: unknown): number | null => {
   if (typeof value === 'number' && Number.isFinite(value)) {
     return value;
   }
   if (value === null || value === undefined) {
     return null;
+  }
+  if (typeof value === 'string') {
+    let cleaned = value.trim();
+    if (!cleaned) {
+      return null;
+    }
+    cleaned = cleaned.replaceAll(',', '');
+    cleaned = cleaned.replaceAll('$', '').replaceAll('£', '').replaceAll('€', '');
+    if (cleaned.endsWith('%')) {
+      cleaned = cleaned.slice(0, -1);
+    }
+    const parsedString = Number(cleaned);
+    return Number.isFinite(parsedString) ? parsedString : null;
   }
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : null;
@@ -74,12 +80,11 @@ const normaliseSpec = (spec: RawVisualizationSpec) => {
     : typeof yValue === 'string' && yValue.length > 0
     ? yValue
     : null;
-  const options = (spec.options ?? spec.chart_options ?? null) as Record<string, unknown> | null;
-  return { chartType, title, x, y, groupBy, options };
+  return { chartType, title, x, y, groupBy };
 };
 
 const ChartPlaceholder = ({ message }: { message: string }) => (
-  <div className="mt-4 rounded-2xl border border-dashed border-[color:var(--panel-border)] bg-[color:var(--panel-alt)] px-4 py-6 text-center text-xs text-[color:var(--text-muted)]">
+  <div className="mt-4 rounded-xl border border-dashed border-[color:var(--panel-border)]/70 bg-[color:var(--panel-alt)]/45 px-3 py-2 text-xs text-[color:var(--text-muted)]">
     {message}
   </div>
 );
@@ -89,7 +94,7 @@ export function VisualizationPreview({ visualization, result }: VisualizationPre
     return null;
   }
 
-  const { chartType, title, x, y, groupBy, options } = normaliseSpec(visualization as RawVisualizationSpec);
+  const { chartType, title, x, y, groupBy } = normaliseSpec(visualization as RawVisualizationSpec);
   const rows = Array.isArray(result?.rows) ? result.rows : [];
   const columns = Array.isArray(result?.columns) ? result.columns : [];
   const records = rows.map((row) => toRecord(columns, row));
@@ -102,8 +107,6 @@ export function VisualizationPreview({ visualization, result }: VisualizationPre
       ? null
       : displayColumns.find((column) => !measureFields.includes(column)) ?? null);
 
-  const sampleRows = records.slice(0, 3);
-  const optionsPreview = stringifyOptions(options ?? undefined);
   const chartVariant = chartType?.toLowerCase() ?? 'table';
 
   const renderCategoricalChart = (variant: 'bar' | 'line') => {
@@ -282,76 +285,20 @@ export function VisualizationPreview({ visualization, result }: VisualizationPre
   })();
 
   return (
-    <section className="rounded-3xl border border-[color:var(--panel-border)] bg-[color:var(--panel-alt)] p-5 shadow-soft">
-      <div className="flex items-start justify-between gap-4">
-        <div className="space-y-1">
-          <h3 className="text-sm font-semibold text-[color:var(--text-primary)]">Visualization</h3>
-          {title ? <p className="text-xs text-[color:var(--text-muted)]">{title}</p> : null}
+    <div className="space-y-2">
+      {(title || chartType) && (
+        <div className="flex items-center justify-between gap-2 text-xs text-[color:var(--text-muted)]">
+          <span>{title || 'Chart'}</span>
+          {chartType ? (
+            <span className="inline-flex items-center rounded-full border border-[color:var(--panel-border)] bg-[color:var(--chip-bg)] px-2 py-0.5 text-[10px] uppercase tracking-[0.08em]">
+              {chartType}
+            </span>
+          ) : null}
         </div>
-        {chartType ? (
-          <span className="inline-flex items-center rounded-full border border-[color:var(--panel-border)] bg-[color:var(--chip-bg)] px-3 py-1 text-[11px] font-medium uppercase tracking-[0.12em] text-[color:var(--text-muted)]">
-            {chartType}
-          </span>
-        ) : null}
+      )}
+      <div className="rounded-xl border border-[color:var(--panel-border)]/70 bg-[color:var(--panel-bg)]/40 px-2 py-1">
+        {chartElement}
       </div>
-
-      {chartElement}
-
-      <dl className="mt-6 grid gap-3 text-xs text-[color:var(--text-secondary)] sm:grid-cols-2">
-        {dimensionKey ? (
-          <div>
-            <dt className="font-semibold text-[color:var(--text-primary)]">Dimension</dt>
-            <dd className="mt-1 break-words text-[color:var(--text-secondary)]">{dimensionKey}</dd>
-          </div>
-        ) : null}
-        {measureFields.length > 0 ? (
-          <div>
-            <dt className="font-semibold text-[color:var(--text-primary)]">Measures</dt>
-            <dd className="mt-1 space-y-1">
-              {measureFields.map((field) => (
-                <span key={field} className="block rounded-full border border-[color:var(--panel-border)] bg-[color:var(--panel-bg)] px-2 py-1 text-[10px] uppercase tracking-[0.08em] text-[color:var(--text-muted)]">
-                  {field}
-                </span>
-              ))}
-            </dd>
-          </div>
-        ) : null}
-        {groupBy ? (
-          <div>
-            <dt className="font-semibold text-[color:var(--text-primary)]">Group by</dt>
-            <dd className="mt-1 break-words text-[color:var(--text-secondary)]">{groupBy}</dd>
-          </div>
-        ) : null}
-      </dl>
-
-      {optionsPreview ? (
-        <div className="mt-4 rounded-2xl border border-[color:var(--panel-border)] bg-[color:var(--panel-bg)]/60">
-          <details className="group">
-            <summary className="cursor-pointer list-none px-4 py-3 text-xs font-semibold text-[color:var(--text-muted)] transition hover:text-[color:var(--text-primary)]">
-              Chart options
-            </summary>
-            <pre className="overflow-x-hidden whitespace-pre-wrap break-words px-4 pb-4 text-[10px] leading-relaxed text-[color:var(--text-secondary)]">
-              {optionsPreview}
-            </pre>
-          </details>
-        </div>
-      ) : null}
-
-      {sampleRows.length > 0 ? (
-        <div className="mt-4 space-y-2">
-          <p className="text-xs font-semibold uppercase tracking-[0.16em] text-[color:var(--text-muted)]">Sample data</p>
-          <div className="space-y-2 text-[10px]">
-            {sampleRows.map((row, index) => (
-              <pre
-                key={index}
-                className="overflow-x-hidden whitespace-pre-wrap break-words rounded-2xl border border-[color:var(--panel-border)] bg-[color:var(--panel-bg)] px-4 py-3 text-[color:var(--text-secondary)]"
-              >
-                {JSON.stringify(row, null, 2)}
-              </pre>
-            ))}
-          </div>
-        </div>
-      ) : null}
-    </section>
+    </div>
   );
 }

@@ -6,6 +6,17 @@ from langbridge.packages.common.langbridge_common.db.connector import Connector
 
 from .base import _Base
 
+class ConnectorDTO(_Base):
+    id: Optional[UUID] = None
+    name: str
+    description: Optional[str] = None
+    version: Optional[str] = None
+    label: Optional[str] = None
+    icon: Optional[str] = None
+    connector_type: Optional[str] = None
+    organization_id: UUID
+    project_id: Optional[UUID] = None
+    config: Optional[Dict[str, Any]] = None
 
 class ConnectorResponse(_Base):
     id: Optional[UUID] = None

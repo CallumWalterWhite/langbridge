@@ -45,5 +45,8 @@ class WorkerMessageHandler:
     def __resolve_handlers(
             self
     ):
+        # Import handler modules so BaseMessageHandler subclasses are registered.
+        from .jobs.agent_job_request_handler import AgentJobRequestHandler  # noqa: F401
+        from .test_message_handler import TestMessageHandler  # noqa: F401
         handlers: List[BaseMessageHandler] = BaseMessageHandler.__subclasses__()
         return handlers

@@ -6,6 +6,7 @@ from dependency_injector import containers, providers
 
 from langbridge.apps.api.langbridge_api.auth.register import create_oauth_client
 from langbridge.apps.api.langbridge_api.services.jobs.agent_job_request_service import AgentJobRequestService
+from langbridge.apps.api.langbridge_api.services.jobs.job_service import JobService
 from langbridge.packages.common.langbridge_common.config import Settings, settings
 from langbridge.packages.common.langbridge_common.db import (
     create_async_engine_for_url,
@@ -205,6 +206,10 @@ class Container(containers.DeclarativeContainer):
         agent_repository=agent_definition_repository,
         message_service=message_service
     )
+    job_service = providers.Factory(
+        JobService,
+        job_repository=job_repository,
+    )
 
     thread_service = providers.Factory(
         ThreadService,
@@ -213,7 +218,7 @@ class Container(containers.DeclarativeContainer):
         tool_call_repository=tool_call_repository,
         project_repository=project_repository,
         organization_service=organization_service,
-        agent_job_request_service=agent_job_request_service,
+        agent_job_request=agent_job_request_service,
     )
 
     orchestrator_service = providers.Factory(

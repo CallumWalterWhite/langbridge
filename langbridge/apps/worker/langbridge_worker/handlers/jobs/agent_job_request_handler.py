@@ -1,461 +1,486 @@
-from dataclasses import dataclass, field
+from __future__ import annotations
+
 import json
 import logging
-from typing import Any, Dict, List, Optional, Tuple, Type
 import uuid
-from langbridge.packages.common.langbridge_common.contracts.jobs.agent_job import CreateAgentJobRequest
-from langbridge.packages.common.langbridge_common.contracts.llm_connections import LLMConnectionSecretResponse
+from datetime import datetime, timezone
+from typing import Any, Optional, Tuple
+
+from pydantic import ValidationError
+
+from langbridge.apps.worker.langbridge_worker.handlers.jobs.job_event_emitter import (
+    JobEventEmitter,
+)
+from langbridge.packages.common.langbridge_common.contracts.jobs.agent_job import (
+    CreateAgentJobRequest,
+)
+from langbridge.packages.common.langbridge_common.contracts.llm_connections import (
+    LLMConnectionSecretResponse,
+)
 from langbridge.packages.common.langbridge_common.db.agent import AgentDefinition, LLMConnection
-from langbridge.packages.common.langbridge_common.db.connector import Connector
-from langbridge.packages.common.langbridge_common.db.job import JobEventRecord, JobRecord, JobStatus
-from langbridge.packages.common.langbridge_common.db.semantic import SemanticModelEntry
+from langbridge.packages.common.langbridge_common.db.job import JobRecord, JobStatus
+from langbridge.packages.common.langbridge_common.db.threads import (
+    Role,
+    Thread,
+    ThreadMessage,
+    ThreadState,
+)
+from langbridge.packages.common.langbridge_common.errors.application_errors import (
+    BusinessValidationError,
+)
+from langbridge.packages.common.langbridge_common.interfaces.agent_events import (
+    AgentEventVisibility,
+)
 from langbridge.packages.common.langbridge_common.repositories.agent_repository import AgentRepository
-from langbridge.packages.common.langbridge_common.repositories.connector_repository import ConnectorRepository
+from langbridge.packages.common.langbridge_common.interfaces.connectors import IConnectorStore
+from langbridge.packages.common.langbridge_common.interfaces.semantic_models import (
+    ISemanticModelStore,
+)
 from langbridge.packages.common.langbridge_common.repositories.job_repository import JobRepository
-from langbridge.packages.common.langbridge_common.errors.application_errors import BusinessValidationError
-from langbridge.packages.common.langbridge_common.repositories.llm_connection_repository import LLMConnectionRepository
-from langbridge.packages.common.langbridge_common.repositories.semantic_model_repository import SemanticModelRepository
-from langbridge.packages.common.langbridge_common.utils.embedding_provider import EmbeddingProvider, EmbeddingProviderError
-from langbridge.packages.connectors.langbridge_connectors.api.config import BaseConnectorConfigFactory, ConnectorRuntimeType, get_connector_config_factory
-from langbridge.packages.connectors.langbridge_connectors.api.connector import ConnectorRuntimeTypeSqlDialectMap, ManagedVectorDB, SqlConnector, SqlDialetcs, VectorDBType
-from langbridge.packages.connectors.langbridge_connectors.api.registry import SqlConnectorFactory, VectorDBConnectorFactory
+from langbridge.packages.common.langbridge_common.repositories.llm_connection_repository import (
+    LLMConnectionRepository,
+)
+from langbridge.packages.common.langbridge_common.repositories.thread_message_repository import (
+    ThreadMessageRepository,
+)
+from langbridge.packages.common.langbridge_common.repositories.thread_repository import ThreadRepository
+from langbridge.packages.common.langbridge_common.utils.embedding_provider import (
+    EmbeddingProvider,
+    EmbeddingProviderError,
+)
 from langbridge.packages.messaging.langbridge_messaging.contracts.base import MessageType
-from langbridge.packages.messaging.langbridge_messaging.contracts.jobs.agent_job import AgentJobRequestMessage
+from langbridge.packages.messaging.langbridge_messaging.contracts.jobs.agent_job import (
+    AgentJobRequestMessage,
+)
 from langbridge.packages.messaging.langbridge_messaging.handler import BaseMessageHandler
-from langbridge.packages.orchestrator.langbridge_orchestrator.agents.analyst.agent import AnalystAgent
-from langbridge.packages.orchestrator.langbridge_orchestrator.agents.deep_research.agent import DeepResearchAgent
-from langbridge.packages.orchestrator.langbridge_orchestrator.agents.planner.models import PlanningConstraints
-from langbridge.packages.orchestrator.langbridge_orchestrator.agents.planner.planner import PlanningAgent
-from langbridge.packages.orchestrator.langbridge_orchestrator.agents.reasoning.agent import ReasoningAgent
-from langbridge.packages.orchestrator.langbridge_orchestrator.agents.supervisor.orchestrator import SupervisorOrchestrator
-from langbridge.packages.orchestrator.langbridge_orchestrator.agents.visual.agent import VisualAgent
-from langbridge.packages.orchestrator.langbridge_orchestrator.agents.web_search.agent import WebSearchAgent
-from langbridge.packages.orchestrator.langbridge_orchestrator.definitions.model import AgentDefinitionModel, DataAccessPolicy, ExecutionMode, ToolType
-from langbridge.packages.orchestrator.langbridge_orchestrator.llm.provider.base import LLMProvider
-from langbridge.packages.orchestrator.langbridge_orchestrator.llm.provider.factory import create_provider
-from langbridge.packages.orchestrator.langbridge_orchestrator.tools.semantic_search.tool import SemanticSearchTool
-from langbridge.packages.orchestrator.langbridge_orchestrator.tools.sql_analyst.tool import SqlAnalystTool
-from langbridge.packages.semantic.langbridge_semantic.loader import load_semantic_model
-from langbridge.packages.semantic.langbridge_semantic.model import SemanticModel
+from langbridge.packages.orchestrator.langbridge_orchestrator.definitions import AgentDefinitionModel
+from langbridge.packages.orchestrator.langbridge_orchestrator.llm.provider import create_provider
+from langbridge.packages.orchestrator.langbridge_orchestrator.runtime import (
+    AgentOrchestratorFactory,
+)
 
 
-@dataclass(slots=True)
-class _AgentToolConfig:
-    allow_sql: bool
-    allow_web_search: bool
-    allow_deep_research: bool
-    allow_visualization: bool
-    sql_model_ids: set[uuid.UUID] = field(default_factory=set)
-    web_search_defaults: dict[str, Any] = field(default_factory=dict)
-
-class JobHandlerMessage(BaseMessageHandler):
+class AgentJobRequestHandler(BaseMessageHandler):
     message_type: MessageType = MessageType.AGENT_JOB_REQUEST
-    
-    def __init__(self,
-                job_repository: JobRepository,
-                agent_definition_repository: AgentRepository,
-                semantic_model_repository: SemanticModelRepository,
-                llm_repository: LLMConnectionRepository,
-                connector_repository: ConnectorRepository
-                ):
+
+    def __init__(
+        self,
+        job_repository: JobRepository,
+        agent_definition_repository: AgentRepository,
+        llm_repository: LLMConnectionRepository,
+        semantic_model_store: ISemanticModelStore,
+        connector_store: IConnectorStore,
+        thread_repository: ThreadRepository,
+        thread_message_repository: ThreadMessageRepository,
+    ) -> None:
         self._logger = logging.getLogger(__name__)
         self._job_repository = job_repository
         self._agent_definition_repository = agent_definition_repository
-        self._semantic_model_repository = semantic_model_repository
         self._llm_repository = llm_repository
-        self._connector_repository = connector_repository
-        self._vector_factory = VectorDBConnectorFactory()
-        self._sql_connector_factory = SqlConnectorFactory()
-    
-    async def handle(self, agent_job_request_payload: AgentJobRequestMessage) -> None:
-        self._logger.info(f"Received agent job request with ID {agent_job_request_payload.job_id} and type {agent_job_request_payload.job_type}")
-
-        job_record: JobRecord | None = await self._job_repository.get_by_id(agent_job_request_payload.job_id)
-
-        if job_record is None:
-            raise BusinessValidationError(f"Job with ID {agent_job_request_payload.job_id} does not exist.")
-        
-        job_record.status = JobStatus.running
-
-        payload: CreateAgentJobRequest = CreateAgentJobRequest(**job_record.payload)
-        
-        agent_definition_record, agent_definition_model = await self._get_agent_definition(payload.agent_definition_id)
-
-        llm_connection: LLMConnection = await self._get_llm_connection(
-            getattr(agent_definition_record, "llm_connection_id")
+        self._thread_repository = thread_repository
+        self._thread_message_repository = thread_message_repository
+        self._agent_orchestrator_factory = AgentOrchestratorFactory(
+            semantic_model_store=semantic_model_store,
+            connector_store=connector_store,
         )
 
-        llm_connection_response = LLMConnectionSecretResponse.model_validate(llm_connection)
+    async def handle(self, payload: AgentJobRequestMessage) -> None:
+        self._logger.info(
+            "Received agent job request with ID %s and type %s",
+            payload.job_id,
+            payload.job_type,
+        )
+
+        job_record = await self._job_repository.get_by_id(payload.job_id)
+        if job_record is None:
+            raise BusinessValidationError(f"Job with ID {payload.job_id} does not exist.")
+
+        if job_record.status in {
+            JobStatus.succeeded,
+            JobStatus.failed,
+            JobStatus.cancelled,
+        }:
+            self._logger.info(
+                "Job %s already in terminal state %s; skipping.",
+                job_record.id,
+                job_record.status,
+            )
+            return None
+
+        event_emitter = JobEventEmitter(
+            job_record=job_record,
+            job_repository=self._job_repository,
+            logger=self._logger,
+        )
+        job_record.status = JobStatus.running
+        if job_record.started_at is None:
+            job_record.started_at = datetime.now(timezone.utc)
+        await event_emitter.emit(
+            event_type="AgentJobStarted",
+            message="Agent job started.",
+            visibility=AgentEventVisibility.public,
+            source="worker",
+            details={"job_id": str(job_record.id)},
+        )
+
+        request: CreateAgentJobRequest | None = None
+        thread: Thread | None = None
+        user_message: ThreadMessage | None = None
 
         try:
-            embedding_provider: EmbeddingProvider | None = EmbeddingProvider.from_llm_connection(llm_connection_response)
-        except EmbeddingProviderError as exc:
-            embedding_provider = None
-            self._logger.warning(
-                "request_id=%s embedding provider unavailable; skipping vector search: %s",
-                job_record.id,
-                exc,
+            request = self._parse_job_payload(job_record)
+            thread, user_message = await self._get_thread_and_last_user_message(request.thread_id)
+            agent_definition, definition_model = await self._get_agent_definition(
+                request.agent_definition_id
+            )
+            llm_connection = await self._get_llm_connection(agent_definition.llm_connection_id)
+            llm_provider = create_provider(llm_connection)
+            embedding_provider = self._create_embedding_provider(job_record.id, llm_connection)
+
+            runtime = await self._agent_orchestrator_factory.create_runtime(
+                definition=definition_model,
+                llm_provider=llm_provider,
+                embedding_provider=embedding_provider,
+                event_emitter=event_emitter,
             )
 
-        tool_config: _AgentToolConfig = self._build_agent_tool_config(agent_definition_model)
+            user_query = self._extract_user_query(user_message)
+            response = await runtime.supervisor.handle(
+                user_query=user_query,
+                planning_constraints=runtime.planning_constraints,
+                planning_context=runtime.planning_context,
+            )
+            response = self._ensure_response_defaults(response, user_query=user_query)
 
-        llm_provider: LLMProvider = create_provider(llm_connection)
-        
-        sql_analyst_tool, semantic_search_tools = await self._build_analyst_tools(tool_config, llm_provider, embedding_provider)
+            self._record_assistant_message(
+                thread=thread,
+                user_message=user_message,
+                response=response,
+                agent_id=agent_definition.id,
+            )
 
-        supervisor_orchestrator = self._build_supervisor_orchestrator(tool_config, agent_definition_model, llm_provider, sql_analyst_tool, semantic_search_tools, embedding_provider)
-        
+            job_record.result = response
+            job_record.status = JobStatus.succeeded
+            job_record.progress = 100
+            job_record.finished_at = datetime.now(timezone.utc)
+            job_record.error = None
+            await event_emitter.emit(
+                event_type="AgentJobCompleted",
+                message="Agent job completed.",
+                visibility=AgentEventVisibility.public,
+                source="worker",
+                details={"job_id": str(job_record.id)},
+            )
+        except Exception as exc:  # pragma: no cover - defensive guard for background jobs
+            self._logger.exception("Agent job %s failed: %s", job_record.id, exc)
+            job_record.status = JobStatus.failed
+            job_record.finished_at = datetime.now(timezone.utc)
+            job_record.error = {"message": str(exc)}
+            if thread is None and request is not None:
+                thread = await self._thread_repository.get_by_id(request.thread_id)
+            if thread is not None:
+                thread.state = ThreadState.awaiting_user_input
+                thread.updated_at = datetime.now(timezone.utc)
+            await event_emitter.emit(
+                event_type="AgentJobFailed",
+                message="Agent job failed.",
+                visibility=AgentEventVisibility.public,
+                source="worker",
+                details={"job_id": str(job_record.id), "error": str(exc)},
+            )
 
-        job_record.status = JobStatus.running
+        return None
 
-        job_record.job_events.append(JobEventRecord(event_type="AgentJobStarted", details={}))
+    def _parse_job_payload(self, job_record: JobRecord) -> CreateAgentJobRequest:
+        raw_payload = job_record.payload
 
+        if isinstance(raw_payload, str):
+            try:
+                payload_data = json.loads(raw_payload)
+            except json.JSONDecodeError as exc:
+                raise BusinessValidationError(
+                    f"Job payload for {job_record.id} is not valid JSON."
+                ) from exc
+        elif isinstance(raw_payload, dict):
+            payload_data = raw_payload
+        else:
+            raise BusinessValidationError(
+                f"Job payload for {job_record.id} must be an object or JSON string."
+            )
 
-        
-    async def _get_agent_definition(self, agent_definition_id: uuid.UUID) -> Tuple[AgentDefinition, AgentDefinitionModel]:
+        try:
+            return CreateAgentJobRequest.model_validate(payload_data)
+        except ValidationError as exc:
+            raise BusinessValidationError(
+                f"Job payload for {job_record.id} is invalid for agent execution."
+            ) from exc
+
+    async def _get_thread_and_last_user_message(
+        self,
+        thread_id: uuid.UUID,
+    ) -> Tuple[Thread, ThreadMessage]:
+        thread = await self._thread_repository.get_by_id(thread_id)
+        if thread is None:
+            raise BusinessValidationError(f"Thread with ID {thread_id} does not exist.")
+
+        messages = await self._thread_message_repository.list_for_thread(thread.id)
+        if not messages:
+            raise BusinessValidationError(f"Thread {thread.id} has no messages to process.")
+
+        last_message: ThreadMessage | None = None
+        if thread.last_message_id is not None:
+            last_message = next((msg for msg in messages if msg.id == thread.last_message_id), None)
+
+        if last_message is None:
+            last_message = messages[-1]
+
+        if last_message.role != Role.user:
+            user_messages = [msg for msg in messages if msg.role == Role.user]
+            if not user_messages:
+                raise BusinessValidationError(f"Thread {thread.id} does not contain a user message.")
+            last_message = user_messages[-1]
+
+        return thread, last_message
+
+    async def _get_agent_definition(
+        self,
+        agent_definition_id: uuid.UUID,
+    ) -> Tuple[AgentDefinition, AgentDefinitionModel]:
         agent_definition = await self._agent_definition_repository.get_by_id(agent_definition_id)
         if agent_definition is None:
-            raise BusinessValidationError(f"Agent definition with ID {agent_definition_id} does not exist.")
+            raise BusinessValidationError(
+                f"Agent definition with ID {agent_definition_id} does not exist."
+            )
 
         return agent_definition, AgentDefinitionModel.model_validate(agent_definition.definition)
-    
+
     async def _get_llm_connection(self, llm_connection_id: uuid.UUID) -> LLMConnection:
         llm_connection = await self._llm_repository.get_by_id(llm_connection_id)
         if llm_connection is None:
-            raise BusinessValidationError(f"LLM connection with ID {llm_connection_id} does not exist.")
+            raise BusinessValidationError(
+                f"LLM connection with ID {llm_connection_id} does not exist."
+            )
 
         return llm_connection
 
-    async def _get_semantic_model_defintions(
-        self, 
-        semantic_model_ids: list[uuid.UUID]
-    ) -> List[SemanticModelEntry]:
-        return await self._semantic_model_repository.get_by_ids(semantic_model_ids)
-    
-    async def _get_connectors(self, connector_ids: set[uuid.UUID]) -> List[Connector]:
-        return await self._connector_repository.get_by_ids(list(connector_ids))
+    def _create_embedding_provider(
+        self,
+        job_id: uuid.UUID,
+        llm_connection: LLMConnection,
+    ) -> Optional[EmbeddingProvider]:
+        llm_connection_response = LLMConnectionSecretResponse.model_validate(llm_connection)
 
-    async def _build_analyst_tools(
-            self,
-            agent_tool_config: _AgentToolConfig,
-            llm_provider: LLMProvider,
-            embedding_provider: Optional[EmbeddingProvider]
-    ) -> Tuple[List[SqlAnalystTool], List[SemanticSearchTool]]:
-        
-        if not agent_tool_config.allow_sql:
-            return [], []
-
-        semantic_model_entries: List[SemanticModelEntry] = await self._get_semantic_model_defintions(list(agent_tool_config.sql_model_ids))
-        
-        connector_ids = set()
-        for entry in semantic_model_entries:
-            connector_ids.add(entry.connector_id)
-
-        connectors: List[Connector] = await self._get_connectors(connector_ids)
-        
-        connector_instances: Dict[uuid.UUID, SqlConnector] = {}
-        sql_tools: List[SqlAnalystTool] = []
-        semantic_search_tools: List[SemanticSearchTool] = []
-        
-        for entry in semantic_model_entries:
-            connector: Connector | None = next((c for c in connectors if getattr(c, "id", None) == entry.connector_id), None)
-            if connector is None:
-                self._logger.warning(f"No connector found for semantic model {entry.id} (connector_id={entry.connector_id})")
-                continue
-            
-            connector_id: uuid.UUID = getattr(connector, "id")
-            connector_config_json = getattr(connector, "config_json")
-            connector_type: ConnectorRuntimeType = ConnectorRuntimeType(connector.connector_type.upper())
-            
-            if connector_id not in connector_instances:
-                dialect: SqlDialetcs | None = ConnectorRuntimeTypeSqlDialectMap.get(connector_type)
-                if dialect is None:
-                    raise BusinessValidationError(
-                        f"Connector type {connector_type.value} does not support SQL operations."
-                    )
-                config_factory: Type[BaseConnectorConfigFactory] = get_connector_config_factory(
-                    connector_type
-                )
-                connector_config: Dict[str, Any] = json.loads(connector_config_json)
-                config_instance = config_factory.create(connector_config["config"])
-                sql_connector: SqlConnector = self._sql_connector_factory.create_sql_connector(
-                    dialect,
-                    config_instance,
-                    logger=self._logger,
-                )
-                connector_instances[connector_id] = sql_connector
-
-            sql_connector: SqlConnector = connector_instances[connector_id]
-            semantic_model: SemanticModel = load_semantic_model(entry.content_yaml)
-            base_dialect = semantic_model.dialect
-            dialect_str = str((base_dialect or getattr(sql_connector.DIALECT, "name", "postgres"))).lower()
-
-            semantic_searches = await self._build_semantic_search_tools(
-                llm_provider,
-                semantic_model,
+        try:
+            return EmbeddingProvider.from_llm_connection(llm_connection_response)
+        except EmbeddingProviderError as exc:
+            self._logger.warning(
+                "request_id=%s embedding provider unavailable; skipping vector search: %s",
+                job_id,
+                exc,
             )
-            semantic_search_tools.extend(semantic_searches)
+            return None
 
-            tool = SqlAnalystTool(
-                llm=llm_provider,
-                semantic_model=semantic_model,
-                connector=sql_connector,
-                dialect=dialect_str,
-                priority=0,
-                embedder=embedding_provider,
+    @staticmethod
+    def _extract_user_query(message: ThreadMessage) -> str:
+        content = message.content
+
+        if isinstance(content, str):
+            text = content.strip()
+            if text:
+                return text
+
+        if isinstance(content, dict):
+            for key in ("text", "message", "prompt", "query"):
+                value = content.get(key)
+                if isinstance(value, str) and value.strip():
+                    return value.strip()
+
+        raise BusinessValidationError(f"Thread message {message.id} does not contain user text.")
+
+    def _record_assistant_message(
+        self,
+        *,
+        thread: Thread,
+        user_message: ThreadMessage,
+        response: dict[str, Any],
+        agent_id: uuid.UUID,
+    ) -> None:
+        assistant_message_id = uuid.uuid4()
+
+        assistant_message = ThreadMessage(
+            id=assistant_message_id,
+            thread_id=thread.id,
+            parent_message_id=user_message.id,
+            role=Role.assistant,
+            content={
+                "summary": response.get("summary"),
+                "result": response.get("result"),
+                "visualization": response.get("visualization"),
+                "diagnostics": response.get("diagnostics"),
+            },
+            model_snapshot={"agent_id": str(agent_id)},
+            error=response.get("error"),
+        )
+
+        self._thread_message_repository.add(assistant_message)
+        thread.last_message_id = assistant_message_id
+        thread.state = ThreadState.awaiting_user_input
+        thread.updated_at = datetime.now(timezone.utc)
+
+    @staticmethod
+    def _ensure_response_defaults(response: dict[str, Any], *, user_query: str) -> dict[str, Any]:
+        payload = dict(response or {})
+        payload = AgentJobRequestHandler._ensure_requested_visualization(payload, user_query=user_query)
+        if payload.get("summary"):
+            return payload
+
+        result = payload.get("result")
+        if isinstance(result, dict) and isinstance(result.get("rows"), list):
+            row_count = len(result.get("rows", []))
+            columns = result.get("columns")
+            col_count = len(columns) if isinstance(columns, list) else 0
+            payload["summary"] = (
+                f"Found {row_count} rows across {col_count} columns for '{user_query}'."
+                if row_count > 0
+                else "Completed, but no tabular rows were returned."
             )
+            return payload
 
-            sql_tools.append(tool)
+        payload["summary"] = "Completed."
+        return payload
 
-        return sql_tools, semantic_search_tools
-    
-    def _get_vector_semantic_searches(self, semantic_model: SemanticModel) -> list[dict[str, Any]]:
-        searches = []
-        for table_key, table in semantic_model.tables.items():
-            for dimension in table.dimensions or []:
-                if not dimension.vectorized:
+    @staticmethod
+    def _ensure_requested_visualization(payload: dict[str, Any], *, user_query: str) -> dict[str, Any]:
+        requested_chart = AgentJobRequestHandler._detect_requested_chart_type(user_query)
+        if not requested_chart:
+            return payload
+
+        result = payload.get("result")
+        if not isinstance(result, dict):
+            return payload
+        columns = result.get("columns")
+        rows = result.get("rows")
+        if not isinstance(columns, list) or not isinstance(rows, list) or not columns or not rows:
+            return payload
+
+        visualization = payload.get("visualization")
+        existing_type = None
+        if isinstance(visualization, dict):
+            existing_raw = visualization.get("chart_type") or visualization.get("chartType")
+            if isinstance(existing_raw, str):
+                existing_type = existing_raw.strip().lower()
+        if existing_type == requested_chart:
+            return payload
+
+        generated = AgentJobRequestHandler._build_chart_spec(
+            chart_type=requested_chart,
+            columns=[str(column) for column in columns],
+            rows=rows,
+            title=f"Visualization for '{user_query}'",
+        )
+        if generated is None:
+            return payload
+
+        payload["visualization"] = generated
+
+        summary = payload.get("summary")
+        if isinstance(summary, str) and "table visualization" in summary.lower():
+            payload["summary"] = summary.replace("table visualization", f"{requested_chart} visualization")
+        return payload
+
+    @staticmethod
+    def _detect_requested_chart_type(question: str) -> str | None:
+        text = str(question or "").lower()
+        if not text:
+            return None
+        if "pie chart" in text or "donut chart" in text or "doughnut chart" in text:
+            return "pie"
+        if " pie " in f" {text} " or "donut" in text or "doughnut" in text:
+            return "pie"
+        if "bar chart" in text or "bar graph" in text:
+            return "bar"
+        if "line chart" in text or "line graph" in text:
+            return "line"
+        if "scatter plot" in text or "scatter chart" in text:
+            return "scatter"
+        return None
+
+    @staticmethod
+    def _coerce_number(value: Any) -> float | None:
+        if isinstance(value, (int, float)):
+            return float(value)
+        if isinstance(value, str):
+            cleaned = value.strip().replace(",", "")
+            cleaned = cleaned.replace("$", "").replace("£", "").replace("€", "")
+            if cleaned.endswith("%"):
+                cleaned = cleaned[:-1]
+            if not cleaned:
+                return None
+            try:
+                return float(cleaned)
+            except ValueError:
+                return None
+        return None
+
+    @staticmethod
+    def _build_chart_spec(
+        *,
+        chart_type: str,
+        columns: list[str],
+        rows: list[Any],
+        title: str,
+    ) -> dict[str, Any] | None:
+        sample_rows = rows[: min(20, len(rows))]
+
+        def get_cell(row: Any, index: int) -> Any:
+            if isinstance(row, (list, tuple)):
+                return row[index] if index < len(row) else None
+            if isinstance(row, dict):
+                key = columns[index]
+                return row.get(key)
+            return None
+
+        numeric_indexes: list[int] = []
+        for idx in range(len(columns)):
+            seen = 0
+            numeric = 0
+            for row in sample_rows:
+                value = get_cell(row, idx)
+                if value is None:
                     continue
-                vector_index = dimension.vector_index or {}
-                if not vector_index:
-                    continue
-                self._logger.info("Found vectorized dimension: %s.%s", table_key, dimension.name)
-                vector_parameters = {
-                    **vector_index,
-                    "semantic_name": f"{semantic_model.name or 'semantic_model'}::{table_key}.{dimension.name}",
-                }
-                searches.append(
-                    {
-                        "metadata_filters": {},
-                        "vector_parameters": vector_parameters,
-                    }
-                )
-        return searches
-    
-    async def _build_semantic_search_tools(
-        self,
-        llm_provider: LLMProvider,
-        semantic_model: SemanticModel,
-    ) -> list[SemanticSearchTool]:
-        tools: list[SemanticSearchTool] = []
-        vector_searches = self._get_vector_semantic_searches(semantic_model)
-        self._logger.info(
-            "Building %d semantic search tools for model %s",
-            len(vector_searches),
-            semantic_model.name,
-        )
-        for vector_search in vector_searches:
-            vector_params = vector_search.get("vector_parameters", {})
-            if not vector_params:
-                self._logger.warning(
-                    "Skipping semantic search tool for model %s due to missing vector parameters in %s",
-                    semantic_model.name, vector_search
-                )
-                continue
-            self._logger.info(
-                "Building semantic search tool for model %s with vector params %s",
-                semantic_model.name,
-                vector_params,
-            )
-            #TODO: Support other vector DB types (e.g., Pinecone, Weaviate) based on vector_params
-            tool = await self._build_semantic_search_tool(
-                llm_provider,
-                vector_type=VectorDBType.FAISS,
-                vector_params=vector_params,
-            )
-            tools.append(tool)
-        return tools
+                seen += 1
+                if AgentJobRequestHandler._coerce_number(value) is not None:
+                    numeric += 1
+            if seen > 0 and numeric / seen >= 0.6:
+                numeric_indexes.append(idx)
 
-    async def _build_semantic_search_tool(
-        self,
-        llm_provider: LLMProvider,
-        vector_type: VectorDBType,
-        vector_params: dict[str, Any],
-    ) -> SemanticSearchTool:
-        vector_managed_class_ref: Type[ManagedVectorDB] = (
-            self._vector_factory.get_managed_vector_db_class_reference(vector_type)
-        )
-        #TODO: Support other vector DB types (e.g., Pinecone, Weaviate)
-        vector_store: ManagedVectorDB = await vector_managed_class_ref.create_managed_instance(
-            kwargs={
-                "index_name": vector_params.get("vector_namespace")
-            },
-            logger=self._logger,
-        )
-        return SemanticSearchTool(
-            semantic_name=vector_params.get("semantic_name", "default_search"),
-            llm=llm_provider,
-            embedding_model=vector_params.get("model"),
-            vector_store=vector_store,
-            entity_reconignition=True # trying out entity recognition
-        )
-    
-    def _build_supervisor_orchestrator(
-            self,
-            tool_config: _AgentToolConfig,
-            agent_definition: AgentDefinitionModel,
-            llm_provider: LLMProvider,
-            sql_tools: List[SqlAnalystTool],
-            semantic_search_tools: List[SemanticSearchTool],
-            _: Optional[EmbeddingProvider]
-    ) -> SupervisorOrchestrator:
-        
-        planning_constraints = self._build_planning_constraints(tool_config, agent_definition)
-        
-        analyst_agent = self._build_analyst_agent(llm_provider, sql_tools, semantic_search_tools)
-        visual_agent = self._build_visual_agent(llm_provider)
-        planning_agent = self._build_planning_agent(llm_provider)
-        reasoning_agent = self._build_reasoning_agent(llm_provider, planning_constraints)
-        deep_research_agent = self._build_deep_research_agent(llm_provider)
-        web_search_agent = self._build_web_search_agent(llm_provider)
-        
-        supervisor = SupervisorOrchestrator(
-            analyst_agent=analyst_agent,
-            visual_agent=visual_agent,
-            planning_agent=planning_agent,
-            reasoning_agent=reasoning_agent,
-            deep_research_agent=deep_research_agent,
-            web_search_agent=web_search_agent
-        )
-        return supervisor
+        if not numeric_indexes:
+            return None
 
-    def _build_agent_tool_config(
-        self,
-        definition: AgentDefinitionModel,
-    ) -> _AgentToolConfig:
+        non_numeric_indexes = [idx for idx in range(len(columns)) if idx not in numeric_indexes]
+        dimension_idx = non_numeric_indexes[0] if non_numeric_indexes else None
+        measure_idx = numeric_indexes[0]
 
-        tools = list(definition.tools or [])
-        
-        sql_tools = [tool for tool in tools if tool.tool_type == ToolType.sql]
-        allow_sql = len(sql_tools) > 0
-
-        web_search_tools = [tool for tool in tools if tool.tool_type == ToolType.web]
-        allow_web_search = len(web_search_tools) > 0
-
-        allow_deep_research = AgentDefinitionModel.features.deep_research_enabled
-        allow_visualization = AgentDefinitionModel.features.visualization_enabled
-
-        sql_semantic_model_ids = [tool.get_sql_tool_config().definition_id for tool in sql_tools]
-
-        return _AgentToolConfig(
-            allow_sql=allow_sql,
-            allow_web_search=allow_web_search,
-            allow_deep_research=allow_deep_research,
-            allow_visualization=allow_visualization,
-            sql_model_ids=set(sql_semantic_model_ids),
-        )
-    
-    def _build_planning_constraints(
-        self,
-        tool_config: _AgentToolConfig,
-        agent_definition: AgentDefinitionModel
-    ) -> PlanningConstraints:
-        max_steps = agent_definition.execution.max_iterations
-        ignore_max_steps = False
-        if agent_definition.features.deep_research_enabled:
-            ignore_max_steps = True
-
-        prefer_low_latency = agent_definition.execution.mode == ExecutionMode.single_step
-        max_steps = max(1, min(max_steps, 5)) if ExecutionMode.single_step else max_steps
-
-        return PlanningConstraints(
-            max_steps=agent_definition.execution.max_iterations,
-            ignore_max_steps=ignore_max_steps,
-            prefer_low_latency=prefer_low_latency,
-            require_viz_when_chartable=agent_definition.features.visualization_enabled,
-            allow_sql_analyst=tool_config.allow_sql,
-            allow_web_search=tool_config.allow_web_search,
-            allow_deep_research=tool_config.allow_deep_research
-        )
-    
-    async def _build_planner_tool_context(
-            self,
-            agent_tool_config: _AgentToolConfig,
-    ) -> Dict[str, Any]:
-        semantic_model_entries: List[SemanticModelEntry] = await self._get_semantic_model_defintions(list(agent_tool_config.sql_model_ids))
-        
-        available_agents = [
-            {
-                "agent": "Analyst",
-                "description": "Query structured data via semantic models (NL to SQL).",
-                "enabled": agent_tool_config.allow_sql,
-                "notes": "Uses the semantic_models list.",
-            },
-            {
-                "agent": "Visual",
-                "description": "Generate a visualization spec from analyst results.",
-                "enabled": agent_tool_config.allow_visualization,
-            },
-            {
-                "agent": "WebSearch",
-                "description": "Search the web for sources and snippets.",
-                "enabled": agent_tool_config.allow_web_search,
-            },
-            {
-                "agent": "DocRetrieval",
-                "description": "Synthesize insights from documents and sources.",
-                "enabled": agent_tool_config.allow_deep_research,
-            },
-            {
-                "agent": "Clarify",
-                "description": "Ask a clarifying question when key details are missing.",
-                "enabled": True,
-            },
-        ]
-
-        semantic_model_tool_descriptions: Dict[str, str] = {}
-        for entry in semantic_model_entries:
-            semantic_model_tool_descriptions[str(entry.id)] = { # type: ignore
-                'name': entry.name,
-                'description': f"{entry.name} - {entry.description}",
-                'yaml': f"yaml: {entry.content_yaml}",
+        if chart_type in {"pie", "bar", "line"}:
+            if dimension_idx is None:
+                return None
+            return {
+                "chart_type": chart_type,
+                "x": columns[dimension_idx],
+                "y": columns[measure_idx],
+                "title": title,
+                "options": {"row_count": len(rows)},
             }
 
-        return {
-            "available_agents": available_agents,
-            "semantic_models": semantic_model_tool_descriptions,
-        }
-    
-    def _build_planning_agent(
-            self,
-            llm_provider: LLMProvider
-    ) -> PlanningAgent:
-        planning_agent = PlanningAgent(llm=llm_provider)
-        return planning_agent
-    
-    def _build_reasoning_agent(
-            self,
-            llm_provider: LLMProvider,
-            planning_constraints: PlanningConstraints
-    ) -> ReasoningAgent:
-        reasoning_agent = ReasoningAgent(llm=llm_provider, max_iterations=planning_constraints.max_steps)
-        return reasoning_agent
-    
-    def _build_visual_agent(
-            self,
-            llm_provider: LLMProvider
-    ) -> VisualAgent:
-        visual_agent = VisualAgent(llm=llm_provider)
-        return visual_agent
-    
-    def _build_deep_research_agent(
-            self,
-            llm_provider: LLMProvider
-    ) -> DeepResearchAgent:
-        deep_research_agent = DeepResearchAgent(llm=llm_provider)
-        return deep_research_agent
-    
-    def _build_web_search_agent(
-            self,
-            llm_provider: LLMProvider
-    ) -> WebSearchAgent:
-        web_search_agent = WebSearchAgent(llm=llm_provider)
-        return web_search_agent
-    
-    def _build_analyst_agent(
-            self,
-            llm_provider: LLMProvider,
-            sql_tools: List[SqlAnalystTool],
-            semantic_search_tools: List[SemanticSearchTool]
-    ) -> AnalystAgent:
-        analyst_agent = AnalystAgent(llm=llm_provider, sql_tools=sql_tools, search_tools=semantic_search_tools)
-        return analyst_agent
+        if chart_type == "scatter":
+            if len(numeric_indexes) < 2:
+                return None
+            return {
+                "chart_type": "scatter",
+                "x": columns[numeric_indexes[0]],
+                "y": columns[numeric_indexes[1]],
+                "title": title,
+                "options": {"row_count": len(rows)},
+            }
+
+        return None

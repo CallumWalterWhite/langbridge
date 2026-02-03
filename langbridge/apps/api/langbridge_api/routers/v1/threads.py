@@ -20,7 +20,6 @@ from langbridge.packages.common.langbridge_common.contracts.threads import (
     ThreadResponse,
     ThreadUpdateRequest,
 )
-from langbridge.apps.api.langbridge_api.services.orchestrator_service import OrchestratorService
 from langbridge.apps.api.langbridge_api.services.thread_service import ThreadService
 
 router = APIRouter(prefix="/thread/{organization_id}", tags=["threads"])
@@ -123,7 +122,6 @@ async def chat_thread(
     current_user: UserResponse = Depends(get_current_user),
     _org = Depends(get_organization),
     thread_service: ThreadService = Depends(Provide[Container.thread_service]),
-    orchestrator_service: OrchestratorService = Depends(Provide[Container.orchestrator_service]),
 ) -> ThreadChatResponse:
     """Handle a chat request within a specific thread."""
     try:
@@ -134,35 +132,19 @@ async def chat_thread(
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc
 
     try:
-        # new work implementation
-        await thread_service.create_user_thread_message(
+        _, job_record = await thread_service.create_user_thread_message(
             thread_id,
             current_user,
             organization_id,
-            agent_definition_id = request.agent_id,
-            content=request.message
-        )
-        
-        response = await orchestrator_service.chat(
-            msg=request.message,
-            agent_id=request.agent_id,
-            thread_id=thread_id,
-            current_user=current_user,
-        )
-        await thread_service.record_chat_turn(
-            thread_id,
-            current_user,
-            prompt=request.message,
-            response=response,
-            agent_snapshot={"agent_id": str(request.agent_id)},
+            agent_definition_id=request.agent_id,
+            content=request.message,
         )
     except BusinessValidationError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
     return ThreadChatResponse(
-        result=response.get("result"),
-        visualization=response.get("visualization"),
-        summary=response.get("summary"),
+        job_id=job_record.id,
+        job_status='queued',
     )
 
 

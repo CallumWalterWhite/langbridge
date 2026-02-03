@@ -98,7 +98,12 @@ wire_packages(
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Lifespan context manager to handle startup and shutdown events."""
-    _ensure_local_sqlite_schema()
+    try:
+        _ensure_local_sqlite_schema()
+        logger.info("Local SQLite schema ensured successfully.")
+    except Exception as e:
+        logger.error("Error during local SQLite schema ensure: %s", e)
+        raise
     init_result = container.init_resources()
     if inspect.isawaitable(init_result):
         await init_result

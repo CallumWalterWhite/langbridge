@@ -55,9 +55,11 @@ export type ThreadVisualizationSpec = {
 };
 
 export type ThreadChatResponse = {
-  result: ThreadTabularResult | null;
-  visualization: ThreadVisualizationSpec | null;
-  summary: string | null;
+  jobId?: string | null;
+  jobStatus?: string | null;
+  result?: ThreadTabularResult | null;
+  visualization?: ThreadVisualizationSpec | null;
+  summary?: string | null;
 };
 
 export type ThreadMessage = {

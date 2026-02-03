@@ -14,6 +14,10 @@ from typing import Any, Dict, List, Optional, Sequence
 
 import sqlglot
 
+from langbridge.packages.common.langbridge_common.interfaces.agent_events import (
+    AgentEventVisibility,
+    IAgentEventEmitter,
+)
 from langbridge.packages.connectors.langbridge_connectors.api import SqlConnector
 from langbridge.packages.orchestrator.langbridge_orchestrator.llm.provider import LLMProvider
 from .interfaces import (
@@ -80,6 +84,7 @@ class SqlAnalystTool:
         llm_temperature: float = 0.0,
         priority: int = 0,
         embedder: Optional[EmbeddingProvider] = None,
+        event_emitter: Optional[IAgentEventEmitter] = None,
     ) -> None:
         self.llm = llm
         self.semantic_model = semantic_model
@@ -91,6 +96,7 @@ class SqlAnalystTool:
         self._model_summary = self._render_semantic_model()
         self.embedder = embedder
         self._vector_columns = self._extract_vector_columns()
+        self._event_emitter = event_emitter
 
     @property
     def name(self) -> str:
@@ -146,6 +152,12 @@ class SqlAnalystTool:
         Execute the full NL -> SQL -> execution pipeline asynchronously.
         """
 
+        await self._emit_event(
+            event_type="SqlToolStarted",
+            message="Analyzing structured data.",
+            visibility=AgentEventVisibility.public,
+            details={"model": self.name},
+        )
         start_ts = time.perf_counter()
         active_request = query_request
 
@@ -160,6 +172,12 @@ class SqlAnalystTool:
             canonical_sql = await asyncio.to_thread(self._generate_canonical_sql, active_request)
         except Exception as exc:  # pragma: no cover - defensive: LLM failure surfaces clean error
             self.logger.exception("LLM failed to generate SQL for model %s", self.name)
+            await self._emit_event(
+                event_type="SqlGenerationFailed",
+                message="Failed to generate SQL from your request.",
+                visibility=AgentEventVisibility.public,
+                details={"model": self.name, "error": str(exc)},
+            )
             return AnalystQueryResponse(
                 sql_canonical="",
                 sql_executable="",
@@ -170,6 +188,12 @@ class SqlAnalystTool:
 
         canonical_sql = canonical_sql.strip()
         canonical_sql = self._extract_sql(canonical_sql)
+        await self._emit_event(
+            event_type="SqlGenerated",
+            message="SQL was generated.",
+            visibility=AgentEventVisibility.internal,
+            details={"model": self.name, "sql_canonical": canonical_sql},
+        )
         sql_validation_error: Optional[str] = None
         try:
             sqlglot.parse_one(canonical_sql, read="postgres")
@@ -178,6 +202,16 @@ class SqlAnalystTool:
 
         if sql_validation_error:
             elapsed = int((time.perf_counter() - start_ts) * 1000)
+            await self._emit_event(
+                event_type="SqlValidationFailed",
+                message="Generated SQL did not pass validation.",
+                visibility=AgentEventVisibility.internal,
+                details={
+                    "model": self.name,
+                    "error": sql_validation_error,
+                    "sql_canonical": canonical_sql,
+                },
+            )
             return AnalystQueryResponse(
                 sql_canonical=canonical_sql,
                 sql_executable="",
@@ -197,9 +231,26 @@ class SqlAnalystTool:
                 write=self.dialect,
             )[0]
             self.logger.info("Successful Transpile %s", transpiled_sql)
+            await self._emit_event(
+                event_type="SqlTranspiled",
+                message="SQL transpiled for connector dialect.",
+                visibility=AgentEventVisibility.internal,
+                details={
+                    "model": self.name,
+                    "dialect": self.dialect,
+                    "sql_canonical": canonical_sql,
+                    "sql_executable": transpiled_sql,
+                },
+            )
         except Exception as exc:  # pragma: no cover - sqlglot error path
             elapsed = int((time.perf_counter() - start_ts) * 1000)
             self.logger.exception("Transpile failed for model %s", exc)
+            await self._emit_event(
+                event_type="SqlTranspileFailed",
+                message="Failed to prepare SQL for execution.",
+                visibility=AgentEventVisibility.public,
+                details={"model": self.name, "error": str(exc)},
+            )
             return AnalystQueryResponse(
                 sql_canonical=canonical_sql,
                 sql_executable="",
@@ -217,15 +268,79 @@ class SqlAnalystTool:
 
         result_payload: QueryResult | None = None
         execution_error: Optional[str] = None
+        await self._emit_event(
+            event_type="SqlExecutionPrepared",
+            message="Prepared executable SQL statement.",
+            visibility=AgentEventVisibility.internal,
+            details={
+                "model": self.name,
+                "dialect": self.dialect,
+                "sql_executable": transpiled_sql,
+                "sql_canonical": canonical_sql,
+                "max_rows": active_request.limit,
+            },
+        )
+        await self._emit_event(
+            event_type="SqlExecutionStarted",
+            message="Running SQL query.",
+            visibility=AgentEventVisibility.public,
+            details={
+                "model": self.name,
+                "dialect": self.dialect,
+                "max_rows": active_request.limit,
+            },
+        )
         try:
             connector_result = await self.connector.execute(
                 transpiled_sql,
                 max_rows=active_request.limit,
             )
             result_payload = QueryResult.from_connector(connector_result)
+            await self._emit_event(
+                event_type="SqlExecutionCompleted",
+                message="SQL query completed.",
+                visibility=AgentEventVisibility.public,
+                details={
+                    "model": self.name,
+                    "row_count": result_payload.rowcount,
+                    "elapsed_ms": result_payload.elapsed_ms,
+                },
+            )
+            await self._emit_event(
+                event_type="SqlExecutionAudit",
+                message="Execution completed with SQL audit details.",
+                visibility=AgentEventVisibility.internal,
+                details={
+                    "model": self.name,
+                    "dialect": self.dialect,
+                    "sql_executable": transpiled_sql,
+                    "sql_canonical": canonical_sql,
+                    "row_count": result_payload.rowcount,
+                    "elapsed_ms": result_payload.elapsed_ms,
+                    "columns": result_payload.columns,
+                },
+            )
         except Exception as exc:  # pragma: no cover - depends on connector implementation
             self.logger.exception("Execution failed for model %s", self.name)
             execution_error = f"Execution failed: {exc}"
+            await self._emit_event(
+                event_type="SqlExecutionFailed",
+                message="SQL query failed.",
+                visibility=AgentEventVisibility.public,
+                details={"model": self.name, "error": str(exc)},
+            )
+            await self._emit_event(
+                event_type="SqlExecutionFailedInternal",
+                message="Execution failed with SQL audit details.",
+                visibility=AgentEventVisibility.internal,
+                details={
+                    "model": self.name,
+                    "dialect": self.dialect,
+                    "sql_executable": transpiled_sql,
+                    "sql_canonical": canonical_sql,
+                    "error": str(exc),
+                },
+            )
 
         elapsed_ms = int((time.perf_counter() - start_ts) * 1000)
 
@@ -238,6 +353,27 @@ class SqlAnalystTool:
             error=execution_error,
             execution_time_ms=elapsed_ms,
         )
+
+    async def _emit_event(
+        self,
+        *,
+        event_type: str,
+        message: str,
+        visibility: AgentEventVisibility,
+        details: dict[str, Any] | None = None,
+    ) -> None:
+        if not self._event_emitter:
+            return
+        try:
+            await self._event_emitter.emit(
+                event_type=event_type,
+                message=message,
+                visibility=visibility,
+                source=f"tool:sql:{self.name}",
+                details=details,
+            )
+        except Exception as exc:  # pragma: no cover - defensive guard
+            self.logger.warning("Failed to emit SQL tool event %s: %s", event_type, exc)
 
     def _build_prompt(self, request: AnalystQueryRequest) -> str:
         conversation_text = ""
