@@ -44,7 +44,7 @@ class SupervisorOrchestrator:
     def __init__(
         self,
         *,
-        visual_agent: VisualAgent,
+        visual_agent: Optional[VisualAgent] = None,
         analyst_agent: Optional[AnalystAgent] = None,
         logger: Optional[logging.Logger] = None,
         planning_agent: Optional[PlanningAgent] = None,
