@@ -594,6 +594,38 @@ class ReasoningAgent:
             rationale=rationale,
         )
 
+    @staticmethod
+    def _normalize_error_signature(value: str) -> str:
+        return re.sub(r"\s+", " ", str(value or "")).strip().lower()[:240]
+
+    def _is_repeated_analyst_error(
+        self,
+        *,
+        diagnostics: Dict[str, Any],
+        analyst_error: Any,
+    ) -> bool:
+        if not analyst_error:
+            return False
+        extra_context = diagnostics.get("extra_context")
+        if not isinstance(extra_context, dict):
+            return False
+        reasoning = extra_context.get("reasoning")
+        if not isinstance(reasoning, dict):
+            return False
+        previous_error = reasoning.get("retry_due_to_error")
+        if not isinstance(previous_error, str) or not previous_error.strip():
+            return False
+
+        current_signature = self._normalize_error_signature(str(analyst_error))
+        previous_signature = self._normalize_error_signature(previous_error)
+        if not current_signature or not previous_signature:
+            return False
+        return (
+            current_signature == previous_signature
+            or current_signature in previous_signature
+            or previous_signature in current_signature
+        )
+
     def evaluate(
         self,
         *,
@@ -608,9 +640,16 @@ class ReasoningAgent:
             self.logger.debug(rationale)
             return ReasoningDecision(continue_planning=False, rationale=rationale)
 
+        analyst_error = artifacts.analyst_result and artifacts.analyst_result.error
+
         if iteration + 1 >= self.max_iterations:
             rationale = "Max reasoning iterations reached; finalising current response."
             self.logger.debug(rationale)
+            return ReasoningDecision(continue_planning=False, rationale=rationale)
+
+        if self._is_repeated_analyst_error(diagnostics=diagnostics, analyst_error=analyst_error):
+            rationale = "Repeated analyst error detected; stopping retries."
+            self.logger.debug("%s Error: %s", rationale, analyst_error)
             return ReasoningDecision(continue_planning=False, rationale=rationale)
 
         llm_decision = self._evaluate_with_llm(
@@ -633,7 +672,6 @@ class ReasoningAgent:
         has_research = self._has_research_results(artifacts)
         has_data = has_structured_data or has_web_results or has_research
         row_count = self._structured_row_count(artifacts)
-        analyst_error = artifacts.analyst_result and artifacts.analyst_result.error
 
         if (
             row_count == 0

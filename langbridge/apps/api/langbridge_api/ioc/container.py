@@ -44,6 +44,9 @@ from langbridge.apps.api.langbridge_api.services.internal_api_client import Inte
 from langbridge.apps.api.langbridge_api.services.organization_service import OrganizationService
 from langbridge.apps.api.langbridge_api.services.orchestrator_service import OrchestratorService
 from langbridge.apps.api.langbridge_api.services.message.message_serivce import MessageService
+from langbridge.apps.api.langbridge_api.services.message.job_event_consumer import (
+    JobEventConsumer,
+)
 from langbridge.apps.api.langbridge_api.services.request_context_provider import RequestContextProvider
 from langbridge.apps.api.langbridge_api.services.semantic import (
     SemanticModelService,
@@ -122,6 +125,11 @@ class Container(containers.DeclarativeContainer):
     message_repository = providers.Factory(MessageRepository, session=async_session)
     job_repository = providers.Factory(JobRepository, session=async_session)
     message_broker = providers.Singleton(RedisBroker)
+    api_message_broker = providers.Singleton(
+        RedisBroker,
+        stream=settings.REDIS_API_STREAM,
+        group=settings.REDIS_API_CONSUMER_GROUP,
+    )
 
     environment_service = providers.Factory(
         EnvironmentService,
@@ -235,6 +243,12 @@ class Container(containers.DeclarativeContainer):
         MessageFlusher,
         message_repository=message_repository,
         message_bus=message_broker,
+    )
+
+    job_event_consumer = providers.Singleton(
+        JobEventConsumer,
+        broker_client=api_message_broker,
+        async_session_factory=async_session_factory,
     )
 
 

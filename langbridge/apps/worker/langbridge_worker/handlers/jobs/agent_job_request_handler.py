@@ -9,7 +9,7 @@ from typing import Any, Optional, Tuple
 from pydantic import ValidationError
 
 from langbridge.apps.worker.langbridge_worker.handlers.jobs.job_event_emitter import (
-    JobEventEmitter,
+    BrokerJobEventEmitter,
 )
 from langbridge.packages.common.langbridge_common.contracts.jobs.agent_job import (
     CreateAgentJobRequest,
@@ -52,6 +52,7 @@ from langbridge.packages.messaging.langbridge_messaging.contracts.base import Me
 from langbridge.packages.messaging.langbridge_messaging.contracts.jobs.agent_job import (
     AgentJobRequestMessage,
 )
+from langbridge.packages.messaging.langbridge_messaging.broker.base import MessageBroker
 from langbridge.packages.messaging.langbridge_messaging.handler import BaseMessageHandler
 from langbridge.packages.orchestrator.langbridge_orchestrator.definitions import AgentDefinitionModel
 from langbridge.packages.orchestrator.langbridge_orchestrator.llm.provider import create_provider
@@ -72,6 +73,7 @@ class AgentJobRequestHandler(BaseMessageHandler):
         connector_store: IConnectorStore,
         thread_repository: ThreadRepository,
         thread_message_repository: ThreadMessageRepository,
+        message_broker: MessageBroker,
     ) -> None:
         self._logger = logging.getLogger(__name__)
         self._job_repository = job_repository
@@ -79,6 +81,7 @@ class AgentJobRequestHandler(BaseMessageHandler):
         self._llm_repository = llm_repository
         self._thread_repository = thread_repository
         self._thread_message_repository = thread_message_repository
+        self._message_broker = message_broker
         self._agent_orchestrator_factory = AgentOrchestratorFactory(
             semantic_model_store=semantic_model_store,
             connector_store=connector_store,
@@ -107,9 +110,9 @@ class AgentJobRequestHandler(BaseMessageHandler):
             )
             return None
 
-        event_emitter = JobEventEmitter(
+        event_emitter = BrokerJobEventEmitter(
             job_record=job_record,
-            job_repository=self._job_repository,
+            broker_client=self._message_broker,
             logger=self._logger,
         )
         job_record.status = JobStatus.running

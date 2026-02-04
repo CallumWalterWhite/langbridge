@@ -405,11 +405,12 @@ class SqlAnalystTool:
             - Apply table filters when the request mentions their name or synonyms.
             - Group only by non-aggregated selected dimensions.
             - Prefer a single query; CTEs allowed: base_fact -> joined -> final.
-            - Use STRFTIME('%Y',date) ||'-Q'|| ((CAST(strftime('%m', date) AS INT) - 1) / 3 + 1) to represent quarters.
             - Do NOT invent columns/joins. If something is missing, omit it safely.
-            - Use ANSI-friendly constructs (CAST, COALESCE, CASE, DATE_PART, standard aggregates) that transpile cleanly.
-            - Avoid Postgres-only syntax such as :: type casts, EXTRACT(... FROM ...), DATE_TRUNC, ILIKE, array operators, or JSON-specific features.
-            - For date extracts, use strftime function instead.
+            - Use PostgreSQL syntax only.
+            - Use ANSI-friendly constructs that also parse in PostgreSQL (CAST, COALESCE, CASE, standard aggregates).
+            - Prefer EXTRACT(YEAR FROM <date_col>) for year filters/grouping.
+            - Prefer CONCAT(EXTRACT(YEAR FROM <date_col>), '-Q', EXTRACT(QUARTER FROM <date_col>)) for quarter labels.
+            - Do NOT use SQLite-specific functions (e.g., strftime, julianday).
             - Use semantic search results to resolve ambiguous entity references. Incorporate them as explicit filters if relevant.
             - Use table identifiers as defined in the model if semantic search results provide them.
             """

@@ -8,6 +8,7 @@ class MessageType(str, Enum):
     """Message types."""
     TEST = "test"
     AGENT_JOB_REQUEST = "agent_job_request"
+    JOB_EVENT = "job_event"
     AGENT_JOB_TASK_EXECUTION = "agent_job_task_execution"
     AGENT_JOB_PLAN_EXECUTION = "agent_job_plan_execution"
     AGENT_JOB_SYNTHESIZE_RESPONSE = "agent_job_synthesize_response"
