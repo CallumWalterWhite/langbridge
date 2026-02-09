@@ -77,6 +77,8 @@ _CORRELATION_KEYWORDS = (
 _TIME_NAME_HINTS = ("date", "time", "month", "year", "quarter", "qtr", "week", "day")
 _ID_LIKE_PATTERN = re.compile(r"(?:^|_)(id|uuid|key|code)$")
 _ALLOWED_CHART_TYPES = ("bar", "line", "scatter", "pie", "table")
+_CURRENCY_SYMBOL_RE = re.compile(r"[$£€]")
+_WHITESPACE_RE = re.compile(r"\s+")
 
 
 def _to_dataframe(data: TabularInput) -> "pd.DataFrame":  # type: ignore[name-defined]
@@ -246,6 +248,43 @@ class VisualAgent:
             return False
         return parsed.notna().mean() >= 0.6
 
+    @staticmethod
+    def _clean_numeric_text(value: str) -> str:
+        cleaned = _WHITESPACE_RE.sub("", str(value).strip())
+        cleaned = cleaned.replace(",", "")
+        cleaned = _CURRENCY_SYMBOL_RE.sub("", cleaned)
+        if cleaned.endswith("%"):
+            cleaned = cleaned[:-1]
+        return cleaned
+
+    def _normalize_dataframe(self, df: "pd.DataFrame") -> "pd.DataFrame":  # type: ignore[name-defined]
+        """
+        Normalize string-like columns into numeric values when conversion is reliable.
+        This keeps table labels intact while making chartability detection robust.
+        """
+        normalized = df.copy()
+        for col in normalized.columns:
+            series = normalized[col]
+            if not (
+                pd.api.types.is_object_dtype(series)
+                or pd.api.types.is_string_dtype(series)
+                or pd.api.types.is_categorical_dtype(series)
+            ):
+                continue
+
+            non_null = series.dropna()
+            if non_null.empty:
+                continue
+
+            cleaned = non_null.astype(str).map(self._clean_numeric_text)
+            converted = pd.to_numeric(cleaned, errors="coerce")
+            valid_ratio = float(converted.notna().sum()) / float(len(non_null))
+            if valid_ratio >= 0.8:
+                full_cleaned = series.astype(str).map(self._clean_numeric_text)
+                normalized[col] = pd.to_numeric(full_cleaned, errors="coerce")
+
+        return normalized
+
     def _profile_dataframe(self, df: "pd.DataFrame") -> DataProfile:  # type: ignore[name-defined]
         columns = list(df.columns)
         row_count = len(df)
@@ -299,6 +338,29 @@ class VisualAgent:
             has_correlation=self._contains_keyword(text, _CORRELATION_KEYWORDS),
             has_composition=self._contains_keyword(text, _COMPOSITION_KEYWORDS),
         )
+
+    @staticmethod
+    def _detect_requested_chart_type(
+        question: Optional[str],
+        user_intent: Optional[str],
+    ) -> Optional[str]:
+        text = f"{question or ''} {user_intent or ''}".lower()
+        if not text.strip():
+            return None
+
+        if "pie chart" in text or "donut chart" in text or "doughnut chart" in text:
+            return "pie"
+        if "pie" in text or "donut" in text or "doughnut" in text:
+            return "pie"
+        if "bar chart" in text or "bar graph" in text:
+            return "bar"
+        if "line chart" in text or "line graph" in text:
+            return "line"
+        if "scatter plot" in text or "scatter chart" in text:
+            return "scatter"
+        if "table" in text and "chart" not in text:
+            return "table"
+        return None
 
     def _select_dimension(
         self,
@@ -538,6 +600,7 @@ class VisualAgent:
         *,
         question: Optional[str],
         user_intent: Optional[str],
+        requested_chart_type: Optional[str],
         profile: DataProfile,
         sample_rows: List[Dict[str, Any]],
     ) -> str:
@@ -549,6 +612,20 @@ class VisualAgent:
             "Use column names exactly as provided. y can be a string or list of strings.",
             "Prefer line for time series, bar for comparisons or rankings, scatter for correlation,",
             "pie for composition with <= 6 categories. Use table if no chart fits.",
+            (
+                f"Requested chart type: {requested_chart_type}."
+                if requested_chart_type
+                else "Requested chart type: none."
+            ),
+            (
+                "If the requested chart type can be supported by the provided columns, you MUST use it."
+                if requested_chart_type
+                else "Use the best chart for the question."
+            ),
+            (
+                "If requested chart type cannot be supported, set chart_type='table' and include "
+                "options.visualization_warning with a concise reason."
+            ),
             f"Question: {question or 'n/a'}",
             f"User intent: {user_intent or 'n/a'}",
             f"Columns: {profile.columns}",
@@ -606,6 +683,7 @@ class VisualAgent:
         *,
         question: Optional[str],
         user_intent: Optional[str],
+        requested_chart_type: Optional[str],
         profile: DataProfile,
         candidates: ChartCandidates,
     ) -> Optional[VisualizationSpec]:
@@ -615,6 +693,7 @@ class VisualAgent:
         prompt = self._build_llm_prompt(
             question=question,
             user_intent=user_intent,
+            requested_chart_type=requested_chart_type,
             profile=profile,
             sample_rows=sample_rows,
         )
@@ -699,18 +778,50 @@ class VisualAgent:
         question: Optional[str],
         user_intent: Optional[str],
     ) -> VisualizationSpec:
-        profile = self._profile_dataframe(df)
-        candidates = self._build_candidates(df, profile)
+        normalized_df = self._normalize_dataframe(df)
+        profile = self._profile_dataframe(normalized_df)
+        candidates = self._build_candidates(normalized_df, profile)
         signals = self._extract_signals(question, user_intent)
+        requested_chart_type = self._detect_requested_chart_type(question, user_intent)
         heuristic_spec = self._choose_chart_heuristic(profile, candidates, signals, user_intent)
         llm_spec = self._choose_chart_with_llm(
-            df,
+            normalized_df,
             question=question,
             user_intent=user_intent,
+            requested_chart_type=requested_chart_type,
             profile=profile,
             candidates=candidates,
         )
-        return llm_spec or heuristic_spec
+        chosen_spec = llm_spec or heuristic_spec
+
+        if (
+            requested_chart_type
+            and requested_chart_type in _ALLOWED_CHART_TYPES
+            and requested_chart_type != chosen_spec.chart_type
+        ):
+            requested_spec = self._build_spec_for_chart(requested_chart_type, profile, candidates)
+            if requested_spec.chart_type != "table" or requested_chart_type == "table":
+                requested_spec.options = {
+                    **(requested_spec.options or {}),
+                    "requested_chart_type": requested_chart_type,
+                }
+                return requested_spec
+            chosen_spec = self._build_spec_for_chart("table", profile, candidates)
+            chosen_spec.options = {
+                **(chosen_spec.options or {}),
+                "requested_chart_type": requested_chart_type,
+                "visualization_warning": (
+                    f"Requested {requested_chart_type} chart could not be created from returned columns."
+                ),
+            }
+
+        elif requested_chart_type:
+            chosen_spec.options = {
+                **(chosen_spec.options or {}),
+                "requested_chart_type": requested_chart_type,
+            }
+
+        return chosen_spec
 
     def run(
         self,

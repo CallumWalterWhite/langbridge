@@ -4,7 +4,13 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from langbridge.packages.common.langbridge_common.contracts.semantic import (
+    SemanticModelRecordResponse,
+)
 from langbridge.packages.common.langbridge_common.db.semantic import SemanticModelEntry, SemanticVectorStoreEntry
+from langbridge.packages.common.langbridge_common.interfaces.semantic_models import (
+    ISemanticModelStore,
+)
 from .base import AsyncBaseRepository
 
 
@@ -29,6 +35,10 @@ class SemanticModelRepository(AsyncBaseRepository[SemanticModelEntry]):
             )
         ).one_or_none()
 
+    async def get_by_ids(self, model_ids: List[UUID]) -> List[SemanticModelEntry]:
+        return list(
+            (await self._session.scalars(select(SemanticModelEntry).filter(SemanticModelEntry.id.in_(model_ids)))).all()
+        )
 
 class SemanticVectorStoreRepository(AsyncBaseRepository[SemanticVectorStoreEntry]):
     def __init__(self, session: AsyncSession):
@@ -50,3 +60,18 @@ class SemanticVectorStoreRepository(AsyncBaseRepository[SemanticVectorStoreEntry
                 ))
             )
         ).one_or_none()
+
+
+class SemanticModelStore(ISemanticModelStore):
+    def __init__(self, repository: SemanticModelRepository):
+        self._repository = repository
+
+    async def get_by_id(self, model_id: UUID) -> SemanticModelRecordResponse | None:
+        entry = await self._repository.get_by_id(model_id)
+        if entry is None:
+            return None
+        return SemanticModelRecordResponse.model_validate(entry)
+
+    async def get_by_ids(self, model_ids: list[UUID]) -> list[SemanticModelRecordResponse]:
+        entries = await self._repository.get_by_ids(model_ids)
+        return [SemanticModelRecordResponse.model_validate(entry) for entry in entries]

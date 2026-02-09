@@ -7,6 +7,7 @@ interface BiCanvasProps {
   activeWidgetId: string | null;
   onActivateWidget: (id: string) => void;
   onRemoveWidget: (id: string) => void;
+  onDuplicateWidget: (id: string) => void;
   onAddWidget: () => void;
   onAddFieldToWidget: (widgetId: string, field: FieldOption, targetKind?: 'dimension' | 'measure') => void;
 }
@@ -16,6 +17,7 @@ export function BiCanvas({
   activeWidgetId,
   onActivateWidget,
   onRemoveWidget,
+  onDuplicateWidget,
   onAddWidget,
   onAddFieldToWidget
 }: BiCanvasProps) {
@@ -31,6 +33,7 @@ export function BiCanvas({
             isActive={widget.id === activeWidgetId}
             onActivate={() => onActivateWidget(widget.id)}
             onRemove={() => onRemoveWidget(widget.id)}
+            onDuplicate={() => onDuplicateWidget(widget.id)}
             onAddField={onAddFieldToWidget}
           />
         ))}

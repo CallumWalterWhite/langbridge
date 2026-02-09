@@ -119,3 +119,8 @@ export interface SemanticQueryResponse {
   annotations: Array<Record<string, unknown>>;
   metadata?: Array<Record<string, unknown>>;
 }
+
+export interface SemanticQueryJobResponse {
+  jobId: string;
+  jobStatus: string;
+}

@@ -1,5 +1,7 @@
 import { apiFetch } from '@/orchestration/http';
 import type {
+  DashboardCopilotAssistRequestPayload,
+  DashboardCopilotJobResponsePayload,
   QueryBuilderCopilotRequestPayload,
   QueryBuilderCopilotResponsePayload,
 } from './types';
@@ -26,6 +28,20 @@ export async function runCopilot(
     throw new Error('Copilot agent id is required.');
   }
   return apiFetch<QueryBuilderCopilotResponsePayload>(`${basePath(organizationId)}/${agentId}/assist`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function enqueueDashboardCopilotJob(
+  organizationId: string,
+  agentId: string,
+  payload: DashboardCopilotAssistRequestPayload,
+): Promise<DashboardCopilotJobResponsePayload> {
+  if (!agentId) {
+    throw new Error('Copilot agent id is required.');
+  }
+  return apiFetch<DashboardCopilotJobResponsePayload>(`${basePath(organizationId)}/${agentId}/assist/jobs`, {
     method: 'POST',
     body: JSON.stringify(payload),
   });

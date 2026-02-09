@@ -5,6 +5,14 @@ from typing import Any
 from dependency_injector import containers, providers
 
 from langbridge.apps.api.langbridge_api.auth.register import create_oauth_client
+from langbridge.apps.api.langbridge_api.services.jobs.agent_job_request_service import AgentJobRequestService
+from langbridge.apps.api.langbridge_api.services.jobs.copilot_dashboard_job_request_service import (
+    CopilotDashboardJobRequestService,
+)
+from langbridge.apps.api.langbridge_api.services.jobs.job_service import JobService
+from langbridge.apps.api.langbridge_api.services.jobs.semantic_query_job_request_service import (
+    SemanticQueryJobRequestService,
+)
 from langbridge.packages.common.langbridge_common.config import Settings, settings
 from langbridge.packages.common.langbridge_common.db import (
     create_async_engine_for_url,
@@ -16,7 +24,9 @@ from langbridge.packages.common.langbridge_common.db import (
 from langbridge.packages.common.langbridge_common.db.session_context import get_session
 from langbridge.packages.common.langbridge_common.repositories.agent_repository import AgentRepository
 from langbridge.packages.common.langbridge_common.repositories.connector_repository import ConnectorRepository
+from langbridge.packages.common.langbridge_common.repositories.dashboard_repository import DashboardRepository
 from langbridge.packages.common.langbridge_common.repositories.environment_repository import OrganizationEnvironmentSettingRepository
+from langbridge.packages.common.langbridge_common.repositories.job_repository import JobRepository
 from langbridge.packages.common.langbridge_common.repositories.llm_connection_repository import LLMConnectionRepository
 from langbridge.packages.common.langbridge_common.repositories.organization_repository import (
     OrganizationInviteRepository,
@@ -36,11 +46,15 @@ from langbridge.apps.api.langbridge_api.services.agent_service import AgentServi
 from langbridge.apps.api.langbridge_api.services.auth_service import AuthService
 from langbridge.apps.api.langbridge_api.services.connector_schema_service import ConnectorSchemaService
 from langbridge.apps.api.langbridge_api.services.connector_service import ConnectorService
+from langbridge.apps.api.langbridge_api.services.dashboard_service import DashboardService
 from langbridge.apps.api.langbridge_api.services.environment_service import EnvironmentService
 from langbridge.apps.api.langbridge_api.services.internal_api_client import InternalApiClient
 from langbridge.apps.api.langbridge_api.services.organization_service import OrganizationService
 from langbridge.apps.api.langbridge_api.services.orchestrator_service import OrchestratorService
 from langbridge.apps.api.langbridge_api.services.message.message_serivce import MessageService
+from langbridge.apps.api.langbridge_api.services.message.job_event_consumer import (
+    JobEventConsumer,
+)
 from langbridge.apps.api.langbridge_api.services.request_context_provider import RequestContextProvider
 from langbridge.apps.api.langbridge_api.services.semantic import (
     SemanticModelService,
@@ -48,6 +62,7 @@ from langbridge.apps.api.langbridge_api.services.semantic import (
     SemanticSearchService,
 )
 from langbridge.apps.api.langbridge_api.services.thread_service import ThreadService
+from langbridge.apps.api.langbridge_api.services.storage import create_dashboard_snapshot_storage
 from langbridge.packages.messaging.langbridge_messaging.broker.redis import RedisBroker
 from langbridge.packages.messaging.langbridge_messaging.flusher.flusher import MessageFlusher
 from langbridge.apps.api.langbridge_api.request_context import get_request_context
@@ -108,6 +123,7 @@ class Container(containers.DeclarativeContainer):
     organization_invite_repository = providers.Factory(OrganizationInviteRepository, session=async_session)
     project_invite_repository = providers.Factory(ProjectInviteRepository, session=async_session)
     connector_repository = providers.Factory(ConnectorRepository, session=async_session)
+    dashboard_repository = providers.Factory(DashboardRepository, session=async_session)
     environment_repository = providers.Factory(OrganizationEnvironmentSettingRepository, session=async_session)
     llm_connection_repository = providers.Factory(LLMConnectionRepository, session=async_session)
     semantic_model_repository = providers.Factory(SemanticModelRepository, session=async_session)
@@ -117,7 +133,13 @@ class Container(containers.DeclarativeContainer):
     agent_definition_repository = providers.Factory(AgentRepository, session=async_session)
     semantic_vector_store_repository = providers.Factory(SemanticVectorStoreEntryRepository, session=async_session)
     message_repository = providers.Factory(MessageRepository, session=async_session)
+    job_repository = providers.Factory(JobRepository, session=async_session)
     message_broker = providers.Singleton(RedisBroker)
+    api_message_broker = providers.Singleton(
+        RedisBroker,
+        stream=settings.REDIS_API_STREAM,
+        group=settings.REDIS_API_CONSUMER_GROUP,
+    )
 
     environment_service = providers.Factory(
         EnvironmentService,
@@ -196,6 +218,40 @@ class Container(containers.DeclarativeContainer):
         connector_service=connector_service
     )
 
+    dashboard_snapshot_storage = providers.Singleton(create_dashboard_snapshot_storage)
+
+    dashboard_service = providers.Factory(
+        DashboardService,
+        repository=dashboard_repository,
+        organization_repository=organization_repository,
+        project_repository=project_repository,
+        semantic_model_service=semantic_model_service,
+        snapshot_storage=dashboard_snapshot_storage,
+    )
+    
+    agent_job_request_service = providers.Factory(
+        AgentJobRequestService,
+        job_repository=job_repository,
+        agent_repository=agent_definition_repository,
+        message_service=message_service
+    )
+    semantic_query_job_request_service = providers.Factory(
+        SemanticQueryJobRequestService,
+        job_repository=job_repository,
+        message_service=message_service,
+    )
+    copilot_dashboard_job_request_service = providers.Factory(
+        CopilotDashboardJobRequestService,
+        job_repository=job_repository,
+        agent_definition_repository=agent_definition_repository,
+        semantic_model_repository=semantic_model_repository,
+        message_service=message_service,
+    )
+    job_service = providers.Factory(
+        JobService,
+        job_repository=job_repository,
+    )
+
     thread_service = providers.Factory(
         ThreadService,
         thread_repository=thread_repository,
@@ -203,6 +259,7 @@ class Container(containers.DeclarativeContainer):
         tool_call_repository=tool_call_repository,
         project_repository=project_repository,
         organization_service=organization_service,
+        agent_job_request=agent_job_request_service,
     )
 
     orchestrator_service = providers.Factory(
@@ -219,6 +276,12 @@ class Container(containers.DeclarativeContainer):
         MessageFlusher,
         message_repository=message_repository,
         message_bus=message_broker,
+    )
+
+    job_event_consumer = providers.Singleton(
+        JobEventConsumer,
+        broker_client=api_message_broker,
+        async_session_factory=async_session_factory,
     )
 
 

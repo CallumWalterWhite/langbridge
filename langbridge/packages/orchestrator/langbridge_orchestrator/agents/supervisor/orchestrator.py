@@ -9,6 +9,10 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Dict, Optional, Sequence
 
+from langbridge.packages.common.langbridge_common.interfaces.agent_events import (
+    AgentEventVisibility,
+    IAgentEventEmitter,
+)
 from langbridge.packages.orchestrator.langbridge_orchestrator.agents.models import PlanExecutionArtifacts
 from langbridge.packages.orchestrator.langbridge_orchestrator.agents.reasoning.agent import ReasoningAgent, ReasoningDecision
 from langbridge.packages.orchestrator.langbridge_orchestrator.agents.analyst import AnalystAgent
@@ -44,7 +48,7 @@ class SupervisorOrchestrator:
     def __init__(
         self,
         *,
-        visual_agent: VisualAgent,
+        visual_agent: Optional[VisualAgent] = None,
         analyst_agent: Optional[AnalystAgent] = None,
         logger: Optional[logging.Logger] = None,
         planning_agent: Optional[PlanningAgent] = None,
@@ -52,6 +56,7 @@ class SupervisorOrchestrator:
         web_search_agent: Optional[WebSearchAgent] = None,
         reasoning_agent: Optional[ReasoningAgent] = None,
         bi_copilot_agent: Optional[BICopilotAgent] = None,
+        event_emitter: Optional[IAgentEventEmitter] = None,
     ) -> None:
         self.analyst_agent = analyst_agent
         self.visual_agent = visual_agent
@@ -61,6 +66,7 @@ class SupervisorOrchestrator:
         self.web_search_agent = web_search_agent
         self.reasoning_agent = reasoning_agent
         self.bi_copilot_agent = bi_copilot_agent
+        self.event_emitter = event_emitter
 
     async def run_copilot(
         self,
@@ -84,6 +90,12 @@ class SupervisorOrchestrator:
     ) -> Dict[str, Any]:
         """Execute planner-driven workflows for a single user query."""
 
+        await self._emit_event(
+            event_type="AgentRunStarted",
+            message="Working on your request.",
+            visibility=AgentEventVisibility.public,
+            source="supervisor",
+        )
         start = time.perf_counter()
 
         plan: Optional[Plan] = None
@@ -96,6 +108,13 @@ class SupervisorOrchestrator:
         iterations_completed = 0
 
         for iteration in range(self.reasoning_agent.max_iterations):
+            await self._emit_event(
+                event_type="PlanningIterationStarted",
+                message=f"Planning iteration {iteration + 1} started.",
+                visibility=AgentEventVisibility.internal,
+                source="planner",
+                details={"iteration": iteration},
+            )
             planner_request = self._build_planner_request(
                 user_query,
                 filters=filters,
@@ -105,6 +124,20 @@ class SupervisorOrchestrator:
                 constraints=planning_constraints,
             )
             plan = await asyncio.to_thread(self.planning_agent.plan, planner_request)
+            await self._emit_event(
+                event_type="PlanCreated",
+                message=f"Planned route: {plan.route}.",
+                visibility=AgentEventVisibility.public,
+                source="planner",
+                details={"iteration": iteration, "route": plan.route, "step_count": len(plan.steps)},
+            )
+            await self._emit_event(
+                event_type="PlanCreatedInternal",
+                message="Detailed plan generated.",
+                visibility=AgentEventVisibility.internal,
+                source="planner",
+                details={"iteration": iteration, "plan": plan.model_dump()},
+            )
             artifacts = await self._execute_plan(
                 plan,
                 user_query=user_query,
@@ -133,6 +166,18 @@ class SupervisorOrchestrator:
             )
             iterations_completed = iteration + 1
 
+            await self._emit_event(
+                event_type="ReasoningDecision",
+                message="Reasoning pass completed.",
+                visibility=AgentEventVisibility.internal,
+                source="reasoning",
+                details={
+                    "iteration": iteration,
+                    "continue_planning": final_decision.continue_planning if final_decision else False,
+                    "rationale": final_decision.rationale if final_decision else None,
+                },
+            )
+
             if not final_decision.continue_planning:
                 break
 
@@ -140,6 +185,12 @@ class SupervisorOrchestrator:
         else:
             # Loop exhausted without final decision; treat last pass as final.
             self.logger.warning("Reasoning agent exhausted max iterations without convergence.")
+            await self._emit_event(
+                event_type="ReasoningMaxIterationsReached",
+                message="Reached max reasoning iterations.",
+                visibility=AgentEventVisibility.public,
+                source="reasoning",
+            )
             if not final_decision or final_decision.continue_planning:
                 final_decision = ReasoningDecision(
                     continue_planning=False,
@@ -157,6 +208,34 @@ class SupervisorOrchestrator:
         if not data_payload and artifacts.research_result:
             data_payload = self._coerce_research_payload(artifacts.research_result)
         visualization = artifacts.visualization
+        if not visualization and data_payload and self.visual_agent:
+            try:
+                visualization = await asyncio.to_thread(
+                    self.visual_agent.run,
+                    data_payload,
+                    title=f"Visualization for '{user_query}'",
+                    question=user_query,
+                )
+                await self._emit_event(
+                    event_type="VisualizationAutoGenerated",
+                    message="Generated a visualization from result data.",
+                    visibility=AgentEventVisibility.public,
+                    source="agent:Visual",
+                )
+            except Exception as exc:  # pragma: no cover - visualization is best-effort
+                self.logger.warning("Auto visualization failed: %s", exc)
+                await self._emit_event(
+                    event_type="VisualizationAutoGenerationFailed",
+                    message="Could not auto-generate a visualization.",
+                    visibility=AgentEventVisibility.internal,
+                    source="agent:Visual",
+                    details={"error": str(exc)},
+                )
+        visualization = self._ensure_requested_visualization(
+            user_query=user_query,
+            data_payload=data_payload,
+            visualization=visualization,
+        )
 
         elapsed_ms = int((time.perf_counter() - start) * 1000)
 
@@ -181,12 +260,26 @@ class SupervisorOrchestrator:
             "iterations": iterations_completed,
             "final_rationale": final_decision.rationale if final_decision else None,
         }
+        summary = self._build_response_summary(
+            user_query=user_query,
+            data_payload=data_payload,
+            visualization=visualization,
+            analyst_result=analyst_result,
+            clarifying_question=artifacts.clarifying_question,
+        )
 
         self.logger.info(
             "Planner route '%s' completed in %sms for query '%s'",
             plan.route,
             elapsed_ms,
             user_query,
+        )
+        await self._emit_event(
+            event_type="AgentRunCompleted",
+            message="Response is ready.",
+            visibility=AgentEventVisibility.public,
+            source="supervisor",
+            details={"elapsed_ms": elapsed_ms, "route": plan.route},
         )
 
         return {
@@ -196,6 +289,7 @@ class SupervisorOrchestrator:
             "model": analyst_result.model_name,
             "result": data_payload,
             "visualization": visualization,
+            "summary": summary,
             "diagnostics": diagnostics,
             "tool_calls": combined_artifacts.tool_calls,
         }
@@ -239,6 +333,20 @@ class SupervisorOrchestrator:
 
         for step in plan.steps:
             agent_name = step.agent
+            await self._emit_event(
+                event_type="AgentStepStarted",
+                message=f"{agent_name} is running.",
+                visibility=AgentEventVisibility.public,
+                source=f"agent:{agent_name}",
+                details={"step_id": step.id},
+            )
+            await self._emit_event(
+                event_type="AgentStepStartedInternal",
+                message="Agent step started with inputs.",
+                visibility=AgentEventVisibility.internal,
+                source=f"agent:{agent_name}",
+                details={"step_id": step.id, "input": step.input},
+            )
 
             if agent_name == AgentName.ANALYST.value:
                 step_start = time.perf_counter()
@@ -281,6 +389,13 @@ class SupervisorOrchestrator:
                     "analyst_result": analyst_result,
                     "data_payload": data_payload,
                 }
+                await self._emit_event(
+                    event_type="AgentStepCompleted",
+                    message="Analyst step completed.",
+                    visibility=AgentEventVisibility.public,
+                    source="agent:Analyst",
+                    details={"step_id": step.id},
+                )
                 continue
 
             if agent_name == AgentName.VISUAL.value:
@@ -321,6 +436,13 @@ class SupervisorOrchestrator:
                     "agent": AgentName.VISUAL.value,
                     "visualization": visualization,
                 }
+                await self._emit_event(
+                    event_type="AgentStepCompleted",
+                    message="Visualization step completed.",
+                    visibility=AgentEventVisibility.public,
+                    source="agent:Visual",
+                    details={"step_id": step.id},
+                )
                 continue
 
             if agent_name == AgentName.DOC_RETRIEVAL.value:
@@ -359,6 +481,13 @@ class SupervisorOrchestrator:
                 }
                 if not artifacts.data_payload:
                     artifacts.data_payload = research_result.to_tabular()
+                await self._emit_event(
+                    event_type="AgentStepCompleted",
+                    message="Research step completed.",
+                    visibility=AgentEventVisibility.public,
+                    source="agent:DocRetrieval",
+                    details={"step_id": step.id},
+                )
                 continue
 
             if agent_name == AgentName.WEB_SEARCH.value:
@@ -396,16 +525,52 @@ class SupervisorOrchestrator:
                 }
                 if not artifacts.data_payload:
                     artifacts.data_payload = web_search_result.to_tabular()
+                await self._emit_event(
+                    event_type="AgentStepCompleted",
+                    message="Web search step completed.",
+                    visibility=AgentEventVisibility.public,
+                    source="agent:WebSearch",
+                    details={"step_id": step.id},
+                )
                 continue
 
             if agent_name == AgentName.CLARIFY.value:
                 artifacts.clarifying_question = step.input.get("clarifying_question")
                 self.logger.info("Planner requested clarification: %s", artifacts.clarifying_question)
+                await self._emit_event(
+                    event_type="ClarificationRequested",
+                    message="More detail is needed to continue.",
+                    visibility=AgentEventVisibility.public,
+                    source="agent:Clarify",
+                    details={"step_id": step.id, "question": artifacts.clarifying_question},
+                )
                 break
 
             self.logger.warning("Unsupported agent '%s' in plan; skipping step.", agent_name)
 
         return artifacts
+
+    async def _emit_event(
+        self,
+        *,
+        event_type: str,
+        message: str,
+        visibility: AgentEventVisibility,
+        source: str,
+        details: dict[str, Any] | None = None,
+    ) -> None:
+        if not self.event_emitter:
+            return
+        try:
+            await self.event_emitter.emit(
+                event_type=event_type,
+                message=message,
+                visibility=visibility,
+                source=source,
+                details=details,
+            )
+        except Exception as exc:  # pragma: no cover - defensive guard
+            self.logger.warning("Failed to emit event %s: %s", event_type, exc)
 
     async def _run_analyst_step(
         self,
@@ -615,6 +780,187 @@ class SupervisorOrchestrator:
         elif data_payload:
             summary.update(self._summarize_tabular_payload(data_payload))
         return summary
+
+    @staticmethod
+    def _build_response_summary(
+        *,
+        user_query: str,
+        data_payload: Dict[str, Any],
+        visualization: Dict[str, Any] | None,
+        analyst_result: AnalystQueryResponse,
+        clarifying_question: str | None,
+    ) -> str:
+        if clarifying_question:
+            return f"I need one clarification before continuing: {clarifying_question}"
+
+        if analyst_result.error:
+            return f"I could not complete that request: {analyst_result.error}"
+
+        rows = data_payload.get("rows") if isinstance(data_payload, dict) else None
+        columns = data_payload.get("columns") if isinstance(data_payload, dict) else None
+        row_count = len(rows) if isinstance(rows, list) else 0
+        col_count = len(columns) if isinstance(columns, list) else 0
+
+        if row_count == 0:
+            return "Completed, but no tabular rows were returned."
+
+        requested_chart = SupervisorOrchestrator._detect_requested_chart_type(user_query)
+        if visualization and isinstance(visualization, dict):
+            chart_type_raw = visualization.get("chart_type") or visualization.get("chartType")
+            chart_type = chart_type_raw.lower() if isinstance(chart_type_raw, str) else None
+            options = visualization.get("options") if isinstance(visualization.get("options"), dict) else {}
+            warning = options.get("visualization_warning") if isinstance(options, dict) else None
+            if isinstance(warning, str) and warning.strip():
+                return (
+                    f"Found {row_count} rows across {col_count} columns for '{user_query}'. "
+                    f"{warning.strip()}"
+                )
+            if requested_chart and chart_type and chart_type != requested_chart:
+                return (
+                    f"Found {row_count} rows across {col_count} columns for '{user_query}'. "
+                    f"I could not prepare the requested {requested_chart} chart from this dataset."
+                )
+            if chart_type and chart_type != "table":
+                return (
+                    f"Found {row_count} rows across {col_count} columns for '{user_query}'. "
+                    f"I also prepared a {chart_type} visualization."
+                )
+            if requested_chart and chart_type == "table":
+                return (
+                    f"Found {row_count} rows across {col_count} columns for '{user_query}'. "
+                    f"I could not prepare the requested {requested_chart} chart from this dataset."
+                )
+
+        if requested_chart:
+            return (
+                f"Found {row_count} rows across {col_count} columns for '{user_query}'. "
+                f"I could not prepare the requested {requested_chart} chart from this dataset."
+            )
+
+        return f"Found {row_count} rows across {col_count} columns for '{user_query}'."
+
+    @staticmethod
+    def _detect_requested_chart_type(question: str) -> str | None:
+        text = str(question or "").lower()
+        if not text:
+            return None
+        if "pie chart" in text or "pie " in text or "donut" in text or "doughnut" in text:
+            return "pie"
+        if "bar chart" in text or "bar graph" in text:
+            return "bar"
+        if "line chart" in text or "line graph" in text:
+            return "line"
+        if "scatter plot" in text or "scatter chart" in text:
+            return "scatter"
+        return None
+
+    def _ensure_requested_visualization(
+        self,
+        *,
+        user_query: str,
+        data_payload: Dict[str, Any],
+        visualization: Dict[str, Any] | None,
+    ) -> Dict[str, Any] | None:
+        requested_chart = self._detect_requested_chart_type(user_query)
+        if not requested_chart:
+            return visualization
+
+        existing_type_raw = None
+        if isinstance(visualization, dict):
+            existing_type_raw = visualization.get("chart_type") or visualization.get("chartType")
+        existing_type = str(existing_type_raw).lower() if isinstance(existing_type_raw, str) else None
+        if existing_type == requested_chart:
+            return visualization
+
+        requested_spec = self._build_requested_visualization_spec(requested_chart, data_payload)
+        if requested_spec is None:
+            return visualization
+        return requested_spec
+
+    @staticmethod
+    def _build_requested_visualization_spec(
+        chart_type: str,
+        data_payload: Dict[str, Any],
+    ) -> Dict[str, Any] | None:
+        if not isinstance(data_payload, dict):
+            return None
+
+        columns_raw = data_payload.get("columns")
+        rows_raw = data_payload.get("rows")
+        if not isinstance(columns_raw, list) or not isinstance(rows_raw, list) or not columns_raw or not rows_raw:
+            return None
+
+        columns = [str(column) for column in columns_raw]
+        sample_rows = rows_raw[: min(20, len(rows_raw))]
+
+        def get_cell(row: Any, index: int) -> Any:
+            if isinstance(row, (list, tuple)):
+                return row[index] if index < len(row) else None
+            if isinstance(row, dict):
+                key = columns[index]
+                return row.get(key)
+            return None
+
+        def is_numeric_column(index: int) -> bool:
+            seen = 0
+            numeric = 0
+            for row in sample_rows:
+                value = get_cell(row, index)
+                if value is None:
+                    continue
+                seen += 1
+                if SupervisorOrchestrator._coerce_numeric(value) is not None:
+                    numeric += 1
+            if seen == 0:
+                return False
+            return numeric / seen >= 0.6
+
+        numeric_indexes = [idx for idx in range(len(columns)) if is_numeric_column(idx)]
+        if not numeric_indexes:
+            return None
+
+        measure_index = numeric_indexes[0]
+        non_numeric_indexes = [idx for idx in range(len(columns)) if idx not in numeric_indexes]
+        dimension_index = non_numeric_indexes[0] if non_numeric_indexes else None
+
+        if chart_type in {"pie", "bar", "line"}:
+            if dimension_index is None:
+                return None
+            return {
+                "chart_type": chart_type,
+                "x": columns[dimension_index],
+                "y": columns[measure_index],
+                "title": "Requested chart",
+            }
+
+        if chart_type == "scatter":
+            if len(numeric_indexes) < 2:
+                return None
+            return {
+                "chart_type": "scatter",
+                "x": columns[numeric_indexes[0]],
+                "y": columns[numeric_indexes[1]],
+                "title": "Requested chart",
+            }
+
+        return None
+
+    @staticmethod
+    def _coerce_numeric(value: Any) -> float | None:
+        if isinstance(value, (int, float)):
+            return float(value)
+        if isinstance(value, str):
+            cleaned = value.strip().replace(",", "")
+            cleaned = cleaned.replace("$", "").replace("£", "").replace("€", "")
+            if cleaned.endswith("%"):
+                cleaned = cleaned[:-1]
+            if not cleaned:
+                return None
+            try:
+                return float(cleaned)
+            except ValueError:
+                return None
+        return None
 
     @staticmethod
     def _extract_data_payload(analyst_result: AnalystQueryResponse) -> Dict[str, Any]:

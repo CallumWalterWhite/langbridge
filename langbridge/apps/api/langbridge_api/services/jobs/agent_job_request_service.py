@@ -3,12 +3,16 @@ import logging
 import uuid
 from langbridge.apps.api.langbridge_api.services.message.message_serivce import MessageService
 from langbridge.packages.common.langbridge_common.contracts.jobs.agent_job import CreateAgentJobRequest
-from langbridge.packages.common.langbridge_common.repositories.job_repository import JobRepository
 from langbridge.packages.common.langbridge_common.errors.application_errors import BusinessValidationError
 from langbridge.packages.common.langbridge_common.repositories.job_repository import JobRepository
 from langbridge.packages.common.langbridge_common.repositories.agent_repository import AgentRepository
 from langbridge.packages.common.langbridge_common.contracts.jobs.type import JobType
-from langbridge.packages.common.langbridge_common.db.job import JobRecord, JobEventRecord
+from langbridge.packages.common.langbridge_common.db.job import (
+    JobEventRecord,
+    JobEventVisibility,
+    JobRecord,
+    JobStatus,
+)
 from langbridge.packages.messaging.langbridge_messaging.contracts.jobs.agent_job import AgentJobRequestMessage
 
 
@@ -22,7 +26,7 @@ class AgentJobRequestService:
         self._message_service = message_service
         self._logger = logging.getLogger(__name__)
         
-    async def create_agent_job(
+    async def create_agent_job_request(
         self,
         request: CreateAgentJobRequest,
     ) -> JobRecord:
@@ -34,20 +38,30 @@ class AgentJobRequestService:
         
         job_record = JobRecord(
             id=job_id,
-            job_type=JobType.AGENT,
-            payload=request.dict_json(),
-            organisation_id=request.organisation_id,
+            job_type=JobType.AGENT.value,
+            payload=request.model_dump(mode="json"),
+            headers={},
+            organisation_id=str(request.organisation_id),
+            status=JobStatus.queued,
+            progress=0,
+            status_message="Job queued.",
             job_events=[
                 JobEventRecord(
                     event_type="AgentJobCreated",
-                    details={"agent_definition_id": str(request.agent_definition_id)}
+                    visibility=JobEventVisibility.public,
+                    details={
+                        "visibility": "public",
+                        "message": "Job queued.",
+                        "source": "api",
+                        "details": {"agent_definition_id": str(request.agent_definition_id)},
+                    },
                 )
             ],
         )
         
-        job = await self._job_repository.add(job_record)
+        self._job_repository.add(job_record)
         
-        self._logger.info(f"Created agent job with ID {job.id} for agent definition ID {request.agent_definition_id}")
+        self._logger.info(f"Created agent job with ID {job_id} for agent definition ID {request.agent_definition_id}")
         
         agent_job_message = AgentJobRequestMessage(
             job_id=job_id,
@@ -55,8 +69,8 @@ class AgentJobRequestService:
         )
         
         await self._message_service.create_outbox_message(
-            message=agent_job_message
+            payload=agent_job_message
         )
         
-        return job
+        return job_record
         

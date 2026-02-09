@@ -92,7 +92,7 @@ export function ResultTable({ result, maxPreviewRows = 10 }: ResultTableProps) {
 
   if (displayColumns.length === 0) {
     return (
-      <div className="rounded-2xl border border-dashed border-[color:var(--panel-border)] bg-[color:var(--panel-alt)] px-4 py-6 text-center text-xs text-[color:var(--text-muted)]">
+      <div className="rounded-xl border border-[color:var(--panel-border)]/60 bg-[color:var(--panel-alt)]/45 px-3 py-2 text-xs text-[color:var(--text-muted)]">
         No tabular data available for this response.
       </div>
     );
@@ -100,7 +100,7 @@ export function ResultTable({ result, maxPreviewRows = 10 }: ResultTableProps) {
 
   return (
     <div className="space-y-3">
-      <div className="overflow-x-hidden rounded-2xl border border-[color:var(--panel-border)] bg-[color:var(--panel-alt)]">
+      <div className="overflow-x-auto rounded-xl border border-[color:var(--panel-border)]/70 bg-[color:var(--panel-bg)]/40">
         <table className="w-full table-fixed divide-y divide-[color:var(--panel-border)] text-left text-xs sm:text-sm">
           <thead className="bg-[color:var(--panel-bg)]">
             <tr>

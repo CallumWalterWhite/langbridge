@@ -30,6 +30,7 @@ class PlanningConstraints(BaseModel):
     """User or system supplied execution constraints for the planner."""
 
     max_steps: int = Field(default=4, ge=1, le=10)
+    ignore_max_steps: bool = False
     prefer_low_latency: bool = True
     cost_sensitivity: str = Field(default="medium")
     require_viz_when_chartable: bool = True

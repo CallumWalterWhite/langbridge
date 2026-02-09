@@ -8,6 +8,7 @@ class MessageType(str, Enum):
     """Message types."""
     TEST = "test"
     AGENT_JOB_REQUEST = "agent_job_request"
+    JOB_EVENT = "job_event"
     AGENT_JOB_TASK_EXECUTION = "agent_job_task_execution"
     AGENT_JOB_PLAN_EXECUTION = "agent_job_plan_execution"
     AGENT_JOB_SYNTHESIZE_RESPONSE = "agent_job_synthesize_response"
@@ -17,6 +18,9 @@ class MessageType(str, Enum):
     SEMANTIC_QUERY_RESPONSE = "semantic_query_response"
     SEMANTIC_TASK_EXECUTION = "semantic_task_execution"
     SEMANTIC_QUERY_COMPLETION = "semantic_query_completion"
+    COPILOT_DASHBOARD_REQUEST = "copilot_dashboard_request"
+    COPILOT_DASHBOARD_RESPONSE = "copilot_dashboard_response"
+    COPILOT_DASHBOARD_COMPLETION = "copilot_dashboard_completion"
     
 
     def __str__(self) -> str:

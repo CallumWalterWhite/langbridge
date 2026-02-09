@@ -6,7 +6,6 @@ from typing import Sequence
 
 from redis.exceptions import RedisError
 
-from langbridge.packages.common.langbridge_common.db import async_session_scope
 from langbridge.packages.common.langbridge_common.db.session_context import reset_session, set_session
 from langbridge.packages.messaging.langbridge_messaging.contracts.messages import (
     MessageEnvelope,
@@ -18,7 +17,19 @@ from .ioc import create_container, DependencyResolver
 
 async def run_worker(poll_interval: float = 2.0) -> None:
     logger = logging.getLogger("langbridge.worker")
-    logger.info("Worker starting. Poll interval: %s seconds", poll_interval)
+    worker_concurrency = _read_positive_int_env("WORKER_CONCURRENCY", default=4, logger=logger)
+    batch_size = _read_positive_int_env(
+        "WORKER_BATCH_SIZE",
+        default=worker_concurrency,
+        logger=logger,
+    )
+    processing_semaphore = asyncio.Semaphore(worker_concurrency)
+    logger.info(
+        "Worker starting. Poll interval: %s seconds. Concurrency: %s. Batch size: %s",
+        poll_interval,
+        worker_concurrency,
+        batch_size,
+    )
 
     run_once = os.environ.get("WORKER_RUN_ONCE", "false").lower() in {"1", "true", "yes"}
     broker_mode = os.environ.get("WORKER_BROKER", "redis").lower()
@@ -39,7 +50,7 @@ async def run_worker(poll_interval: float = 2.0) -> None:
             try:
                 messages = await broker.consume(
                     timeout_ms=max(1000, int(poll_interval * 1000)),
-                    count=1,
+                    count=batch_size,
                 )
             except RedisError as exc:
                 logger.error("Redis error: %s", exc)
@@ -50,34 +61,101 @@ async def run_worker(poll_interval: float = 2.0) -> None:
 
             if not messages:
                 logger.info("Worker idle: awaiting jobs")
-            for message in messages:
-                envelope = message.envelope
-                logger.info(
-                    "Received message %s (%s)",
-                    envelope.id,
-                    envelope.message_type,
+            else:
+                await asyncio.gather(
+                    *(
+                        _process_message(
+                            message=message,
+                            container=container,
+                            worker_handler=worker_handler,
+                            broker=broker,
+                            logger=logger,
+                            processing_semaphore=processing_semaphore,
+                        )
+                        for message in messages
+                    )
                 )
-                try:
-                    async with async_session_scope(container.async_session_factory()) as session:
-                        token = set_session(session)
-                        try:
-                            new_messages: Sequence[MessageEnvelope] | None = await worker_handler.handle_message(envelope)
-                        finally:
-                            reset_session(token)
-                    if new_messages:
-                        for new_message in new_messages:
-                            await broker.publish(new_message)
-                except Exception as exc:
-                    logger.error("Handler error: %s", exc)
-                    await broker.nack(message, error=str(exc))
-                    continue
-                await broker.ack(message)
             if run_once:
                 logger.info("Worker run-once enabled; exiting.")
                 return
             await asyncio.sleep(poll_interval)
     finally:
         await broker.close()
+
+
+async def _process_message(
+    *,
+    message,
+    container,
+    worker_handler: WorkerMessageHandler,
+    broker,
+    logger: logging.Logger,
+    processing_semaphore: asyncio.Semaphore,
+) -> None:
+    async with processing_semaphore:
+        envelope = message.envelope
+        logger.info(
+            "Received message %s (%s)",
+            envelope.id,
+            envelope.message_type,
+        )
+        try:
+            session_factory = container.async_session_factory()
+            session = session_factory()
+            token = set_session(session)
+            try:
+                logger.debug("UnitOfWork: starting async DB session")
+                new_messages: Sequence[MessageEnvelope] | None = await worker_handler.handle_message(
+                    envelope
+                )
+                logger.debug("UnitOfWork: committing session")
+                await session.commit()
+            except BaseException as exc:
+                logger.error("UnitOfWork: rolling back due to exception: %s", exc)
+                await session.rollback()
+                raise
+            finally:
+                reset_session(token)
+                await session.close()
+                logger.debug("UnitOfWork: session closed")
+            if new_messages:
+                for new_message in new_messages:
+                    await broker.publish(new_message)
+        except Exception as exc:
+            logger.error("Handler error: %s", exc)
+            await broker.nack(message, error=str(exc))
+            return
+        await broker.ack(message)
+
+
+def _read_positive_int_env(
+    env_name: str,
+    *,
+    default: int,
+    logger: logging.Logger,
+) -> int:
+    raw_value = os.environ.get(env_name)
+    if raw_value is None:
+        return default
+    try:
+        parsed = int(raw_value)
+    except ValueError:
+        logger.warning(
+            "Invalid %s value '%s'; falling back to %s.",
+            env_name,
+            raw_value,
+            default,
+        )
+        return default
+    if parsed < 1:
+        logger.warning(
+            "Invalid %s value '%s'; falling back to %s.",
+            env_name,
+            raw_value,
+            default,
+        )
+        return default
+    return parsed
 
 
 def _run_once() -> None:
@@ -116,7 +194,7 @@ def main() -> None:
 
 
 class _NoopBroker:
-    async def publish(self, message: MessageEnvelope) -> str:
+    async def publish(self, message: MessageEnvelope, stream: str | None = None) -> str:
         return "noop"
 
     async def consume(self, *, timeout_ms: int, count: int):

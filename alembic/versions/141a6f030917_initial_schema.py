@@ -174,6 +174,7 @@ def upgrade() -> None:
     )
     op.create_table('threads',
     sa.Column('id', sa.UUID(), nullable=False),
+    sa.Column('organisation_id', sa.UUID(), nullable=False),
     sa.Column('project_id', sa.UUID(), nullable=False),
     sa.Column('title', sa.String(), nullable=True),
     sa.Column('status', sa.Enum('active', 'archived', 'error', 'completed', name='thread_status'), nullable=False),
@@ -181,6 +182,7 @@ def upgrade() -> None:
     sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.text('(CURRENT_TIMESTAMP)'), nullable=False),
     sa.Column('updated_at', sa.DateTime(timezone=True), server_default=sa.text('(CURRENT_TIMESTAMP)'), nullable=False),
     sa.Column('created_by', sa.UUID(), nullable=False),
+    sa.Column('last_message_id', sa.UUID(), nullable=True),
     sa.ForeignKeyConstraint(['created_by'], ['users.id'], ondelete='cascade'),
     sa.PrimaryKeyConstraint('id')
     )
@@ -332,6 +334,7 @@ def upgrade() -> None:
     sa.Column('job_id', sa.UUID(), nullable=False),
     sa.Column('event_type', sa.String(length=255), nullable=False),
     sa.Column('details', sa.JSON(), nullable=False),
+    sa.Column('visibility', sa.Enum('public', 'internal', name='job_event_visibility'), nullable=False),
     sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.text('(CURRENT_TIMESTAMP)'), nullable=False),
     sa.ForeignKeyConstraint(['job_id'], ['jobs.id'], ondelete='cascade'),
     sa.PrimaryKeyConstraint('id')

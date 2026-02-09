@@ -31,6 +31,10 @@ class JobPriority(enum.Enum):
     normal = "normal"
     high = "high"
     
+class JobEventVisibility(enum.Enum):
+    public = "public"
+    internal = "internal"
+    
 class JobTaskRecord(Base):
     __tablename__ = "job_tasks"
 
@@ -52,6 +56,11 @@ class JobEventRecord(Base):
 
     event_type: Mapped[str] = mapped_column(String(255), nullable=False)
     details: Mapped[Dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    visibility: Mapped[JobEventVisibility] = mapped_column(
+        SAEnum(JobEventVisibility, name="job_event_visibility"),
+        nullable=False,
+        default=JobEventVisibility.public,
+    )
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     
@@ -63,6 +72,7 @@ class JobRecord(Base):
     job_type: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
     
     payload: Mapped[Dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    headers: Mapped[Dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
     
     status: Mapped[JobStatus] = mapped_column(
         SAEnum(JobStatus, name="job_status"),

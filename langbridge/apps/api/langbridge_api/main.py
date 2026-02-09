@@ -1,4 +1,5 @@
-from contextlib import asynccontextmanager
+import asyncio
+from contextlib import asynccontextmanager, suppress
 import inspect
 import logging
 from pathlib import Path
@@ -98,15 +99,31 @@ wire_packages(
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Lifespan context manager to handle startup and shutdown events."""
-    _ensure_local_sqlite_schema()
+    try:
+        _ensure_local_sqlite_schema()
+        logger.info("Local SQLite schema ensured successfully.")
+    except Exception as e:
+        logger.error("Error during local SQLite schema ensure: %s", e)
+        raise
     init_result = container.init_resources()
     if inspect.isawaitable(init_result):
         await init_result
     app.state.container = container
-    yield
-    shutdown_result = container.shutdown_resources()
-    if inspect.isawaitable(shutdown_result):
-        await shutdown_result
+    job_event_consumer = container.job_event_consumer()
+    consumer_task = asyncio.create_task(
+        job_event_consumer.run(),
+        name="job-event-consumer",
+    )
+    try:
+        yield
+    finally:
+        await job_event_consumer.stop()
+        consumer_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await consumer_task
+        shutdown_result = container.shutdown_resources()
+        if inspect.isawaitable(shutdown_result):
+            await shutdown_result
 
 setup_logging(service_name=settings.PROJECT_NAME)
 

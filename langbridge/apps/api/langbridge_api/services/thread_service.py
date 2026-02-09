@@ -1,9 +1,14 @@
 
+from typing import Any, Optional
 import uuid
 from datetime import datetime, timezone
 from fastapi.encoders import jsonable_encoder
 
-from langbridge.packages.common.langbridge_common.db.threads import Role, Thread, ThreadMessage, ThreadStatus, ToolCall
+from langbridge.apps.api.langbridge_api.services.jobs.agent_job_request_service import AgentJobRequestService
+from langbridge.packages.common.langbridge_common.contracts.jobs.agent_job import CreateAgentJobRequest
+from langbridge.packages.common.langbridge_common.contracts.jobs.type import JobType
+from langbridge.packages.common.langbridge_common.db.job import JobRecord
+from langbridge.packages.common.langbridge_common.db.threads import Role, Thread, ThreadMessage, ThreadState, ToolCall
 from langbridge.packages.common.langbridge_common.errors.application_errors import (
     BusinessValidationError,
     PermissionDeniedBusinessValidationError,
@@ -28,12 +33,14 @@ class ThreadService:
         tool_call_repository: ToolCallRepository,
         project_repository: ProjectRepository,
         organization_service: OrganizationService,
+        agent_job_request: AgentJobRequestService,
     ) -> None:
         self._thread_repository = thread_repository
         self._thread_message_repository = thread_message_repository
         self._tool_call_repository = tool_call_repository
         self._project_repository = project_repository
         self._organization_service = organization_service
+        self._agent_job_request_service = agent_job_request
 
     async def list_threads_for_user(self, user: UserResponse) -> list[ThreadResponse]:
         threads = await self._thread_repository.list_for_user(user.id)
@@ -61,6 +68,9 @@ class ThreadService:
         user: UserResponse,
     ) -> ThreadResponse:
         project_id = await self._resolve_project_id(request, user)
+        project = await self._project_repository.get_by_id(project_id)
+        if project is None:
+            raise ResourceNotFound("Project not found")
 
         metadata = request.metadata_json or {}
         if not isinstance(metadata, dict):
@@ -68,14 +78,15 @@ class ThreadService:
 
         thread = Thread(
             id=uuid.uuid4(),
+            organization_id=project.organization_id,
             project_id=project_id,
             title=request.title,
             created_by=user.id,
-            status=ThreadStatus.active,
+            state=ThreadState.awaiting_user_input,
         )
 
         self._thread_repository.add(thread)
-        await self._thread_repository.flush()
+        
         return ThreadResponse.model_validate(thread)
 
     async def get_thread_for_user(self, thread_id: uuid.UUID, user: UserResponse) -> Thread:
@@ -87,7 +98,7 @@ class ThreadService:
     async def delete_thread(self, thread_id: uuid.UUID, user: UserResponse) -> None:
         thread = await self.get_thread_for_user(thread_id, user)
         await self._thread_repository.delete(thread)
-        await self._thread_repository.flush()
+        
 
     async def update_thread(
         self,
@@ -106,7 +117,6 @@ class ThreadService:
             thread.metadata_json = request.metadata_json
 
         thread.updated_at = datetime.now(timezone.utc)
-        await self._thread_repository.flush()
         return ThreadResponse.model_validate(thread)
 
     async def list_messages_for_thread(
@@ -117,6 +127,48 @@ class ThreadService:
         await self.get_thread_for_user(thread_id, user)
         messages = await self._thread_message_repository.list_for_thread(thread_id)
         return [ThreadMessageResponse.model_validate(message) for message in messages]
+
+    async def create_user_thread_message(
+        self,
+        thread_id: uuid.UUID,
+        user: UserResponse,
+        organisation_id: uuid.UUID,
+        agent_definition_id: uuid.UUID,
+        content: dict[str, Any] | str,
+        project_id: Optional[uuid.UUID] = None,
+    ) -> tuple[ThreadMessageResponse, JobRecord]:
+        thread: Thread | None = await self._thread_repository.get_for_user(thread_id, user.id)
+        
+        if thread is None:
+            raise ResourceNotFound("Thread not found")
+        
+        message_id = uuid.uuid4()
+        
+        message = ThreadMessage(
+            id=message_id,
+            thread_id=thread.id,
+            role=Role.user,
+            content=content if isinstance(content, dict) else {"text": content},
+        )
+
+        self._thread_message_repository.add(message)
+        
+        thread.updated_at = datetime.now(timezone.utc)
+        thread.last_message_id = message_id
+        thread.state = ThreadState.processing
+        
+        job_record: JobRecord = await self._agent_job_request_service.create_agent_job_request(
+            request=CreateAgentJobRequest(
+                job_type=JobType.AGENT,
+                agent_definition_id=agent_definition_id,
+                organisation_id=organisation_id,
+                project_id=project_id or thread.project_id,
+                user_id=user.id,
+                thread_id=thread.id,
+            )
+        )
+        
+        return ThreadMessageResponse.model_validate(message), job_record
 
     async def record_chat_turn(
         self,

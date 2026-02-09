@@ -28,3 +28,8 @@ class SemanticQueryResponse(_Base):
     data: List[Dict[str, Any]]
     annotations: List[Dict[str, Any]]
     metadata: Optional[List[Dict[str, Any]]] = None
+
+
+class SemanticQueryJobResponse(_Base):
+    job_id: UUID
+    job_status: str

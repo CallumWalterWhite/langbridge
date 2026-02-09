@@ -17,6 +17,7 @@ from langbridge.packages.common.langbridge_common.db import Base
 from langbridge.packages.common.langbridge_common.db import agent as _agent  # noqa: F401
 from langbridge.packages.common.langbridge_common.db import associations as _associations  # noqa: F401
 from langbridge.packages.common.langbridge_common.db import auth as _auth  # noqa: F401
+from langbridge.packages.common.langbridge_common.db import bi as _bi  # noqa: F401
 from langbridge.packages.common.langbridge_common.db import connector as _connector  # noqa: F401
 from langbridge.packages.common.langbridge_common.db import environment as _environment  # noqa: F401
 from langbridge.packages.common.langbridge_common.db import semantic as _semantic  # noqa: F401

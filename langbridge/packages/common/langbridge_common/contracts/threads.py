@@ -72,6 +72,8 @@ class ThreadVisualizationSpec(_Base):
 
 
 class ThreadChatResponse(_Base):
+    job_id: Optional[UUID] = None
+    job_status: Optional[str] = None
     result: Optional[ThreadTabularResult] = None
     visualization: Optional[ThreadVisualizationSpec] = None
     summary: Optional[str] = None

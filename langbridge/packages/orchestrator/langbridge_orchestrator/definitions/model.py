@@ -8,7 +8,7 @@ output schema, guardrails, and observability knobs.
 
 import uuid
 from enum import Enum
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -70,14 +70,26 @@ class MemoryConfig(BaseModel):
         None, description="Table or collection for database-backed memory."
     )
 
+class ToolType(str, Enum):
+    sql = "sql"
+    web = "web"
+    doc = "doc"
+    custom = "custom"
+
+class SqlToolConfig(BaseModel):
+    definition_id: uuid.UUID = Field(..., description="Tool definition ID.")
 
 class ToolBinding(BaseModel):
     name: str = Field(..., description="Registered tool/connector name.")
-    connector_id: Optional[uuid.UUID] = Field(
-        None, description="Connector identifier if this tool maps to a connector."
-    )
+    tool_type: Optional[ToolType] = Field(None, description="Type of tool.")
     description: Optional[str] = Field(None, description="Short description of the tool.")
-    config: Dict[str, Any] = Field(default_factory=dict, description="Tool-specific configuration.")
+    config: Union[SqlToolConfig, Dict[str, Any]] = Field(default_factory=dict, description="Tool-specific configuration.")
+
+    def get_sql_tool_config(self):
+        if self.tool_type == ToolType.sql:
+            return SqlToolConfig.model_validate(self.config)
+        else:
+            raise ValueError(f"Tool type {self.tool_type} is not supported.")
 
 
 class ExecutionBehavior(BaseModel):
@@ -142,13 +154,20 @@ class AgentFeatures(BaseModel):
     bi_copilot_enabled: bool = Field(
         False, description="Enable the bi copilot feature for this agent."
     )
+    deep_research_enabled: bool = Field(
+        False, description="Enable the deep research feature for this agent."
+    )
+    visualization_enabled: bool = Field(
+        False, description="Enable the visualization feature for this agent."
+    )
+    mcp_enabled: bool = Field(False, description="Enable the mcp feature for this agent.")
 
 class AgentDefinitionModel(BaseModel):
     """Complete agent definition payload stored alongside the Agent record."""
 
     prompt: PromptContract
     memory: MemoryConfig
-    # features: AgentFeatures
+    features: AgentFeatures
     tools: List[ToolBinding] = Field(default_factory=list)
     access_policy: DataAccessPolicy = Field(default_factory=DataAccessPolicy)
     execution: ExecutionBehavior

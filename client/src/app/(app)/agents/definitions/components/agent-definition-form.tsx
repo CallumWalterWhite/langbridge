@@ -29,7 +29,6 @@ import {
   fetchLLMConnections,
   getAvailableFileRetriverDefinitions,
   getAvailableSemanticModels,
-  getAvailableSemanticSearchDefinitions,
   updateAgentDefinition,
   deleteAgentDefinition
 } from '@/orchestration/agents';
@@ -56,6 +55,7 @@ const responseModeLabels: Record<(typeof responseModes)[number], string> = {
 };
 
 interface ToolState {
+  toolType: ToolType;
   name: string;
   connectorId: string;
   description: string;
@@ -68,6 +68,9 @@ interface FormState {
   llmConnectionId: string;
   isActive: boolean;
   biCopilotEnabled: boolean;
+  deepResearchEnabled: boolean;
+  visualizationEnabled: boolean;
+  mcpEnabled: boolean;
   systemPrompt: string;
   userInstructions: string;
   styleGuidance: string;
@@ -105,69 +108,74 @@ interface ToolDefinitionOption {
 }
 
 enum ToolType {
-  sql_analyst = 'sql_analyst',
-  web_search = 'web_search',
-  deep_research = 'deep_research',
-  file_retriever = 'file_retriever',
-  semantic_searcher = 'semantic_searcher',
+  sql = 'sql',
+  web = 'web',
+  doc = 'doc',
 }
 
 const ToolTypeLabels: Record<ToolType, string> = {
-  [ToolType.sql_analyst]: 'SQL Analyst',
-  [ToolType.web_search]: 'Web Search',
-  [ToolType.deep_research]: 'Deep Research',
-  [ToolType.file_retriever]: 'File Retriever',
-  [ToolType.semantic_searcher]: 'Semantic Searcher',
+  [ToolType.sql]: 'SQL Tool',
+  [ToolType.web]: 'Web Search Tool',
+  [ToolType.doc]: 'Document Retrieval Tool',
 };
 
 const ToolTypeOptions: ToolType[] = [
-  ToolType.sql_analyst,
-  ToolType.web_search,
-  ToolType.deep_research,
-  ToolType.file_retriever,
-  ToolType.semantic_searcher,
+  ToolType.sql,
+  ToolType.web,
+  ToolType.doc,
 ];
 
 const ToolDefinitionLabels: Record<ToolType, string> = {
-  [ToolType.sql_analyst]: 'Semantic model',
-  [ToolType.web_search]: 'Web search definition',
-  [ToolType.deep_research]: 'Research definition',
-  [ToolType.file_retriever]: 'File retriever definition',
-  [ToolType.semantic_searcher]: 'Semantic search definition',
+  [ToolType.sql]: 'Semantic model',
+  [ToolType.web]: 'Web search definition',
+  [ToolType.doc]: 'Document retriever definition',
 };
 
 const TOOL_TYPES_WITH_DEFINITIONS = new Set<ToolType>([
-  ToolType.sql_analyst,
-  ToolType.file_retriever,
-  ToolType.semantic_searcher,
+  ToolType.sql,
+  ToolType.doc,
 ]);
 
 const TOOL_DEFAULT_DESCRIPTIONS: Record<ToolType, string> = {
-  [ToolType.sql_analyst]: 'Query structured data through semantic models.',
-  [ToolType.web_search]: 'Search the public web for sources and summaries.',
-  [ToolType.deep_research]: 'Synthesize insights from documents and sources.',
-  [ToolType.file_retriever]: 'Retrieve files from configured sources.',
-  [ToolType.semantic_searcher]: 'Run semantic retrieval over embeddings.',
+  [ToolType.sql]: 'Query structured data through semantic models.',
+  [ToolType.web]: 'Search the public web for sources and summaries.',
+  [ToolType.doc]: 'Retrieve documents from configured sources.',
 };
 
 const TOOL_DEFAULT_CONFIG: Record<ToolType, Record<string, unknown>> = {
-  [ToolType.sql_analyst]: {},
-  [ToolType.web_search]: { max_results: 6, safe_search: 'moderate' },
-  [ToolType.deep_research]: {},
-  [ToolType.file_retriever]: {},
-  [ToolType.semantic_searcher]: {},
+  [ToolType.sql]: {},
+  [ToolType.web]: { max_results: 6, safe_search: 'moderate' },
+  [ToolType.doc]: {},
 };
 
 const ALL_SEMANTIC_MODELS_OPTION = '__all__';
 
-const WEB_SEARCH_TOOL_NAMES = new Set(['web_search', 'web_searcher', 'web_search_agent']);
+const WEB_SEARCH_TOOL_NAMES = new Set(['web', 'web_search', 'web_searcher', 'web_search_agent']);
+const TOOL_TYPE_VALUES = new Set(Object.values(ToolType));
 
 function normalizeToolName(value: string): string {
   return value.trim().toLowerCase();
 }
 
-function isWebSearchTool(value: string): boolean {
-  return WEB_SEARCH_TOOL_NAMES.has(normalizeToolName(value));
+function resolveToolType(value: unknown, name: string): ToolType {
+  if (typeof value === 'string' && TOOL_TYPE_VALUES.has(value as ToolType)) {
+    return value as ToolType;
+  }
+  const normalized = normalizeToolName(name);
+  if (normalized.includes('sql')) {
+    return ToolType.sql;
+  }
+  if (normalized.includes('web')) {
+    return ToolType.web;
+  }
+  if (normalized.includes('doc') || normalized.includes('file') || normalized.includes('retriever') || normalized.includes('semantic')) {
+    return ToolType.doc;
+  }
+  return ToolType.sql;
+}
+
+function isWebSearchTool(toolType: ToolType, name: string): boolean {
+  return toolType === ToolType.web || WEB_SEARCH_TOOL_NAMES.has(normalizeToolName(name));
 }
 
 function defaultFormState(): FormState {
@@ -177,6 +185,9 @@ function defaultFormState(): FormState {
     llmConnectionId: '',
     isActive: true,
     biCopilotEnabled: false,
+    deepResearchEnabled: false,
+    visualizationEnabled: false,
+    mcpEnabled: false,
     systemPrompt: '',
     userInstructions: '',
     styleGuidance: '',
@@ -263,10 +274,15 @@ function hydrateFromDefinition(definition: unknown, base: FormState): FormState 
   const output = (payload.output as Record<string, any>) ?? {};
   const guardrails = (payload.guardrails as Record<string, any>) ?? {};
   const observability = (payload.observability as Record<string, any>) ?? {};
+  const features = (payload.features as Record<string, any>) ?? {};
 
   return {
     ...base,
     llmConnectionId: payload.llm_connection_id ?? base.llmConnectionId,
+    biCopilotEnabled: features.bi_copilot_enabled ?? base.biCopilotEnabled,
+    deepResearchEnabled: features.deep_research_enabled ?? base.deepResearchEnabled,
+    visualizationEnabled: features.visualization_enabled ?? base.visualizationEnabled,
+    mcpEnabled: features.mcp_enabled ?? base.mcpEnabled,
     systemPrompt: prompt.system_prompt ?? '',
     userInstructions: prompt.user_instructions ?? '',
     styleGuidance: prompt.style_guidance ?? '',
@@ -276,6 +292,7 @@ function hydrateFromDefinition(definition: unknown, base: FormState): FormState 
     databaseTable: memory.database_table ?? '',
     tools: tools.length
       ? tools.map((tool: any) => ({
+          toolType: resolveToolType(tool.tool_type, tool.name ?? ''),
           name: tool.name ?? '',
           connectorId: tool.connector_id ?? '',
           description: tool.description ?? '',
@@ -345,7 +362,7 @@ export function AgentDefinitionForm({
     enabled: toolPickerOpen && toolSupportsDefinitions && Boolean(scopeOrganizationId),
     queryFn: async () => {
       switch (selectedToolType) {
-        case ToolType.sql_analyst: {
+        case ToolType.sql: {
           const models = await getAvailableSemanticModels(scopeOrganizationId ?? '');
           return models.map((model) => ({
             id: model.id,
@@ -353,20 +370,12 @@ export function AgentDefinitionForm({
             description: model.description ?? '',
           }));
         }
-        case ToolType.file_retriever: {
+        case ToolType.doc: {
           const retrievers = await getAvailableFileRetriverDefinitions();
           return retrievers.map((retriever) => ({
             id: retriever.id,
             name: retriever.name,
             description: retriever.description ?? '',
-          }));
-        }
-        case ToolType.semantic_searcher: {
-          const searches = await getAvailableSemanticSearchDefinitions();
-          return searches.map((search) => ({
-            id: search.id,
-            name: search.name,
-            description: search.description ?? '',
           }));
         }
         default:
@@ -431,7 +440,7 @@ export function AgentDefinitionForm({
     if (!toolPickerOpen) {
       return;
     }
-    if (selectedToolType !== ToolType.sql_analyst) {
+    if (selectedToolType !== ToolType.sql) {
       return;
     }
     if (!toolDefinitionsQuery.data || toolDefinitionsQuery.data.length === 0) {
@@ -456,6 +465,17 @@ export function AgentDefinitionForm({
     setFormState((prev) => {
       const nextTools = prev.tools.slice();
       nextTools[index] = { ...nextTools[index], [field]: value } as ToolState;
+      return { ...prev, tools: nextTools };
+    });
+  };
+
+  const handleToolTypeChange = (index: number, value: ToolType) => {
+    setFormState((prev) => {
+      const nextTools = prev.tools.slice();
+      nextTools[index] = {
+        ...nextTools[index],
+        toolType: value,
+      };
       return { ...prev, tools: nextTools };
     });
   };
@@ -503,6 +523,7 @@ export function AgentDefinitionForm({
       tools: [
         ...prev.tools,
         {
+          toolType: selectedToolType,
           name: selectedToolType,
           connectorId: '',
           description: selectedToolDefinition?.description ?? TOOL_DEFAULT_DESCRIPTIONS[selectedToolType],
@@ -552,9 +573,16 @@ export function AgentDefinitionForm({
         .map((tool) => ({
           name: tool.name.trim(),
           connector_id: tool.connectorId || undefined,
+          tool_type: tool.toolType,
           description: tool.description || undefined,
           config: parseJsonSafe(tool.config),
         })),
+      features: {
+        bi_copilot_enabled: formState.biCopilotEnabled,
+        deep_research_enabled: formState.deepResearchEnabled,
+        visualization_enabled: formState.visualizationEnabled,
+        mcp_enabled: formState.mcpEnabled,
+      },
       access_policy: {
         allowed_connectors: listFromCsv(formState.allowedConnectors),
         denied_connectors: listFromCsv(formState.deniedConnectors),
@@ -907,6 +935,63 @@ export function AgentDefinitionForm({
         </section>
       </div>
 
+      <section className="surface-panel rounded-3xl p-6 shadow-soft">
+        <div className="space-y-4">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-sm font-semibold text-[color:var(--text-primary)]">Agent features</p>
+              <p className="text-xs text-[color:var(--text-muted)]">Toggle optional capabilities for this agent.</p>
+            </div>
+          </div>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div className="space-y-2">
+              <Label className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  checked={formState.biCopilotEnabled}
+                  onChange={(e) => setFormState((prev) => ({ ...prev, biCopilotEnabled: e.target.checked }))}
+                  className="h-4 w-4 rounded border-[color:var(--panel-border)]"
+                />
+                BI copilot
+              </Label>
+            </div>
+            <div className="space-y-2">
+              <Label className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  checked={formState.deepResearchEnabled}
+                  onChange={(e) => setFormState((prev) => ({ ...prev, deepResearchEnabled: e.target.checked }))}
+                  className="h-4 w-4 rounded border-[color:var(--panel-border)]"
+                />
+                Deep research
+              </Label>
+            </div>
+            <div className="space-y-2">
+              <Label className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  checked={formState.visualizationEnabled}
+                  onChange={(e) => setFormState((prev) => ({ ...prev, visualizationEnabled: e.target.checked }))}
+                  className="h-4 w-4 rounded border-[color:var(--panel-border)]"
+                />
+                Visualization
+              </Label>
+            </div>
+            <div className="space-y-2">
+              <Label className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  checked={formState.mcpEnabled}
+                  onChange={(e) => setFormState((prev) => ({ ...prev, mcpEnabled: e.target.checked }))}
+                  className="h-4 w-4 rounded border-[color:var(--panel-border)]"
+                />
+                MCP
+              </Label>
+            </div>
+          </div>
+        </div>
+      </section>
+
       <div className="grid gap-6 xl:grid-cols-2">
         <section className="surface-panel rounded-3xl p-6 shadow-soft">
           <div className="space-y-4">
@@ -1051,8 +1136,8 @@ export function AgentDefinitionForm({
             <DialogContent className="max-w-xl">
               <DialogHeader>
                 <DialogTitle>Add tool</DialogTitle>
-                <DialogDescription>
-                  Pick a tool type. Built-in tools can be added immediately, while others can be scoped to a definition.
+              <DialogDescription>
+                  Pick a tool type. SQL and document tools can be scoped to a definition.
                 </DialogDescription>
               </DialogHeader>
               <div className="space-y-4">
@@ -1087,7 +1172,7 @@ export function AgentDefinitionForm({
                             onChange={(event) => setSelectedToolDefinitionId(event.target.value)}
                             placeholder={`Select a ${toolDefinitionLabel.toLowerCase()}`}
                           >
-                            {selectedToolType === ToolType.sql_analyst ? (
+                            {selectedToolType === ToolType.sql ? (
                               <option value={ALL_SEMANTIC_MODELS_OPTION}>All semantic models</option>
                             ) : null}
                             {toolDefinitionOptions.map((option) => (
@@ -1148,6 +1233,19 @@ export function AgentDefinitionForm({
               </div>
               <div className="mt-3 grid gap-3 md:grid-cols-2">
                 <div className="space-y-2">
+                  <Label>Tool type</Label>
+                  <Select
+                    value={tool.toolType}
+                    onChange={(e) => handleToolTypeChange(index, e.target.value as ToolType)}
+                  >
+                    {ToolTypeOptions.map((toolType) => (
+                      <option key={toolType} value={toolType}>
+                        {ToolTypeLabels[toolType]}
+                      </option>
+                    ))}
+                  </Select>
+                </div>
+                <div className="space-y-2">
                   <Label>Name</Label>
                   <Input
                     value={tool.name}
@@ -1180,7 +1278,7 @@ export function AgentDefinitionForm({
                   onChange={(e) => handleToolChange(index, 'config', e.target.value)}
                 />
               </div>
-              {isWebSearchTool(tool.name) ? (
+              {isWebSearchTool(tool.toolType, tool.name) ? (
                 <div className="mt-4 grid gap-3 rounded-2xl border border-[color:var(--panel-border)] bg-[color:var(--panel-alt)] p-4 text-xs text-[color:var(--text-muted)] sm:grid-cols-3">
                   <div className="space-y-2">
                     <Label className="text-xs">Max results</Label>

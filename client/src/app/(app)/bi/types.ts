@@ -56,7 +56,25 @@ export type BiWidget = {
   // Execution State
   queryResult: SemanticQueryResponse | null;
   isLoading: boolean;
+  jobId?: string | null;
+  jobStatus?: string | null;
+  progress?: number;
+  statusMessage?: string | null;
   error?: string | null;
+};
+
+export type PersistedBiWidget = Omit<
+  BiWidget,
+  'queryResult' | 'isLoading' | 'jobId' | 'jobStatus' | 'progress' | 'statusMessage' | 'error'
+>;
+
+export type DashboardBuilderState = {
+  name: string;
+  description: string;
+  refreshMode: 'manual' | 'live';
+  semanticModelId: string;
+  globalFilters: FilterDraft[];
+  widgets: PersistedBiWidget[];
 };
 
 export const FILTER_OPERATORS = [
