@@ -24,3 +24,18 @@ export interface QueryBuilderCopilotResponsePayload {
   preview?: SemanticQueryResponse;
   rawModelResponse?: string | null;
 }
+
+export interface DashboardCopilotAssistRequestPayload {
+  projectId?: string | null;
+  semanticModelId: string;
+  instructions: string;
+  dashboardName?: string | null;
+  currentDashboard?: Record<string, unknown> | null;
+  generatePreviews?: boolean;
+  maxWidgets?: number;
+}
+
+export interface DashboardCopilotJobResponsePayload {
+  jobId: string;
+  jobStatus: string;
+}

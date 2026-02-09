@@ -42,26 +42,67 @@ class GithubUserHttpProvider(OAuthUserHttpProvider):
         self._oauth = oauth
 
     async def fetch_user_info(self, token: dict) -> OAuthProviderUserInfo:
+        access_token = token.get("access_token")
+        if not access_token:
+            raise AuthenticationError("Missing access token in GitHub OAuth flow.")
+
+        headers = {
+            "Authorization": f"Bearer {access_token}",
+            "Accept": "application/vnd.github+json",
+            "User-Agent": "langbridge-auth",
+        }
+
         async with httpx.AsyncClient() as client:
-            user_resp = await client.get(
-                "https://api.github.com/user",
-                headers={"Authorization": f"Bearer {token['access_token']}"},
-            )
-            user_resp.raise_for_status()
+            try:
+                user_resp = await client.get(
+                    "https://api.github.com/user",
+                    headers=headers,
+                )
+                user_resp.raise_for_status()
+            except httpx.HTTPStatusError as exc:
+                raise AuthenticationError(
+                    "GitHub authentication failed while fetching user profile."
+                ) from exc
+            except httpx.RequestError as exc:
+                raise AuthenticationError(
+                    "GitHub authentication failed due to a network error."
+                ) from exc
+
             user = user_resp.json()
+            primary_email = user.get("email")
 
-            email_resp = await client.get(
-                "https://api.github.com/user/emails",
-                headers={"Authorization": f"Bearer {token['access_token']}"},
+            try:
+                email_resp = await client.get(
+                    "https://api.github.com/user/emails",
+                    headers=headers,
+                )
+                email_resp.raise_for_status()
+                emails = email_resp.json()
+            except (httpx.HTTPStatusError, httpx.RequestError):
+                emails = []
+
+        if isinstance(emails, list) and emails:
+            primary_verified = next(
+                (
+                    item.get("email")
+                    for item in emails
+                    if isinstance(item, dict) and item.get("primary") and item.get("verified")
+                ),
+                None,
             )
-            email_resp.raise_for_status()
-            emails = email_resp.json()
-
-        primary_email = next((e["email"] for e in emails if e.get("primary") and e.get("verified")), None)
+            any_verified = next(
+                (
+                    item.get("email")
+                    for item in emails
+                    if isinstance(item, dict) and item.get("verified")
+                ),
+                None,
+            )
+            primary_email = primary_verified or any_verified or primary_email
 
         return OAuthProviderUserInfo(
             sub=str(user.get("id")),
-            username=user.get("login"),
+            username=user.get("login") or "",
             name=user.get("name"),
             avatar_url=user.get("avatar_url"),
             email=primary_email,

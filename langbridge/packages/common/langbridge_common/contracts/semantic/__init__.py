@@ -3,7 +3,12 @@ from .semantic_models import (
     SemanticModelRecordResponse,
     SemanticModelUpdateRequest,
 )
-from .semantic_query import SemanticQueryRequest, SemanticQueryResponse, SemanticQueryMetaResponse
+from .semantic_query import (
+    SemanticQueryJobResponse,
+    SemanticQueryMetaResponse,
+    SemanticQueryRequest,
+    SemanticQueryResponse,
+)
 
 __all__ = [
     "SemanticModelCreateRequest",
@@ -12,4 +17,5 @@ __all__ = [
     "SemanticQueryRequest",
     "SemanticQueryResponse",
     "SemanticQueryMetaResponse",
+    "SemanticQueryJobResponse",
 ]

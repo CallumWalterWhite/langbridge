@@ -79,7 +79,7 @@ class Settings(BaseSettings):
     REDIS_CHANNEL: str = "events"
     REDIS_STREAM: str = "langbridge:events"
     REDIS_CONSUMER_GROUP: str = "langbridge-workers"
-    REDIS_CONSUMER_NAME: str = ""
+    REDIS_CONSUMER_NAME: str = "langbridge-consumer-1"
     REDIS_DEAD_LETTER_STREAM: str = "langbridge:dead-letter"
     REDIS_WORKER_STREAM: str = "langbridge:worker_stream"
     REDIS_WORKER_CONSUMER_GROUP: str = "langbridge-worker"
@@ -105,6 +105,8 @@ class Settings(BaseSettings):
     OPENAI_KEY:str = ""
     
     STORAGE_SETTING: Literal["local", "azure"] = "local"
+    DASHBOARD_SNAPSHOT_STORAGE_BACKEND: Literal["local", "azure_blob", "s3"] = "local"
+    DASHBOARD_SNAPSHOT_LOCAL_DIR: str = ".cache/dashboard_snapshots"
     
     IS_LOCAL_MESSAGING: bool = True
     INBOX_INTERNAL_REQUEST_URL: str = "http://127.0.0.1:8000/api/v1/message/inbox"

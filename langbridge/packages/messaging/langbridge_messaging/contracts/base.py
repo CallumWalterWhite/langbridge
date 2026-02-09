@@ -18,6 +18,9 @@ class MessageType(str, Enum):
     SEMANTIC_QUERY_RESPONSE = "semantic_query_response"
     SEMANTIC_TASK_EXECUTION = "semantic_task_execution"
     SEMANTIC_QUERY_COMPLETION = "semantic_query_completion"
+    COPILOT_DASHBOARD_REQUEST = "copilot_dashboard_request"
+    COPILOT_DASHBOARD_RESPONSE = "copilot_dashboard_response"
+    COPILOT_DASHBOARD_COMPLETION = "copilot_dashboard_completion"
     
 
     def __str__(self) -> str:

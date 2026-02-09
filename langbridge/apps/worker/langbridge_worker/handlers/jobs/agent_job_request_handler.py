@@ -136,7 +136,7 @@ class AgentJobRequestHandler(BaseMessageHandler):
             agent_definition, definition_model = await self._get_agent_definition(
                 request.agent_definition_id
             )
-            llm_connection = await self._get_llm_connection(agent_definition.llm_connection_id)
+            llm_connection = await self._get_llm_connection(agent_definition.llm_connection_id) # type: ignore
             llm_provider = create_provider(llm_connection)
             embedding_provider = self._create_embedding_provider(job_record.id, llm_connection)
 

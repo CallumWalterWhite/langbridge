@@ -3,26 +3,39 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select } from '@/components/ui/select';
+import { Textarea } from '@/components/ui/textarea';
 import { FILTER_OPERATORS } from '../types';
 import type { FieldOption, FilterDraft } from '../types';
 import { FieldSelect } from './FieldSelect';
 
 interface BiGlobalConfigPanelProps {
   onClose: () => void;
-  workspaceName: string;
-  setWorkspaceName: (name: string) => void;
+  dashboardName: string;
+  setDashboardName: (name: string) => void;
+  dashboardDescription: string;
+  setDashboardDescription: (description: string) => void;
+  refreshMode: 'manual' | 'live';
+  setRefreshMode: (mode: 'manual' | 'live') => void;
+  lastRefreshedAt: string | null;
   fields: FieldOption[];
   globalFilters: FilterDraft[];
   setGlobalFilters: (filters: FilterDraft[]) => void;
+  onApplyGlobalFilters: () => void;
 }
 
 export function BiGlobalConfigPanel({
   onClose,
-  workspaceName,
-  setWorkspaceName,
+  dashboardName,
+  setDashboardName,
+  dashboardDescription,
+  setDashboardDescription,
+  refreshMode,
+  setRefreshMode,
+  lastRefreshedAt,
   fields,
   globalFilters,
   setGlobalFilters,
+  onApplyGlobalFilters,
 }: BiGlobalConfigPanelProps) {
   const handleAddGlobalFilter = () => {
     setGlobalFilters([
@@ -49,10 +62,10 @@ export function BiGlobalConfigPanel({
       <div className="p-4 border-b border-[var(--border-light)] flex items-center justify-between bg-muted/10">
         <div className="flex-1 mr-4">
           <Input
-            value={workspaceName}
-            onChange={(e) => setWorkspaceName(e.target.value)}
+            value={dashboardName}
+            onChange={(e) => setDashboardName(e.target.value)}
             className="h-8 font-semibold bg-transparent border-transparent hover:border-border focus:border-primary px-2 transition-colors"
-            placeholder="Workspace name"
+            placeholder="Dashboard name"
           />
         </div>
         <Button variant="ghost" size="icon" onClick={onClose} className="h-7 w-7 text-muted-foreground">
@@ -62,13 +75,48 @@ export function BiGlobalConfigPanel({
 
       <div className="flex-1 overflow-y-auto p-4 space-y-6 custom-scrollbar">
         <section className="space-y-3">
+          <Label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Description</Label>
+          <Textarea
+            value={dashboardDescription}
+            onChange={(event) => setDashboardDescription(event.target.value)}
+            className="min-h-20 text-xs"
+            placeholder="Summarize what this dashboard tracks."
+          />
+        </section>
+        <section className="space-y-3">
+          <Label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+            Refresh Mode
+          </Label>
+          <Select
+            value={refreshMode}
+            onChange={(event) => setRefreshMode(event.target.value === 'live' ? 'live' : 'manual')}
+            className="h-8 text-xs"
+          >
+            <option value="manual">Manual refresh</option>
+            <option value="live">Live on load</option>
+          </Select>
+          <p className="text-xs text-muted-foreground">
+            {refreshMode === 'live'
+              ? 'Dashboard refreshes automatically when opened.'
+              : 'Dashboard keeps cached data until you manually refresh.'}
+          </p>
+          <p className="text-xs text-muted-foreground">
+            Last refreshed: {lastRefreshedAt ? new Date(lastRefreshedAt).toLocaleString() : 'Never'}
+          </p>
+        </section>
+        <section className="space-y-3">
           <div className="flex items-center justify-between">
             <Label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Global Filters</Label>
-            <Button variant="outline" size="sm" onClick={handleAddGlobalFilter} className="h-6 gap-1 px-2 text-xs">
-              <Plus className="h-3 w-3" /> Add
-            </Button>
+            <div className="flex items-center gap-2">
+              <Button variant="outline" size="sm" onClick={handleAddGlobalFilter} className="h-6 gap-1 px-2 text-xs">
+                <Plus className="h-3 w-3" /> Add
+              </Button>
+              <Button variant="outline" size="sm" onClick={onApplyGlobalFilters} className="h-6 px-2 text-xs">
+                Apply
+              </Button>
+            </div>
           </div>
-          <p className="text-xs text-muted-foreground">Applies to every widget in this dashboard.</p>
+          <p className="text-xs text-muted-foreground">Merged into every chart query and run against all widgets.</p>
           {globalFilters.length === 0 && (
             <div className="text-xs text-muted-foreground italic">No global filters applied</div>
           )}

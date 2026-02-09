@@ -11,6 +11,7 @@ from langbridge.packages.common.langbridge_common.db.job import (
     JobEventRecord,
     JobEventVisibility,
     JobRecord,
+    JobStatus,
 )
 from langbridge.packages.messaging.langbridge_messaging.contracts.jobs.agent_job import AgentJobRequestMessage
 
@@ -39,7 +40,11 @@ class AgentJobRequestService:
             id=job_id,
             job_type=JobType.AGENT.value,
             payload=request.model_dump(mode="json"),
+            headers={},
             organisation_id=str(request.organisation_id),
+            status=JobStatus.queued,
+            progress=0,
+            status_message="Job queued.",
             job_events=[
                 JobEventRecord(
                     event_type="AgentJobCreated",

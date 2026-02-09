@@ -1,3 +1,4 @@
+from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -21,6 +22,13 @@ class JobRepository(AsyncBaseRepository[JobRecord]):
         )
         result = await self._session.scalars(stmt)
         return result.one_or_none()
+
+    async def get_existing_ids(self, ids: set[UUID]) -> set[UUID]:
+        if not ids:
+            return set()
+        stmt = select(JobRecord.id).where(JobRecord.id.in_(ids))
+        result = await self._session.scalars(stmt)
+        return set(result.all())
 
     def add_job_event(self, event: JobEventRecord) -> JobEventRecord:
         self._session.add(event)

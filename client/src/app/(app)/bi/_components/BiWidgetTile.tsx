@@ -1,4 +1,4 @@
-import { X, BarChart3, LineChart, PieChart as PieChartIcon, Table as TableIcon, Loader2 } from 'lucide-react';
+import { X, Copy, BarChart3, LineChart, PieChart as PieChartIcon, Table as TableIcon, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { CartesianGrid, XAxis, YAxis, Tooltip, ResponsiveContainer, BarChart, Bar, LineChart as RechartsLine, Line, PieChart, Pie, Cell } from 'recharts';
 import { cn } from '@/lib/utils';
@@ -9,6 +9,7 @@ interface BiWidgetTileProps {
   isActive: boolean;
   onActivate: () => void;
   onRemove: () => void;
+  onDuplicate: () => void;
   onAddField: (widgetId: string, field: FieldOption, targetKind?: 'dimension' | 'measure') => void;
 }
 
@@ -17,6 +18,7 @@ export function BiWidgetTile({
   isActive,
   onActivate,
   onRemove,
+  onDuplicate,
   onAddField
 }: BiWidgetTileProps) {
   const sizeClassName = (() => {
@@ -40,6 +42,7 @@ export function BiWidgetTile({
     '#ec4899',
     '#a855f7',
   ];
+  const progress = Math.max(0, Math.min(100, widget.progress ?? 0));
   
   const hasData = widget.queryResult?.data && widget.queryResult.data.length > 0;
   const columnMetadata = widget.queryResult?.metadata ?? [];
@@ -192,6 +195,17 @@ export function BiWidgetTile({
             </div>
             
             <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-7 w-7 text-muted-foreground hover:text-primary"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onDuplicate();
+                  }}
+                >
+                  <Copy className="h-3.5 w-3.5" />
+                </Button>
                 <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground hover:text-destructive" onClick={(e) => { e.stopPropagation(); onRemove(); }}>
                     <X className="h-3.5 w-3.5" />
                 </Button>
@@ -201,13 +215,27 @@ export function BiWidgetTile({
         {/* Chart Area */}
         <div className="flex-1 p-4 relative min-h-0">
             {widget.isLoading ? (
-                <div className="absolute inset-0 flex items-center justify-center bg-background/50 backdrop-blur-sm z-10">
-                    <Loader2 className="h-6 w-6 animate-spin text-primary" />
+                <div className="absolute inset-0 flex items-center justify-center bg-background/70 backdrop-blur-sm z-10 px-5">
+                    <div className="w-full max-w-xs rounded-xl border border-border/60 bg-background/90 p-3 shadow-sm">
+                        <div className="flex items-center gap-2 text-xs font-medium text-foreground">
+                            <Loader2 className="h-4 w-4 animate-spin text-primary" />
+                            <span>{widget.statusMessage || 'Running semantic query...'}</span>
+                        </div>
+                        <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-muted">
+                            <div className="h-full rounded-full bg-primary transition-[width] duration-300" style={{ width: `${progress}%` }} />
+                        </div>
+                        <div className="mt-1 text-[11px] text-muted-foreground">{progress}%</div>
+                    </div>
                 </div>
             ) : null}
 
             {hasData ? (
                 renderChart()
+            ) : widget.error ? (
+                <div className="h-full flex flex-col items-center justify-center text-center gap-2 rounded-xl border border-destructive/30 bg-destructive/5 p-4">
+                    <p className="text-xs font-semibold text-destructive">Query failed</p>
+                    <p className="text-xs text-muted-foreground">{widget.error}</p>
+                </div>
             ) : (
                 <div className="h-full flex flex-col items-center justify-center text-muted-foreground/40 gap-3 border-2 border-dashed border-border/50 rounded-xl m-2">
                     {widget.type === 'bar' && <BarChart3 className="h-8 w-8" />}

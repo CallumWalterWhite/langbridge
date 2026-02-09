@@ -1,6 +1,7 @@
 import { apiFetch } from '@/orchestration/http';
 
 import type {
+  SemanticQueryJobResponse,
   SemanticQueryMetaResponse,
   SemanticQueryRequestPayload,
   SemanticQueryResponse,
@@ -36,4 +37,17 @@ export async function runSemanticQuery(
     method: 'POST',
     body: JSON.stringify(payload),
   });
+}
+
+export async function enqueueSemanticQuery(
+  organizationId: string,
+  payload: SemanticQueryRequestPayload,
+): Promise<SemanticQueryJobResponse> {
+  return apiFetch<SemanticQueryJobResponse>(
+    `${basePath(organizationId)}/${payload.semanticModelId}/q/jobs`,
+    {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    },
+  );
 }

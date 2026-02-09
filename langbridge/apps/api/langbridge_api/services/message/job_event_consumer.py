@@ -1,8 +1,6 @@
-from __future__ import annotations
-
 import asyncio
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Iterable, Sequence
 
 from redis.exceptions import RedisError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -64,66 +62,117 @@ class JobEventConsumer:
             if not messages:
                 continue
 
-            for message in messages:
-                await self._process_message(message)
+            await self._process_messages(messages)
 
     async def stop(self) -> None:
         self._stop_event.set()
-        await self._broker_client.close()
 
-    async def _process_message(self, message: ReceivedMessage) -> None:
-        envelope = message.envelope
-        if envelope.message_type != MessageType.JOB_EVENT:
-            self._logger.warning(
-                "JobEventConsumer received unsupported message type %s; acking.",
-                envelope.message_type,
-            )
-            await self._broker_client.ack(message)
-            return
+    async def _process_messages(self, messages: Sequence[ReceivedMessage]) -> None:
+        ack_messages: list[ReceivedMessage] = []
+        nack_messages: list[tuple[ReceivedMessage, str]] = []
+        job_messages: list[tuple[ReceivedMessage, JobEventMessage]] = []
 
-        try:
-            payload = self._parse_payload(envelope.payload)
-            await self._persist_job_event(payload)
-        except Exception as exc:  # pragma: no cover - defensive guard for background loop
-            self._logger.error("Failed to process job event message %s: %s", envelope.id, exc)
-            await self._broker_client.nack(message, error=str(exc))
-            return
+        for message in messages:
+            envelope = message.envelope
+            if envelope.message_type != MessageType.JOB_EVENT:
+                self._logger.warning(
+                    "JobEventConsumer received unsupported message type %s; acking.",
+                    envelope.message_type,
+                )
+                ack_messages.append(message)
+                continue
 
-        await self._broker_client.ack(message)
+            try:
+                payload = self._parse_payload(envelope.payload)
+            except Exception as exc:  # pragma: no cover - defensive guard for deserialization issues
+                self._logger.error("Failed to parse job event message %s: %s", envelope.id, exc)
+                nack_messages.append((message, str(exc)))
+                continue
+
+            job_messages.append((message, payload))
+
+        if job_messages:
+            acked, nacked = await self._persist_job_events(job_messages)
+            ack_messages.extend(acked)
+            nack_messages.extend(nacked)
+
+        if ack_messages:
+            await self._ack_messages(ack_messages)
+        if nack_messages:
+            await self._nack_messages(nack_messages)
 
     @staticmethod
     def _parse_payload(payload: BaseMessagePayload) -> JobEventMessage:
         return JobEventMessage.model_validate(payload.model_dump(mode="json"))
 
-    async def _persist_job_event(self, payload: JobEventMessage) -> None:
+    async def _persist_job_events(
+        self,
+        messages: Sequence[tuple[ReceivedMessage, JobEventMessage]],
+    ) -> tuple[list[ReceivedMessage], list[tuple[ReceivedMessage, str]]]:
         session = self._async_session_factory()
         repository = JobRepository(session=session)
-        try:
-            job = await repository.get_by_id(payload.job_id)
-            if job is None:
-                raise ValueError(f"Job {payload.job_id} was not found.")
+        acked: list[ReceivedMessage] = []
+        nacked: list[tuple[ReceivedMessage, str]] = []
 
-            repository.add_job_event(
-                JobEventRecord(
-                    job_id=payload.job_id,
-                    event_type=payload.event_type,
-                    details={
-                        "visibility": payload.visibility,
-                        "message": payload.message,
-                        "source": payload.source or "agent-runtime",
-                        "details": payload.details or {},
-                    },
-                    visibility=(
-                        JobEventRecordVisibility.public
-                        if payload.visibility == AgentEventVisibility.public.value
-                        else JobEventRecordVisibility.internal
-                    ),
-                )
-            )
-            await repository.flush()
-            await session.commit()
-        except Exception:
+        try:
+            job_ids = {payload.job_id for _, payload in messages}
+            existing_ids = await repository.get_existing_ids(job_ids)
+            missing_ids = job_ids - existing_ids
+
+            if missing_ids:
+                for message, payload in messages:
+                    if payload.job_id in missing_ids:
+                        error = f"Job {payload.job_id} was not found."
+                        self._logger.error("Failed to process job event message %s: %s", message.envelope.id, error)
+                        nacked.append((message, error))
+
+            valid_messages = [
+                (message, payload)
+                for message, payload in messages
+                if payload.job_id in existing_ids
+            ]
+
+            if valid_messages:
+                events = [
+                    JobEventRecord(
+                        job_id=payload.job_id,
+                        event_type=payload.event_type,
+                        details={
+                            "visibility": payload.visibility,
+                            "message": payload.message,
+                            "source": payload.source or "agent-runtime",
+                            "details": payload.details or {},
+                        },
+                        visibility=(
+                            JobEventRecordVisibility.public
+                            if payload.visibility == AgentEventVisibility.public.value
+                            else JobEventRecordVisibility.internal
+                        ),
+                    )
+                    for _, payload in valid_messages
+                ]
+                session.add_all(events)
+                await session.commit()
+                acked.extend(message for message, _ in valid_messages)
+        except Exception as exc:  # pragma: no cover - defensive guard for background loop
             await session.rollback()
-            raise
+            error = str(exc)
+            self._logger.error("Failed to persist job event batch: %s", error)
+            acked = []
+            nacked = [(message, error) for message, _ in messages]
         finally:
             await session.close()
+
+        return acked, nacked
+
+    async def _ack_messages(self, messages: Iterable[ReceivedMessage]) -> None:
+        await asyncio.gather(
+            *(self._broker_client.ack(message) for message in messages),
+            return_exceptions=True,
+        )
+
+    async def _nack_messages(self, messages: Iterable[tuple[ReceivedMessage, str]]) -> None:
+        await asyncio.gather(
+            *(self._broker_client.nack(message, error=error) for message, error in messages),
+            return_exceptions=True,
+        )

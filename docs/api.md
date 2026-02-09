@@ -23,6 +23,18 @@ Base path: `/api/v1`
 - `GET /semantic-query/{semantic_model_id}/meta?organization_id=...`
   - Returns: `SemanticQueryMetaResponse` including `semantic_model`.
 
+## BI dashboards
+- `GET /bi-dashboard/{organization_id}?project_id=...`
+  - List saved dashboards for an organization, optionally scoped to a project.
+- `POST /bi-dashboard/{organization_id}`
+  - Create a dashboard. Body: `DashboardCreateRequest`.
+- `GET /bi-dashboard/{organization_id}/{dashboard_id}`
+  - Fetch one saved dashboard.
+- `PUT /bi-dashboard/{organization_id}/{dashboard_id}`
+  - Update dashboard metadata, semantic model, global filters, and widgets.
+- `DELETE /bi-dashboard/{organization_id}/{dashboard_id}`
+  - Delete a saved dashboard.
+
 ## Example: meta
 ```http
 GET /api/v1/semantic-query/00000000-0000-0000-0000-000000000000/meta?organization_id=00000000-0000-0000-0000-000000000000
@@ -42,5 +54,36 @@ GET /api/v1/semantic-query/00000000-0000-0000-0000-000000000000/meta?organizatio
     ],
     "limit": 200
   }
+}
+```
+
+## Example: dashboard create
+```json
+{
+  "projectId": "00000000-0000-0000-0000-000000000000",
+  "semanticModelId": "00000000-0000-0000-0000-000000000000",
+  "name": "Revenue command center",
+  "description": "Executive revenue dashboard",
+  "globalFilters": [
+    { "id": "gf-1", "member": "orders.region", "operator": "equals", "values": "US" }
+  ],
+  "widgets": [
+    {
+      "id": "w-1",
+      "title": "Revenue by month",
+      "type": "line",
+      "size": "wide",
+      "measures": ["orders.revenue"],
+      "dimensions": ["orders.order_date"],
+      "filters": [],
+      "orderBys": [],
+      "limit": 500,
+      "timeDimension": "orders.order_date",
+      "timeGrain": "month",
+      "timeRangePreset": "last_30_days",
+      "chartX": "orders.order_date",
+      "chartY": "orders.revenue"
+    }
+  ]
 }
 ```

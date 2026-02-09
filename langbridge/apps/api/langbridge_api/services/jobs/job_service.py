@@ -12,6 +12,13 @@ from langbridge.packages.common.langbridge_common.contracts.jobs.agent_job impor
     JobEventVisibility,
     JobFinalResponse,
 )
+from langbridge.packages.common.langbridge_common.contracts.jobs.copilot_dashboard_job import (
+    CreateCopilotDashboardJobRequest,
+)
+from langbridge.packages.common.langbridge_common.contracts.jobs.semantic_query_job import (
+    CreateSemanticQueryJobRequest,
+)
+from langbridge.packages.common.langbridge_common.contracts.jobs.type import JobType
 from langbridge.packages.common.langbridge_common.db.job import JobRecord
 from langbridge.packages.common.langbridge_common.errors.application_errors import (
     PermissionDeniedBusinessValidationError,
@@ -70,12 +77,31 @@ class JobService:
         if payload is None:
             raise PermissionDeniedBusinessValidationError("You do not have access to this job.")
 
+        user_id: uuid.UUID | None = None
         try:
-            request = CreateAgentJobRequest.model_validate(payload)
+            if str(job.job_type) == JobType.AGENT.value:
+                request = CreateAgentJobRequest.model_validate(payload)
+                user_id = request.user_id
+            elif str(job.job_type) == JobType.SEMANTIC_QUERY.value:
+                request = CreateSemanticQueryJobRequest.model_validate(payload)
+                user_id = request.user_id
+                if request.organisation_id != organization_id:
+                    raise PermissionDeniedBusinessValidationError("You do not have access to this job.")
+            elif str(job.job_type) == JobType.COPILOT_DASHBOARD.value:
+                request = CreateCopilotDashboardJobRequest.model_validate(payload)
+                user_id = request.user_id
+                if request.organisation_id != organization_id:
+                    raise PermissionDeniedBusinessValidationError("You do not have access to this job.")
+            else:
+                raw_user_id = payload.get("user_id")
+                if raw_user_id is not None:
+                    user_id = uuid.UUID(str(raw_user_id))
+        except PermissionDeniedBusinessValidationError:
+            raise
         except Exception as exc:
             raise PermissionDeniedBusinessValidationError("You do not have access to this job.") from exc
 
-        if request.user_id != current_user.id:
+        if user_id != current_user.id:
             raise PermissionDeniedBusinessValidationError("You do not have access to this job.")
 
     @staticmethod
