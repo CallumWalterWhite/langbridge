@@ -9,25 +9,43 @@ import os
 from logging.handlers import RotatingFileHandler
 from typing import Optional
 
-from opentelemetry import _logs, trace
-from opentelemetry.exporter.otlp.proto.grpc._log_exporter import (
-    OTLPLogExporter as GrpcOTLPLogExporter,
-)
-from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import (
-    OTLPSpanExporter as GrpcOTLPSpanExporter,
-)
-from opentelemetry.exporter.otlp.proto.http._log_exporter import (
-    OTLPLogExporter as HttpOTLPLogExporter,
-)
-from opentelemetry.exporter.otlp.proto.http.trace_exporter import (
-    OTLPSpanExporter as HttpOTLPSpanExporter,
-)
-from opentelemetry.instrumentation.logging import LoggingInstrumentor
-from opentelemetry.sdk._logs import LoggerProvider, LoggingHandler
-from opentelemetry.sdk._logs.export import BatchLogRecordProcessor
-from opentelemetry.sdk.resources import Resource
-from opentelemetry.sdk.trace import TracerProvider
-from opentelemetry.sdk.trace.export import BatchSpanProcessor
+try:
+    from opentelemetry import _logs, trace
+    from opentelemetry.exporter.otlp.proto.grpc._log_exporter import (
+        OTLPLogExporter as GrpcOTLPLogExporter,
+    )
+    from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import (
+        OTLPSpanExporter as GrpcOTLPSpanExporter,
+    )
+    from opentelemetry.exporter.otlp.proto.http._log_exporter import (
+        OTLPLogExporter as HttpOTLPLogExporter,
+    )
+    from opentelemetry.exporter.otlp.proto.http.trace_exporter import (
+        OTLPSpanExporter as HttpOTLPSpanExporter,
+    )
+    from opentelemetry.instrumentation.logging import LoggingInstrumentor
+    from opentelemetry.sdk._logs import LoggerProvider, LoggingHandler
+    from opentelemetry.sdk._logs.export import BatchLogRecordProcessor
+    from opentelemetry.sdk.resources import Resource
+    from opentelemetry.sdk.trace import TracerProvider
+    from opentelemetry.sdk.trace.export import BatchSpanProcessor
+
+    OTEL_AVAILABLE = True
+except ModuleNotFoundError:  # pragma: no cover - optional in local/dev test environments
+    OTEL_AVAILABLE = False
+    _logs = None  # type: ignore[assignment]
+    trace = None  # type: ignore[assignment]
+    GrpcOTLPLogExporter = None  # type: ignore[assignment]
+    GrpcOTLPSpanExporter = None  # type: ignore[assignment]
+    HttpOTLPLogExporter = None  # type: ignore[assignment]
+    HttpOTLPSpanExporter = None  # type: ignore[assignment]
+    LoggingInstrumentor = None  # type: ignore[assignment]
+    LoggerProvider = None  # type: ignore[assignment]
+    LoggingHandler = None  # type: ignore[assignment]
+    BatchLogRecordProcessor = None  # type: ignore[assignment]
+    Resource = None  # type: ignore[assignment]
+    TracerProvider = None  # type: ignore[assignment]
+    BatchSpanProcessor = None  # type: ignore[assignment]
 
 DEFAULT_LOG_DIR = "./"
 DEFAULT_LOG_FILE = "app.log"
@@ -86,7 +104,7 @@ def _bool_env(name: str) -> bool:
 
 
 def _otel_disabled() -> bool:
-    return _bool_env("OTEL_SDK_DISABLED")
+    return _bool_env("OTEL_SDK_DISABLED") or not OTEL_AVAILABLE
 
 
 def _exporter_enabled(env_key: str, default: str = "otlp") -> bool:
@@ -119,6 +137,8 @@ def _build_span_exporter() -> Optional[object]:
 
 
 def _build_resource(service_name: Optional[str]) -> Resource:
+    if Resource is None:  # pragma: no cover - guarded by _otel_disabled
+        raise RuntimeError("OpenTelemetry resource support is unavailable")
     name = service_name or DEFAULT_SERVICE_NAME
     return Resource.create({"service.name": name})
 

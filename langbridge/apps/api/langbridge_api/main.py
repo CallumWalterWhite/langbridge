@@ -6,7 +6,6 @@ from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.routing import APIRoute
-from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 from starlette.middleware.cors import CORSMiddleware
 from starlette.middleware.sessions import SessionMiddleware
 from starlette.responses import Response
@@ -33,6 +32,11 @@ from langbridge.apps.api.langbridge_api.middleware import (
     CorrelationIdMiddleware,
 )
 from dotenv import load_dotenv
+
+try:
+    from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
+except ModuleNotFoundError:  # pragma: no cover - optional dependency in local test envs
+    FastAPIInstrumentor = None  # type: ignore[assignment]
 
 load_dotenv()
 logger = logging.getLogger(__name__)
@@ -172,7 +176,10 @@ app.include_router(
 def metrics() -> Response:
     return metrics_response()
 
-FastAPIInstrumentor.instrument_app(app)
+if FastAPIInstrumentor is not None:
+    FastAPIInstrumentor.instrument_app(app)
+else:
+    logger.warning("OpenTelemetry FastAPI instrumentation is unavailable; skipping instrumentation.")
 
 if __name__ == "__main__":
     import uvicorn

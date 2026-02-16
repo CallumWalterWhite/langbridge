@@ -2,6 +2,13 @@
 
 Base path: `/api/v1`
 
+For the complete and current endpoint inventory, use:
+- `docs/insomnia/langbridge_collection.yml`
+- `docs/postman/langbridge_collection.json`
+
+Regenerate both from router source with `python scripts/generate_api_collections.py`.
+This page is a partial overview.
+
 ## Semantic models
 - `GET /semantic-model?organization_id=...&project_id=...`
   - List semantic models in scope.

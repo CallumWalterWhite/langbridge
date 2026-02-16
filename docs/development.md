@@ -21,6 +21,9 @@ This doc is aimed at quick onboarding for Codex and contributors.
 
 ## Testing and linting
 - Backend tests (if present): `pytest`
+- API E2E automation: `pytest -q tests/e2e/test_api_e2e.py`
+  - The E2E test boots the API with a temporary SQLite DB and exercises auth -> organization -> project -> thread endpoints.
+  - If required backend dependencies are missing, the test is skipped with an actionable message.
 - Frontend lint: `cd client && npm run lint`
 
 ## Change safety checklist
