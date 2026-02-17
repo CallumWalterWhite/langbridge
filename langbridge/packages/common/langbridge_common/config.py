@@ -137,5 +137,14 @@ class Settings(BaseSettings):
     
     CONFIG_KEYRING: str = "default"  # JSON-encoded dict of base64 keys, e.g. '{"key-id-1": "base64key1",
     CONFIG_ACTIVE_KEY: str = "default"  # key ID of the active key in the keyring
+    UNIFIED_TRINO_HOST: str = "localhost"
+    UNIFIED_TRINO_PORT: int = 8080
+    UNIFIED_TRINO_USER: str = "trino"
+    UNIFIED_TRINO_PASSWORD: str | None = None
+    UNIFIED_TRINO_CATALOG: str = "system"
+    UNIFIED_TRINO_SCHEMA: str = "information_schema"
+    UNIFIED_TRINO_HTTP_SCHEME: str = "http"
+    UNIFIED_TRINO_VERIFY: bool = True
+    UNIFIED_TRINO_SOURCE: str = "langbridge"
 
 settings = Settings()  # type: ignore

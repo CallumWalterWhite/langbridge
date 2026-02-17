@@ -2,6 +2,7 @@
 
 import { use, useCallback, useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import yaml from 'js-yaml';
 
 import { useToast } from '@/components/ui/toast';
 import { useWorkspaceScope } from '@/context/workspaceScope';
@@ -27,13 +28,24 @@ import type {
 import { listSemanticModels } from '@/orchestration/semanticModels';
 import type { SemanticModelRecord } from '@/orchestration/semanticModels/types';
 import { fetchAgentJobState } from '@/orchestration/jobs';
-import { enqueueSemanticQuery, fetchSemanticQueryMeta } from '@/orchestration/semanticQuery';
+import {
+  enqueueSemanticQuery,
+  enqueueUnifiedSemanticQuery,
+  fetchSemanticQueryMeta,
+  fetchUnifiedSemanticQueryMeta,
+} from '@/orchestration/semanticQuery';
 import type {
   SemanticModelPayload,
   SemanticQueryJobResponse,
   SemanticQueryMetaResponse,
+  SemanticQueryPayload,
   SemanticQueryRequestPayload,
   SemanticQueryResponse,
+  UnifiedSemanticJoinPayload,
+  UnifiedSemanticMetricPayload,
+  UnifiedSemanticQueryMetaRequestPayload,
+  UnifiedSemanticQueryMetaResponse,
+  UnifiedSemanticQueryRequestPayload,
 } from '@/orchestration/semanticQuery/types';
 
 import { BiAiInput } from '../_components/BiAiInput';
@@ -62,6 +74,19 @@ type CopilotAgentOption = {
   name: string;
   description?: string | null;
 };
+
+type SelectedModelConfig =
+  | { kind: 'standard' }
+  | {
+      kind: 'unified';
+      semanticModelIds: string[];
+      joins?: UnifiedSemanticJoinPayload[];
+      metrics?: Record<string, UnifiedSemanticMetricPayload>;
+    };
+
+type QueryMutationInput =
+  | { widgetId: string; mode: 'standard'; payload: SemanticQueryRequestPayload }
+  | { widgetId: string; mode: 'unified'; payload: UnifiedSemanticQueryRequestPayload };
 
 export default function BiStudioPage({ params }: BiStudioPageProps) {
   const { selectedOrganizationId, selectedProjectId, setSelectedOrganizationId } = useWorkspaceScope();
@@ -106,7 +131,7 @@ export default function BiStudioPage({ params }: BiStudioPageProps) {
 
   const semanticModelsQuery = useQuery<SemanticModelRecord[]>({
     queryKey: ['semantic-models', organizationId, selectedProjectId],
-    queryFn: () => listSemanticModels(organizationId, selectedProjectId || undefined),
+    queryFn: () => listSemanticModels(organizationId, selectedProjectId || undefined, 'all'),
     enabled: Boolean(organizationId),
   });
 
@@ -121,10 +146,49 @@ export default function BiStudioPage({ params }: BiStudioPageProps) {
     enabled: Boolean(organizationId),
   });
 
-  const semanticMetaQuery = useQuery<SemanticQueryMetaResponse>({
-    queryKey: ['semantic-model-meta', organizationId, selectedModelId],
-    queryFn: () => fetchSemanticQueryMeta(organizationId, selectedModelId),
-    enabled: Boolean(organizationId && selectedModelId),
+  const selectedModelRecord = useMemo(
+    () => semanticModelsQuery.data?.find((model) => model.id === selectedModelId) ?? null,
+    [semanticModelsQuery.data, selectedModelId],
+  );
+  const unifiedModelIds = useMemo(
+    () =>
+      new Set(
+        (semanticModelsQuery.data || [])
+          .filter((model) => parseSelectedModelConfig(model).kind === 'unified')
+          .map((model) => model.id),
+      ),
+    [semanticModelsQuery.data],
+  );
+  const selectedModelConfig = useMemo(
+    () => parseSelectedModelConfig(selectedModelRecord),
+    [selectedModelRecord],
+  );
+  const semanticMetaQuery = useQuery<SemanticQueryMetaResponse | UnifiedSemanticQueryMetaResponse>({
+    queryKey: [
+      'semantic-model-meta',
+      organizationId,
+      selectedModelId,
+      selectedModelConfig.kind,
+      selectedModelConfig.kind === 'unified' ? selectedModelConfig.semanticModelIds.join(',') : 'standard',
+    ],
+    queryFn: () => {
+      if (selectedModelConfig.kind === 'unified') {
+        const payload: UnifiedSemanticQueryMetaRequestPayload = {
+          organizationId,
+          projectId: projectScope,
+          semanticModelIds: selectedModelConfig.semanticModelIds,
+          joins: selectedModelConfig.joins,
+          metrics: selectedModelConfig.metrics,
+        };
+        return fetchUnifiedSemanticQueryMeta(organizationId, payload);
+      }
+      return fetchSemanticQueryMeta(organizationId, selectedModelId);
+    },
+    enabled: Boolean(
+      organizationId &&
+        selectedModelId &&
+        (selectedModelConfig.kind === 'standard' || selectedModelConfig.semanticModelIds.length > 0),
+    ),
   });
 
   const semanticModel = semanticMetaQuery.data?.semanticModel;
@@ -300,9 +364,14 @@ export default function BiStudioPage({ params }: BiStudioPageProps) {
   const queryMutation = useMutation<
     SemanticQueryJobResponse,
     Error,
-    { widgetId: string; payload: SemanticQueryRequestPayload }
+    QueryMutationInput
   >({
-    mutationFn: async ({ payload }) => enqueueSemanticQuery(organizationId, payload),
+    mutationFn: async ({ mode, payload }) => {
+      if (mode === 'unified') {
+        return enqueueUnifiedSemanticQuery(organizationId, payload);
+      }
+      return enqueueSemanticQuery(organizationId, payload);
+    },
     onMutate: ({ widgetId }) => {
       updateWidget(widgetId, {
         queryResult: null,
@@ -314,13 +383,13 @@ export default function BiStudioPage({ params }: BiStudioPageProps) {
         error: null,
       });
     },
-    onSuccess: (data, { widgetId }) => {
+    onSuccess: (data, { widgetId, mode }) => {
       updateWidget(widgetId, {
         isLoading: true,
         jobId: data.jobId,
         jobStatus: data.jobStatus,
         progress: 5,
-        statusMessage: 'Semantic query job accepted.',
+        statusMessage: mode === 'unified' ? 'Unified semantic query job accepted.' : 'Semantic query job accepted.',
       });
     },
     onError: (error, { widgetId }) => {
@@ -447,7 +516,7 @@ export default function BiStudioPage({ params }: BiStudioPageProps) {
             }
 
             if (job.status === 'succeeded') {
-              const result = normalizeSemanticQueryResponse(job.finalResponse?.result);
+              const result = normalizeSemanticQueryResponse(job.finalResponse?.result, selectedModelId);
               if (!result) {
                 updateWidget(widget.id, {
                   isLoading: false,
@@ -496,7 +565,7 @@ export default function BiStudioPage({ params }: BiStudioPageProps) {
       cancelled = true;
       window.clearInterval(intervalId);
     };
-  }, [organizationId, updateWidget, widgets]);
+  }, [organizationId, selectedModelId, updateWidget, widgets]);
 
   useEffect(() => {
     if (!copilotJobId) {
@@ -610,14 +679,26 @@ export default function BiStudioPage({ params }: BiStudioPageProps) {
       return;
     }
     runnable.forEach((widget) => {
-      const payload = buildWidgetQueryPayload({
+      const requestInput = buildWidgetQueryRequestInput({
         widget,
         organizationId,
         projectId: projectScope,
         semanticModelId: selectedModelId,
+        selectedModelConfig,
         globalFilters,
       });
-      queryMutation.mutate({ widgetId: widget.id, payload });
+      if (!requestInput) {
+        updateWidget(widget.id, {
+          isLoading: false,
+          jobId: null,
+          jobStatus: 'failed',
+          progress: 0,
+          statusMessage: 'Unified model is missing source model bindings.',
+          error: 'Unified semantic model is missing source model ids.',
+        });
+        return;
+      }
+      queryMutation.mutate({ widgetId: widget.id, ...requestInput });
     });
     setPendingAutoRefreshDashboardId(null);
   }, [
@@ -629,6 +710,8 @@ export default function BiStudioPage({ params }: BiStudioPageProps) {
     projectScope,
     queryMutation,
     selectedModelId,
+    selectedModelConfig,
+    updateWidget,
     widgets,
   ]);
 
@@ -718,14 +801,23 @@ export default function BiStudioPage({ params }: BiStudioPageProps) {
     if (!activeWidget || !selectedModelId) {
       return;
     }
-    const payload = buildWidgetQueryPayload({
+    const requestInput = buildWidgetQueryRequestInput({
       widget: activeWidget,
       organizationId,
       projectId: projectScope,
       semanticModelId: selectedModelId,
+      selectedModelConfig,
       globalFilters,
     });
-    queryMutation.mutate({ widgetId: activeWidget.id, payload });
+    if (!requestInput) {
+      toast({
+        title: 'Unable to run query',
+        description: 'Unified model is missing source model bindings.',
+        variant: 'destructive',
+      });
+      return;
+    }
+    queryMutation.mutate({ widgetId: activeWidget.id, ...requestInput });
   };
 
   const handleRunAllQueries = () => {
@@ -736,14 +828,26 @@ export default function BiStudioPage({ params }: BiStudioPageProps) {
       if (widget.dimensions.length === 0 && widget.measures.length === 0) {
         return;
       }
-      const payload = buildWidgetQueryPayload({
+      const requestInput = buildWidgetQueryRequestInput({
         widget,
         organizationId,
         projectId: projectScope,
         semanticModelId: selectedModelId,
+        selectedModelConfig,
         globalFilters,
       });
-      queryMutation.mutate({ widgetId: widget.id, payload });
+      if (!requestInput) {
+        updateWidget(widget.id, {
+          isLoading: false,
+          jobId: null,
+          jobStatus: 'failed',
+          progress: 0,
+          statusMessage: 'Unified model is missing source model bindings.',
+          error: 'Unified semantic model is missing source model ids.',
+        });
+        return;
+      }
+      queryMutation.mutate({ widgetId: widget.id, ...requestInput });
     });
   };
 
@@ -862,11 +966,12 @@ export default function BiStudioPage({ params }: BiStudioPageProps) {
 
   return (
     <div className="flex h-[calc(100vh-4rem)] w-full overflow-hidden relative p-4 gap-4">
-      <BiSidebar
-        semanticModels={semanticModelsQuery.data || []}
-        selectedModelId={selectedModelId}
-        onSelectModel={setSelectedModelId}
-        tableGroups={tableGroups}
+        <BiSidebar
+          semanticModels={semanticModelsQuery.data || []}
+          unifiedModelIds={unifiedModelIds}
+          selectedModelId={selectedModelId}
+          onSelectModel={setSelectedModelId}
+          tableGroups={tableGroups}
         fieldSearch={fieldSearch}
         onFieldSearchChange={setFieldSearch}
         onAddField={handleSidebarAddField}
@@ -1284,40 +1389,65 @@ function serializeDashboardState(input: {
   });
 }
 
-function buildWidgetQueryPayload(input: {
+function buildWidgetQueryRequestInput(input: {
   widget: BiWidget;
   organizationId: string;
   projectId: string | null;
   semanticModelId: string;
+  selectedModelConfig: SelectedModelConfig;
   globalFilters: FilterDraft[];
-}): SemanticQueryRequestPayload {
-  const timeDimensionsPayload = input.widget.timeDimension
+}): Omit<QueryMutationInput, 'widgetId'> | null {
+  const query = buildSemanticQueryPayload(input.widget, input.globalFilters);
+  if (input.selectedModelConfig.kind === 'unified') {
+    if (input.selectedModelConfig.semanticModelIds.length === 0) {
+      return null;
+    }
+    return {
+      mode: 'unified',
+      payload: {
+        organizationId: input.organizationId,
+        projectId: input.projectId,
+        semanticModelIds: input.selectedModelConfig.semanticModelIds,
+        joins: input.selectedModelConfig.joins,
+        metrics: input.selectedModelConfig.metrics,
+        query,
+      },
+    };
+  }
+  return {
+    mode: 'standard',
+    payload: {
+      organizationId: input.organizationId,
+      projectId: input.projectId,
+      semanticModelId: input.semanticModelId,
+      query,
+    },
+  };
+}
+
+function buildSemanticQueryPayload(widget: BiWidget, globalFilters: FilterDraft[]): SemanticQueryPayload {
+  const timeDimensionsPayload = widget.timeDimension
     ? [
         {
-          dimension: input.widget.timeDimension,
-          granularity: input.widget.timeGrain || undefined,
-          dateRange: input.widget.timeRangePreset || undefined,
+          dimension: widget.timeDimension,
+          granularity: widget.timeGrain || undefined,
+          dateRange: widget.timeRangePreset || undefined,
         },
       ]
     : [];
-  const filterPayload = buildSemanticFilters([...input.globalFilters, ...input.widget.filters]);
+  const filterPayload = buildSemanticFilters([...globalFilters, ...widget.filters]);
   const orderPayload =
-    input.widget.orderBys.length > 0
-      ? input.widget.orderBys.map((order) => ({ [order.member]: order.direction }))
+    widget.orderBys.length > 0
+      ? widget.orderBys.map((order) => ({ [order.member]: order.direction }))
       : undefined;
 
   return {
-    organizationId: input.organizationId,
-    projectId: input.projectId,
-    semanticModelId: input.semanticModelId,
-    query: {
-      measures: input.widget.measures,
-      dimensions: input.widget.dimensions,
-      timeDimensions: timeDimensionsPayload,
-      filters: filterPayload.length > 0 ? filterPayload : undefined,
-      order: orderPayload,
-      limit: input.widget.limit,
-    },
+    measures: widget.measures,
+    dimensions: widget.dimensions,
+    timeDimensions: timeDimensionsPayload,
+    filters: filterPayload.length > 0 ? filterPayload : undefined,
+    order: orderPayload,
+    limit: widget.limit,
   };
 }
 
@@ -1359,14 +1489,22 @@ function getErrorMessage(error: unknown, fallback: string): string {
   return fallback;
 }
 
-function normalizeSemanticQueryResponse(value: unknown): SemanticQueryResponse | null {
+function normalizeSemanticQueryResponse(
+  value: unknown,
+  fallbackSemanticModelId?: string | null,
+): SemanticQueryResponse | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     return null;
   }
   const payload = value as Record<string, unknown>;
   const id = readString(payload.id);
   const organizationId = readString(payload.organizationId) ?? readString(payload.organization_id);
-  const semanticModelId = readString(payload.semanticModelId) ?? readString(payload.semantic_model_id);
+  const semanticModelId =
+    readString(payload.semanticModelId) ??
+    readString(payload.semantic_model_id) ??
+    toStringArray(payload.semanticModelIds)[0] ??
+    toStringArray(payload.semantic_model_ids)[0] ??
+    (fallbackSemanticModelId ?? null);
   if (!id || !organizationId || !semanticModelId) {
     return null;
   }
@@ -1379,6 +1517,99 @@ function normalizeSemanticQueryResponse(value: unknown): SemanticQueryResponse |
     annotations: toRecordArray(payload.annotations),
     metadata: Array.isArray(payload.metadata) ? toRecordArray(payload.metadata) : undefined,
   };
+}
+
+function parseSelectedModelConfig(model: SemanticModelRecord | null): SelectedModelConfig {
+  if (!model || !model.contentYaml) {
+    return { kind: 'standard' };
+  }
+  const parsed = safeParseYaml(model.contentYaml);
+  if (!parsed) {
+    return { kind: 'standard' };
+  }
+  const sourceModels = Array.isArray(parsed.source_models)
+    ? parsed.source_models
+    : Array.isArray(parsed.sourceModels)
+      ? parsed.sourceModels
+      : null;
+  const hasUnifiedShape = Array.isArray(parsed.semantic_models) || Array.isArray(parsed.semanticModels) || sourceModels;
+  if (!hasUnifiedShape) {
+    return { kind: 'standard' };
+  }
+  const semanticModelIds = (sourceModels || [])
+    .map((entry) => (isRecord(entry) ? readString(entry.id) : null))
+    .filter((entry): entry is string => Boolean(entry));
+  const joins = parseUnifiedJoins(parsed.relationships);
+  const metrics = parseUnifiedMetrics(parsed.metrics);
+  return {
+    kind: 'unified',
+    semanticModelIds,
+    joins: joins.length > 0 ? joins : undefined,
+    metrics: metrics && Object.keys(metrics).length > 0 ? metrics : undefined,
+  };
+}
+
+function parseUnifiedJoins(value: unknown): UnifiedSemanticJoinPayload[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value
+    .map((entry) => {
+      if (!isRecord(entry)) {
+        return null;
+      }
+      const from = readString(entry.from_) ?? readString(entry.from);
+      const to = readString(entry.to);
+      const on = readString(entry.join_on) ?? readString(entry.on);
+      if (!from || !to || !on) {
+        return null;
+      }
+      return {
+        name: readString(entry.name),
+        from,
+        to,
+        type: readString(entry.type) ?? 'inner',
+        on,
+      };
+    })
+    .filter((join): join is UnifiedSemanticJoinPayload => Boolean(join));
+}
+
+function parseUnifiedMetrics(value: unknown): Record<string, UnifiedSemanticMetricPayload> | null {
+  if (!isRecord(value)) {
+    return null;
+  }
+  const output: Record<string, UnifiedSemanticMetricPayload> = {};
+  Object.entries(value).forEach(([name, rawMetric]) => {
+    if (!isRecord(rawMetric)) {
+      return;
+    }
+    const expression = readString(rawMetric.expression);
+    if (!expression) {
+      return;
+    }
+    output[name] = {
+      expression,
+      description: readString(rawMetric.description) ?? undefined,
+    };
+  });
+  return output;
+}
+
+function safeParseYaml(content: string): Record<string, unknown> | null {
+  try {
+    const parsed = yaml.load(content);
+    if (!isRecord(parsed)) {
+      return null;
+    }
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value && typeof value === 'object' && !Array.isArray(value));
 }
 
 function readString(value: unknown): string | null {

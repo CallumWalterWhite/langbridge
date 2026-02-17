@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Search, ChevronDown, Plus, Hash, Type, Calendar, List } from 'lucide-react';
 import { Input } from '@/components/ui/input';
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import type { FieldOption, TableGroup } from '../types';
@@ -8,6 +9,7 @@ import type { SemanticModelRecord } from '@/orchestration/semanticModels/types';
 
 interface BiSidebarProps {
   semanticModels: SemanticModelRecord[];
+  unifiedModelIds?: Set<string>;
   selectedModelId: string;
   onSelectModel: (id: string) => void;
   tableGroups: TableGroup[];
@@ -19,6 +21,7 @@ interface BiSidebarProps {
 
 export function BiSidebar({
   semanticModels,
+  unifiedModelIds,
   selectedModelId,
   onSelectModel,
   tableGroups,
@@ -30,6 +33,7 @@ export function BiSidebar({
   const [isModelListOpen, setIsModelListOpen] = useState(false);
 
   const selectedModel = semanticModels.find(m => m.id === selectedModelId);
+  const isUnifiedModel = (model: SemanticModelRecord) => unifiedModelIds?.has(model.id) ?? false;
 
   const renderFieldIcon = (kind: string) => {
     switch (kind) {
@@ -51,7 +55,10 @@ export function BiSidebar({
             className="w-full justify-between text-left font-normal bg-[color:var(--panel-alt)] border-0"
             onClick={() => setIsModelListOpen(!isModelListOpen)}
           >
-            <span className="truncate">{selectedModel?.name || "Select Model"}</span>
+            <span className="truncate">
+              {selectedModel?.name || "Select Model"}
+              {selectedModel && isUnifiedModel(selectedModel) ? ' (Unified)' : ''}
+            </span>
             <ChevronDown className="h-4 w-4 opacity-50" />
           </Button>
           {isModelListOpen && (
@@ -70,7 +77,10 @@ export function BiSidebar({
                     setIsModelListOpen(false);
                   }}
                 >
-                  {model.name}
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="truncate">{model.name}</span>
+                    {isUnifiedModel(model) ? <Badge variant="secondary">Unified</Badge> : null}
+                  </div>
                 </div>
               ))}
             </div>

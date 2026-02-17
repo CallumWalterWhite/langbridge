@@ -6,7 +6,7 @@ from dependency_injector.wiring import Provide, inject
 
 from langbridge.apps.api.langbridge_api.ioc import Container
 from langbridge.apps.api.langbridge_api.auth.jwt import create_jwt, set_session_cookie, verify_jwt
-from langbridge.apps.api.langbridge_api.services.auth_service import AuthService
+from langbridge.apps.api.langbridge_api.services.auth.auth_service import AuthService
 from langbridge.packages.common.langbridge_common.config import settings
 from langbridge.packages.common.langbridge_common.contracts.auth import UserResponse, NativeLoginRequest, NativeRegisterRequest
 
@@ -47,6 +47,7 @@ async def _handle_oauth_callback(
     session_claims = {
         "sub": oauth_account.sub,
         "username": user.username,
+        "id": str(user.id),
         "name": oauth_account.name,
         "avatar_url": oauth_account.avatar_url,
         "email": oauth_account.email,
@@ -87,6 +88,7 @@ async def login_native(
     user = await auth_service.authenticate_native_user(payload.email, payload.password)
     session_claims = {
         "sub": str(user.id),
+        "id": str(user.id),
         "username": user.username,
         "email": user.email,
         "provider": "native",
@@ -110,6 +112,7 @@ async def register_native(
     )
     session_claims = {
         "sub": str(user.id),
+        "id": str(user.id), 
         "username": user.username,
         "email": user.email,
         "provider": "native",

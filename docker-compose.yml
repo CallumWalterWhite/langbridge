@@ -38,6 +38,15 @@ services:
       POSTGRES_DB: langbridge
       REDIS_HOST: redis
       REDIS_PORT: 6379
+      UNIFIED_TRINO_HOST: trino
+      UNIFIED_TRINO_PORT: ${UNIFIED_TRINO_PORT:-8080}
+      UNIFIED_TRINO_USER: ${UNIFIED_TRINO_USER:-trino}
+      UNIFIED_TRINO_PASSWORD: ${UNIFIED_TRINO_PASSWORD:-}
+      UNIFIED_TRINO_CATALOG: ${UNIFIED_TRINO_CATALOG:-system}
+      UNIFIED_TRINO_SCHEMA: ${UNIFIED_TRINO_SCHEMA:-information_schema}
+      UNIFIED_TRINO_HTTP_SCHEME: ${UNIFIED_TRINO_HTTP_SCHEME:-http}
+      UNIFIED_TRINO_VERIFY: ${UNIFIED_TRINO_VERIFY:-false}
+      UNIFIED_TRINO_SOURCE: ${UNIFIED_TRINO_SOURCE:-langbridge}
     depends_on:
       db:
         condition: service_healthy
@@ -67,6 +76,15 @@ services:
       REDIS_PORT: 6379
       WORKER_POLL_INTERVAL: 2.0
       WORKER_METRICS_PORT: 9101
+      UNIFIED_TRINO_HOST: trino
+      UNIFIED_TRINO_PORT: ${UNIFIED_TRINO_PORT:-8080}
+      UNIFIED_TRINO_USER: ${UNIFIED_TRINO_USER:-trino}
+      UNIFIED_TRINO_PASSWORD: ${UNIFIED_TRINO_PASSWORD:-}
+      UNIFIED_TRINO_CATALOG: ${UNIFIED_TRINO_CATALOG:-system}
+      UNIFIED_TRINO_SCHEMA: ${UNIFIED_TRINO_SCHEMA:-information_schema}
+      UNIFIED_TRINO_HTTP_SCHEME: ${UNIFIED_TRINO_HTTP_SCHEME:-http}
+      UNIFIED_TRINO_VERIFY: ${UNIFIED_TRINO_VERIFY:-false}
+      UNIFIED_TRINO_SOURCE: ${UNIFIED_TRINO_SOURCE:-langbridge}
     command: ["python", "-m", "langbridge.apps.worker.langbridge_worker.main", "--reload"]
     depends_on:
       db:

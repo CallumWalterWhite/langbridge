@@ -209,6 +209,12 @@ class User(Base):
         cascade="all, delete-orphan",
     )
 
+    pats: Mapped[list["UserPAT"]] = relationship(
+        "UserPAT",
+        back_populates="user",
+        cascade="all, delete-orphan",
+    )
+
 
 class OAuthAccount(Base):
     """OAuth account linked to a user."""
@@ -301,3 +307,14 @@ class OrganisationEnvironmentSetting(Base):
     setting_value = Column(String(1024), nullable=False)
 
     organization: Mapped["Organization"] = relationship("Organization", back_populates="environment_settings")
+
+class UserPAT(Base):
+    __tablename__ = "user_pats"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"), nullable=False)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    token_hash: Mapped[str] = mapped_column(String(255), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+    user: Mapped["User"] = relationship("User", back_populates="pats")

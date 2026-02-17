@@ -186,7 +186,7 @@ export default function SemanticModelPage({ params }: SemanticModelPageProps): J
     }
     setStoredLoading(true);
     try {
-      const models = await listSemanticModels(organizationId, selectedProjectId ?? undefined);
+      const models = await listSemanticModels(organizationId, selectedProjectId ?? undefined, 'standard');
       setStoredModels(models);
     } catch (err) {
       setError(resolveError(err));

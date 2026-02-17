@@ -12,10 +12,12 @@ from starlette.responses import Response, JSONResponse
 from dependency_injector.wiring import Provide, inject
 
 from langbridge.apps.api.langbridge_api.ioc import Container
+from langbridge.apps.api.langbridge_api.services.auth.token_service import TokenService
+from langbridge.apps.api.langbridge_api.services.auth.token_service import TokenService
 from langbridge.packages.common.langbridge_common.config import settings
 from langbridge.apps.api.langbridge_api.auth.jwt import verify_jwt
 from langbridge.packages.common.langbridge_common.contracts.auth import UserResponse
-from langbridge.apps.api.langbridge_api.services.auth_service import AuthService
+from langbridge.apps.api.langbridge_api.services.auth.auth_service import AuthService
 from langbridge.apps.api.langbridge_api.services.service_utils import (
     reset_internal_service_call,
     set_internal_service_call,
@@ -38,6 +40,8 @@ INTERNAL_SERVICE_HEADER = "x-langbridge-service-token"
 INTERNAL_SERVICE_USERNAME = "internal-service"
 INTERNAL_SERVICE_USER_ID = uuid.UUID(int=0)
 
+AUTHORIZATION_HEADER_PREFIX = "Bearer "
+
 class AuthMiddleware(BaseHTTPMiddleware):
     """
     Middleware to handle JWT authentication via cookies.
@@ -51,7 +55,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
         self,
         request: Request,
         call_next: RequestResponseEndpoint,
-        auth_service: AuthService = Provide[Container.auth_service],
+        auth_service: AuthService = Provide[Container.auth_service]
     ) -> Response:
         self.logger.debug(f"AuthMiddleware: Processing request {request.method} {request.url.path}")
 
@@ -97,6 +101,12 @@ class AuthMiddleware(BaseHTTPMiddleware):
             claims = verify_jwt(token)
         except JWTError as exc:
             self.logger.warning(f"Invalid JWT: {exc}")
+            return JSONResponse(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                content={"error": "InvalidSession", "message": "Invalid authentication session"}
+            )
+        
+        if not claims:
             return JSONResponse(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 content={"error": "InvalidSession", "message": "Invalid authentication session"}

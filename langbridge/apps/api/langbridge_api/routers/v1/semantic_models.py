@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Literal, Optional
 from uuid import UUID
 
 from dependency_injector.wiring import Provide, inject
@@ -66,6 +66,7 @@ async def create_semantic_model(
 async def list_semantic_models(
     organization_id: UUID,
     project_id: Optional[UUID] = None,
+    model_kind: Literal["all", "standard", "unified"] = "all",
     current_user: UserResponse = Depends(get_current_user),
     _org = Depends(get_organization),
     _proj = Depends(get_project),
@@ -74,6 +75,7 @@ async def list_semantic_models(
     models = await service.list_models(
         organization_id=organization_id,
         project_id=project_id,
+        model_kind=model_kind,
     )
     return models
 

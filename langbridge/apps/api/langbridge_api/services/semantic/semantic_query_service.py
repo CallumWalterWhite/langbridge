@@ -10,6 +10,7 @@ from langbridge.apps.api.langbridge_api.services.connector_service import Connec
 from langbridge.apps.api.langbridge_api.services.semantic.semantic_model_service import (
     SemanticModelService,
 )
+from langbridge.packages.common.langbridge_common.config import settings
 from langbridge.packages.common.langbridge_common.contracts.connectors import ConnectorResponse
 from langbridge.packages.common.langbridge_common.contracts.semantic import (
     SemanticModelRecordResponse,
@@ -30,6 +31,10 @@ from langbridge.packages.connectors.langbridge_connectors.api.config import (
 from langbridge.packages.connectors.langbridge_connectors.api.connector import (
     QueryResult,
     SqlConnector,
+)
+from langbridge.packages.connectors.langbridge_connectors.api._trino.connector import (
+    TrinoConnector,
+    TrinoConnectorConfig,
 )
 from langbridge.packages.semantic.langbridge_semantic.loader import (
     SemanticModelError,
@@ -91,6 +96,10 @@ class SemanticQueryService:
         self,
         request: UnifiedSemanticQueryRequest,
     ) -> UnifiedSemanticQueryResponse:
+        sql_connector, execution_connector_id = await self._create_unified_trino_connector(
+            organization_id=request.organization_id,
+        )
+
         unified_model, table_connector_map = await self._build_unified_model_and_map(
             organization_id=request.organization_id,
             semantic_model_ids=request.semantic_model_ids,
@@ -99,19 +108,14 @@ class SemanticQueryService:
         )
 
         semantic_query = self._load_query_payload(request.query)
-        connector_response = await self._connector_service.get_connector(request.connector_id)
-        sql_connector = await self._create_sql_connector(connector_response)
-
-        execution_model = unified_model
-        if sql_connector.DIALECT.value.lower() == "trino":
-            execution_model = apply_tenant_aware_context(
-                unified_model,
-                context=TenantAwareQueryContext(
-                    organization_id=request.organization_id,
-                    execution_connector_id=request.connector_id,
-                ),
-                table_connector_map=table_connector_map,
-            )
+        execution_model = apply_tenant_aware_context(
+            unified_model,
+            context=TenantAwareQueryContext(
+                organization_id=request.organization_id,
+                execution_connector_id=execution_connector_id,
+            ),
+            table_connector_map=table_connector_map,
+        )
 
         plan, result = await self._compile_and_execute(
             semantic_model=execution_model,
@@ -123,7 +127,7 @@ class SemanticQueryService:
             id=uuid.uuid4(),
             organization_id=request.organization_id,
             project_id=request.project_id,
-            connector_id=request.connector_id,
+            connector_id=execution_connector_id,
             semantic_model_ids=request.semantic_model_ids,
             data=self._engine.format_rows(result.columns, result.rows),
             annotations=plan.annotations,
@@ -157,6 +161,10 @@ class SemanticQueryService:
         self,
         request: UnifiedSemanticQueryMetaRequest,
     ) -> UnifiedSemanticQueryMetaResponse:
+        execution_connector_id = self._build_unified_execution_connector_id(
+            organization_id=request.organization_id
+        )
+
         unified_model, _ = await self._build_unified_model_and_map(
             organization_id=request.organization_id,
             semantic_model_ids=request.semantic_model_ids,
@@ -167,7 +175,7 @@ class SemanticQueryService:
         payload = unified_model.model_dump(by_alias=True, exclude_none=True)
         self._attach_full_column_paths(payload)
         return UnifiedSemanticQueryMetaResponse(
-            connector_id=request.connector_id,
+            connector_id=execution_connector_id,
             organization_id=request.organization_id,
             project_id=request.project_id,
             semantic_model_ids=request.semantic_model_ids,
@@ -239,7 +247,7 @@ class SemanticQueryService:
     async def _create_sql_connector(
         self,
         connector_response: ConnectorResponse,
-    ) -> SqlConnector:
+    ) -> Any:
         if connector_response.connector_type is None:
             raise BusinessValidationError(
                 "Connector type is required for semantic query execution."
@@ -256,15 +264,53 @@ class SemanticQueryService:
             )
         return sql_connector
 
+    async def _create_unified_trino_connector(
+        self,
+        *,
+        organization_id: UUID,
+    ) -> tuple[TrinoConnector, UUID]:
+        host = settings.UNIFIED_TRINO_HOST.strip()
+        if not host:
+            raise BusinessValidationError(
+                "UNIFIED_TRINO_HOST must be configured for unified semantic query execution."
+            )
+
+        execution_connector_id = self._build_unified_execution_connector_id(
+            organization_id=organization_id
+        )
+        connector = TrinoConnector(
+            TrinoConnectorConfig(
+                host=host,
+                port=settings.UNIFIED_TRINO_PORT,
+                user=settings.UNIFIED_TRINO_USER,
+                password=settings.UNIFIED_TRINO_PASSWORD,
+                catalog=settings.UNIFIED_TRINO_CATALOG,
+                schema=settings.UNIFIED_TRINO_SCHEMA,
+                http_scheme=settings.UNIFIED_TRINO_HTTP_SCHEME,
+                verify=settings.UNIFIED_TRINO_VERIFY,
+                tenant=str(organization_id),
+                source=settings.UNIFIED_TRINO_SOURCE,
+            )
+        )
+        await connector.test_connection()
+        return connector, execution_connector_id
+
+    @staticmethod
+    def _build_unified_execution_connector_id(*, organization_id: UUID) -> UUID:
+        return uuid.uuid5(
+            uuid.NAMESPACE_DNS,
+            f"langbridge-unified-trino:{organization_id}",
+        )
+
     async def _compile_and_execute(
         self,
         *,
         semantic_model: SemanticModel,
         semantic_query: SemanticQuery,
-        sql_connector: SqlConnector,
+        sql_connector: Any,
     ) -> tuple[Any, QueryResult]:
         rewrite_expression = None
-        if sql_connector.EXPRESSION_REWRITE:
+        if getattr(sql_connector, "EXPRESSION_REWRITE", False):
             rewrite_expression = getattr(sql_connector, "rewrite_expression", None)
             if rewrite_expression is None:
                 raise BusinessValidationError(
@@ -348,4 +394,3 @@ class SemanticQueryService:
                     if not column_name:
                         continue
                     item["full_path"] = f"{base}.{column_name}"
-

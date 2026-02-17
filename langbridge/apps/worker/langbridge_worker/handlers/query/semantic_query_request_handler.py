@@ -12,6 +12,7 @@ from pydantic import ValidationError
 from langbridge.apps.worker.langbridge_worker.handlers.jobs.job_event_emitter import (
     BrokerJobEventEmitter,
 )
+from langbridge.packages.common.langbridge_common.config import settings
 from langbridge.packages.common.langbridge_common.contracts.connectors import ConnectorResponse
 from langbridge.packages.common.langbridge_common.contracts.jobs.semantic_query_job import (
     CreateSemanticQueryJobRequest,
@@ -41,6 +42,10 @@ from langbridge.packages.connectors.langbridge_connectors.api import (
     get_connector_config_factory,
 )
 from langbridge.packages.connectors.langbridge_connectors.api.config import ConnectorRuntimeType
+from langbridge.packages.connectors.langbridge_connectors.api._trino.connector import (
+    TrinoConnector,
+    TrinoConnectorConfig,
+)
 from langbridge.packages.messaging.langbridge_messaging.broker.base import MessageBroker
 from langbridge.packages.messaging.langbridge_messaging.contracts.base import MessageType
 from langbridge.packages.messaging.langbridge_messaging.contracts.jobs.semantic_query import (
@@ -195,11 +200,10 @@ class SemanticQueryRequestHandler(BaseMessageHandler):
         semantic_model: SemanticModel
         table_connector_map: dict[str, uuid.UUID] | None = None
         execution_connector_id: uuid.UUID
+        sql_connector: Any
         semantic_model_id: uuid.UUID | None = None
 
         if request.query_scope == "unified":
-            if request.connector_id is None:
-                raise BusinessValidationError("connector_id is required for unified query scope.")
             if not request.semantic_model_ids:
                 raise BusinessValidationError(
                     "semantic_model_ids must include at least one model id for unified query scope."
@@ -210,7 +214,9 @@ class SemanticQueryRequestHandler(BaseMessageHandler):
                 joins=request.joins,
                 metrics=request.metrics,
             )
-            execution_connector_id = request.connector_id
+            execution_connector_id, sql_connector = await self._create_unified_trino_connector(
+                organization_id=request.organisation_id,
+            )
         else:
             if request.semantic_model_id is None:
                 raise BusinessValidationError(
@@ -225,28 +231,27 @@ class SemanticQueryRequestHandler(BaseMessageHandler):
             semantic_model = self._load_model_payload(semantic_model_record.content_yaml)
             execution_connector_id = semantic_model_record.connector_id
             semantic_model_id = request.semantic_model_id
+            connector = await self._connector_repository.get_by_id(execution_connector_id)
+            if connector is None:
+                raise BusinessValidationError("Connector not found for semantic query.")
+            connector_response = ConnectorResponse.from_connector(
+                connector,
+                organization_id=request.organisation_id,
+                project_id=request.project_id,
+            )
+            if connector_response.connector_type is None:
+                raise BusinessValidationError("Connector type is required for semantic query execution.")
 
-        connector = await self._connector_repository.get_by_id(execution_connector_id)
-        if connector is None:
-            raise BusinessValidationError("Connector not found for semantic query.")
-        connector_response = ConnectorResponse.from_connector(
-            connector,
-            organization_id=request.organisation_id,
-            project_id=request.project_id,
-        )
-        if connector_response.connector_type is None:
-            raise BusinessValidationError("Connector type is required for semantic query execution.")
-
-        connector_type = ConnectorRuntimeType(connector_response.connector_type.upper())
-        sql_connector = await self._create_sql_connector(
-            connector_type=connector_type,
-            connector_config=connector_response.config or {},
-        )
-        if not isinstance(sql_connector, SqlConnector):
-            raise BusinessValidationError("Only SQL connectors are supported for semantic queries.")
+            connector_type = ConnectorRuntimeType(connector_response.connector_type.upper())
+            sql_connector = await self._create_sql_connector(
+                connector_type=connector_type,
+                connector_config=connector_response.config or {},
+            )
+            if not isinstance(sql_connector, SqlConnector):
+                raise BusinessValidationError("Only SQL connectors are supported for semantic queries.")
 
         execution_model = semantic_model
-        if request.query_scope == "unified" and sql_connector.DIALECT.value.lower() == "trino":
+        if request.query_scope == "unified":
             execution_model = apply_tenant_aware_context(
                 semantic_model,
                 context=TenantAwareQueryContext(
@@ -266,7 +271,7 @@ class SemanticQueryRequestHandler(BaseMessageHandler):
         )
 
         rewrite_expression = None
-        if sql_connector.EXPRESSION_REWRITE:
+        if getattr(sql_connector, "EXPRESSION_REWRITE", False):
             rewrite_expression = getattr(sql_connector, "rewrite_expression", None)
             if rewrite_expression is None:
                 raise BusinessValidationError(
@@ -374,6 +379,41 @@ class SemanticQueryRequestHandler(BaseMessageHandler):
                 f"Unified semantic model failed validation: {exc}"
             ) from exc
 
+    async def _create_unified_trino_connector(
+        self,
+        *,
+        organization_id: uuid.UUID,
+    ) -> tuple[uuid.UUID, TrinoConnector]:
+        host = settings.UNIFIED_TRINO_HOST.strip()
+        if not host:
+            raise BusinessValidationError(
+                "UNIFIED_TRINO_HOST must be configured for unified semantic query execution."
+            )
+
+        connector = TrinoConnector(
+            TrinoConnectorConfig(
+                host=host,
+                port=settings.UNIFIED_TRINO_PORT,
+                user=settings.UNIFIED_TRINO_USER,
+                password=settings.UNIFIED_TRINO_PASSWORD,
+                catalog=settings.UNIFIED_TRINO_CATALOG,
+                schema=settings.UNIFIED_TRINO_SCHEMA,
+                http_scheme=settings.UNIFIED_TRINO_HTTP_SCHEME,
+                verify=settings.UNIFIED_TRINO_VERIFY,
+                tenant=str(organization_id),
+                source=settings.UNIFIED_TRINO_SOURCE,
+            )
+        )
+        await connector.test_connection()
+        return self._build_unified_execution_connector_id(organization_id=organization_id), connector
+
+    @staticmethod
+    def _build_unified_execution_connector_id(*, organization_id: uuid.UUID) -> uuid.UUID:
+        return uuid.uuid5(
+            uuid.NAMESPACE_DNS,
+            f"langbridge-unified-trino:{organization_id}",
+        )
+
     async def _create_sql_connector(
         self,
         *,
@@ -427,4 +467,3 @@ class SemanticQueryRequestHandler(BaseMessageHandler):
                 "semantic_model_ids must include at least one model id."
             )
         return ordered_unique
-

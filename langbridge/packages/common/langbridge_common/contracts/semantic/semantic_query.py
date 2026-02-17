@@ -50,7 +50,7 @@ class UnifiedSemanticMetricRequest(_Base):
 class UnifiedSemanticQueryRequest(_Base):
     organization_id: UUID
     project_id: Optional[UUID] = None
-    connector_id: UUID
+    connector_id: Optional[UUID] = None
     semantic_model_ids: List[UUID]
     joins: List[UnifiedSemanticJoinRequest] = Field(default_factory=list)
     metrics: Optional[Dict[str, UnifiedSemanticMetricRequest]] = None
@@ -66,7 +66,7 @@ class UnifiedSemanticQueryRequest(_Base):
 class UnifiedSemanticQueryMetaRequest(_Base):
     organization_id: UUID
     project_id: Optional[UUID] = None
-    connector_id: UUID
+    connector_id: Optional[UUID] = None
     semantic_model_ids: List[UUID]
     joins: List[UnifiedSemanticJoinRequest] = Field(default_factory=list)
     metrics: Optional[Dict[str, UnifiedSemanticMetricRequest]] = None

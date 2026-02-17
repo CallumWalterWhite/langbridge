@@ -33,8 +33,6 @@ class CreateSemanticQueryJobRequest(_Base):
             return self
 
         if self.query_scope == "unified":
-            if self.connector_id is None:
-                raise ValueError("connector_id is required for unified query scope.")
             if not self.semantic_model_ids:
                 raise ValueError("semantic_model_ids must include at least one model id for unified query scope.")
             return self

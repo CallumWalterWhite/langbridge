@@ -141,7 +141,7 @@ export interface UnifiedSemanticMetricPayload {
 export interface UnifiedSemanticQueryRequestPayload {
   organizationId: string;
   projectId?: string | null;
-  connectorId: string;
+  connectorId?: string | null;
   semanticModelIds: string[];
   joins?: UnifiedSemanticJoinPayload[];
   metrics?: Record<string, UnifiedSemanticMetricPayload>;
@@ -151,7 +151,7 @@ export interface UnifiedSemanticQueryRequestPayload {
 export interface UnifiedSemanticQueryMetaRequestPayload {
   organizationId: string;
   projectId?: string | null;
-  connectorId: string;
+  connectorId?: string | null;
   semanticModelIds: string[];
   joins?: UnifiedSemanticJoinPayload[];
   metrics?: Record<string, UnifiedSemanticMetricPayload>;

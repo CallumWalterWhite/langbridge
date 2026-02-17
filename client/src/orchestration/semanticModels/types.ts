@@ -84,3 +84,5 @@ export interface UpdateSemanticModelPayload {
   autoGenerate?: boolean;
   modelYaml?: string;
 }
+
+export type SemanticModelKind = 'all' | 'standard' | 'unified';

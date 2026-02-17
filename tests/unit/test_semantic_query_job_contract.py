@@ -26,24 +26,21 @@ def test_semantic_query_job_contract_accepts_unified_scope() -> None:
         organisation_id=uuid.uuid4(),
         user_id=uuid.uuid4(),
         query_scope="unified",
-        connector_id=uuid.uuid4(),
         semantic_model_ids=[uuid.uuid4(), uuid.uuid4()],
         query={"dimensions": ["orders.id"], "limit": 10},
     )
 
     assert payload.query_scope == "unified"
-    assert payload.connector_id is not None
+    assert payload.connector_id is None
     assert payload.semantic_model_ids is not None
     assert len(payload.semantic_model_ids) == 2
 
 
-def test_semantic_query_job_contract_requires_unified_connector_id() -> None:
+def test_semantic_query_job_contract_requires_unified_model_ids() -> None:
     with pytest.raises(ValidationError):
         CreateSemanticQueryJobRequest(
             organisation_id=uuid.uuid4(),
             user_id=uuid.uuid4(),
             query_scope="unified",
-            semantic_model_ids=[uuid.uuid4()],
             query={"dimensions": ["orders.id"]},
         )
-

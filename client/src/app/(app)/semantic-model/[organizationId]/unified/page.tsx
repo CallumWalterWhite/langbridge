@@ -1,6 +1,6 @@
 'use client';
 
-import { JSX, useCallback, useEffect, useMemo, useState } from 'react';
+import { FormEvent, JSX, useCallback, useEffect, useMemo, useState } from 'react';
 import yaml from 'js-yaml';
 
 import { Badge } from '@/components/ui/badge';
@@ -10,16 +10,26 @@ import { Label } from '@/components/ui/label';
 import { Select } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
 import { useWorkspaceScope } from '@/context/workspaceScope';
-import { fetchConnectors } from '@/orchestration/connectors';
-import type { ConnectorResponse } from '@/orchestration/connectors/types';
-import { createSemanticModel, listSemanticModels } from '@/orchestration/semanticModels';
+import { cn, formatRelativeDate } from '@/lib/utils';
+import { ApiError } from '@/orchestration/http';
+import {
+  createSemanticModel,
+  listSemanticModels,
+  updateSemanticModel,
+} from '@/orchestration/semanticModels';
 import type { SemanticModelRecord } from '@/orchestration/semanticModels/types';
 import { runUnifiedSemanticQuery } from '@/orchestration/semanticQuery';
-import type { UnifiedSemanticQueryResponse } from '@/orchestration/semanticQuery/types';
-import { ApiError } from '@/orchestration/http';
-import { cn, formatRelativeDate } from '@/lib/utils';
+import type {
+  UnifiedSemanticJoinPayload,
+  UnifiedSemanticQueryResponse,
+} from '@/orchestration/semanticQuery/types';
+
+type UnifiedSemanticModelPageProps = {
+  params: { organizationId: string };
+};
 
 type JoinType = 'inner' | 'left' | 'right' | 'full';
+type JoinOperator = '=' | '!=' | '>' | '>=' | '<' | '<=';
 
 interface FormState {
   name: string;
@@ -27,30 +37,39 @@ interface FormState {
   version: string;
 }
 
-interface BuilderRelationship {
+interface StructuredJoinDraft {
   id: string;
   name: string;
-  from: string;
-  to: string;
-  on: string;
   type: JoinType;
+  leftTable: string;
+  leftColumn: string;
+  operator: JoinOperator;
+  rightTable: string;
+  rightColumn: string;
 }
 
-interface UnifiedMetric {
+interface UnifiedMetricDraft {
   id: string;
   name: string;
   expression: string;
-  description?: string;
+  description: string;
+}
+
+interface TableOption {
+  tableKey: string;
+  modelId: string;
+  modelName: string;
+  columns: string[];
 }
 
 const DEFAULT_VERSION = '1.0';
+const DEFAULT_PREVIEW_QUERY = '{\n  "measures": [],\n  "dimensions": [],\n  "limit": 25\n}';
 const JOIN_TYPES: JoinType[] = ['inner', 'left', 'right', 'full'];
+const JOIN_OPERATORS: JoinOperator[] = ['=', '!=', '>', '>=', '<', '<='];
 
-type UnifiedSemanticModelPageProps = {
-  params: { organizationId: string };
-};
-
-export default function UnifiedSemanticModelPage({ params }: UnifiedSemanticModelPageProps): JSX.Element {
+export default function UnifiedSemanticModelPage({
+  params,
+}: UnifiedSemanticModelPageProps): JSX.Element {
   const {
     selectedOrganizationId,
     selectedProjectId,
@@ -66,51 +85,41 @@ export default function UnifiedSemanticModelPage({ params }: UnifiedSemanticMode
     }
   }, [organizationId, selectedOrganizationId, setSelectedOrganizationId]);
 
-  const [connectors, setConnectors] = useState<ConnectorResponse[]>([]);
-  const [connectorsLoading, setConnectorsLoading] = useState(false);
-  const [semanticModels, setSemanticModels] = useState<SemanticModelRecord[]>([]);
-  const [semanticLoading, setSemanticLoading] = useState(false);
-  const [selectedConnectorId, setSelectedConnectorId] = useState('');
+  const [sourceModels, setSourceModels] = useState<SemanticModelRecord[]>([]);
+  const [unifiedModels, setUnifiedModels] = useState<SemanticModelRecord[]>([]);
+  const [sourceLoading, setSourceLoading] = useState(false);
+  const [unifiedLoading, setUnifiedLoading] = useState(false);
+
+  const [selectedUnifiedModelId, setSelectedUnifiedModelId] = useState<string | null>(null);
   const [selectedModelIds, setSelectedModelIds] = useState<string[]>([]);
-  const [relationships, setRelationships] = useState<BuilderRelationship[]>([]);
-  const [metrics, setMetrics] = useState<UnifiedMetric[]>([]);
-  const [formState, setFormState] = useState<FormState>({ name: '', description: '', version: DEFAULT_VERSION });
-  const [submitting, setSubmitting] = useState(false);
-  const [previewQueryJson, setPreviewQueryJson] = useState<string>('{\n  "measures": [],\n  "dimensions": [],\n  "limit": 25\n}');
+  const [joinDrafts, setJoinDrafts] = useState<StructuredJoinDraft[]>([]);
+  const [metrics, setMetrics] = useState<UnifiedMetricDraft[]>([]);
+  const [formState, setFormState] = useState<FormState>({
+    name: '',
+    description: '',
+    version: DEFAULT_VERSION,
+  });
+
+  const [previewQueryJson, setPreviewQueryJson] = useState(DEFAULT_PREVIEW_QUERY);
   const [previewResult, setPreviewResult] = useState<UnifiedSemanticQueryResponse | null>(null);
-  const [previewSqlError, setPreviewSqlError] = useState<string | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
+  const [previewError, setPreviewError] = useState<string | null>(null);
+
+  const [saveLoading, setSaveLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
 
-  const selectedConnector = useMemo(
-    () => connectors.find((connector) => connector.id === selectedConnectorId),
-    [connectors, selectedConnectorId],
+  const hasOrganization = Boolean(organizationId);
+
+  const selectedSourceModels = useMemo(
+    () => sourceModels.filter((model) => selectedModelIds.includes(model.id)),
+    [sourceModels, selectedModelIds],
   );
 
-  const selectedModels = useMemo(
-    () => semanticModels.filter((model) => selectedModelIds.includes(model.id)),
-    [semanticModels, selectedModelIds],
+  const selectedUnifiedModel = useMemo(
+    () => unifiedModels.find((model) => model.id === selectedUnifiedModelId) ?? null,
+    [unifiedModels, selectedUnifiedModelId],
   );
-
-  const availableTableKeys = useMemo(() => {
-    const tableKeys = new Set<string>();
-    selectedModels.forEach((model) => {
-      const parsed = safeParseYaml(model.contentYaml ?? '');
-      if (!parsed || typeof parsed !== 'object') {
-        return;
-      }
-      const tables = (parsed as Record<string, unknown>).tables;
-      if (!tables || typeof tables !== 'object' || Array.isArray(tables)) {
-        return;
-      }
-      Object.keys(tables as Record<string, unknown>).forEach((tableKey) => {
-        if (tableKey) {
-          tableKeys.add(tableKey);
-        }
-      });
-    });
-    return Array.from(tableKeys).sort();
-  }, [selectedModels]);
 
   const organizationName = useMemo(() => {
     if (!organizationId) {
@@ -119,184 +128,392 @@ export default function UnifiedSemanticModelPage({ params }: UnifiedSemanticMode
     return organizations.find((org) => org.id === organizationId)?.name ?? 'Unknown organization';
   }, [organizations, organizationId]);
 
-  const unifiedYamlPreview = useMemo(() => {
-    try {
-      const payload = buildUnifiedPayload({
-        formState,
-        selectedModels,
-        relationships,
-        metrics,
-        connectorName: selectedConnector?.name,
-      });
-      const yamlText = yaml.dump(payload, { noRefs: true, sortKeys: false });
-      return { yaml: yamlText, error: null };
-    } catch (err) {
-      return {
-        yaml: '',
-        error: err instanceof Error ? err.message : 'Unable to build unified model YAML.',
-      };
-    }
-  }, [formState, selectedModels, relationships, metrics, selectedConnector?.name]);
+  const tableOptions = useMemo<TableOption[]>(() => {
+    const options: TableOption[] = [];
+    selectedSourceModels.forEach((model) => {
+      const payload = safeParseYaml(model.contentYaml || '');
+      if (!payload) {
+        return;
+      }
+      const tables = payload.tables;
+      if (!isRecord(tables)) {
+        return;
+      }
 
-  const loadConnectors = useCallback(async () => {
+      Object.entries(tables).forEach(([tableKey, value]) => {
+        if (!isRecord(value)) {
+          return;
+        }
+        const dimensions = Array.isArray(value.dimensions) ? value.dimensions : [];
+        const measures = Array.isArray(value.measures) ? value.measures : [];
+        const columns = [
+          ...dimensions
+            .map((dimension) => (isRecord(dimension) ? readString(dimension.name) : null))
+            .filter((name): name is string => Boolean(name)),
+          ...measures
+            .map((measure) => (isRecord(measure) ? readString(measure.name) : null))
+            .filter((name): name is string => Boolean(name)),
+        ];
+
+        options.push({
+          tableKey,
+          modelId: model.id,
+          modelName: model.name,
+          columns: Array.from(new Set(columns)).sort(),
+        });
+      });
+    });
+    return options;
+  }, [selectedSourceModels]);
+
+  const tableOptionLookup = useMemo(() => {
+    const lookup = new Map<string, TableOption>();
+    tableOptions.forEach((option) => {
+      if (!lookup.has(option.tableKey)) {
+        lookup.set(option.tableKey, option);
+      }
+    });
+    return lookup;
+  }, [tableOptions]);
+
+  const duplicateTableKeys = useMemo(() => {
+    const counts = new Map<string, number>();
+    tableOptions.forEach((option) => {
+      counts.set(option.tableKey, (counts.get(option.tableKey) || 0) + 1);
+    });
+    return Array.from(counts.entries())
+      .filter(([, count]) => count > 1)
+      .map(([tableKey]) => tableKey);
+  }, [tableOptions]);
+  const loadSourceModels = useCallback(async () => {
     if (!organizationId) {
-      setConnectors([]);
-      setSelectedConnectorId('');
+      setSourceModels([]);
       return;
     }
-    setConnectorsLoading(true);
+    setSourceLoading(true);
     try {
-      const data = await fetchConnectors(organizationId);
-      setConnectors(data);
-      setSelectedConnectorId((current) => {
-        if (current) {
-          return current;
-        }
-        const trino = data.find((connector) => connector.connectorType?.toLowerCase() === 'trino');
-        if (trino?.id) {
-          return trino.id;
-        }
-        const first = data.find((connector) => connector.id);
-        return first?.id ?? '';
-      });
-    } catch (err) {
-      setError(resolveError(err));
+      const models = await listSemanticModels(
+        organizationId,
+        selectedProjectId ?? undefined,
+        'standard',
+      );
+      setSourceModels(models);
+    } catch (loadError) {
+      setError(resolveError(loadError));
     } finally {
-      setConnectorsLoading(false);
+      setSourceLoading(false);
     }
-  }, [organizationId]);
+  }, [organizationId, selectedProjectId]);
 
-  const loadSemanticModels = useCallback(async () => {
+  const loadUnifiedModels = useCallback(async () => {
     if (!organizationId) {
-      setSemanticModels([]);
+      setUnifiedModels([]);
       return;
     }
-    setSemanticLoading(true);
+    setUnifiedLoading(true);
     try {
-      const models = await listSemanticModels(organizationId, selectedProjectId ?? undefined);
-      setSemanticModels(models);
-    } catch (err) {
-      setError(resolveError(err));
+      const models = await listSemanticModels(
+        organizationId,
+        selectedProjectId ?? undefined,
+        'unified',
+      );
+      setUnifiedModels(models);
+    } catch (loadError) {
+      setError(resolveError(loadError));
     } finally {
-      setSemanticLoading(false);
+      setUnifiedLoading(false);
     }
   }, [organizationId, selectedProjectId]);
 
   useEffect(() => {
     if (!organizationId) {
-      setConnectors([]);
-      setSemanticModels([]);
-      setSelectedModelIds([]);
-      setSelectedConnectorId('');
+      setSourceModels([]);
+      setUnifiedModels([]);
       return;
     }
-    void loadConnectors();
-    void loadSemanticModels();
-  }, [organizationId, loadConnectors, loadSemanticModels]);
+    void loadSourceModels();
+    void loadUnifiedModels();
+  }, [organizationId, loadSourceModels, loadUnifiedModels]);
 
   useEffect(() => {
-    setSelectedModelIds([]);
-    setRelationships([]);
-    setMetrics([]);
-    setPreviewResult(null);
-    setPreviewSqlError(null);
-  }, [selectedConnectorId]);
+    const sourceModelIds = new Set(sourceModels.map((model) => model.id));
+    setSelectedModelIds((current) => current.filter((id) => sourceModelIds.has(id)));
+  }, [sourceModels]);
 
-  const toggleModelSelection = (modelId: string) => {
+  useEffect(() => {
+    setPreviewResult(null);
+    setPreviewError(null);
+  }, [selectedModelIds, joinDrafts, metrics]);
+
+  const unifiedYamlPreview = useMemo(() => {
+    try {
+      const payload = buildUnifiedPayload({
+        formState,
+        selectedModels: selectedSourceModels,
+        joinDrafts,
+        metrics,
+      });
+      return {
+        yaml: yaml.dump(payload, { noRefs: true, sortKeys: false }),
+        error: null,
+      };
+    } catch (previewBuildError) {
+      return {
+        yaml: '',
+        error:
+          previewBuildError instanceof Error
+            ? previewBuildError.message
+            : 'Unable to build unified model YAML.',
+      };
+    }
+  }, [formState, selectedSourceModels, joinDrafts, metrics]);
+
+  const resetBuilder = useCallback(() => {
+    setSelectedUnifiedModelId(null);
+    setSelectedModelIds([]);
+    setJoinDrafts([]);
+    setMetrics([]);
+    setFormState({ name: '', description: '', version: DEFAULT_VERSION });
+    setPreviewQueryJson(DEFAULT_PREVIEW_QUERY);
+    setPreviewResult(null);
+    setPreviewError(null);
+    setNotice(null);
+    setError(null);
+  }, []);
+
+  const handleToggleModel = (modelId: string) => {
     setSelectedModelIds((current) =>
-      current.includes(modelId) ? current.filter((id) => id !== modelId) : [...current, modelId],
+      current.includes(modelId)
+        ? current.filter((id) => id !== modelId)
+        : [...current, modelId],
     );
   };
 
-  useEffect(() => {
-    setPreviewResult(null);
-    setPreviewSqlError(null);
-  }, [selectedModelIds, relationships, metrics]);
+  const addJoinDraft = () => {
+    const firstTable = tableOptions[0]?.tableKey || '';
+    const secondTable = tableOptions[1]?.tableKey || firstTable;
+    const firstLeftColumn = tableOptionLookup.get(firstTable)?.columns[0] || '';
+    const firstRightColumn = tableOptionLookup.get(secondTable)?.columns[0] || '';
+    setJoinDrafts((current) => [
+      ...current,
+      {
+        id: createId('join'),
+        name: '',
+        type: 'inner',
+        leftTable: firstTable,
+        leftColumn: firstLeftColumn,
+        operator: '=',
+        rightTable: secondTable,
+        rightColumn: firstRightColumn,
+      },
+    ]);
+  };
 
-  const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
+  const updateJoinDraft = (
+    joinId: string,
+    updates: Partial<StructuredJoinDraft>,
+  ) => {
+    setJoinDrafts((current) =>
+      current.map((draft) => {
+        if (draft.id !== joinId) {
+          return draft;
+        }
+        const next = { ...draft, ...updates };
+        if (updates.leftTable !== undefined) {
+          const leftColumns = tableOptionLookup.get(next.leftTable)?.columns || [];
+          if (!leftColumns.includes(next.leftColumn)) {
+            next.leftColumn = leftColumns[0] || '';
+          }
+        }
+        if (updates.rightTable !== undefined) {
+          const rightColumns = tableOptionLookup.get(next.rightTable)?.columns || [];
+          if (!rightColumns.includes(next.rightColumn)) {
+            next.rightColumn = rightColumns[0] || '';
+          }
+        }
+        return next;
+      }),
+    );
+  };
+  const handleLoadUnifiedModel = (model: SemanticModelRecord) => {
+    const payload = safeParseYaml(model.contentYaml || '');
+    if (!payload) {
+      setError('Selected unified model has invalid YAML content.');
+      return;
+    }
+
+    const sourceModelIds = readSourceModelIds(payload);
+    const availableIds = new Set(sourceModels.map((entry) => entry.id));
+    const normalizedSourceIds = sourceModelIds.filter((id) => availableIds.has(id));
+
+    const relationshipPayload = Array.isArray(payload.relationships) ? payload.relationships : [];
+    let parseFailures = 0;
+    const loadedJoinDrafts: StructuredJoinDraft[] = relationshipPayload
+      .filter((entry): entry is Record<string, unknown> => isRecord(entry))
+      .map((entry) => {
+        const parsedJoin = parseJoinCondition(readString(entry.on) || '');
+        if (!parsedJoin) {
+          parseFailures += 1;
+        }
+        return {
+          id: createId('join'),
+          name: readString(entry.name) || '',
+          type: normalizeJoinType(readString(entry.type)),
+          leftTable: parsedJoin?.leftTable || readString(entry.from) || '',
+          leftColumn: parsedJoin?.leftColumn || '',
+          operator: normalizeJoinOperator(parsedJoin?.operator),
+          rightTable: parsedJoin?.rightTable || readString(entry.to) || '',
+          rightColumn: parsedJoin?.rightColumn || '',
+        };
+      });
+
+    const metricPayload = isRecord(payload.metrics) ? payload.metrics : {};
+    const loadedMetrics = Object.entries(metricPayload)
+      .map(([metricName, metricValue]) => {
+        if (!isRecord(metricValue)) {
+          return null;
+        }
+        const expression = readString(metricValue.expression);
+        if (!expression) {
+          return null;
+        }
+        return {
+          id: createId('metric'),
+          name: metricName,
+          expression,
+          description: readString(metricValue.description) || '',
+        };
+      })
+      .filter((entry): entry is UnifiedMetricDraft => Boolean(entry));
+
+    setSelectedUnifiedModelId(model.id);
+    setFormState({
+      name: readString(payload.name) || model.name,
+      description: readString(payload.description) || model.description || '',
+      version: readString(payload.version) || DEFAULT_VERSION,
+    });
+    setSelectedModelIds(normalizedSourceIds);
+    setJoinDrafts(loadedJoinDrafts);
+    setMetrics(loadedMetrics);
+    setPreviewResult(null);
+    setPreviewError(null);
+
+    if (parseFailures > 0) {
+      setNotice(
+        `${parseFailures} join condition${parseFailures > 1 ? 's were' : ' was'} not in simple column format and needs re-selection.`,
+      );
+    } else {
+      setNotice('Unified model loaded into the builder.');
+    }
+  };
+
+  const handleSaveUnifiedModel = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (!organizationId) {
       setError('Select an organization before saving.');
       return;
     }
-    if (!selectedConnectorId) {
-      setError('Select a connector to run unified queries through (Trino recommended).');
+    if (selectedSourceModels.length === 0) {
+      setError('Select at least one source semantic model.');
       return;
     }
-    if (selectedModelIds.length === 0) {
-      setError('Choose at least one semantic model to compose.');
+    if (duplicateTableKeys.length > 0) {
+      setError(
+        `Resolve duplicate table keys before saving: ${duplicateTableKeys.join(', ')}.`,
+      );
       return;
     }
 
-    setSubmitting(true);
+    setSaveLoading(true);
     setError(null);
+    setNotice(null);
+
     try {
       const payload = buildUnifiedPayload({
         formState,
-        selectedModels,
-        relationships,
+        selectedModels: selectedSourceModels,
+        joinDrafts,
         metrics,
-        connectorName: selectedConnector?.name,
       });
-      const yamlText = yaml.dump(payload, { noRefs: true, sortKeys: false });
-      await createSemanticModel(organizationId, {
-        organizationId,
-        projectId: selectedProjectId ?? undefined,
-        connectorId: selectedConnectorId,
-        name: formState.name || payload.name,
-        description: formState.description || undefined,
-        modelYaml: yamlText,
-        autoGenerate: false,
-      });
-      await loadSemanticModels();
-    } catch (err) {
-      setError(resolveError(err));
+      const modelYaml = yaml.dump(payload, { noRefs: true, sortKeys: false });
+      const fallbackConnectorId = selectedSourceModels[0].connectorId;
+      const connectorId = selectedUnifiedModel?.connectorId || fallbackConnectorId;
+
+      if (!connectorId) {
+        throw new Error('Unable to infer connector id for unified model persistence.');
+      }
+
+      if (selectedUnifiedModelId) {
+        const updated = await updateSemanticModel(selectedUnifiedModelId, organizationId, {
+          projectId: selectedProjectId ?? undefined,
+          connectorId,
+          name: formState.name || payload.name,
+          description: formState.description || undefined,
+          modelYaml,
+          autoGenerate: false,
+        });
+        setSelectedUnifiedModelId(updated.id);
+        setNotice('Unified model updated.');
+      } else {
+        const created = await createSemanticModel(organizationId, {
+          organizationId,
+          projectId: selectedProjectId ?? undefined,
+          connectorId,
+          name: formState.name || payload.name,
+          description: formState.description || undefined,
+          modelYaml,
+          autoGenerate: false,
+        });
+        setSelectedUnifiedModelId(created.id);
+        setNotice('Unified model saved.');
+      }
+
+      await loadUnifiedModels();
+    } catch (saveError) {
+      setError(resolveError(saveError));
     } finally {
-      setSubmitting(false);
+      setSaveLoading(false);
     }
   };
 
   const handlePreviewQuery = async () => {
     if (!organizationId) {
-      setPreviewSqlError('Select an organization before previewing queries.');
-      return;
-    }
-    if (!selectedConnectorId) {
-      setPreviewSqlError('Select a connector to run unified queries through.');
+      setPreviewError('Select an organization before running preview queries.');
       return;
     }
     if (selectedModelIds.length === 0) {
-      setPreviewSqlError('Choose at least one semantic model to preview unified queries.');
+      setPreviewError('Select at least one source semantic model.');
       return;
     }
 
     let parsedQuery: Record<string, unknown>;
     try {
-      const maybeQuery = JSON.parse(previewQueryJson);
-      if (!maybeQuery || typeof maybeQuery !== 'object' || Array.isArray(maybeQuery)) {
+      const raw = JSON.parse(previewQueryJson);
+      if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
         throw new Error('Query payload must be a JSON object.');
       }
-      parsedQuery = maybeQuery as Record<string, unknown>;
-    } catch (err) {
-      setPreviewSqlError(err instanceof Error ? err.message : 'Invalid JSON query payload.');
+      parsedQuery = raw as Record<string, unknown>;
+    } catch (parseError) {
+      setPreviewError(
+        parseError instanceof Error ? parseError.message : 'Invalid JSON query payload.',
+      );
       return;
     }
 
     setPreviewLoading(true);
-    setPreviewSqlError(null);
+    setPreviewError(null);
     try {
       const response = await runUnifiedSemanticQuery(organizationId, {
         organizationId,
         projectId: selectedProjectId ?? undefined,
-        connectorId: selectedConnectorId,
         semanticModelIds: selectedModelIds,
-        joins: buildUnifiedJoinPayload(relationships),
+        joins: buildUnifiedJoinPayload(joinDrafts),
         metrics: buildUnifiedMetricPayload(metrics),
         query: parsedQuery,
       });
       setPreviewResult(response);
-    } catch (err) {
-      setPreviewSqlError(resolveError(err));
+    } catch (queryError) {
+      setPreviewError(resolveError(queryError));
       setPreviewResult(null);
     } finally {
       setPreviewLoading(false);
@@ -305,524 +522,524 @@ export default function UnifiedSemanticModelPage({ params }: UnifiedSemanticMode
 
   return (
     <div className="space-y-6 text-[color:var(--text-secondary)]">
-      <header className="space-y-2">
-        <p className="text-xs font-semibold uppercase tracking-[0.25em] text-[color:var(--text-muted)]">
-          Unified semantic models
-        </p>
-        <h1 className="text-2xl font-semibold text-[color:var(--text-primary)] md:text-3xl">
-          Compose and query across semantic models
-        </h1>
-        <p className="max-w-3xl text-sm">
-          Pick a Trino connector, select the semantic models you want to stitch together, define cross-model joins and
-          shared metrics, and save a single YAML artifact for agents to route unified questions.
-        </p>
-        <p className="text-xs text-[color:var(--text-muted)]">
-          Scope: <span className="font-medium text-[color:var(--text-primary)]">{organizationName}</span>
-          {selectedProjectId ? ' - project scoped' : ' - organization scoped'}
-        </p>
-      </header>
-
+      <section className="relative overflow-hidden rounded-3xl border border-[color:var(--panel-border)] bg-gradient-to-br from-[color:var(--panel-bg)] via-[color:var(--panel-alt)] to-[color:var(--panel-bg)] p-6 shadow-soft">
+        <div className="absolute -top-20 -right-12 h-48 w-48 rounded-full bg-[color:var(--accent)]/10 blur-3xl" />
+        <div className="relative space-y-2">
+          <p className="text-xs font-semibold uppercase tracking-[0.22em] text-[color:var(--text-muted)]">
+            Unified semantic models
+          </p>
+          <h1 className="text-2xl font-semibold text-[color:var(--text-primary)] md:text-3xl">
+            Cross-source model composer
+          </h1>
+          <p className="max-w-3xl text-sm">
+            Compose unified models from existing semantic models, define joins with guided dropdowns,
+            and preview cross-source semantic queries executed on the unified query runtime.
+          </p>
+          <p className="text-xs text-[color:var(--text-muted)]">
+            Scope: <span className="font-medium text-[color:var(--text-primary)]">{organizationName}</span>
+            {selectedProjectId ? ' - project scoped' : ' - organization scoped'}
+          </p>
+        </div>
+      </section>
       {error ? (
-        <div className="rounded-lg border border-rose-300 bg-rose-100/40 px-4 py-3 text-sm text-rose-700">{error}</div>
+        <div className="rounded-xl border border-rose-300 bg-rose-100/50 px-4 py-3 text-sm text-rose-700">
+          {error}
+        </div>
+      ) : null}
+      {notice ? (
+        <div className="rounded-xl border border-emerald-300 bg-emerald-100/50 px-4 py-3 text-sm text-emerald-800">
+          {notice}
+        </div>
       ) : null}
 
-      {!organizationId && !scopeLoading ? (
+      {!hasOrganization && !scopeLoading ? (
         <div className="rounded-2xl border border-dashed border-[color:var(--panel-border)] bg-[color:var(--panel-bg)] p-6 text-center text-sm">
-          Choose an organization from the scope selector to begin.
+          Choose an organization from scope selector to use unified semantic modeling.
         </div>
       ) : (
-        <div className="grid gap-6 lg:grid-cols-[2fr_1fr]">
-          <section className="space-y-6 rounded-3xl border border-[color:var(--panel-border)] bg-[color:var(--panel-bg)] p-6 shadow-soft">
-            <form className="space-y-6" onSubmit={(event) => void handleSubmit(event)}>
-              <div className="space-y-3">
-                <div className="flex items-center justify-between">
-                  <h2 className="text-lg font-semibold text-[color:var(--text-primary)]">1. Select a connector</h2>
-                  <Button type="button" variant="outline" size="sm" onClick={() => void loadConnectors()} isLoading={connectorsLoading}>
+        <div className="grid gap-6 xl:grid-cols-[1.6fr_1fr]">
+          <section className="space-y-5 rounded-3xl border border-[color:var(--panel-border)] bg-[color:var(--panel-bg)] p-6 shadow-soft">
+            <form className="space-y-5" onSubmit={(event) => void handleSaveUnifiedModel(event)}>
+              <div className="flex items-center justify-between gap-3">
+                <h2 className="text-lg font-semibold text-[color:var(--text-primary)]">Builder</h2>
+                <div className="flex items-center gap-2">
+                  <Button type="button" size="sm" variant="outline" onClick={resetBuilder}>
+                    New unified model
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    onClick={() => {
+                      void loadSourceModels();
+                      void loadUnifiedModels();
+                    }}
+                    isLoading={sourceLoading || unifiedLoading}
+                  >
                     Refresh
                   </Button>
                 </div>
-                <p className="text-sm">
-                  Unified models execute through Trino. Pick a Trino connector for best compatibility; other SQL
-                  connectors are shown if available.
-                </p>
-                {connectors.length === 0 ? (
-                  <div className="rounded-xl border border-dashed border-[color:var(--panel-border)] bg-[color:var(--panel-alt)] p-6 text-sm">
-                    No connectors available. Create a connector first.
+              </div>
+
+              <div className="rounded-2xl border border-[color:var(--panel-border)] bg-[color:var(--panel-alt)] p-4">
+                <div className="grid gap-4 md:grid-cols-2">
+                  <div className="space-y-1">
+                    <Label htmlFor="unified-name">Name</Label>
+                    <Input
+                      id="unified-name"
+                      value={formState.name}
+                      onChange={(event) =>
+                        setFormState((current) => ({ ...current, name: event.target.value }))
+                      }
+                      placeholder="e.g. Revenue Operations Hub"
+                    />
                   </div>
+                  <div className="space-y-1">
+                    <Label htmlFor="unified-version">Version</Label>
+                    <Input
+                      id="unified-version"
+                      value={formState.version}
+                      onChange={(event) =>
+                        setFormState((current) => ({
+                          ...current,
+                          version: event.target.value || DEFAULT_VERSION,
+                        }))
+                      }
+                    />
+                  </div>
+                </div>
+                <div className="mt-4 space-y-1">
+                  <Label htmlFor="unified-description">Description</Label>
+                  <Textarea
+                    id="unified-description"
+                    rows={3}
+                    value={formState.description}
+                    onChange={(event) =>
+                      setFormState((current) => ({ ...current, description: event.target.value }))
+                    }
+                    placeholder="Explain the business domain this unified model serves"
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-3 rounded-2xl border border-[color:var(--panel-border)] bg-[color:var(--panel-alt)] p-4">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-base font-semibold text-[color:var(--text-primary)]">Source models</h3>
+                  <Badge variant="secondary">{selectedSourceModels.length}</Badge>
+                </div>
+                {sourceLoading ? (
+                  <p className="text-sm">Loading semantic models...</p>
+                ) : sourceModels.length === 0 ? (
+                  <p className="text-sm text-[color:var(--text-muted)]">
+                    No standard semantic models found in this scope.
+                  </p>
                 ) : (
                   <div className="grid gap-3 md:grid-cols-2">
-                    {connectors.map((connector) => {
-                      const connectorId = connector.id ?? '';
-                      const isSelected = connectorId === selectedConnectorId;
-                      const isTrino = connector.connectorType?.toLowerCase() === 'trino';
+                    {sourceModels.map((model) => {
+                      const isSelected = selectedModelIds.includes(model.id);
                       return (
                         <button
-                          key={connector.id ?? connector.name}
+                          key={model.id}
                           type="button"
-                          onClick={() => setSelectedConnectorId(connectorId)}
-                          disabled={!connectorId}
+                          onClick={() => handleToggleModel(model.id)}
                           className={cn(
-                            'rounded-2xl border bg-[color:var(--panel-alt)] p-4 text-left transition hover:border-[color:var(--border-strong)]',
-                            isSelected ? 'border-[color:var(--accent)] shadow-soft' : 'border-[color:var(--panel-border)]',
+                            'rounded-2xl border p-4 text-left transition',
+                            isSelected
+                              ? 'border-[color:var(--accent)] bg-[color:var(--panel-bg)] shadow-soft'
+                              : 'border-[color:var(--panel-border)] bg-[color:var(--panel-bg)] hover:border-[color:var(--border-strong)]',
                           )}
                         >
-                          <div className="flex items-start justify-between gap-3">
-                            <div>
-                              <p className="text-sm font-semibold text-[color:var(--text-primary)]">{connector.name}</p>
-                              <p className="text-xs text-[color:var(--text-muted)]">
-                                {connector.description ?? 'No description provided.'}
-                              </p>
-                            </div>
-                            {isSelected ? <Badge variant="secondary">Selected</Badge> : null}
-                          </div>
-                          <div className="mt-2 flex items-center gap-2 text-xs text-[color:var(--text-muted)]">
-                            <span className="rounded-full border border-[color:var(--panel-border)] px-2 py-0.5">
-                              {connector.connectorType ?? 'Custom'}
-                            </span>
-                            {isTrino ? (
-                              <span className="rounded-full border border-[color:var(--accent)] px-2 py-0.5 text-[color:var(--accent)]">
-                                Trino recommended
-                              </span>
-                            ) : null}
-                          </div>
+                          <p className="text-sm font-semibold text-[color:var(--text-primary)]">{model.name}</p>
+                          <p className="mt-1 text-xs text-[color:var(--text-muted)]">
+                            Updated {formatRelativeDate(model.updatedAt)}
+                          </p>
+                          {model.description ? (
+                            <p className="mt-2 text-xs text-[color:var(--text-secondary)]">{model.description}</p>
+                          ) : null}
                         </button>
+                      );
+                    })}
+                  </div>
+                )}
+
+                {duplicateTableKeys.length > 0 ? (
+                  <div className="rounded-xl border border-amber-300 bg-amber-100/60 px-3 py-2 text-xs text-amber-900">
+                    Duplicate table keys detected across selected models: {duplicateTableKeys.join(', ')}.
+                    Rename table keys before creating unified joins.
+                  </div>
+                ) : null}
+              </div>
+
+              <div className="space-y-3 rounded-2xl border border-[color:var(--panel-border)] bg-[color:var(--panel-alt)] p-4">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-base font-semibold text-[color:var(--text-primary)]">Join relationships</h3>
+                  <Button type="button" size="sm" variant="outline" onClick={addJoinDraft}>
+                    Add join
+                  </Button>
+                </div>
+
+                {joinDrafts.length === 0 ? (
+                  <p className="text-sm text-[color:var(--text-muted)]">
+                    Add joins by selecting table and column pairs. Manual SQL join expressions are not required.
+                  </p>
+                ) : (
+                  <div className="space-y-3">
+                    {joinDrafts.map((draft) => {
+                      const leftColumns = tableOptionLookup.get(draft.leftTable)?.columns || [];
+                      const rightColumns = tableOptionLookup.get(draft.rightTable)?.columns || [];
+                      return (
+                        <div
+                          key={draft.id}
+                          className="space-y-3 rounded-xl border border-[color:var(--panel-border)] bg-[color:var(--panel-bg)] p-4"
+                        >
+                          <div className="grid gap-3 md:grid-cols-[2fr_1fr_auto]">
+                            <Input
+                              value={draft.name}
+                              onChange={(event) =>
+                                updateJoinDraft(draft.id, { name: event.target.value })
+                              }
+                              placeholder="Join name"
+                            />
+                            <Select
+                              value={draft.type}
+                              onChange={(event) =>
+                                updateJoinDraft(draft.id, {
+                                  type: event.target.value as JoinType,
+                                })
+                              }
+                            >
+                              {JOIN_TYPES.map((joinType) => (
+                                <option key={joinType} value={joinType}>
+                                  {joinType}
+                                </option>
+                              ))}
+                            </Select>
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="ghost"
+                              onClick={() =>
+                                setJoinDrafts((current) =>
+                                  current.filter((entry) => entry.id !== draft.id),
+                                )
+                              }
+                            >
+                              Remove
+                            </Button>
+                          </div>
+
+                          <div className="grid gap-3 md:grid-cols-2">
+                            <Select
+                              value={draft.leftTable}
+                              onChange={(event) =>
+                                updateJoinDraft(draft.id, { leftTable: event.target.value })
+                              }
+                            >
+                              <option value="">Left table</option>
+                              {tableOptions.map((option) => (
+                                <option key={`left-${option.modelId}-${option.tableKey}`} value={option.tableKey}>
+                                  {option.tableKey} ({option.modelName})
+                                </option>
+                              ))}
+                            </Select>
+                            <Select
+                              value={draft.rightTable}
+                              onChange={(event) =>
+                                updateJoinDraft(draft.id, { rightTable: event.target.value })
+                              }
+                            >
+                              <option value="">Right table</option>
+                              {tableOptions.map((option) => (
+                                <option key={`right-${option.modelId}-${option.tableKey}`} value={option.tableKey}>
+                                  {option.tableKey} ({option.modelName})
+                                </option>
+                              ))}
+                            </Select>
+                          </div>
+
+                          <div className="grid gap-3 md:grid-cols-[2fr_1fr_2fr]">
+                            <Select
+                              value={draft.leftColumn}
+                              onChange={(event) =>
+                                updateJoinDraft(draft.id, { leftColumn: event.target.value })
+                              }
+                              disabled={!draft.leftTable}
+                            >
+                              <option value="">Left column</option>
+                              {leftColumns.map((column) => (
+                                <option key={`left-col-${draft.id}-${column}`} value={column}>
+                                  {column}
+                                </option>
+                              ))}
+                            </Select>
+                            <Select
+                              value={draft.operator}
+                              onChange={(event) =>
+                                updateJoinDraft(draft.id, {
+                                  operator: event.target.value as JoinOperator,
+                                })
+                              }
+                            >
+                              {JOIN_OPERATORS.map((operator) => (
+                                <option key={`operator-${draft.id}-${operator}`} value={operator}>
+                                  {operator}
+                                </option>
+                              ))}
+                            </Select>
+                            <Select
+                              value={draft.rightColumn}
+                              onChange={(event) =>
+                                updateJoinDraft(draft.id, { rightColumn: event.target.value })
+                              }
+                              disabled={!draft.rightTable}
+                            >
+                              <option value="">Right column</option>
+                              {rightColumns.map((column) => (
+                                <option key={`right-col-${draft.id}-${column}`} value={column}>
+                                  {column}
+                                </option>
+                              ))}
+                            </Select>
+                          </div>
+                          <p className="text-xs text-[color:var(--text-muted)]">
+                            Condition preview:{' '}
+                            <span className="font-mono text-[color:var(--text-secondary)]">
+                              {draft.leftTable && draft.leftColumn && draft.rightTable && draft.rightColumn
+                                ? `${draft.leftTable}.${draft.leftColumn} ${draft.operator} ${draft.rightTable}.${draft.rightColumn}`
+                                : 'Select both tables and columns'}
+                            </span>
+                          </p>
+                        </div>
                       );
                     })}
                   </div>
                 )}
               </div>
 
-              {!selectedConnectorId ? (
-                <div className="rounded-xl border border-dashed border-[color:var(--panel-border)] bg-[color:var(--panel-alt)] p-6 text-sm">
-                  Select a connector to unlock the unified builder.
+              <div className="space-y-3 rounded-2xl border border-[color:var(--panel-border)] bg-[color:var(--panel-alt)] p-4">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-base font-semibold text-[color:var(--text-primary)]">Unified metrics</h3>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    onClick={() =>
+                      setMetrics((current) => [
+                        ...current,
+                        { id: createId('metric'), name: '', expression: '', description: '' },
+                      ])
+                    }
+                  >
+                    Add metric
+                  </Button>
                 </div>
-              ) : (
-                <>
-                  <div className="space-y-4 rounded-2xl border border-[color:var(--panel-border)] bg-[color:var(--panel-alt)] p-4">
-                    <div className="flex flex-wrap items-center justify-between gap-3">
-                      <div>
-                        <h3 className="text-base font-semibold text-[color:var(--text-primary)]">2. Metadata</h3>
-                        <p className="text-xs text-[color:var(--text-muted)]">
-                          Name and describe the unified layer; version is tracked in the YAML.
-                        </p>
-                      </div>
-                    </div>
-                    <div className="grid gap-4 md:grid-cols-2">
-                      <div className="space-y-1">
-                        <Label htmlFor="unified-name">Unified model name</Label>
-                        <Input
-                          id="unified-name"
-                          value={formState.name}
-                          onChange={(event) => setFormState((current) => ({ ...current, name: event.target.value }))}
-                          placeholder="e.g. Revenue intelligence hub"
-                        />
-                      </div>
-                      <div className="space-y-1">
-                        <Label htmlFor="unified-version">Version</Label>
-                        <Input
-                          id="unified-version"
-                          value={formState.version}
+                {metrics.length === 0 ? (
+                  <p className="text-sm text-[color:var(--text-muted)]">
+                    Optional metrics can still use SQL expressions across selected source models.
+                  </p>
+                ) : (
+                  <div className="space-y-3">
+                    {metrics.map((metric) => (
+                      <div
+                        key={metric.id}
+                        className="space-y-3 rounded-xl border border-[color:var(--panel-border)] bg-[color:var(--panel-bg)] p-4"
+                      >
+                        <div className="grid gap-3 md:grid-cols-[1fr_1fr_auto]">
+                          <Input
+                            value={metric.name}
+                            onChange={(event) =>
+                              setMetrics((current) =>
+                                current.map((entry) =>
+                                  entry.id === metric.id
+                                    ? { ...entry, name: event.target.value }
+                                    : entry,
+                                ),
+                              )
+                            }
+                            placeholder="Metric name"
+                          />
+                          <Input
+                            value={metric.description}
+                            onChange={(event) =>
+                              setMetrics((current) =>
+                                current.map((entry) =>
+                                  entry.id === metric.id
+                                    ? { ...entry, description: event.target.value }
+                                    : entry,
+                                ),
+                              )
+                            }
+                            placeholder="Description"
+                          />
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="ghost"
+                            onClick={() =>
+                              setMetrics((current) =>
+                                current.filter((entry) => entry.id !== metric.id),
+                              )
+                            }
+                          >
+                            Remove
+                          </Button>
+                        </div>
+                        <Textarea
+                          rows={3}
+                          value={metric.expression}
                           onChange={(event) =>
-                            setFormState((current) => ({ ...current, version: event.target.value || DEFAULT_VERSION }))
+                            setMetrics((current) =>
+                              current.map((entry) =>
+                                entry.id === metric.id
+                                  ? { ...entry, expression: event.target.value }
+                                  : entry,
+                              ),
+                            )
                           }
+                          placeholder="SQL expression"
                         />
                       </div>
-                    </div>
-                    <div className="space-y-1">
-                      <Label htmlFor="unified-description">Description</Label>
-                      <Textarea
-                        id="unified-description"
-                        rows={3}
-                        value={formState.description}
-                        onChange={(event) =>
-                          setFormState((current) => ({ ...current, description: event.target.value }))
-                        }
-                        placeholder="What problems does this unified layer solve?"
-                      />
-                    </div>
-                  </div>
-
-                  <div className="space-y-4">
-                    <div className="flex items-center justify-between">
-                      <h3 className="text-base font-semibold text-[color:var(--text-primary)]">3. Choose models</h3>
-                      <Badge variant="secondary">{semanticModels.length}</Badge>
-                    </div>
-                    {semanticLoading ? (
-                      <p className="text-sm">Loading semantic models...</p>
-                    ) : semanticModels.length === 0 ? (
-                      <div className="rounded-xl border border-dashed border-[color:var(--panel-border)] bg-[color:var(--panel-alt)] p-6 text-sm">
-                        No semantic models found in this scope. Create at least one before unifying.
-                      </div>
-                    ) : (
-                      <div className="grid gap-3 md:grid-cols-2">
-                        {semanticModels.map((model) => {
-                          const isSelected = selectedModelIds.includes(model.id);
-                          return (
-                            <button
-                              key={model.id}
-                              type="button"
-                              onClick={() => toggleModelSelection(model.id)}
-                              className={cn(
-                                'rounded-2xl border bg-[color:var(--panel-alt)] p-4 text-left transition hover:border-[color:var(--border-strong)]',
-                                isSelected ? 'border-[color:var(--accent)] shadow-soft' : 'border-[color:var(--panel-border)]',
-                              )}
-                            >
-                              <div className="flex items-start justify-between gap-3">
-                                <div>
-                                  <p className="text-sm font-semibold text-[color:var(--text-primary)]">{model.name}</p>
-                                  <p className="text-xs text-[color:var(--text-muted)]">
-                                    Updated {formatRelativeDate(model.updatedAt)}
-                                  </p>
-                                  {model.description ? (
-                                    <p className="mt-2 text-xs text-[color:var(--text-secondary)]">{model.description}</p>
-                                  ) : null}
-                                </div>
-                                {isSelected ? <Badge variant="secondary">Added</Badge> : null}
-                              </div>
-                            </button>
-                          );
-                        })}
-                      </div>
-                    )}
-                  </div>
-
-                  <div className="space-y-3 rounded-2xl border border-[color:var(--panel-border)] bg-[color:var(--panel-alt)] p-4">
-                    <div className="flex items-center justify-between">
-                      <h3 className="text-base font-semibold text-[color:var(--text-primary)]">4. Cross-model relationships</h3>
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        onClick={() =>
-                          setRelationships((current) => [
-                            ...current,
-                            {
-                              id: createId('relationship'),
-                              name: `relationship_${current.length + 1}`,
-                              from: '',
-                              to: '',
-                              on: '',
-                              type: 'inner',
-                            },
-                          ])
-                        }
-                      >
-                        Add relationship
-                      </Button>
-                    </div>
-                    {relationships.length === 0 ? (
-                      <p className="text-sm text-[color:var(--text-muted)]">
-                        No relationships yet. Add joins to link tables across models.
-                      </p>
-                    ) : (
-                      <div className="space-y-3">
-                        {relationships.map((relationship) => (
-                          <div
-                            key={relationship.id}
-                            className="rounded-xl border border-[color:var(--panel-border)] bg-[color:var(--panel-bg)] p-4"
-                          >
-                            <div className="flex flex-wrap items-center justify-between gap-3">
-                              <div className="space-y-1">
-                                <Label htmlFor={`rel-name-${relationship.id}`}>Name</Label>
-                                <Input
-                                  id={`rel-name-${relationship.id}`}
-                                  value={relationship.name}
-                                  onChange={(event) =>
-                                    setRelationships((current) =>
-                                      current.map((entry) =>
-                                        entry.id === relationship.id ? { ...entry, name: event.target.value } : entry,
-                                      ),
-                                    )
-                                  }
-                                  placeholder="orders_to_customers"
-                                />
-                              </div>
-                              <div className="space-y-1">
-                                <Label htmlFor={`rel-type-${relationship.id}`}>Join type</Label>
-                                <Select
-                                  id={`rel-type-${relationship.id}`}
-                                  value={relationship.type}
-                                  onChange={(event) =>
-                                    setRelationships((current) =>
-                                      current.map((entry) =>
-                                        entry.id === relationship.id
-                                          ? { ...entry, type: event.target.value as JoinType }
-                                          : entry,
-                                      ),
-                                    )
-                                  }
-                                >
-                                  {JOIN_TYPES.map((type) => (
-                                    <option key={type} value={type}>
-                                      {type}
-                                    </option>
-                                  ))}
-                                </Select>
-                              </div>
-                              <Button
-                                type="button"
-                                variant="ghost"
-                                size="sm"
-                                onClick={() =>
-                                  setRelationships((current) => current.filter((entry) => entry.id !== relationship.id))
-                                }
-                              >
-                                Remove
-                              </Button>
-                            </div>
-                            <div className="grid gap-3 md:grid-cols-2">
-                              <div className="space-y-1">
-                                <Label htmlFor={`rel-from-${relationship.id}`}>From</Label>
-                                <Input
-                                  id={`rel-from-${relationship.id}`}
-                                  list="unified-table-keys"
-                                  value={relationship.from}
-                                  onChange={(event) =>
-                                    setRelationships((current) =>
-                                      current.map((entry) =>
-                                        entry.id === relationship.id ? { ...entry, from: event.target.value } : entry,
-                                      ),
-                                    )
-                                  }
-                                  placeholder="orders_table_key"
-                                />
-                              </div>
-                              <div className="space-y-1">
-                                <Label htmlFor={`rel-to-${relationship.id}`}>To</Label>
-                                <Input
-                                  id={`rel-to-${relationship.id}`}
-                                  list="unified-table-keys"
-                                  value={relationship.to}
-                                  onChange={(event) =>
-                                    setRelationships((current) =>
-                                      current.map((entry) =>
-                                        entry.id === relationship.id ? { ...entry, to: event.target.value } : entry,
-                                      ),
-                                    )
-                                  }
-                                  placeholder="customers_table_key"
-                                />
-                              </div>
-                            </div>
-                            <div className="space-y-1">
-                              <Label htmlFor={`rel-on-${relationship.id}`}>Join condition</Label>
-                              <Textarea
-                                id={`rel-on-${relationship.id}`}
-                                rows={2}
-                                value={relationship.on}
-                                onChange={(event) =>
-                                  setRelationships((current) =>
-                                    current.map((entry) =>
-                                      entry.id === relationship.id ? { ...entry, on: event.target.value } : entry,
-                                    ),
-                                  )
-                                }
-                                placeholder="orders.orders.customer_id = customers.customers.id"
-                              />
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                  <datalist id="unified-table-keys">
-                    {availableTableKeys.map((tableKey) => (
-                      <option key={tableKey} value={tableKey} />
                     ))}
-                  </datalist>
-
-                  <div className="space-y-3 rounded-2xl border border-[color:var(--panel-border)] bg-[color:var(--panel-alt)] p-4">
-                    <div className="flex items-center justify-between">
-                      <h3 className="text-base font-semibold text-[color:var(--text-primary)]">5. Unified metrics</h3>
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        onClick={() =>
-                          setMetrics((current) => [
-                            ...current,
-                            { id: createId('metric'), name: '', expression: '', description: '' },
-                          ])
-                        }
-                      >
-                        Add metric
-                      </Button>
-                    </div>
-                    {metrics.length === 0 ? (
-                      <p className="text-sm text-[color:var(--text-muted)]">
-                        No unified metrics yet. Add shared definitions that leverage multiple models.
-                      </p>
-                    ) : (
-                      <div className="space-y-3">
-                        {metrics.map((metric) => (
-                          <div
-                            key={metric.id}
-                            className="rounded-xl border border-[color:var(--panel-border)] bg-[color:var(--panel-bg)] p-4"
-                          >
-                            <div className="flex items-center justify-between">
-                              <Label className="text-xs font-semibold uppercase tracking-wide">Metric</Label>
-                              <Button
-                                type="button"
-                                variant="ghost"
-                                size="sm"
-                                onClick={() => setMetrics((current) => current.filter((entry) => entry.id !== metric.id))}
-                              >
-                                Remove
-                              </Button>
-                            </div>
-                            <div className="mt-3 grid gap-3 md:grid-cols-2">
-                              <Input
-                                value={metric.name}
-                                onChange={(event) =>
-                                  setMetrics((current) =>
-                                    current.map((entry) =>
-                                      entry.id === metric.id ? { ...entry, name: event.target.value } : entry,
-                                    ),
-                                  )
-                                }
-                                placeholder="metric name"
-                              />
-                              <Input
-                                value={metric.description ?? ''}
-                                onChange={(event) =>
-                                  setMetrics((current) =>
-                                    current.map((entry) =>
-                                      entry.id === metric.id ? { ...entry, description: event.target.value } : entry,
-                                    ),
-                                  )
-                                }
-                                placeholder="description"
-                              />
-                            </div>
-                            <Textarea
-                              className="mt-3"
-                              rows={3}
-                              value={metric.expression}
-                              onChange={(event) =>
-                                setMetrics((current) =>
-                                  current.map((entry) =>
-                                    entry.id === metric.id ? { ...entry, expression: event.target.value } : entry,
-                                  ),
-                                )
-                              }
-                              placeholder="SQL expression referencing entities across models"
-                            />
-                          </div>
-                        ))}
-                      </div>
-                    )}
                   </div>
+                )}
+              </div>
 
-                  <div className="space-y-3 rounded-2xl border border-[color:var(--panel-border)] bg-[color:var(--panel-alt)] p-4">
-                    <div className="flex items-center justify-between">
-                      <h3 className="text-base font-semibold text-[color:var(--text-primary)]">6. YAML preview</h3>
-                      <span className="text-xs text-[color:var(--text-muted)]">The payload saved to the API</span>
-                    </div>
-                    {unifiedYamlPreview.error ? (
-                      <p className="text-xs text-rose-600">{unifiedYamlPreview.error}</p>
-                    ) : null}
-                    <Textarea
-                      readOnly
-                      rows={12}
-                      value={unifiedYamlPreview.yaml}
-                      className="font-mono text-xs"
-                      placeholder="YAML will appear once models are selected."
-                    />
-                    <Button type="submit" className="w-full" disabled={submitting} isLoading={submitting}>
-                      Save unified model
-                    </Button>
+              <div className="space-y-3 rounded-2xl border border-[color:var(--panel-border)] bg-[color:var(--panel-alt)] p-4">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-base font-semibold text-[color:var(--text-primary)]">Unified YAML</h3>
+                  <Badge variant="secondary">Preview</Badge>
+                </div>
+                {unifiedYamlPreview.error ? (
+                  <p className="text-xs text-rose-600">{unifiedYamlPreview.error}</p>
+                ) : null}
+                <Textarea
+                  readOnly
+                  rows={12}
+                  className="font-mono text-xs"
+                  value={unifiedYamlPreview.yaml}
+                  placeholder="YAML appears once source models are selected."
+                />
+                <Button type="submit" className="w-full" isLoading={saveLoading} disabled={saveLoading}>
+                  {selectedUnifiedModelId ? 'Update unified model' : 'Save unified model'}
+                </Button>
+              </div>
+
+              <div className="space-y-3 rounded-2xl border border-[color:var(--panel-border)] bg-[color:var(--panel-alt)] p-4">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-base font-semibold text-[color:var(--text-primary)]">Unified query preview</h3>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    onClick={() => void handlePreviewQuery()}
+                    isLoading={previewLoading}
+                    disabled={previewLoading}
+                  >
+                    Run query
+                  </Button>
+                </div>
+                <Textarea
+                  rows={7}
+                  className="font-mono text-xs"
+                  value={previewQueryJson}
+                  onChange={(event) => setPreviewQueryJson(event.target.value)}
+                />
+                {previewError ? (
+                  <div className="rounded-xl border border-rose-300 bg-rose-100/50 px-3 py-2 text-xs text-rose-700">
+                    {previewError}
                   </div>
-
-                  <div className="space-y-3 rounded-2xl border border-[color:var(--panel-border)] bg-[color:var(--panel-alt)] p-4">
-                    <div className="flex items-center justify-between">
-                      <h3 className="text-base font-semibold text-[color:var(--text-primary)]">
-                        7. Unified query preview
-                      </h3>
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        onClick={() => void handlePreviewQuery()}
-                        isLoading={previewLoading}
-                        disabled={previewLoading}
-                      >
-                        Run preview query
-                      </Button>
-                    </div>
+                ) : null}
+                {previewResult ? (
+                  <div className="space-y-2">
                     <p className="text-xs text-[color:var(--text-muted)]">
-                      Executes the new unified semantic query endpoint with your selected joins and metrics.
+                      Returned {previewResult.data.length} rows from unified query execution.
                     </p>
                     <Textarea
+                      readOnly
                       rows={8}
                       className="font-mono text-xs"
-                      value={previewQueryJson}
-                      onChange={(event) => setPreviewQueryJson(event.target.value)}
-                      placeholder='{"measures":["orders.total"],"dimensions":["customers.country"],"limit":25}'
+                      value={JSON.stringify(previewResult.data.slice(0, 25), null, 2)}
                     />
-                    {previewSqlError ? (
-                      <div className="rounded-xl border border-rose-300 bg-rose-100/40 px-3 py-2 text-xs text-rose-700">
-                        {previewSqlError}
-                      </div>
-                    ) : null}
-                    {previewResult ? (
-                      <div className="space-y-2">
-                        <p className="text-xs text-[color:var(--text-muted)]">
-                          Returned {previewResult.data.length} rows using connector {previewResult.connectorId}.
-                        </p>
-                        <Textarea
-                          readOnly
-                          rows={8}
-                          className="font-mono text-xs"
-                          value={JSON.stringify(previewResult.data.slice(0, 25), null, 2)}
-                        />
-                      </div>
-                    ) : null}
                   </div>
-                </>
-              )}
+                ) : null}
+              </div>
             </form>
           </section>
 
-          <aside className="space-y-4 rounded-3xl border border-[color:var(--panel-border)] bg-[color:var(--panel-bg)] p-6 shadow-soft">
-            <div className="flex items-center justify-between">
-              <h2 className="text-lg font-semibold text-[color:var(--text-primary)]">Selected models</h2>
-              <Badge variant="secondary">{selectedModels.length}</Badge>
+          <aside className="space-y-5 rounded-3xl border border-[color:var(--panel-border)] bg-[color:var(--panel-bg)] p-6 shadow-soft">
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <h2 className="text-lg font-semibold text-[color:var(--text-primary)]">Unified library</h2>
+                <Badge variant="secondary">{unifiedModels.length}</Badge>
+              </div>
+              <p className="text-xs text-[color:var(--text-muted)]">
+                Unified models are listed separately from standard semantic models.
+              </p>
             </div>
-            {selectedModels.length === 0 ? (
-              <p className="text-sm text-[color:var(--text-muted)]">Pick semantic models to stitch together.</p>
+
+            {unifiedLoading ? (
+              <p className="text-sm">Loading unified models...</p>
+            ) : unifiedModels.length === 0 ? (
+              <div className="rounded-xl border border-dashed border-[color:var(--panel-border)] bg-[color:var(--panel-alt)] p-4 text-sm text-[color:var(--text-muted)]">
+                No unified models yet. Build and save one from the panel.
+              </div>
             ) : (
-              <ul className="space-y-3 text-sm">
-                {selectedModels.map((model) => (
-                  <li
-                    key={model.id}
-                    className="rounded-2xl border border-[color:var(--panel-border)] bg-[color:var(--panel-alt)] p-4"
-                  >
-                    <div className="flex items-start justify-between gap-3">
-                      <div>
-                        <p className="font-semibold text-[color:var(--text-primary)]">{model.name}</p>
-                        <p className="text-xs text-[color:var(--text-muted)]">Updated {formatRelativeDate(model.updatedAt)}</p>
-                        {model.description ? (
-                          <p className="mt-2 text-xs text-[color:var(--text-secondary)]">{model.description}</p>
-                        ) : null}
+              <ul className="space-y-3">
+                {unifiedModels.map((model) => {
+                  const isActive = model.id === selectedUnifiedModelId;
+                  return (
+                    <li
+                      key={model.id}
+                      className={cn(
+                        'rounded-2xl border p-4',
+                        isActive
+                          ? 'border-[color:var(--accent)] bg-[color:var(--panel-alt)]'
+                          : 'border-[color:var(--panel-border)] bg-[color:var(--panel-alt)]',
+                      )}
+                    >
+                      <p className="text-sm font-semibold text-[color:var(--text-primary)]">{model.name}</p>
+                      <p className="mt-1 text-xs text-[color:var(--text-muted)]">
+                        Updated {formatRelativeDate(model.updatedAt)}
+                      </p>
+                      {model.description ? (
+                        <p className="mt-2 text-xs text-[color:var(--text-secondary)]">{model.description}</p>
+                      ) : null}
+                      <div className="mt-3 flex justify-end">
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant={isActive ? 'default' : 'outline'}
+                          onClick={() => handleLoadUnifiedModel(model)}
+                        >
+                          {isActive ? 'Loaded' : 'Load'}
+                        </Button>
                       </div>
-                      <Button type="button" size="sm" variant="ghost" onClick={() => toggleModelSelection(model.id)}>
-                        Remove
-                      </Button>
-                    </div>
-                  </li>
-                ))}
+                    </li>
+                  );
+                })}
               </ul>
             )}
-            <div className="rounded-2xl border border-[color:var(--panel-border)] bg-[color:var(--panel-alt)] p-4 text-xs text-[color:var(--text-muted)]">
-              Builder tips:
-              <ul className="mt-2 list-disc space-y-1 pl-4">
-                <li>Use fully qualified entity names in joins (entity.column).</li>
-                <li>Unified metrics can reference columns across the selected models.</li>
-                <li>
-                  The saved YAML is compatible with the SQL analyst tool; agents will automatically route cross-model
-                  questions here.
-                </li>
-              </ul>
+
+            <div className="space-y-2 rounded-2xl border border-[color:var(--panel-border)] bg-[color:var(--panel-alt)] p-4">
+              <div className="flex items-center justify-between">
+                <h3 className="text-sm font-semibold text-[color:var(--text-primary)]">Current source set</h3>
+                <Badge variant="secondary">{selectedSourceModels.length}</Badge>
+              </div>
+              {selectedSourceModels.length === 0 ? (
+                <p className="text-xs text-[color:var(--text-muted)]">No source models selected.</p>
+              ) : (
+                <ul className="space-y-2 text-xs">
+                  {selectedSourceModels.map((model) => (
+                    <li
+                      key={model.id}
+                      className="rounded-xl border border-[color:var(--panel-border)] bg-[color:var(--panel-bg)] px-3 py-2"
+                    >
+                      <p className="font-medium text-[color:var(--text-primary)]">{model.name}</p>
+                      <p className="text-[color:var(--text-muted)]">{model.id}</p>
+                    </li>
+                  ))}
+                </ul>
+              )}
             </div>
           </aside>
         </div>
@@ -830,7 +1047,6 @@ export default function UnifiedSemanticModelPage({ params }: UnifiedSemanticMode
     </div>
   );
 }
-
 function resolveError(error: unknown): string {
   if (error instanceof ApiError) {
     return error.message;
@@ -841,49 +1057,49 @@ function resolveError(error: unknown): string {
   return 'Something went wrong while processing your request.';
 }
 
-function createId(prefix: string): string {
-  return `${prefix}-${Math.random().toString(36).slice(2, 9)}`;
+function readSourceModelIds(payload: Record<string, unknown>): string[] {
+  const sourceModels = Array.isArray(payload.source_models) ? payload.source_models : [];
+  return sourceModels
+    .map((entry) => {
+      if (!isRecord(entry)) {
+        return null;
+      }
+      return readString(entry.id);
+    })
+    .filter((entry): entry is string => Boolean(entry));
 }
 
-function buildUnifiedPayload({
-  formState,
-  selectedModels,
-  relationships,
-  metrics,
-  connectorName,
-}: {
+function buildUnifiedPayload(input: {
   formState: FormState;
   selectedModels: SemanticModelRecord[];
-  relationships: BuilderRelationship[];
-  metrics: UnifiedMetric[];
-  connectorName?: string;
+  joinDrafts: StructuredJoinDraft[];
+  metrics: UnifiedMetricDraft[];
 }) {
+  const { formState, selectedModels, joinDrafts, metrics } = input;
   if (selectedModels.length === 0) {
-    throw new Error('Select at least one semantic model to compose.');
+    throw new Error('Select at least one source model.');
   }
 
   const parsedModels = selectedModels.map((model, index) => {
-    const parsed = safeParseYaml(model.contentYaml ?? '');
-    if (!parsed || typeof parsed !== 'object') {
-      throw new Error(`Semantic model "${model.name}" is missing YAML content.`);
+    const parsed = safeParseYaml(model.contentYaml || '');
+    if (!parsed) {
+      throw new Error(`Semantic model "${model.name}" has invalid YAML.`);
     }
-    const parsedName = (parsed as Record<string, unknown>).name;
-    const fallbackName =
-      (typeof parsedName === 'string' && parsedName.trim().length > 0 ? parsedName : null) ??
-      model.name ??
-      `model_${index + 1}`;
-    return { name: fallbackName, ...parsed };
+
+    const parsedName = readString(parsed.name);
+    return {
+      ...parsed,
+      name: parsedName || model.name || `model_${index + 1}`,
+    };
   });
-  const rels = buildUnifiedJoinPayload(relationships);
-  const metricMap = buildUnifiedMetricPayload(metrics);
 
   const name = formState.name || parsedModels[0].name || 'unified_model';
+  const joinPayload = buildUnifiedJoinPayload(joinDrafts);
+  const metricPayload = buildUnifiedMetricPayload(metrics);
 
   return {
     name,
     version: formState.version || DEFAULT_VERSION,
-    connector: connectorName,
-    dialect: 'trino',
     description: formState.description || undefined,
     source_models: selectedModels.map((model) => ({
       id: model.id,
@@ -891,9 +1107,84 @@ function buildUnifiedPayload({
       name: model.name,
     })),
     semantic_models: parsedModels,
-    relationships: rels.length > 0 ? rels : undefined,
-    metrics: Object.keys(metricMap).length > 0 ? metricMap : undefined,
+    relationships: joinPayload.length > 0 ? joinPayload : undefined,
+    metrics: Object.keys(metricPayload).length > 0 ? metricPayload : undefined,
   };
+}
+
+function buildUnifiedJoinPayload(joinDrafts: StructuredJoinDraft[]): UnifiedSemanticJoinPayload[] {
+  return joinDrafts
+    .filter(
+      (draft) =>
+        draft.leftTable &&
+        draft.leftColumn &&
+        draft.rightTable &&
+        draft.rightColumn,
+    )
+    .map((draft) => ({
+      name: draft.name || undefined,
+      from: draft.leftTable,
+      to: draft.rightTable,
+      type: draft.type,
+      on: `${draft.leftTable}.${draft.leftColumn} ${draft.operator} ${draft.rightTable}.${draft.rightColumn}`,
+    }));
+}
+
+function buildUnifiedMetricPayload(metrics: UnifiedMetricDraft[]) {
+  return metrics.reduce<Record<string, { expression: string; description?: string }>>(
+    (acc, metric) => {
+      if (!metric.name || !metric.expression) {
+        return acc;
+      }
+      acc[metric.name] = {
+        expression: metric.expression,
+        description: metric.description || undefined,
+      };
+      return acc;
+    },
+    {},
+  );
+}
+
+function parseJoinCondition(
+  condition: string,
+):
+  | {
+      leftTable: string;
+      leftColumn: string;
+      operator: JoinOperator;
+      rightTable: string;
+      rightColumn: string;
+    }
+  | null {
+  const match = condition.match(
+    /^\s*([A-Za-z0-9_]+)\.([A-Za-z0-9_]+)\s*(=|!=|>=|<=|>|<)\s*([A-Za-z0-9_]+)\.([A-Za-z0-9_]+)\s*$/,
+  );
+  if (!match) {
+    return null;
+  }
+
+  const operator = normalizeJoinOperator(match[3]);
+  return {
+    leftTable: match[1],
+    leftColumn: match[2],
+    operator,
+    rightTable: match[4],
+    rightColumn: match[5],
+  };
+}
+function normalizeJoinType(value?: string | null): JoinType {
+  if (value === 'left' || value === 'right' || value === 'full') {
+    return value;
+  }
+  return 'inner';
+}
+
+function normalizeJoinOperator(value?: string | null): JoinOperator {
+  if (value === '!=' || value === '>' || value === '>=' || value === '<' || value === '<=') {
+    return value;
+  }
+  return '=';
 }
 
 function safeParseYaml(content: string): Record<string, unknown> | null {
@@ -908,30 +1199,21 @@ function safeParseYaml(content: string): Record<string, unknown> | null {
   }
 }
 
-function buildUnifiedJoinPayload(relationships: BuilderRelationship[]) {
-  return relationships
-    .filter((relationship) => relationship.from && relationship.to && relationship.on)
-    .map((relationship) => ({
-      name: relationship.name || undefined,
-      from: relationship.from,
-      to: relationship.to,
-      type: relationship.type,
-      on: relationship.on,
-    }));
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value && typeof value === 'object' && !Array.isArray(value));
 }
 
-function buildUnifiedMetricPayload(metrics: UnifiedMetric[]) {
-  return metrics.reduce<Record<string, { expression: string; description?: string }>>((acc, metric) => {
-    if (!metric.name || !metric.expression) {
-      return acc;
-    }
-    acc[metric.name] = {
-      expression: metric.expression,
-      description: metric.description || undefined,
-    };
-    return acc;
-  }, {});
+function readString(value: unknown): string | null {
+  if (typeof value !== 'string') {
+    return null;
+  }
+  const normalized = value.trim();
+  return normalized.length > 0 ? normalized : null;
 }
 
-
-
+function createId(prefix: string): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return `${prefix}-${crypto.randomUUID()}`;
+  }
+  return `${prefix}-${Math.random().toString(36).slice(2, 11)}`;
+}

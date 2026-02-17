@@ -5,6 +5,7 @@ from typing import Any
 from dependency_injector import containers, providers
 
 from langbridge.apps.api.langbridge_api.auth.register import create_oauth_client
+from langbridge.apps.api.langbridge_api.repositories.token_repository import UserPATRepository
 from langbridge.apps.api.langbridge_api.services.jobs.agent_job_request_service import AgentJobRequestService
 from langbridge.apps.api.langbridge_api.services.jobs.copilot_dashboard_job_request_service import (
     CopilotDashboardJobRequestService,
@@ -43,7 +44,8 @@ from langbridge.packages.common.langbridge_common.repositories.user_repository i
 from langbridge.packages.common.langbridge_common.repositories.message_repository import MessageRepository
 from langbridge.packages.semantic.langbridge_semantic.semantic_model_builder import SemanticModelBuilder
 from langbridge.apps.api.langbridge_api.services.agent_service import AgentService
-from langbridge.apps.api.langbridge_api.services.auth_service import AuthService
+from langbridge.apps.api.langbridge_api.services.auth.auth_service import AuthService
+from langbridge.apps.api.langbridge_api.services.auth.token_service import TokenService
 from langbridge.apps.api.langbridge_api.services.connector_schema_service import ConnectorSchemaService
 from langbridge.apps.api.langbridge_api.services.connector_service import ConnectorService
 from langbridge.apps.api.langbridge_api.services.dashboard_service import DashboardService
@@ -134,6 +136,7 @@ class Container(containers.DeclarativeContainer):
     semantic_vector_store_repository = providers.Factory(SemanticVectorStoreEntryRepository, session=async_session)
     message_repository = providers.Factory(MessageRepository, session=async_session)
     job_repository = providers.Factory(JobRepository, session=async_session)
+    user_pat_repository = providers.Factory(UserPATRepository, session=async_session)
     message_broker = providers.Singleton(RedisBroker)
     api_message_broker = providers.Singleton(
         RedisBroker,
@@ -162,6 +165,12 @@ class Container(containers.DeclarativeContainer):
         oauth_account_repository=oauth_account_repository,
         oauth=oauth,
         organization_service=organization_service,
+    )
+
+    token_service = providers.Factory(
+        TokenService,
+        auth_service=auth_service,
+        user_pat_repository=user_pat_repository,
     )
 
     connector_service = providers.Factory(
@@ -215,7 +224,7 @@ class Container(containers.DeclarativeContainer):
     semantic_query_service = providers.Factory(
         SemanticQueryService,
         semantic_model_service=semantic_model_service,
-        connector_service=connector_service
+        connector_service=connector_service,
     )
 
     dashboard_snapshot_storage = providers.Singleton(create_dashboard_snapshot_storage)
