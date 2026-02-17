@@ -1,3 +1,3 @@
-from .base import WorkerMessageHandler
+from .dispatcher import WorkerMessageDispatcher
 
-__all__ = ["WorkerMessageHandler"]
+__all__ = ["WorkerMessageDispatcher"]

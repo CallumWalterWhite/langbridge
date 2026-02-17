@@ -11,7 +11,7 @@ from langbridge.packages.messaging.langbridge_messaging.contracts.messages impor
     MessageEnvelope,
 )
 from langbridge.packages.common.langbridge_common.monitoring import start_metrics_server
-from .handlers import WorkerMessageHandler
+from .handlers import WorkerMessageDispatcher
 from .ioc import create_container, DependencyResolver
 
 
@@ -37,7 +37,7 @@ async def run_worker(poll_interval: float = 2.0) -> None:
     container = create_container()
     container.wire(packages=["langbridge.apps.worker.langbridge_worker"])
     dependency_resolver = DependencyResolver(container)
-    worker_handler = WorkerMessageHandler(dependency_resolver=dependency_resolver)
+    worker_dispatcher = WorkerMessageDispatcher(dependency_resolver=dependency_resolver)
 
     if broker_mode in {"none", "noop", "disabled"}:
         broker = _NoopBroker()
@@ -67,7 +67,7 @@ async def run_worker(poll_interval: float = 2.0) -> None:
                         _process_message(
                             message=message,
                             container=container,
-                            worker_handler=worker_handler,
+                            worker_dispatcher=worker_dispatcher,
                             broker=broker,
                             logger=logger,
                             processing_semaphore=processing_semaphore,
@@ -87,7 +87,7 @@ async def _process_message(
     *,
     message,
     container,
-    worker_handler: WorkerMessageHandler,
+    worker_dispatcher: WorkerMessageDispatcher,
     broker,
     logger: logging.Logger,
     processing_semaphore: asyncio.Semaphore,
@@ -105,7 +105,7 @@ async def _process_message(
             token = set_session(session)
             try:
                 logger.debug("UnitOfWork: starting async DB session")
-                new_messages: Sequence[MessageEnvelope] | None = await worker_handler.handle_message(
+                new_messages: Sequence[MessageEnvelope] | None = await worker_dispatcher.handle_message(
                     envelope
                 )
                 logger.debug("UnitOfWork: committing session")
