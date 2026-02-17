@@ -52,6 +52,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--verify", dest="verify", action="store_true", default=verify_default, help="Verify TLS certificates (default, env: TRINO_VERIFY).")
     parser.add_argument("--no-verify", dest="verify", action="store_false", help="Skip TLS verification when using https.")
     parser.add_argument("--tenant", default=os.getenv("TRINO_TENANT", "cw_tenant_123"), help="Tenant (env: TRINO_TENANT)")
+    parser.add_argument("--source", default=os.getenv("TRINO_SOURCE", ""), help="Optional source id (env: TRINO_SOURCE)")
     parser.add_argument("query", nargs="?", help="SQL query to run; wrap in quotes when needed.")
     return parser
 
@@ -62,6 +63,12 @@ def create_connection(args: argparse.Namespace):
         password = getpass("Trino password: ")
 
     auth = BasicAuthentication(args.user, password) if password else None
+    extra_credentials = [
+        ("tenant", args.tenant)
+    ]
+    if args.source:
+        extra_credentials.append(("source", args.source))
+
     return trino.dbapi.connect(
         host=args.host,
         port=args.port,
@@ -70,9 +77,7 @@ def create_connection(args: argparse.Namespace):
         schema=args.schema,
         http_scheme=args.http_scheme,
         auth=auth,
-        extra_credential=[
-            ("tenant", args.tenant)
-        ],
+        extra_credential=extra_credentials,
         verify=args.verify,
     )
 

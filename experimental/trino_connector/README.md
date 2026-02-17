@@ -13,7 +13,7 @@ Minimal Python helper for running ad-hoc queries against a Trino cluster using t
 - Use `--sample-cross-query` to automatically run a join between the two demo data sources (see docker compose section below).
 
 ### Environment variables
-- Shared connection: `TRINO_HOST`, `TRINO_PORT`, `TRINO_USER`, `TRINO_CATALOG`, `TRINO_SCHEMA`, `TRINO_HTTP_SCHEME`, `TRINO_VERIFY`
+- Shared connection: `TRINO_HOST`, `TRINO_PORT`, `TRINO_USER`, `TRINO_CATALOG`, `TRINO_SCHEMA`, `TRINO_HTTP_SCHEME`, `TRINO_VERIFY`, `TRINO_TENANT`, `TRINO_SOURCE`
 - Cross-source helpers: `TRINO_CATALOG_A`, `TRINO_SCHEMA_A`, `TRINO_TABLE_A`, `TRINO_CATALOG_B`, `TRINO_SCHEMA_B`, `TRINO_TABLE_B`, `TRINO_JOIN_COLUMN`
 - CLI flags always override environment defaults.
 

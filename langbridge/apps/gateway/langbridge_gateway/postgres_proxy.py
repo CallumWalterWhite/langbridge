@@ -40,11 +40,14 @@ class PostgresProxyServer:
             params, raw_packet, version = startup
             db_name = params.get("database") or params.get("dbname")
             user = params.get("user")
-            if not db_name:
-                await self._send_pg_error(writer, "database is required for routing")
+            if not db_name and not user:
+                await self._send_pg_error(
+                    writer,
+                    "database or tenant identity in user is required for routing",
+                )
                 return
 
-            upstream = route_database(db_name, "postgres")
+            upstream = route_database(db_name or "", "postgres", user_name=user)
             logging.info(
                 "Routing Postgres connection db=%s user=%s to %s:%s",
                 db_name,

@@ -1,30 +1,55 @@
+from __future__ import annotations
+
 import logging
+import uuid
+from collections.abc import Iterable, Mapping
 from typing import Any
 from uuid import UUID
-import uuid
-from langbridge.packages.common.langbridge_common.errors.application_errors import BusinessValidationError
-from langbridge.packages.connectors.langbridge_connectors.api.config import ConnectorRuntimeType
-from langbridge.packages.connectors.langbridge_connectors.api.connector import QueryResult, SqlConnector
-from langbridge.packages.common.langbridge_common.contracts.connectors import ConnectorResponse
+
 from langbridge.apps.api.langbridge_api.services.connector_service import ConnectorService
-from .semantic_model_service import SemanticModelService
-from langbridge.packages.semantic.langbridge_semantic.query import (
-    SemanticQuery,
-    SemanticQueryEngine,
+from langbridge.apps.api.langbridge_api.services.semantic.semantic_model_service import (
+    SemanticModelService,
 )
+from langbridge.packages.common.langbridge_common.contracts.connectors import ConnectorResponse
 from langbridge.packages.common.langbridge_common.contracts.semantic import (
+    SemanticModelRecordResponse,
+    SemanticQueryMetaResponse,
     SemanticQueryRequest,
     SemanticQueryResponse,
-    SemanticQueryMetaResponse,
-    SemanticModelRecordResponse
+    UnifiedSemanticQueryMetaRequest,
+    UnifiedSemanticQueryMetaResponse,
+    UnifiedSemanticQueryRequest,
+    UnifiedSemanticQueryResponse,
 )
-from langbridge.packages.semantic.langbridge_semantic.loader import SemanticModelError, load_semantic_model
+from langbridge.packages.common.langbridge_common.errors.application_errors import (
+    BusinessValidationError,
+)
+from langbridge.packages.connectors.langbridge_connectors.api.config import (
+    ConnectorRuntimeType,
+)
+from langbridge.packages.connectors.langbridge_connectors.api.connector import (
+    QueryResult,
+    SqlConnector,
+)
+from langbridge.packages.semantic.langbridge_semantic.loader import (
+    SemanticModelError,
+    load_semantic_model,
+)
 from langbridge.packages.semantic.langbridge_semantic.model import SemanticModel
+from langbridge.packages.semantic.langbridge_semantic.query import SemanticQuery, SemanticQueryEngine
+from langbridge.packages.semantic.langbridge_semantic.unified_query import (
+    TenantAwareQueryContext,
+    UnifiedSourceModel,
+    apply_tenant_aware_context,
+    build_unified_semantic_model,
+)
+
 
 class SemanticQueryService:
-    def __init__(self, 
-                 semantic_model_service: SemanticModelService,
-                 connector_service: ConnectorService
+    def __init__(
+        self,
+        semantic_model_service: SemanticModelService,
+        connector_service: ConnectorService,
     ):
         self._semantic_model_service = semantic_model_service
         self._connector_service = connector_service
@@ -32,38 +57,212 @@ class SemanticQueryService:
         self._logger = logging.getLogger(__name__)
 
     async def query_request(
-            self,
-            semantic_query_request: SemanticQueryRequest
+        self,
+        semantic_query_request: SemanticQueryRequest,
     ) -> SemanticQueryResponse:
-        semantic_model_record: SemanticModelRecordResponse = await self._semantic_model_service.get_model(
+        semantic_model_record = await self._semantic_model_service.get_model(
             model_id=semantic_query_request.semantic_model_id,
-            organization_id=semantic_query_request.organization_id
+            organization_id=semantic_query_request.organization_id,
+        )
+        semantic_model = self._load_model_payload(semantic_model_record.content_yaml)
+        semantic_query = self._load_query_payload(semantic_query_request.query)
+
+        connector_response = await self._connector_service.get_connector(
+            semantic_model_record.connector_id
+        )
+        sql_connector = await self._create_sql_connector(connector_response)
+        plan, result = await self._compile_and_execute(
+            semantic_model=semantic_model,
+            semantic_query=semantic_query,
+            sql_connector=sql_connector,
         )
 
-        if semantic_model_record is None:
-            raise BusinessValidationError("Semantic model not found")
-        
+        return SemanticQueryResponse(
+            id=uuid.uuid4(),
+            organization_id=semantic_query_request.organization_id,
+            project_id=semantic_query_request.project_id,
+            semantic_model_id=semantic_query_request.semantic_model_id,
+            data=self._engine.format_rows(result.columns, result.rows),
+            annotations=plan.annotations,
+            metadata=plan.metadata,
+        )
+
+    async def query_unified_request(
+        self,
+        request: UnifiedSemanticQueryRequest,
+    ) -> UnifiedSemanticQueryResponse:
+        unified_model, table_connector_map = await self._build_unified_model_and_map(
+            organization_id=request.organization_id,
+            semantic_model_ids=request.semantic_model_ids,
+            joins=request.joins,
+            metrics=request.metrics,
+        )
+
+        semantic_query = self._load_query_payload(request.query)
+        connector_response = await self._connector_service.get_connector(request.connector_id)
+        sql_connector = await self._create_sql_connector(connector_response)
+
+        execution_model = unified_model
+        if sql_connector.DIALECT.value.lower() == "trino":
+            execution_model = apply_tenant_aware_context(
+                unified_model,
+                context=TenantAwareQueryContext(
+                    organization_id=request.organization_id,
+                    execution_connector_id=request.connector_id,
+                ),
+                table_connector_map=table_connector_map,
+            )
+
+        plan, result = await self._compile_and_execute(
+            semantic_model=execution_model,
+            semantic_query=semantic_query,
+            sql_connector=sql_connector,
+        )
+
+        return UnifiedSemanticQueryResponse(
+            id=uuid.uuid4(),
+            organization_id=request.organization_id,
+            project_id=request.project_id,
+            connector_id=request.connector_id,
+            semantic_model_ids=request.semantic_model_ids,
+            data=self._engine.format_rows(result.columns, result.rows),
+            annotations=plan.annotations,
+            metadata=plan.metadata,
+        )
+
+    async def get_meta(
+        self,
+        semantic_model_id: UUID,
+        organization_id: UUID,
+    ) -> SemanticQueryMetaResponse:
+        semantic_model_record = await self._semantic_model_service.get_model(
+            model_id=semantic_model_id,
+            organization_id=organization_id,
+        )
+        semantic_model = self._load_model_payload(semantic_model_record.content_yaml)
+
+        payload = semantic_model.model_dump(by_alias=True, exclude_none=True)
+        self._attach_full_column_paths(payload)
+        return SemanticQueryMetaResponse(
+            id=semantic_model_id,
+            name=semantic_model_record.name,
+            description=semantic_model_record.description,
+            connector_id=semantic_model_record.connector_id,
+            organization_id=semantic_model_record.organization_id,
+            project_id=semantic_model_record.project_id,
+            semantic_model=payload,
+        )
+
+    async def get_unified_meta(
+        self,
+        request: UnifiedSemanticQueryMetaRequest,
+    ) -> UnifiedSemanticQueryMetaResponse:
+        unified_model, _ = await self._build_unified_model_and_map(
+            organization_id=request.organization_id,
+            semantic_model_ids=request.semantic_model_ids,
+            joins=request.joins,
+            metrics=request.metrics,
+        )
+
+        payload = unified_model.model_dump(by_alias=True, exclude_none=True)
+        self._attach_full_column_paths(payload)
+        return UnifiedSemanticQueryMetaResponse(
+            connector_id=request.connector_id,
+            organization_id=request.organization_id,
+            project_id=request.project_id,
+            semantic_model_ids=request.semantic_model_ids,
+            semantic_model=payload,
+        )
+
+    async def _build_unified_model_and_map(
+        self,
+        *,
+        organization_id: UUID,
+        semantic_model_ids: Iterable[UUID],
+        joins: Iterable[Any] | None,
+        metrics: Mapping[str, Any] | None,
+    ) -> tuple[SemanticModel, dict[str, UUID]]:
+        normalized_model_ids = self._normalize_model_ids(semantic_model_ids)
+        source_models = await self._load_source_models(
+            organization_id=organization_id,
+            semantic_model_ids=normalized_model_ids,
+        )
+
+        joins_payload = [
+            join.model_dump(by_alias=True, exclude_none=True)
+            if hasattr(join, "model_dump")
+            else dict(join)
+            for join in joins or []
+        ]
+        metrics_payload: dict[str, Any] = {}
+        for metric_name, metric_value in (metrics or {}).items():
+            if hasattr(metric_value, "model_dump"):
+                metrics_payload[metric_name] = metric_value.model_dump(
+                    by_alias=True, exclude_none=True
+                )
+            elif isinstance(metric_value, Mapping):
+                metrics_payload[metric_name] = dict(metric_value)
+            else:
+                metrics_payload[metric_name] = metric_value
+
         try:
-            semantic_model: SemanticModel = load_semantic_model(semantic_model_record.content_yaml)
-        except SemanticModelError as exc:
-            raise BusinessValidationError(f"Semantic model failed validation: {exc}") from exc
-        semantic_query: SemanticQuery = SemanticQuery.model_validate(semantic_query_request.query)
+            return build_unified_semantic_model(
+                source_models=source_models,
+                joins=joins_payload,
+                metrics=metrics_payload or None,
+            )
+        except (SemanticModelError, ValueError) as exc:
+            raise BusinessValidationError(
+                f"Unified semantic model failed validation: {exc}"
+            ) from exc
 
-        self._logger.info(f"Semantic model: {semantic_model}")
-        self._logger.info(f"Semantic query: {semantic_query}")
+    async def _load_source_models(
+        self,
+        *,
+        organization_id: UUID,
+        semantic_model_ids: list[UUID],
+    ) -> list[UnifiedSourceModel]:
+        source_models: list[UnifiedSourceModel] = []
+        for semantic_model_id in semantic_model_ids:
+            model_record: SemanticModelRecordResponse = await self._semantic_model_service.get_model(
+                model_id=semantic_model_id,
+                organization_id=organization_id,
+            )
+            source_models.append(
+                UnifiedSourceModel(
+                    model=self._load_model_payload(model_record.content_yaml),
+                    connector_id=model_record.connector_id,
+                )
+            )
+        return source_models
 
-        connector_response: ConnectorResponse = await self._connector_service.get_connector(semantic_model_record.connector_id)
+    async def _create_sql_connector(
+        self,
+        connector_response: ConnectorResponse,
+    ) -> SqlConnector:
+        if connector_response.connector_type is None:
+            raise BusinessValidationError(
+                "Connector type is required for semantic query execution."
+            )
 
-        connector_type: ConnectorRuntimeType = ConnectorRuntimeType(connector_response.connector_type.upper()) # type: ignore
-
-        sql_connector: SqlConnector = await self._connector_service.async_create_sql_connector(
-            connector_type, 
-            connector_response.config, # type: ignore (not null)
+        connector_type = ConnectorRuntimeType(connector_response.connector_type.upper())
+        sql_connector = await self._connector_service.async_create_sql_connector(
+            connector_type,
+            connector_response.config or {},
         )
-
         if not isinstance(sql_connector, SqlConnector):
-            raise BusinessValidationError("Only SQL connectors are supported for semantic queries.")
+            raise BusinessValidationError(
+                "Only SQL connectors are supported for semantic queries."
+            )
+        return sql_connector
 
+    async def _compile_and_execute(
+        self,
+        *,
+        semantic_model: SemanticModel,
+        semantic_query: SemanticQuery,
+        sql_connector: SqlConnector,
+    ) -> tuple[Any, QueryResult]:
         rewrite_expression = None
         if sql_connector.EXPRESSION_REWRITE:
             rewrite_expression = getattr(sql_connector, "rewrite_expression", None)
@@ -80,48 +279,46 @@ class SemanticQueryService:
                 rewrite_expression=rewrite_expression,
             )
         except Exception as exc:
-            raise BusinessValidationError(f"Semantic query translation failed: {exc}") from exc
+            raise BusinessValidationError(
+                f"Semantic query translation failed: {exc}"
+            ) from exc
 
-        self._logger.info(f"Translated SQL {plan.sql}")
+        self._logger.info("Translated SQL %s", plan.sql)
+        result = await sql_connector.execute(plan.sql)
+        return plan, result
 
-        result: QueryResult = await sql_connector.execute(plan.sql)
-
-        return SemanticQueryResponse(
-            id=uuid.uuid4(),
-            organization_id=semantic_query_request.organization_id,
-            project_id=semantic_query_request.project_id,
-            semantic_model_id=semantic_query_request.semantic_model_id,
-            data=self._engine.format_rows(result.columns, result.rows),
-            annotations=plan.annotations,
-            metadata=plan.metadata,
-        )
-
-    async def get_meta(
-            self,
-            semantic_model_id: UUID,
-            organization_id: UUID,
-    ) -> SemanticQueryMetaResponse:
-        semantic_model_record: SemanticModelRecordResponse = await self._semantic_model_service.get_model(
-            model_id=semantic_model_id,
-            organization_id=organization_id,
-        )
-
+    @staticmethod
+    def _load_model_payload(content_yaml: str) -> SemanticModel:
         try:
-            semantic_model = load_semantic_model(semantic_model_record.content_yaml)
+            return load_semantic_model(content_yaml)
         except SemanticModelError as exc:
-            raise BusinessValidationError(f"Semantic model failed validation: {exc}") from exc
+            raise BusinessValidationError(
+                f"Semantic model failed validation: {exc}"
+            ) from exc
 
-        payload = semantic_model.model_dump(by_alias=True, exclude_none=True)
-        self._attach_full_column_paths(payload)
-        return SemanticQueryMetaResponse(
-            id=semantic_model_id,
-            name=semantic_model_record.name,
-            description=semantic_model_record.description,
-            connector_id=semantic_model_record.connector_id,
-            organization_id=semantic_model_record.organization_id,
-            project_id=semantic_model_record.project_id,
-            semantic_model=payload,
-        )
+    @staticmethod
+    def _load_query_payload(query_payload: Mapping[str, Any] | dict[str, Any]) -> SemanticQuery:
+        try:
+            return SemanticQuery.model_validate(query_payload)
+        except Exception as exc:
+            raise BusinessValidationError(
+                f"Semantic query payload failed validation: {exc}"
+            ) from exc
+
+    @staticmethod
+    def _normalize_model_ids(semantic_model_ids: Iterable[UUID]) -> list[UUID]:
+        ordered_unique: list[UUID] = []
+        seen: set[UUID] = set()
+        for model_id in semantic_model_ids:
+            if model_id in seen:
+                continue
+            seen.add(model_id)
+            ordered_unique.append(model_id)
+        if not ordered_unique:
+            raise BusinessValidationError(
+                "semantic_model_ids must include at least one model id."
+            )
+        return ordered_unique
 
     @staticmethod
     def _attach_full_column_paths(payload: dict[str, Any]) -> None:
@@ -131,11 +328,15 @@ class SemanticQueryService:
         for table in tables.values():
             if not isinstance(table, dict):
                 continue
+            catalog = str(table.get("catalog") or "").strip()
             schema = str(table.get("schema") or "").strip()
             table_name = str(table.get("name") or "").strip()
             if not table_name:
                 continue
-            base = f"{schema}.{table_name}" if schema else table_name
+            base_parts = [part for part in [catalog, schema, table_name] if part]
+            if not base_parts:
+                continue
+            base = ".".join(base_parts)
             for collection_key in ("dimensions", "measures"):
                 items = table.get(collection_key)
                 if not isinstance(items, list):

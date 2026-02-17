@@ -14,6 +14,8 @@ import { fetchConnectors } from '@/orchestration/connectors';
 import type { ConnectorResponse } from '@/orchestration/connectors/types';
 import { createSemanticModel, listSemanticModels } from '@/orchestration/semanticModels';
 import type { SemanticModelRecord } from '@/orchestration/semanticModels/types';
+import { runUnifiedSemanticQuery } from '@/orchestration/semanticQuery';
+import type { UnifiedSemanticQueryResponse } from '@/orchestration/semanticQuery/types';
 import { ApiError } from '@/orchestration/http';
 import { cn, formatRelativeDate } from '@/lib/utils';
 
@@ -74,6 +76,10 @@ export default function UnifiedSemanticModelPage({ params }: UnifiedSemanticMode
   const [metrics, setMetrics] = useState<UnifiedMetric[]>([]);
   const [formState, setFormState] = useState<FormState>({ name: '', description: '', version: DEFAULT_VERSION });
   const [submitting, setSubmitting] = useState(false);
+  const [previewQueryJson, setPreviewQueryJson] = useState<string>('{\n  "measures": [],\n  "dimensions": [],\n  "limit": 25\n}');
+  const [previewResult, setPreviewResult] = useState<UnifiedSemanticQueryResponse | null>(null);
+  const [previewSqlError, setPreviewSqlError] = useState<string | null>(null);
+  const [previewLoading, setPreviewLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const selectedConnector = useMemo(
@@ -85,6 +91,26 @@ export default function UnifiedSemanticModelPage({ params }: UnifiedSemanticMode
     () => semanticModels.filter((model) => selectedModelIds.includes(model.id)),
     [semanticModels, selectedModelIds],
   );
+
+  const availableTableKeys = useMemo(() => {
+    const tableKeys = new Set<string>();
+    selectedModels.forEach((model) => {
+      const parsed = safeParseYaml(model.contentYaml ?? '');
+      if (!parsed || typeof parsed !== 'object') {
+        return;
+      }
+      const tables = (parsed as Record<string, unknown>).tables;
+      if (!tables || typeof tables !== 'object' || Array.isArray(tables)) {
+        return;
+      }
+      Object.keys(tables as Record<string, unknown>).forEach((tableKey) => {
+        if (tableKey) {
+          tableKeys.add(tableKey);
+        }
+      });
+    });
+    return Array.from(tableKeys).sort();
+  }, [selectedModels]);
 
   const organizationName = useMemo(() => {
     if (!organizationId) {
@@ -172,6 +198,8 @@ export default function UnifiedSemanticModelPage({ params }: UnifiedSemanticMode
     setSelectedModelIds([]);
     setRelationships([]);
     setMetrics([]);
+    setPreviewResult(null);
+    setPreviewSqlError(null);
   }, [selectedConnectorId]);
 
   const toggleModelSelection = (modelId: string) => {
@@ -179,6 +207,11 @@ export default function UnifiedSemanticModelPage({ params }: UnifiedSemanticMode
       current.includes(modelId) ? current.filter((id) => id !== modelId) : [...current, modelId],
     );
   };
+
+  useEffect(() => {
+    setPreviewResult(null);
+    setPreviewSqlError(null);
+  }, [selectedModelIds, relationships, metrics]);
 
   const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -220,6 +253,53 @@ export default function UnifiedSemanticModelPage({ params }: UnifiedSemanticMode
       setError(resolveError(err));
     } finally {
       setSubmitting(false);
+    }
+  };
+
+  const handlePreviewQuery = async () => {
+    if (!organizationId) {
+      setPreviewSqlError('Select an organization before previewing queries.');
+      return;
+    }
+    if (!selectedConnectorId) {
+      setPreviewSqlError('Select a connector to run unified queries through.');
+      return;
+    }
+    if (selectedModelIds.length === 0) {
+      setPreviewSqlError('Choose at least one semantic model to preview unified queries.');
+      return;
+    }
+
+    let parsedQuery: Record<string, unknown>;
+    try {
+      const maybeQuery = JSON.parse(previewQueryJson);
+      if (!maybeQuery || typeof maybeQuery !== 'object' || Array.isArray(maybeQuery)) {
+        throw new Error('Query payload must be a JSON object.');
+      }
+      parsedQuery = maybeQuery as Record<string, unknown>;
+    } catch (err) {
+      setPreviewSqlError(err instanceof Error ? err.message : 'Invalid JSON query payload.');
+      return;
+    }
+
+    setPreviewLoading(true);
+    setPreviewSqlError(null);
+    try {
+      const response = await runUnifiedSemanticQuery(organizationId, {
+        organizationId,
+        projectId: selectedProjectId ?? undefined,
+        connectorId: selectedConnectorId,
+        semanticModelIds: selectedModelIds,
+        joins: buildUnifiedJoinPayload(relationships),
+        metrics: buildUnifiedMetricPayload(metrics),
+        query: parsedQuery,
+      });
+      setPreviewResult(response);
+    } catch (err) {
+      setPreviewSqlError(resolveError(err));
+      setPreviewResult(null);
+    } finally {
+      setPreviewLoading(false);
     }
   };
 
@@ -495,6 +575,7 @@ export default function UnifiedSemanticModelPage({ params }: UnifiedSemanticMode
                                 <Label htmlFor={`rel-from-${relationship.id}`}>From</Label>
                                 <Input
                                   id={`rel-from-${relationship.id}`}
+                                  list="unified-table-keys"
                                   value={relationship.from}
                                   onChange={(event) =>
                                     setRelationships((current) =>
@@ -503,13 +584,14 @@ export default function UnifiedSemanticModelPage({ params }: UnifiedSemanticMode
                                       ),
                                     )
                                   }
-                                  placeholder="orders.orders"
+                                  placeholder="orders_table_key"
                                 />
                               </div>
                               <div className="space-y-1">
                                 <Label htmlFor={`rel-to-${relationship.id}`}>To</Label>
                                 <Input
                                   id={`rel-to-${relationship.id}`}
+                                  list="unified-table-keys"
                                   value={relationship.to}
                                   onChange={(event) =>
                                     setRelationships((current) =>
@@ -518,7 +600,7 @@ export default function UnifiedSemanticModelPage({ params }: UnifiedSemanticMode
                                       ),
                                     )
                                   }
-                                  placeholder="customers.customers"
+                                  placeholder="customers_table_key"
                                 />
                               </div>
                             </div>
@@ -543,6 +625,11 @@ export default function UnifiedSemanticModelPage({ params }: UnifiedSemanticMode
                       </div>
                     )}
                   </div>
+                  <datalist id="unified-table-keys">
+                    {availableTableKeys.map((tableKey) => (
+                      <option key={tableKey} value={tableKey} />
+                    ))}
+                  </datalist>
 
                   <div className="space-y-3 rounded-2xl border border-[color:var(--panel-border)] bg-[color:var(--panel-alt)] p-4">
                     <div className="flex items-center justify-between">
@@ -645,6 +732,52 @@ export default function UnifiedSemanticModelPage({ params }: UnifiedSemanticMode
                       Save unified model
                     </Button>
                   </div>
+
+                  <div className="space-y-3 rounded-2xl border border-[color:var(--panel-border)] bg-[color:var(--panel-alt)] p-4">
+                    <div className="flex items-center justify-between">
+                      <h3 className="text-base font-semibold text-[color:var(--text-primary)]">
+                        7. Unified query preview
+                      </h3>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => void handlePreviewQuery()}
+                        isLoading={previewLoading}
+                        disabled={previewLoading}
+                      >
+                        Run preview query
+                      </Button>
+                    </div>
+                    <p className="text-xs text-[color:var(--text-muted)]">
+                      Executes the new unified semantic query endpoint with your selected joins and metrics.
+                    </p>
+                    <Textarea
+                      rows={8}
+                      className="font-mono text-xs"
+                      value={previewQueryJson}
+                      onChange={(event) => setPreviewQueryJson(event.target.value)}
+                      placeholder='{"measures":["orders.total"],"dimensions":["customers.country"],"limit":25}'
+                    />
+                    {previewSqlError ? (
+                      <div className="rounded-xl border border-rose-300 bg-rose-100/40 px-3 py-2 text-xs text-rose-700">
+                        {previewSqlError}
+                      </div>
+                    ) : null}
+                    {previewResult ? (
+                      <div className="space-y-2">
+                        <p className="text-xs text-[color:var(--text-muted)]">
+                          Returned {previewResult.data.length} rows using connector {previewResult.connectorId}.
+                        </p>
+                        <Textarea
+                          readOnly
+                          rows={8}
+                          className="font-mono text-xs"
+                          value={JSON.stringify(previewResult.data.slice(0, 25), null, 2)}
+                        />
+                      </div>
+                    ) : null}
+                  </div>
                 </>
               )}
             </form>
@@ -730,34 +863,19 @@ function buildUnifiedPayload({
   }
 
   const parsedModels = selectedModels.map((model, index) => {
-    const parsed = yaml.load(model.contentYaml ?? '') as Record<string, any> | undefined;
+    const parsed = safeParseYaml(model.contentYaml ?? '');
     if (!parsed || typeof parsed !== 'object') {
       throw new Error(`Semantic model "${model.name}" is missing YAML content.`);
     }
-    const fallbackName = (parsed as Record<string, any>).name ?? model.name ?? `model_${index + 1}`;
+    const parsedName = (parsed as Record<string, unknown>).name;
+    const fallbackName =
+      (typeof parsedName === 'string' && parsedName.trim().length > 0 ? parsedName : null) ??
+      model.name ??
+      `model_${index + 1}`;
     return { name: fallbackName, ...parsed };
   });
-
-  const rels = relationships
-    .filter((relationship) => relationship.from && relationship.to && relationship.on)
-    .map((relationship) => ({
-      name: relationship.name,
-      from: relationship.from,
-      to: relationship.to,
-      type: relationship.type,
-      on: relationship.on,
-    }));
-
-  const metricMap = metrics.reduce<Record<string, { expression: string; description?: string }>>((acc, metric) => {
-    if (!metric.name || !metric.expression) {
-      return acc;
-    }
-    acc[metric.name] = {
-      expression: metric.expression,
-      description: metric.description || undefined,
-    };
-    return acc;
-  }, {});
+  const rels = buildUnifiedJoinPayload(relationships);
+  const metricMap = buildUnifiedMetricPayload(metrics);
 
   const name = formState.name || parsedModels[0].name || 'unified_model';
 
@@ -767,10 +885,52 @@ function buildUnifiedPayload({
     connector: connectorName,
     dialect: 'trino',
     description: formState.description || undefined,
+    source_models: selectedModels.map((model) => ({
+      id: model.id,
+      connector_id: model.connectorId,
+      name: model.name,
+    })),
     semantic_models: parsedModels,
     relationships: rels.length > 0 ? rels : undefined,
     metrics: Object.keys(metricMap).length > 0 ? metricMap : undefined,
   };
+}
+
+function safeParseYaml(content: string): Record<string, unknown> | null {
+  try {
+    const parsed = yaml.load(content);
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      return null;
+    }
+    return parsed as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+}
+
+function buildUnifiedJoinPayload(relationships: BuilderRelationship[]) {
+  return relationships
+    .filter((relationship) => relationship.from && relationship.to && relationship.on)
+    .map((relationship) => ({
+      name: relationship.name || undefined,
+      from: relationship.from,
+      to: relationship.to,
+      type: relationship.type,
+      on: relationship.on,
+    }));
+}
+
+function buildUnifiedMetricPayload(metrics: UnifiedMetric[]) {
+  return metrics.reduce<Record<string, { expression: string; description?: string }>>((acc, metric) => {
+    if (!metric.name || !metric.expression) {
+      return acc;
+    }
+    acc[metric.name] = {
+      expression: metric.expression,
+      description: metric.description || undefined,
+    };
+    return acc;
+  }, {});
 }
 
 

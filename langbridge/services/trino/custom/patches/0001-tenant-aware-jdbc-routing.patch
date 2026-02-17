@@ -1,0 +1,299 @@
+diff --git a/plugin/trino-base-jdbc/src/main/java/io/trino/plugin/jdbc/TenantAwareConnectionFactory.java b/plugin/trino-base-jdbc/src/main/java/io/trino/plugin/jdbc/TenantAwareConnectionFactory.java
+new file mode 100644
+index 0000000..7a63293
+--- /dev/null
++++ b/plugin/trino-base-jdbc/src/main/java/io/trino/plugin/jdbc/TenantAwareConnectionFactory.java
+@@ -0,0 +1,185 @@
++package io.trino.plugin.jdbc;
++
++import io.opentelemetry.api.OpenTelemetry;
++import io.trino.plugin.jdbc.credential.CredentialPropertiesProvider;
++import io.trino.plugin.jdbc.credential.CredentialProvider;
++import io.trino.plugin.jdbc.credential.DefaultCredentialPropertiesProvider;
++import io.trino.spi.connector.ConnectorSession;
++import io.trino.spi.security.ConnectorIdentity;
++
++import java.sql.Connection;
++import java.sql.Driver;
++import java.sql.SQLException;
++import java.util.Map;
++import java.util.Objects;
++import java.util.Optional;
++import java.util.Properties;
++import java.util.regex.Pattern;
++
++import static com.google.common.base.Preconditions.checkState;
++
++/**
++ * ConnectionFactory that materializes tenant-aware JDBC URL templates.
++ *
++ * <p>The URL template must contain "{tenant}" and may contain "{source}".
++ * Values are read from Trino extra credentials.
++ */
++public final class TenantAwareConnectionFactory
++        implements ConnectionFactory
++{
++    private static final String TENANT_PLACEHOLDER = "{tenant}";
++    private static final String SOURCE_PLACEHOLDER = "{source}";
++    private static final Pattern SAFE_TOKEN = Pattern.compile("^[A-Za-z0-9_.:-]+$");
++
++    private final Driver driver;
++    private final String connectionUrlTemplate;
++    private final Properties connectionProperties;
++    private final CredentialPropertiesProvider<String, String> credentialPropertiesProvider;
++    private final OpenTelemetry openTelemetry;
++    private final String tenantCredentialKey;
++    private final String sourceCredentialKey;
++
++    public TenantAwareConnectionFactory(
++            Driver driver,
++            String connectionUrlTemplate,
++            CredentialProvider credentialProvider,
++            Properties baseConnectionProperties,
++            OpenTelemetry openTelemetry)
++    {
++        this(
++                driver,
++                connectionUrlTemplate,
++                new DefaultCredentialPropertiesProvider(Objects.requireNonNull(credentialProvider, "credentialProvider is null")),
++                baseConnectionProperties,
++                openTelemetry,
++                "tenant",
++                "source");
++    }
++
++    public TenantAwareConnectionFactory(
++            Driver driver,
++            String connectionUrlTemplate,
++            CredentialPropertiesProvider<String, String> credentialPropertiesProvider,
++            Properties baseConnectionProperties,
++            OpenTelemetry openTelemetry,
++            String tenantCredentialKey,
++            String sourceCredentialKey)
++    {
++        this.driver = Objects.requireNonNull(driver, "driver is null");
++        this.connectionUrlTemplate = Objects.requireNonNull(connectionUrlTemplate, "connectionUrlTemplate is null");
++        this.connectionProperties = new Properties();
++        this.connectionProperties.putAll(Objects.requireNonNull(baseConnectionProperties, "baseConnectionProperties is null"));
++        this.credentialPropertiesProvider = Objects.requireNonNull(credentialPropertiesProvider, "credentialPropertiesProvider is null");
++        this.openTelemetry = Objects.requireNonNull(openTelemetry, "openTelemetry is null");
++        this.tenantCredentialKey = Objects.requireNonNull(tenantCredentialKey, "tenantCredentialKey is null");
++        this.sourceCredentialKey = Objects.requireNonNull(sourceCredentialKey, "sourceCredentialKey is null");
++    }
++
++    @Override
++    public Connection openConnection(ConnectorSession session)
++            throws SQLException
++    {
++        Map<String, String> extraCredentials = readExtraCredentials(session);
++        String tenantId = getRequiredCredential(extraCredentials, tenantCredentialKey);
++        String sourceId = getOptionalCredential(extraCredentials, sourceCredentialKey);
++        String resolvedUrl = materializeConnectionUrl(connectionUrlTemplate, tenantId, sourceId);
++
++        Properties properties = getConnectionProperties(session.getIdentity());
++        materializePropertyTemplates(properties, tenantId, sourceId);
++        TracingDataSource dataSource = new TracingDataSource(openTelemetry, driver, resolvedUrl);
++        Connection connection = dataSource.getConnection(properties);
++        checkState(connection != null, "Driver returned null connection for URL '%s' and driver %s", resolvedUrl, driver);
++        return connection;
++    }
++
++    private Properties getConnectionProperties(ConnectorIdentity identity)
++    {
++        Properties properties = new Properties();
++        properties.putAll(connectionProperties);
++        properties.putAll(credentialPropertiesProvider.getCredentialProperties(identity));
++        return properties;
++    }
++
++    static String materializeConnectionUrl(String template, String tenantId, String sourceId)
++            throws SQLException
++    {
++        String resolved = template.replace(TENANT_PLACEHOLDER, sanitize("tenant", tenantId));
++
++        if (resolved.contains(SOURCE_PLACEHOLDER)) {
++            if (sourceId == null || sourceId.isBlank()) {
++                throw new SQLException("Connection URL requires source credential but it is missing");
++            }
++            resolved = resolved.replace(SOURCE_PLACEHOLDER, sanitize("source", sourceId));
++        }
++
++        return resolved;
++    }
++
++    static void materializePropertyTemplates(Properties properties, String tenantId, String sourceId)
++            throws SQLException
++    {
++        String sanitizedTenant = sanitize("tenant", tenantId);
++        String sanitizedSource = null;
++        if (sourceId != null && !sourceId.isBlank()) {
++            sanitizedSource = sanitize("source", sourceId);
++        }
++
++        for (String key : properties.stringPropertyNames()) {
++            String value = properties.getProperty(key);
++            if (value == null) {
++                continue;
++            }
++
++            String resolved = value.replace(TENANT_PLACEHOLDER, sanitizedTenant);
++            if (resolved.contains(SOURCE_PLACEHOLDER)) {
++                if (sanitizedSource == null) {
++                    throw new SQLException("Connection property '" + key + "' requires source credential but it is missing");
++                }
++                resolved = resolved.replace(SOURCE_PLACEHOLDER, sanitizedSource);
++            }
++            properties.setProperty(key, resolved);
++        }
++    }
++
++    static Map<String, String> readExtraCredentials(ConnectorSession session)
++            throws SQLException
++    {
++        if (session == null) {
++            throw new SQLException("Connector session is required");
++        }
++        ConnectorIdentity identity = session.getIdentity();
++        if (identity == null) {
++            throw new SQLException("Connector identity is required");
++        }
++        return identity.getExtraCredentials();
++    }
++
++    static String getRequiredCredential(Map<String, String> credentials, String key)
++            throws SQLException
++    {
++        Optional<String> value = Optional.ofNullable(credentials.get(key))
++                .map(String::trim)
++                .filter(v -> !v.isBlank());
++        if (value.isEmpty()) {
++            throw new SQLException("Missing required Trino extra credential: " + key);
++        }
++        return value.get();
++    }
++
++    static String getOptionalCredential(Map<String, String> credentials, String key)
++    {
++        return Optional.ofNullable(credentials.get(key))
++                .map(String::trim)
++                .filter(v -> !v.isBlank())
++                .orElse(null);
++    }
++
++    static String sanitize(String label, String value)
++            throws SQLException
++    {
++        if (!SAFE_TOKEN.matcher(value).matches()) {
++            throw new SQLException("Invalid " + label + " value for JDBC routing token");
++        }
++        return value;
++    }
++}
+diff --git a/plugin/trino-mysql/src/main/java/io/trino/plugin/mysql/MySqlClientModule.java b/plugin/trino-mysql/src/main/java/io/trino/plugin/mysql/MySqlClientModule.java
+index 6f80a10..00a18ea 100644
+--- a/plugin/trino-mysql/src/main/java/io/trino/plugin/mysql/MySqlClientModule.java
++++ b/plugin/trino-mysql/src/main/java/io/trino/plugin/mysql/MySqlClientModule.java
+@@ -23,12 +23,12 @@ import io.opentelemetry.api.OpenTelemetry;
+ import io.trino.plugin.jdbc.BaseJdbcConfig;
+ import io.trino.plugin.jdbc.ConnectionFactory;
+ import io.trino.plugin.jdbc.DecimalModule;
+-import io.trino.plugin.jdbc.DriverConnectionFactory;
+ import io.trino.plugin.jdbc.ForBaseJdbc;
+ import io.trino.plugin.jdbc.JdbcClient;
+ import io.trino.plugin.jdbc.JdbcJoinPushdownSupportModule;
+ import io.trino.plugin.jdbc.JdbcMetadataConfig;
+ import io.trino.plugin.jdbc.JdbcStatisticsConfig;
++import io.trino.plugin.jdbc.TenantAwareConnectionFactory;
+ import io.trino.plugin.jdbc.TimestampTimeZoneDomain;
+ import io.trino.plugin.jdbc.credential.CredentialProvider;
+ import io.trino.plugin.jdbc.ptf.Query;
+@@ -64,10 +64,12 @@ public class MySqlClientModule
+     public static ConnectionFactory createConnectionFactory(BaseJdbcConfig config, CredentialProvider credentialProvider, MySqlConfig mySqlConfig, OpenTelemetry openTelemetry)
+             throws SQLException
+     {
+-        return DriverConnectionFactory.builder(new Driver(), config.getConnectionUrl(), credentialProvider)
+-                .setConnectionProperties(getConnectionProperties(mySqlConfig))
+-                .setOpenTelemetry(openTelemetry)
+-                .build();
++        return new TenantAwareConnectionFactory(
++                new Driver(),
++                config.getConnectionUrl(),
++                credentialProvider,
++                getConnectionProperties(mySqlConfig),
++                openTelemetry);
+     }
+ 
+     public static Properties getConnectionProperties(MySqlConfig mySqlConfig)
+diff --git a/plugin/trino-postgresql/src/main/java/io/trino/plugin/postgresql/PostgreSqlConnectionFactoryModule.java b/plugin/trino-postgresql/src/main/java/io/trino/plugin/postgresql/PostgreSqlConnectionFactoryModule.java
+index 204b31f..33f79d1 100644
+--- a/plugin/trino-postgresql/src/main/java/io/trino/plugin/postgresql/PostgreSqlConnectionFactoryModule.java
++++ b/plugin/trino-postgresql/src/main/java/io/trino/plugin/postgresql/PostgreSqlConnectionFactoryModule.java
+@@ -20,8 +20,8 @@ import io.airlift.configuration.AbstractConfigurationAwareModule;
+ import io.opentelemetry.api.OpenTelemetry;
+ import io.trino.plugin.jdbc.BaseJdbcConfig;
+ import io.trino.plugin.jdbc.ConnectionFactory;
+-import io.trino.plugin.jdbc.DriverConnectionFactory;
+ import io.trino.plugin.jdbc.ForBaseJdbc;
++import io.trino.plugin.jdbc.TenantAwareConnectionFactory;
+ import io.trino.plugin.jdbc.credential.CredentialProvider;
+ import org.postgresql.Driver;
+ 
+@@ -42,9 +42,11 @@ public class PostgreSqlConnectionFactoryModule
+     {
+         Properties connectionProperties = new Properties();
+         connectionProperties.put(REWRITE_BATCHED_INSERTS.getName(), "true");
+-        return DriverConnectionFactory.builder(new Driver(), config.getConnectionUrl(), credentialProvider)
+-                .setConnectionProperties(connectionProperties)
+-                .setOpenTelemetry(openTelemetry)
+-                .build();
++        return new TenantAwareConnectionFactory(
++                new Driver(),
++                config.getConnectionUrl(),
++                credentialProvider,
++                connectionProperties,
++                openTelemetry);
+     }
+ }
+diff --git a/plugin/trino-sqlserver/src/main/java/io/trino/plugin/sqlserver/SqlServerClientModule.java b/plugin/trino-sqlserver/src/main/java/io/trino/plugin/sqlserver/SqlServerClientModule.java
+index 9c1d97d..4ce2e50 100644
+--- a/plugin/trino-sqlserver/src/main/java/io/trino/plugin/sqlserver/SqlServerClientModule.java
++++ b/plugin/trino-sqlserver/src/main/java/io/trino/plugin/sqlserver/SqlServerClientModule.java
+@@ -23,17 +23,19 @@ import io.airlift.configuration.AbstractConfigurationAwareModule;
+ import io.opentelemetry.api.OpenTelemetry;
+ import io.trino.plugin.jdbc.BaseJdbcConfig;
+ import io.trino.plugin.jdbc.ConnectionFactory;
+-import io.trino.plugin.jdbc.DriverConnectionFactory;
+ import io.trino.plugin.jdbc.ForBaseJdbc;
+ import io.trino.plugin.jdbc.JdbcClient;
+ import io.trino.plugin.jdbc.JdbcJoinPushdownSupportModule;
+ import io.trino.plugin.jdbc.JdbcStatisticsConfig;
+ import io.trino.plugin.jdbc.MaxDomainCompactionThreshold;
++import io.trino.plugin.jdbc.TenantAwareConnectionFactory;
+ import io.trino.plugin.jdbc.credential.CredentialProvider;
+ import io.trino.plugin.jdbc.ptf.Procedure;
+ import io.trino.plugin.jdbc.ptf.Query;
+ import io.trino.spi.function.table.ConnectorTableFunction;
+ 
++import java.util.Properties;
++
+ import static com.google.inject.multibindings.Multibinder.newSetBinder;
+ import static com.google.inject.multibindings.OptionalBinder.newOptionalBinder;
+ import static io.airlift.configuration.ConditionalModule.conditionalModule;
+@@ -72,10 +74,14 @@ public class SqlServerClientModule
+             CredentialProvider credentialProvider,
+             OpenTelemetry openTelemetry)
+     {
++        ConnectionFactory tenantAwareFactory = new TenantAwareConnectionFactory(
++                new SQLServerDriver(),
++                config.getConnectionUrl(),
++                credentialProvider,
++                new Properties(),
++                openTelemetry);
+         return new SqlServerConnectionFactory(
+-                DriverConnectionFactory.builder(new SQLServerDriver(), config.getConnectionUrl(), credentialProvider)
+-                        .setOpenTelemetry(openTelemetry)
+-                        .build(),
++                tenantAwareFactory,
+                 sqlServerConfig.isSnapshotIsolationDisabled());
+     }
+ }

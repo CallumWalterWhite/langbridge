@@ -86,11 +86,36 @@ services:
     env_file:
       - ./langbridge/.env
     environment:
-      TRINO_URL: ${TRINO_URL:-}
+      TRINO_URL: ${TRINO_URL:-http://trino:8080}
       GATEWAY_PORT: 8001
     command: ["uvicorn", "langbridge.apps.gateway.langbridge_gateway.main:app", "--host", "0.0.0.0", "--port", "8001"]
+    depends_on:
+      trino:
+        condition: service_started
     ports:
       - "8001:8001"
+  gateway-proxy:
+    build:
+      context: .
+      dockerfile: langbridge/Dockerfile.gateway
+    container_name: langbridge-gateway-proxy
+    env_file:
+      - ./langbridge/.env
+    environment:
+      PROXY_LISTEN_HOST: 0.0.0.0
+      PROXY_PG_PORT: 55432
+      PROXY_MYSQL_PORT: 53306
+      PROXY_POSTGRES_UPSTREAMS: '{"*":{"host":"db","port":5432,"database":"langbridge"}}'
+    command: ["python", "-m", "langbridge.apps.gateway.langbridge_gateway.app"]
+    depends_on:
+      db:
+        condition: service_healthy
+      sales-db:
+        condition: service_healthy
+    ports:
+      - "55432:55432"
+      - "53306:53306"
+      - "51433:51433"
   client:
     build:
       context: ./client
@@ -156,6 +181,26 @@ services:
       - "6334:6334"
     volumes:
       - qdrant_data:/qdrant/storage
+  trino:
+    build:
+      context: .
+      dockerfile: langbridge/services/trino/custom/Dockerfile
+      args:
+        TRINO_VERSION: ${TRINO_VERSION:-455}
+    image: langbridge-trino-custom:${TRINO_VERSION:-455}
+    container_name: langbridge-trino
+    depends_on:
+      db:
+        condition: service_healthy
+      sales-db:
+        condition: service_healthy
+      gateway-proxy:
+        condition: service_started
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./langbridge/services/trino/docker/config.properties:/etc/trino/config.properties:ro
+      - ./langbridge/services/trino/docker/catalog-gateway:/etc/trino/catalog:ro
   prometheus:
     image: prom/prometheus:v2.55.1
     container_name: langbridge-prometheus

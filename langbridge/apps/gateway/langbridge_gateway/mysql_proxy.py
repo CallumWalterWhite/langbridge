@@ -310,13 +310,19 @@ class MySQLProxyServer:
             client_payload, client_seq = await _read_mysql_packet(reader)
             client_info = _parse_handshake_response(client_payload)
             db_name = client_info.get("database") or ""
-            if not db_name:
-                writer.write(_build_mysql_error("database required for routing", client_seq + 1))
+            username = str(client_info.get("username") or "")
+            if not db_name and not username:
+                writer.write(
+                    _build_mysql_error(
+                        "database or tenant identity in user is required for routing",
+                        client_seq + 1,
+                    )
+                )
                 await writer.drain()
                 return
 
             try:
-                upstream = route_database(db_name, "mysql")
+                upstream = route_database(db_name, "mysql", user_name=username)
             except ValueError as exc:
                 writer.write(_build_mysql_error(str(exc), client_seq + 1))
                 await writer.drain()
@@ -325,7 +331,7 @@ class MySQLProxyServer:
             logging.info(
                 "Routing MySQL connection db=%s user=%s to %s:%s",
                 db_name,
-                client_info.get("username"),
+                username,
                 upstream.host,
                 upstream.port,
             )
