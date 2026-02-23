@@ -154,6 +154,8 @@ services:
       # args:
       #   NEXT_PUBLIC_BACKEND_URL: http://localhost:8000
     container_name: langbridge-client
+    env_file:
+      - ./client/.env
     profiles:
       - local
       - development
