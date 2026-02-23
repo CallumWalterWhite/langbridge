@@ -16,6 +16,7 @@ services:
       POSTGRES_DB: langbridge
     profiles:
       - local
+      - development
     depends_on:
       db:
         condition: service_healthy
@@ -52,6 +53,7 @@ services:
       UNIFIED_TRINO_SOURCE: ${UNIFIED_TRINO_SOURCE:-langbridge}
     profiles:
       - local
+      - development
     depends_on:
       db:
         condition: service_healthy
@@ -93,6 +95,7 @@ services:
     command: ["python", "-m", "langbridge.apps.worker.langbridge_worker.main", "--reload"]
     profiles:
       - local
+      - development
     depends_on:
       db:
         condition: service_healthy
@@ -153,6 +156,7 @@ services:
     container_name: langbridge-client
     profiles:
       - local
+      - development
     environment:
       NODE_ENV: production
       NEXT_PUBLIC_BACKEND_URL: http://localhost:8000
@@ -170,6 +174,7 @@ services:
       POSTGRES_DB: langbridge
     profiles:
       - local
+      - development
     volumes:
       - pg_data:/var/lib/postgresql/data
     ports:
@@ -223,6 +228,8 @@ services:
       dockerfile: langbridge/services/trino/custom/Dockerfile
       args:
         TRINO_VERSION: ${TRINO_VERSION:-455}
+        CUSTOM_CA_CERT_B64: ${CUSTOM_CA_CERT_B64:-}
+        CUSTOM_CA_ALIAS: ${CUSTOM_CA_ALIAS:-custom-root-ca}
     image: langbridge-trino-custom:${TRINO_VERSION:-455}
     container_name: langbridge-trino
     profiles:
