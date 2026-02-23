@@ -32,8 +32,8 @@ services:
       - ./langbridge/.env
     environment:
       ENVIRONMENT: development
-      BACKEND_URL: http://localhost:8000
-      FRONTEND_URL: http://localhost:3000
+      # BACKEND_URL: http://localhost:8000
+      # FRONTEND_URL: http://localhost:3000
       POSTGRES_SERVER: db
       POSTGRES_PORT: 5432
       POSTGRES_USER: langbridge
@@ -151,15 +151,15 @@ services:
     build:
       context: ./client
       dockerfile: Dockerfile
-      args:
-        NEXT_PUBLIC_BACKEND_URL: http://localhost:8000
+      # args:
+      #   NEXT_PUBLIC_BACKEND_URL: http://localhost:8000
     container_name: langbridge-client
     profiles:
       - local
       - development
     environment:
       NODE_ENV: production
-      NEXT_PUBLIC_BACKEND_URL: http://localhost:8000
+      # NEXT_PUBLIC_BACKEND_URL: http://localhost:8000
       PORT: 3000
     depends_on:
       - api

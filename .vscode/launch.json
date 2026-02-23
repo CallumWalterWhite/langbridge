@@ -5,14 +5,27 @@
     "version": "0.2.0",
     "configurations": [
         {
-            "name": "Python Debugger: FastAPI",
+            "name": "Debug Langbirdge API",
             "type": "debugpy",
             "request": "launch",
             "module": "uvicorn",
-            "cwd": "${workspaceFolder}/langbridge",
+            "cwd": "${workspaceFolder}",
             "envFile": "${workspaceFolder}/.env",
             "args": [
-                "main:app",
+                "langbridge.apps.api.langbridge_api.main:app",
+                "--reload"
+            ],
+            "jinja": true
+        },
+        {
+            "name": "Debug Langbirdge Worker",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "uvicorn",
+            "cwd": "${workspaceFolder}",
+            "envFile": "${workspaceFolder}/.env",
+            "args": [
+                "langbridge.apps.worker.langbridge_worker.main:app",
                 "--reload"
             ],
             "jinja": true
