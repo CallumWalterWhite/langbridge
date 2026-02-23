@@ -99,8 +99,8 @@ class Settings(BaseSettings):
     IS_LOCAL_MESSAGING: bool = True
     INBOX_INTERNAL_REQUEST_URL: str = "http://127.0.0.1:8000/api/v1/message/inbox"
 
-    BACKEND_URL: str = "http://localhost:8000"
-    FRONTEND_URL: str = "http://localhost:3000"
+    BACKEND_URL: str = "http://192.168.1.250:8000"
+    FRONTEND_URL: str = "http://192.168.1.250:3000"
 
     JWT_SECRET: str
     JWT_ALG: str = "HS256"

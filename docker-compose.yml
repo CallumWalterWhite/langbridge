@@ -9,8 +9,8 @@ services:
       - ./langbridge/.env
     environment:
       ENVIRONMENT: development
-      BACKEND_URL: http://localhost:8000
-      FRONTEND_URL: http://localhost:3000
+      BACKEND_URL: http://langbridge.test.com/api
+      FRONTEND_URL: http://langbridge.test.com
       POSTGRES_SERVER: db
       POSTGRES_PORT: 5432
       POSTGRES_USER: langbridge
@@ -25,21 +25,25 @@ services:
         condition: service_started
     ports:
       - "8000:8000"
+    networks:
+      - web
   client:
     build:
       context: ./client
       dockerfile: Dockerfile
       args:
-        NEXT_PUBLIC_BACKEND_URL: http://localhost:8000
+        NEXT_PUBLIC_BACKEND_URL: http://langbridge.test.com
     container_name: langbridge-client
     environment:
       NODE_ENV: production
-      NEXT_PUBLIC_BACKEND_URL: http://localhost:8000
+      NEXT_PUBLIC_BACKEND_URL: http://langbridge.test.com
       PORT: 3000
     depends_on:
       - backend
     ports:
       - "3000:3000"
+    networks:
+      - web
   db:
     image: postgres:16-alpine
     container_name: langbridge-db
@@ -56,6 +60,8 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+    networks:
+        - web
   redis:
     image: redis:7-alpine
     container_name: langbridge-redis
@@ -63,6 +69,8 @@ services:
       - "6379:6379"
     volumes:
       - redis_data:/data
+    networks:
+      - web
   proxy:
     build:
       context: ./proxy
@@ -78,6 +86,12 @@ services:
     depends_on:
       - db
       - redis
+    networks:
+      - web
 volumes:
   pg_data:
   redis_data:
+
+networks:
+  web:
+    external: true
