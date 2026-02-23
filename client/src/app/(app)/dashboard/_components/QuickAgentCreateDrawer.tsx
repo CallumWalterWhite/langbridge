@@ -9,17 +9,9 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select } from '@/components/ui/select';
 import { useToast } from '@/components/ui/toast';
+import { resolveApiUrl } from '@/orchestration/http';
 
 import type { DataSource } from '../types';
-
-const API_BASE = process.env.NEXT_PUBLIC_BACKEND_URL ?? '';
-
-function withApiBase(path: string) {
-  if (!API_BASE) {
-    return path;
-  }
-  return `${API_BASE}${path}`;
-}
 
 const TEMPLATE_OPTIONS = [
   { value: 'sql_analyst', label: 'SQL Analyst (NL->SQL)' },
@@ -84,7 +76,7 @@ export function QuickAgentCreateDrawer({ sources, organizationId, onCreated }: Q
       if (!organizationId) {
         throw new Error('Select an organization before creating an agent.');
       }
-      const response = await fetch(withApiBase(`/api/v1/agents/${organizationId}`), {
+      const response = await fetch(resolveApiUrl(`/api/v1/agents/${organizationId}`), {
         method: 'POST',
         credentials: 'include',
         headers: { 'Content-Type': 'application/json', Accept: 'application/json' },

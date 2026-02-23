@@ -1,10 +1,10 @@
 import type { ReactNode } from 'react';
-import Script from 'next/script';
 
 import './globals.css';
 import { ThemeProvider } from './theme-provider';
 
 export const metadata = { title: 'LangBridge' };
+export const dynamic = 'force-dynamic';
 
 const themeInitScript = `
 if (typeof window !== 'undefined') {
@@ -20,9 +20,13 @@ if (typeof window !== 'undefined') {
 `;
 
 export default function RootLayout({ children }: { children: ReactNode }) {
+  const backendUrl = process.env.BACKEND_URL ?? process.env.NEXT_PUBLIC_BACKEND_URL ?? '';
+  const runtimeConfigScript = `window.__LANGBRIDGE_BACKEND_URL__ = ${JSON.stringify(backendUrl)};`;
+
   return (
     <html lang="en" suppressHydrationWarning>
       <head>
+        <script dangerouslySetInnerHTML={{ __html: runtimeConfigScript }} />
         <script dangerouslySetInnerHTML={{ __html: themeInitScript }} />
       </head>
       <body className="min-h-screen bg-[color:var(--app-bg)] font-sans text-[color:var(--text-primary)] antialiased transition-colors">

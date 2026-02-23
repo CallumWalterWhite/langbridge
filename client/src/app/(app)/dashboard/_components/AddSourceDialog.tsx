@@ -11,17 +11,9 @@ import { Select } from '@/components/ui/select';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Textarea } from '@/components/ui/textarea';
 import { useToast } from '@/components/ui/toast';
+import { resolveApiUrl } from '@/orchestration/http';
 
 import type { DataSource } from '../types';
-
-const API_BASE = process.env.NEXT_PUBLIC_BACKEND_URL ?? '';
-
-function withApiBase(path: string) {
-  if (!API_BASE) {
-    return path;
-  }
-  return `${API_BASE}${path}`;
-}
 
 const DATABASE_OPTIONS = [
   { value: 'snowflake', label: 'Snowflake' },
@@ -78,7 +70,7 @@ export function AddSourceDialog({ children, organizationId, onCreated }: AddSour
       if (!organizationId) {
         throw new Error('Select an organization before adding a source.');
       }
-      const response = await fetch(withApiBase(`/api/v1/datasources/${organizationId}`), {
+      const response = await fetch(resolveApiUrl(`/api/v1/datasources/${organizationId}`), {
         method: 'POST',
         credentials: 'include',
         headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
@@ -361,7 +353,6 @@ export function AddSourceDialog({ children, organizationId, onCreated }: AddSour
     </Dialog>
   );
 }
-
 
 
 
