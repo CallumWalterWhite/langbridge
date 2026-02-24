@@ -42,6 +42,7 @@ from langbridge.packages.orchestrator.langbridge_orchestrator.agents.supervisor.
     ClassifiedQuestion,
     ResolvedEntities,
 )
+from langbridge.packages.orchestrator.langbridge_orchestrator.llm.provider import LLMProvider
 from langbridge.packages.orchestrator.langbridge_orchestrator.agents.visual import VisualAgent
 from langbridge.packages.orchestrator.langbridge_orchestrator.agents.web_search import WebSearchAgent, WebSearchResult
 from langbridge.packages.orchestrator.langbridge_orchestrator.tools.semantic_query_builder import (
@@ -73,6 +74,7 @@ class SupervisorOrchestrator:
     def __init__(
         self,
         *,
+        llm: LLMProvider,
         visual_agent: Optional[VisualAgent] = None,
         analyst_agent: Optional[AnalystAgent] = None,
         logger: Optional[logging.Logger] = None,
@@ -95,7 +97,6 @@ class SupervisorOrchestrator:
         self.reasoning_agent = reasoning_agent
         self.bi_copilot_agent = bi_copilot_agent
         self.event_emitter = event_emitter
-        llm = reasoning_agent.llm if reasoning_agent else None
         self.question_classifier = question_classifier or QuestionClassifier(llm=llm, logger=self.logger)
         self.entity_resolver = entity_resolver or EntityResolver(llm=llm, logger=self.logger)
         self.clarification_manager = clarification_manager or ClarificationManager(default_max_turns=2)
@@ -419,9 +420,7 @@ class SupervisorOrchestrator:
         )
         prior_state = self._coerce_clarification_state(planning_context.get("clarification_state"))
         clarification_decision = self.clarification_manager.decide(
-            question=user_query,
             classification=classification,
-            entities=resolved_entities,
             prior_state=prior_state,
         )
 

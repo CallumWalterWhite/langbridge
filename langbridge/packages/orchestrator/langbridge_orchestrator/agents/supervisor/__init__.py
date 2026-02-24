@@ -6,7 +6,10 @@ except Exception:  # pragma: no cover
 from .question_classifier import QuestionClassifier
 from .entity_resolver import EntityResolver
 from .clarification_manager import ClarificationManager
-from .memory_manager import MemoryManager
+try:  # pragma: no cover - optional runtime deps
+    from .memory_manager import MemoryManager
+except Exception:  # pragma: no cover
+    MemoryManager = None
 from .schemas import (
     ClassifiedQuestion,
     ClarificationDecision,

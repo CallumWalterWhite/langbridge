@@ -177,7 +177,6 @@ def upgrade() -> None:
     sa.Column('organization_id', sa.UUID(), nullable=False),
     sa.Column('project_id', sa.UUID(), nullable=False),
     sa.Column('title', sa.String(), nullable=True),
-    sa.Column('status', sa.Enum('active', 'archived', 'error', 'completed', name='thread_status'), nullable=False),
     sa.Column('state', sa.Enum('awaiting_user_input', 'processing', 'awaiting_tool_response', 'completed', 'error', name='thread_state'), nullable=False, server_default='awaiting_user_input'),
     sa.Column('metadata', postgresql.JSON(astext_type=Text()), nullable=True),
     sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.text('(CURRENT_TIMESTAMP)'), nullable=False),

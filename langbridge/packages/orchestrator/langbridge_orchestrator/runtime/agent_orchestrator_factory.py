@@ -336,6 +336,7 @@ class AgentOrchestratorFactory:
         )
 
         return SupervisorOrchestrator(
+            llm=llm_provider,
             analyst_agent=analyst_agent,
             visual_agent=visual_agent,
             planning_agent=planning_agent,

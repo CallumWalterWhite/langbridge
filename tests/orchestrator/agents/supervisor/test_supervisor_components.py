@@ -1,4 +1,5 @@
 import asyncio
+import json
 import sys
 from pathlib import Path
 from types import ModuleType
@@ -41,8 +42,37 @@ from langbridge.packages.orchestrator.langbridge_orchestrator.agents.supervisor.
 )
 
 
+class StubLLM:
+    def complete(self, prompt: str, *, temperature: float = 0.0, max_tokens: int | None = None) -> str:
+        if "Will the latest Boston storms cause my sales to drop?" in prompt:
+            return json.dumps(
+                {
+                    "intent": "web_search",
+                    "route_hint": "WebSearch",
+                    "confidence": 0.9,
+                    "requires_clarification": False,
+                    "required_context": [],
+                    "clarifying_question": None,
+                    "extracted_entities": {"location": "Boston"},
+                    "rationale": "Needs external weather/news evidence.",
+                }
+            )
+        return json.dumps(
+            {
+                "intent": "analytical",
+                "route_hint": "SimpleAnalyst",
+                "confidence": 0.88,
+                "requires_clarification": True,
+                "required_context": ["fund_id"],
+                "clarifying_question": "Which fund should I use for this analysis?",
+                "extracted_entities": {"metric": "performance", "time_period": "2024 Q1"},
+                "rationale": "A specific fund is required for the requested metric.",
+            }
+        )
+
+
 def test_question_classifier_routes_analytical_query_to_analyst() -> None:
-    classifier = QuestionClassifier()
+    classifier = QuestionClassifier(llm=StubLLM())
     result = asyncio.run(classifier.classify_async("Fund performance by region for 2024 Q1"))
 
     assert result.route_hint == "SimpleAnalyst"
@@ -50,7 +80,7 @@ def test_question_classifier_routes_analytical_query_to_analyst() -> None:
 
 
 def test_entity_resolver_extracts_core_slots() -> None:
-    resolver = EntityResolver()
+    resolver = EntityResolver(llm=StubLLM())
     entities = asyncio.run(resolver.resolve_async("Fund performance by region for 2024 Q1"))
 
     assert entities.region == "by region"
@@ -60,58 +90,62 @@ def test_entity_resolver_extracts_core_slots() -> None:
 
 
 def test_clarification_manager_dedupes_repeated_question() -> None:
-    classifier = QuestionClassifier()
-    resolver = EntityResolver()
+    classifier = QuestionClassifier(llm=StubLLM())
     manager = ClarificationManager(default_max_turns=2)
 
     question = "Fund performance by region for 2024 Q1"
     classification = asyncio.run(classifier.classify_async(question))
-    entities = asyncio.run(resolver.resolve_async(question, classification=classification))
 
     first = manager.decide(
-        question=question,
         classification=classification,
-        entities=entities,
         prior_state=None,
     )
     assert first.requires_clarification is True
     assert first.clarifying_question is not None
 
     second = manager.decide(
-        question=question,
         classification=classification,
-        entities=entities,
         prior_state=first.updated_state,
     )
 
     assert second.requires_clarification is False
-    assert any("Assuming all funds" in entry for entry in second.assumptions)
+    assert any("best-effort assumptions" in entry for entry in second.assumptions)
 
 
 def test_regression_fund_performance_query_no_repeat_and_correct_route() -> None:
-    classifier = QuestionClassifier()
-    resolver = EntityResolver()
+    classifier = QuestionClassifier(llm=StubLLM())
     manager = ClarificationManager(default_max_turns=2)
 
     question = "fund performance by region for 2024 Q1"
     classification = asyncio.run(classifier.classify_async(question))
-    entities = asyncio.run(resolver.resolve_async(question, classification=classification))
 
     assert classification.route_hint == "SimpleAnalyst"
 
     first = manager.decide(
-        question=question,
         classification=classification,
-        entities=entities,
         prior_state=None,
     )
     assert first.requires_clarification is True
 
     second = manager.decide(
-        question=question,
         classification=classification,
-        entities=entities,
         prior_state=first.updated_state,
     )
     assert second.requires_clarification is False
     assert second.updated_state.turn_count == first.updated_state.turn_count
+
+
+def test_external_event_business_question_routes_without_fund_clarification() -> None:
+    classifier = QuestionClassifier(llm=StubLLM())
+    manager = ClarificationManager(default_max_turns=2)
+
+    question = "Will the latest Boston storms cause my sales to drop?"
+    classification = asyncio.run(classifier.classify_async(question))
+    decision = manager.decide(
+        classification=classification,
+        prior_state=None,
+    )
+
+    assert classification.route_hint in {"WebSearch", "DeepResearch"}
+    assert classification.requires_clarification is False
+    assert decision.requires_clarification is False

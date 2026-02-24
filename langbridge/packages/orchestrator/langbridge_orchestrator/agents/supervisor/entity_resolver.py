@@ -45,7 +45,7 @@ class EntityResolver:
     def __init__(
         self,
         *,
-        llm: Optional[LLMProvider] = None,
+        llm: LLMProvider,
         logger: Optional[logging.Logger] = None,
     ) -> None:
         self._llm = llm
@@ -184,8 +184,6 @@ class EntityResolver:
         classification: Optional[ClassifiedQuestion],
         context: Optional[Dict[str, Any]],
     ) -> Optional[Dict[str, Any]]:
-        if not self._llm:
-            return None
         return await asyncio.to_thread(
             self._resolve_with_llm,
             question,
@@ -199,9 +197,6 @@ class EntityResolver:
         classification: Optional[ClassifiedQuestion],
         context: Optional[Dict[str, Any]],
     ) -> Optional[Dict[str, Any]]:
-        if not self._llm:
-            return None
-
         prompt = self._build_prompt(question=question, classification=classification, context=context)
         try:
             response = self._llm.complete(prompt, temperature=0.0, max_tokens=320)

@@ -299,6 +299,7 @@ class OrchestratorService:
             planning_context = None
 
         supervisor = SupervisorOrchestrator(
+            llm=llm_provider,
             analyst_agent=analyst_agent,
             visual_agent=visual_agent,
             planning_agent=planning_agent,
@@ -355,6 +356,7 @@ class OrchestratorService:
         llm_provider: LLMProvider = create_provider(llm_connection)
 
         supervisor = SupervisorOrchestrator(
+            llm=llm_provider,
             analyst_agent=None,
             visual_agent=VisualAgent(llm=llm_provider),
             planning_agent=None,
