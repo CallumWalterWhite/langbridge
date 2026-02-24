@@ -71,6 +71,29 @@ class StubLLM:
         )
 
 
+class BadPayloadLLM:
+    def complete(self, prompt: str, *, temperature: float = 0.0, max_tokens: int | None = None) -> str:
+        if "Normalize the classifier output into strict JSON." in prompt:
+            return json.dumps(
+                {
+                    "intent": "web_search",
+                    "route_hint": "WebSearch",
+                    "confidence": 0.72,
+                    "requires_clarification": False,
+                    "clarifying_question": None,
+                    "required_context": [],
+                    "extracted_entities": {},
+                    "rationale": "Recovered via repair prompt.",
+                }
+            )
+        return "This is not JSON output."
+
+
+class AlwaysBadPayloadLLM:
+    def complete(self, prompt: str, *, temperature: float = 0.0, max_tokens: int | None = None) -> str:
+        return "still not json"
+
+
 def test_question_classifier_routes_analytical_query_to_analyst() -> None:
     classifier = QuestionClassifier(llm=StubLLM())
     result = asyncio.run(classifier.classify_async("Fund performance by region for 2024 Q1"))
@@ -149,3 +172,19 @@ def test_external_event_business_question_routes_without_fund_clarification() ->
     assert classification.route_hint in {"WebSearch", "DeepResearch"}
     assert classification.requires_clarification is False
     assert decision.requires_clarification is False
+
+
+def test_classifier_repairs_invalid_payload_with_llm() -> None:
+    classifier = QuestionClassifier(llm=BadPayloadLLM())
+    result = asyncio.run(classifier.classify_async("Will the latest Boston storms cause my sales to drop?"))
+
+    assert result.route_hint == "WebSearch"
+    assert result.intent == "web_search"
+
+
+def test_classifier_degrades_gracefully_when_payload_invalid() -> None:
+    classifier = QuestionClassifier(llm=AlwaysBadPayloadLLM())
+    result = asyncio.run(classifier.classify_async("Will the latest Boston storms cause my sales to drop?"))
+
+    assert result.route_hint is None
+    assert result.requires_clarification is False

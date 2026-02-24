@@ -33,9 +33,21 @@ class QuestionClassifier:
 
     async def classify_async(self, question: str, context: Optional[Dict[str, Any]] = None) -> ClassifiedQuestion:
         llm_result = await self._classify_with_llm_async(question, context=context)
-        if llm_result is None:
-            raise RuntimeError("QuestionClassifier LLM returned an invalid payload; fallback routing is disabled.")
-        return llm_result
+        if llm_result is not None:
+            return llm_result
+        self._logger.warning(
+            "QuestionClassifier received invalid LLM payload; proceeding without a classifier route hint."
+        )
+        return ClassifiedQuestion(
+            intent="chat",
+            route_hint=None,
+            confidence=0.0,
+            requires_clarification=False,
+            clarifying_question=None,
+            required_context=[],
+            extracted_entities={},
+            rationale="Classifier payload invalid; planner should continue without preflight hint.",
+        )
 
     async def _classify_with_llm_async(
         self,
@@ -51,6 +63,7 @@ class QuestionClassifier:
         context: Optional[Dict[str, Any]] = None,
     ) -> Optional[ClassifiedQuestion]:
         prompt = self._build_prompt(question=question, context=context)
+        self._logger.log("QuestionClassifier prompt: %s", prompt)
         try:
             response = self._llm.complete(prompt, temperature=0.0, max_tokens=320)
         except Exception as exc:  # pragma: no cover
@@ -58,6 +71,12 @@ class QuestionClassifier:
             return None
 
         payload = self._parse_json_payload(str(response))
+        if not payload:
+            payload = self._repair_payload_with_llm(
+                raw_response=str(response),
+                question=question,
+                context=context,
+            )
         if not payload:
             return None
 
@@ -95,6 +114,10 @@ class QuestionClassifier:
                 clarifying_question = "Please clarify: " + ", ".join(required_context_clean[:3]) + "."
             else:
                 clarifying_question = "What additional context should I use before I proceed?"
+        if route_hint == RouteName.CLARIFY.value and not requires_clarification:
+            requires_clarification = True
+        if requires_clarification and not route_hint:
+            route_hint = RouteName.CLARIFY.value
 
         return ClassifiedQuestion(
             intent=intent,
@@ -106,6 +129,25 @@ class QuestionClassifier:
             extracted_entities={str(k): str(v) for k, v in extracted_entities.items() if str(v).strip()},
             rationale=str(rationale).strip() if isinstance(rationale, str) and rationale.strip() else None,
         )
+
+    def _repair_payload_with_llm(
+        self,
+        *,
+        raw_response: str,
+        question: str,
+        context: Optional[Dict[str, Any]],
+    ) -> Optional[Dict[str, Any]]:
+        repair_prompt = self._build_repair_prompt(
+            raw_response=raw_response,
+            question=question,
+            context=context,
+        )
+        try:
+            repair_response = self._llm.complete(repair_prompt, temperature=0.0, max_tokens=320)
+        except Exception as exc:  # pragma: no cover
+            self._logger.warning("QuestionClassifier repair call failed: %s", exc)
+            return None
+        return self._parse_json_payload(str(repair_response))
 
     @staticmethod
     def _build_prompt(question: str, context: Optional[Dict[str, Any]]) -> str:
@@ -141,6 +183,27 @@ class QuestionClassifier:
                 "No heuristic assumptions: decide directly from the prompt and context.",
                 f"Question: {question}",
                 f"Context JSON: {json.dumps(context_payload, ensure_ascii=True, default=str)}",
+            ]
+        )
+
+    @staticmethod
+    def _build_repair_prompt(
+        *,
+        raw_response: str,
+        question: str,
+        context: Optional[Dict[str, Any]],
+    ) -> str:
+        context_payload = context if isinstance(context, dict) else {}
+        return "\n".join(
+            [
+                "Normalize the classifier output into strict JSON.",
+                "Return ONLY JSON with keys: intent, route_hint, confidence, requires_clarification, clarifying_question, required_context, extracted_entities, rationale.",
+                "intent one of: analytical, web_search, research, clarification, chat.",
+                "route_hint one of: SimpleAnalyst, AnalystThenVisual, WebSearch, DeepResearch, Clarify, or null.",
+                "Use null / [] / {} for unknown fields.",
+                f"Question: {question}",
+                f"Context JSON: {json.dumps(context_payload, ensure_ascii=True, default=str)}",
+                f"Raw classifier output to normalize: {raw_response}",
             ]
         )
 
