@@ -63,7 +63,7 @@ class QuestionClassifier:
         context: Optional[Dict[str, Any]] = None,
     ) -> Optional[ClassifiedQuestion]:
         prompt = self._build_prompt(question=question, context=context)
-        self._logger.log("QuestionClassifier prompt: %s", prompt)
+        self._logger.debug("QuestionClassifier prompt: %s", prompt)
         try:
             response = self._llm.complete(prompt, temperature=0.0, max_tokens=320)
         except Exception as exc:  # pragma: no cover
