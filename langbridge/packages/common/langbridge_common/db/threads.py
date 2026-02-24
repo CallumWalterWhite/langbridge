@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime
 from typing import Any, Dict, Optional
 
-from sqlalchemy import JSON, String, Enum as SAEnum, ForeignKey, DateTime, Integer, UUID, func
+from sqlalchemy import JSON, String, Text, Enum as SAEnum, ForeignKey, DateTime, Integer, UUID, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .base import Base
@@ -61,6 +61,38 @@ class ThreadMessage(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
+class MemoryCategory(enum.Enum):
+    fact = "fact"
+    preference = "preference"
+    decision = "decision"
+    tool_outcome = "tool_outcome"
+    answer = "answer"
+
+
+class ConversationMemoryItem(Base):
+    __tablename__ = "conversation_memory_items"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    thread_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("threads.id", ondelete="cascade"), index=True)
+    user_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), nullable=True, index=True)
+    category: Mapped[MemoryCategory] = mapped_column(
+        SAEnum(MemoryCategory, name="memory_category"),
+        nullable=False,
+        default=MemoryCategory.fact,
+        index=True,
+    )
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    metadata_json: Mapped[Optional[Dict[str, Any]]] = mapped_column("metadata", JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
+    last_accessed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
+
+
 class RunStatus(enum.Enum):
     running = "running"
     succeeded = "succeeded"
@@ -106,4 +138,3 @@ class ToolCall(Base):
     duration_ms: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     error: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
-

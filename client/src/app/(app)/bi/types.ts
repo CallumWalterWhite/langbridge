@@ -22,6 +22,14 @@ export type TableGroup = {
 
 export type ChartType = 'table' | 'bar' | 'line' | 'pie';
 export type WidgetSize = 'small' | 'wide' | 'tall' | 'large';
+export type WidgetLayout = {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  minW?: number;
+  minH?: number;
+};
 
 export type FilterDraft = {
   id: string;
@@ -41,6 +49,7 @@ export type BiWidget = {
   title: string;
   type: ChartType;
   size: WidgetSize;
+  layout: WidgetLayout;
   // Data State
   measures: string[];
   dimensions: string[];

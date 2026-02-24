@@ -28,7 +28,6 @@ from langbridge.packages.orchestrator.langbridge_orchestrator.definitions import
     DataAccessPolicy,
     ExecutionMode,
     GuardrailConfig,
-    MemoryStrategy,
     OutputFormat,
     OutputSchema,
     PromptContract,
@@ -280,8 +279,12 @@ class OrchestratorService:
         planning_agent = PlanningAgent(llm=llm_provider, logger=self._logger)
         planning_constraints = self._build_planning_constraints(agent_definition, tool_config)
         reasoning_agent = self._build_reasoning_agent(agent_definition, llm_provider)
-        deep_research_agent = DeepResearchAgent(llm=llm_provider, logger=self._logger)
         web_search_agent = WebSearchAgent(llm=llm_provider, logger=self._logger)
+        deep_research_agent = DeepResearchAgent(
+            llm=llm_provider,
+            web_search_agent=web_search_agent,
+            logger=self._logger,
+        )
         planning_context: dict[str, Any] | None = dict(tool_config.web_search_defaults)
         planning_context.update(
             self._build_planner_tool_context(
@@ -373,19 +376,6 @@ class OrchestratorService:
     ) -> str | None:
         if thread_id is None or current_user is None or agent_definition is None:
             return None
-        if agent_definition.memory.strategy == MemoryStrategy.none:
-            return None
-
-        if agent_definition.memory.strategy not in (
-            MemoryStrategy.conversation,
-            MemoryStrategy.database,
-            MemoryStrategy.transient,
-        ):
-            self._logger.info(
-                "request_id=%s memory strategy '%s' not fully supported; using thread history fallback.",
-                request_id,
-                agent_definition.memory.strategy.value,
-            )
 
         try:
             messages = await self._thread_service.list_messages_for_thread(thread_id, current_user)

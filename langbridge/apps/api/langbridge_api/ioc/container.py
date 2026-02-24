@@ -25,6 +25,9 @@ from langbridge.packages.common.langbridge_common.db import (
 from langbridge.packages.common.langbridge_common.db.session_context import get_session
 from langbridge.packages.common.langbridge_common.repositories.agent_repository import AgentRepository
 from langbridge.packages.common.langbridge_common.repositories.connector_repository import ConnectorRepository
+from langbridge.packages.common.langbridge_common.repositories.conversation_memory_repository import (
+    ConversationMemoryRepository,
+)
 from langbridge.packages.common.langbridge_common.repositories.dashboard_repository import DashboardRepository
 from langbridge.packages.common.langbridge_common.repositories.environment_repository import OrganizationEnvironmentSettingRepository
 from langbridge.packages.common.langbridge_common.repositories.job_repository import JobRepository
@@ -131,6 +134,7 @@ class Container(containers.DeclarativeContainer):
     semantic_model_repository = providers.Factory(SemanticModelRepository, session=async_session)
     thread_repository = providers.Factory(ThreadRepository, session=async_session)
     thread_message_repository = providers.Factory(ThreadMessageRepository, session=async_session)
+    memory_repository = providers.Factory(ConversationMemoryRepository, session=async_session)
     tool_call_repository = providers.Factory(ToolCallRepository, session=async_session)
     agent_definition_repository = providers.Factory(AgentRepository, session=async_session)
     semantic_vector_store_repository = providers.Factory(SemanticVectorStoreEntryRepository, session=async_session)

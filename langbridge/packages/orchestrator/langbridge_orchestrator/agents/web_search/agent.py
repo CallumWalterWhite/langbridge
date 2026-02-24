@@ -4,11 +4,15 @@ Web search agent that retrieves and normalizes search results.
 import asyncio
 import json
 import logging
+import re
 from dataclasses import dataclass, field
 from typing import Any, Dict, Iterable, Optional, Protocol
 from urllib.parse import urlparse
 
-import httpx
+try:  # pragma: no cover - optional dependency for environments that do not execute HTTP providers
+    import httpx
+except Exception:  # pragma: no cover
+    httpx = None  # type: ignore
 
 from langbridge.packages.orchestrator.langbridge_orchestrator.llm.provider import LLMProvider
 
@@ -53,6 +57,10 @@ class WebSearchResult:
     provider: str
     results: list[WebSearchResultItem] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
+    answer: Optional[str] = None
+    citations: list[str] = field(default_factory=list)
+    weak_results: bool = False
+    follow_up_question: Optional[str] = None
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -60,6 +68,10 @@ class WebSearchResult:
             "provider": self.provider,
             "results": [result.to_dict() for result in self.results],
             "warnings": list(self.warnings),
+            "answer": self.answer,
+            "citations": list(self.citations),
+            "weak_results": self.weak_results,
+            "follow_up_question": self.follow_up_question,
         }
 
     def to_tabular(self) -> Dict[str, Any]:
@@ -143,6 +155,8 @@ class DuckDuckGoInstantAnswerProvider:
         safe_search: Optional[str],
         timebox_seconds: int,
     ) -> list[WebSearchResultItem]:
+        if httpx is None:
+            raise RuntimeError("httpx is required for DuckDuckGoInstantAnswerProvider.")
         params = self._build_params(query, region=region, safe_search=safe_search)
         timeout = httpx.Timeout(timebox_seconds)
         with httpx.Client(timeout=timeout, headers={"User-Agent": self.user_agent}) as client:
@@ -160,6 +174,8 @@ class DuckDuckGoInstantAnswerProvider:
         safe_search: Optional[str],
         timebox_seconds: int,
     ) -> list[WebSearchResultItem]:
+        if httpx is None:
+            raise RuntimeError("httpx is required for DuckDuckGoInstantAnswerProvider.")
         params = self._build_params(query, region=region, safe_search=safe_search)
         timeout = httpx.Timeout(timebox_seconds)
         async with httpx.AsyncClient(timeout=timeout, headers={"User-Agent": self.user_agent}) as client:
@@ -289,7 +305,7 @@ class DuckDuckGoInstantAnswerProvider:
 
 
 class WebSearchAgent:
-    """Agent that delegates to a web search provider."""
+    """Agent that performs query refinement, triage, and grounded synthesis."""
 
     def __init__(
         self,
@@ -301,6 +317,10 @@ class WebSearchAgent:
         self.provider = provider or DuckDuckGoInstantAnswerProvider()
         self.logger = logger or logging.getLogger(__name__)
         self.llm = llm
+
+    @staticmethod
+    def _tokens(text: str) -> set[str]:
+        return set(re.findall(r"[a-z0-9]+", str(text or "").lower()))
 
     @staticmethod
     def _extract_json_blob(text: str) -> Optional[str]:
@@ -357,61 +377,57 @@ class WebSearchAgent:
             ordered.append(query)
         return ordered
 
-    def _build_llm_prompt(self, query: str) -> str:
+    def _build_query_refinement_prompt(self, query: str) -> str:
         prompt_sections = [
-            "You are a web search assistant. Rewrite the query to maximize relevant results.",
-            "Return ONLY JSON with keys: query, alternates.",
-            "query must be a concise search string. alternates is a list of backup queries.",
+            "You refine web search queries for high-relevance retrieval.",
+            "Return ONLY JSON with key: queries.",
+            "queries must be a list with 1 to 3 concise search strings.",
             f"Original query: {query}",
         ]
         return "\n".join(prompt_sections)
 
-    def _rewrite_query_with_llm(self, query: str) -> Optional[Dict[str, Any]]:
+    def _refine_queries_with_llm(self, query: str) -> Optional[list[str]]:
         if not self.llm:
             return None
-        prompt = self._build_llm_prompt(query)
+        prompt = self._build_query_refinement_prompt(query)
         try:
             response = self.llm.complete(prompt, temperature=0.0, max_tokens=160)
         except Exception as exc:  # pragma: no cover - defensive guard
-            self.logger.warning("WebSearchAgent LLM query rewrite failed: %s", exc)
+            self.logger.warning("WebSearchAgent query refinement failed: %s", exc)
             return None
         payload = self._parse_llm_payload(str(response))
         if not payload:
             return None
-        return payload
+        raw_queries = payload.get("queries") or payload.get("search_queries")
+        if isinstance(raw_queries, str):
+            queries = [raw_queries]
+        elif isinstance(raw_queries, list):
+            queries = [str(item).strip() for item in raw_queries if str(item).strip()]
+        else:
+            queries = []
+        deduped = self._dedupe_queries(queries)
+        return deduped[:3] if deduped else None
 
-    async def _rewrite_query_with_llm_async(self, query: str) -> Optional[Dict[str, Any]]:
+    async def _refine_queries_with_llm_async(self, query: str) -> Optional[list[str]]:
         if not self.llm:
             return None
-        return await asyncio.to_thread(self._rewrite_query_with_llm, query)
+        return await asyncio.to_thread(self._refine_queries_with_llm, query)
 
-    def _prepare_query_candidates(self, query: str) -> tuple[str, list[str], list[str]]:
+    def _prepare_query_candidates(self, query: str) -> tuple[list[str], list[str]]:
         warnings: list[str] = []
-        payload = self._rewrite_query_with_llm(query)
-        if not payload:
-            return query, [], warnings
-        llm_query = str(payload.get("query") or payload.get("search_query") or "").strip()
-        if llm_query and llm_query != query:
-            warnings.append(f"LLM rewrote query to '{llm_query}'.")
-        alternates = self._normalize_alternates(
-            payload.get("alternates") or payload.get("alternate_queries") or payload.get("queries"),
-            llm_query or query,
-        )
-        return llm_query or query, alternates, warnings
+        refined = self._refine_queries_with_llm(query)
+        if refined:
+            warnings.append(f"LLM generated {len(refined)} refined query candidate(s).")
+            return self._dedupe_queries([*refined, query]), warnings
+        return [query], warnings
 
-    async def _prepare_query_candidates_async(self, query: str) -> tuple[str, list[str], list[str]]:
+    async def _prepare_query_candidates_async(self, query: str) -> tuple[list[str], list[str]]:
         warnings: list[str] = []
-        payload = await self._rewrite_query_with_llm_async(query)
-        if not payload:
-            return query, [], warnings
-        llm_query = str(payload.get("query") or payload.get("search_query") or "").strip()
-        if llm_query and llm_query != query:
-            warnings.append(f"LLM rewrote query to '{llm_query}'.")
-        alternates = self._normalize_alternates(
-            payload.get("alternates") or payload.get("alternate_queries") or payload.get("queries"),
-            llm_query or query,
-        )
-        return llm_query or query, alternates, warnings
+        refined = await self._refine_queries_with_llm_async(query)
+        if refined:
+            warnings.append(f"LLM generated {len(refined)} refined query candidate(s).")
+            return self._dedupe_queries([*refined, query]), warnings
+        return [query], warnings
 
     def _execute_query_sequence(
         self,
@@ -421,20 +437,33 @@ class WebSearchAgent:
         region: Optional[str],
         safe_search: Optional[str],
         timebox_seconds: int,
-    ) -> tuple[list[WebSearchResultItem], str, list[str]]:
+    ) -> tuple[list[WebSearchResultItem], list[str], list[str]]:
+        warnings: list[str] = []
         attempts: list[str] = []
-        for candidate in queries:
+        merged: list[WebSearchResultItem] = []
+        seen_urls: set[str] = set()
+        per_query_limit = max(1, min(max_results, 8))
+        for candidate in queries[:3]:
             attempts.append(candidate)
-            results = self.provider.search(
-                candidate,
-                max_results=max_results,
-                region=region,
-                safe_search=safe_search,
-                timebox_seconds=timebox_seconds,
-            )
-            if results:
-                return results, candidate, attempts
-        return [], attempts[-1] if attempts else "", attempts
+            try:
+                results = self.provider.search(
+                    candidate,
+                    max_results=per_query_limit,
+                    region=region,
+                    safe_search=safe_search,
+                    timebox_seconds=timebox_seconds,
+                )
+            except Exception as exc:  # pragma: no cover
+                warnings.append(f"Search provider failed for query '{candidate}': {exc}")
+                continue
+            for result in results:
+                if result.url in seen_urls:
+                    continue
+                seen_urls.add(result.url)
+                merged.append(result)
+                if len(merged) >= max_results * 2:
+                    break
+        return merged, attempts, warnings
 
     async def _execute_query_sequence_async(
         self,
@@ -444,20 +473,123 @@ class WebSearchAgent:
         region: Optional[str],
         safe_search: Optional[str],
         timebox_seconds: int,
-    ) -> tuple[list[WebSearchResultItem], str, list[str]]:
+    ) -> tuple[list[WebSearchResultItem], list[str], list[str]]:
+        warnings: list[str] = []
         attempts: list[str] = []
-        for candidate in queries:
+        merged: list[WebSearchResultItem] = []
+        seen_urls: set[str] = set()
+        per_query_limit = max(1, min(max_results, 8))
+        for candidate in queries[:3]:
             attempts.append(candidate)
-            results = await self.provider.search_async(
-                candidate,
-                max_results=max_results,
-                region=region,
-                safe_search=safe_search,
-                timebox_seconds=timebox_seconds,
-            )
-            if results:
-                return results, candidate, attempts
-        return [], attempts[-1] if attempts else "", attempts
+            try:
+                results = await self.provider.search_async(
+                    candidate,
+                    max_results=per_query_limit,
+                    region=region,
+                    safe_search=safe_search,
+                    timebox_seconds=timebox_seconds,
+                )
+            except Exception as exc:  # pragma: no cover
+                warnings.append(f"Search provider failed for query '{candidate}': {exc}")
+                continue
+            for result in results:
+                if result.url in seen_urls:
+                    continue
+                seen_urls.add(result.url)
+                merged.append(result)
+                if len(merged) >= max_results * 2:
+                    break
+        return merged, attempts, warnings
+
+    def _triage_results(
+        self,
+        *,
+        query: str,
+        results: list[WebSearchResultItem],
+        max_results: int,
+    ) -> tuple[list[WebSearchResultItem], bool]:
+        if not results:
+            return [], True
+
+        query_tokens = self._tokens(query)
+        scored: list[tuple[float, WebSearchResultItem]] = []
+        for item in results:
+            title_tokens = self._tokens(item.title)
+            snippet_tokens = self._tokens(item.snippet)
+            overlap = len(query_tokens.intersection(title_tokens.union(snippet_tokens)))
+            denom = max(len(query_tokens), 1)
+            score = overlap / denom
+            if item.snippet:
+                score += 0.1
+            score = min(1.0, score)
+            scored.append((score, item))
+
+        scored.sort(key=lambda row: row[0], reverse=True)
+        kept = [item for score, item in scored if score >= 0.2][:max_results]
+        weak_results = len(kept) < min(2, max_results)
+        return kept, weak_results
+
+    def _synthesize_answer(
+        self,
+        *,
+        query: str,
+        triaged_results: list[WebSearchResultItem],
+    ) -> tuple[Optional[str], list[str], bool, Optional[str]]:
+        if not triaged_results:
+            return None, [], True, self._build_follow_up_question(query)
+
+        if self.llm:
+            prompt_sections = [
+                "You synthesize grounded answers from web snippets.",
+                "Return ONLY JSON with keys: answer, citations, weak_results, follow_up_question.",
+                "citations must be list of URLs actually used.",
+                f"Question: {query}",
+                "Search snippets:",
+            ]
+            for index, item in enumerate(triaged_results[:6], start=1):
+                prompt_sections.append(
+                    f"{index}. title={item.title}; url={item.url}; snippet={item.snippet}"
+                )
+            prompt = "\n".join(prompt_sections)
+            try:
+                response = self.llm.complete(prompt, temperature=0.1, max_tokens=420)
+                payload = self._parse_llm_payload(str(response))
+            except Exception as exc:  # pragma: no cover
+                self.logger.warning("WebSearchAgent answer synthesis failed: %s", exc)
+                payload = None
+
+            if isinstance(payload, dict):
+                answer = str(payload.get("answer") or "").strip() or None
+                raw_citations = payload.get("citations")
+                if isinstance(raw_citations, list):
+                    citations = [str(item).strip() for item in raw_citations if str(item).strip()]
+                else:
+                    citations = []
+                weak_results = bool(payload.get("weak_results"))
+                follow_up = payload.get("follow_up_question")
+                follow_up_question = (
+                    str(follow_up).strip()
+                    if isinstance(follow_up, str) and str(follow_up).strip()
+                    else None
+                )
+                if answer:
+                    return answer, citations, weak_results, follow_up_question
+
+        top = triaged_results[:3]
+        citations = [item.url for item in top]
+        snippets = [item.snippet for item in top if item.snippet]
+        answer = snippets[0] if snippets else f"Found {len(top)} relevant sources."
+        weak = len(top) < 2
+        return answer, citations, weak, self._build_follow_up_question(query) if weak else None
+
+    @staticmethod
+    def _build_follow_up_question(query: str) -> str:
+        lowered = query.lower()
+        if "latest" in lowered or "news" in lowered:
+            return "Which company, region, or date range should I focus on?"
+        if "policy" in lowered or "regulation" in lowered:
+            return "Which jurisdiction or regulatory body should I prioritize?"
+        return "Could you narrow this to a specific company, location, or timeframe?"
 
     def search(
         self,
@@ -470,31 +602,46 @@ class WebSearchAgent:
     ) -> WebSearchResult:
         clean_query = self._normalize_query(query)
         capped_max_results = self._normalize_max_results(max_results)
-        primary_query, alternates, warnings = self._prepare_query_candidates(clean_query)
-        query_sequence = self._dedupe_queries([primary_query, *alternates, clean_query])
-        results, final_query, attempts = self._execute_query_sequence(
+        query_sequence, warnings = self._prepare_query_candidates(clean_query)
+        results, attempts, attempt_warnings = self._execute_query_sequence(
             query_sequence,
             max_results=capped_max_results,
             region=region,
             safe_search=safe_search,
             timebox_seconds=timebox_seconds,
         )
-        if final_query and final_query != clean_query:
-            warnings.append(f"Search used query '{final_query}' after {len(attempts)} attempt(s).")
+        warnings.extend(attempt_warnings)
+        triaged_results, weak_results = self._triage_results(
+            query=clean_query,
+            results=results,
+            max_results=capped_max_results,
+        )
+        answer, citations, weak_from_synthesis, follow_up = self._synthesize_answer(
+            query=clean_query,
+            triaged_results=triaged_results,
+        )
+        weak_results = weak_results or weak_from_synthesis
         if not results:
             warnings.append("No web results returned by the provider.")
-        self._apply_ranking(results)
+        if weak_results:
+            warnings.append("Search results were weak or only partially relevant.")
+        self._apply_ranking(triaged_results)
         self.logger.info(
-            "WebSearchAgent retrieved %d result(s) for query '%s' via %s",
-            len(results),
-            final_query or clean_query,
+            "WebSearchAgent retrieved %d result(s) for query '%s' via %s after %d attempt(s)",
+            len(triaged_results),
+            clean_query,
             self.provider.name,
+            len(attempts),
         )
         return WebSearchResult(
-            query=final_query or clean_query,
+            query=clean_query,
             provider=self.provider.name,
-            results=results,
+            results=triaged_results,
             warnings=warnings,
+            answer=answer,
+            citations=citations,
+            weak_results=weak_results,
+            follow_up_question=follow_up,
         )
 
     async def search_async(
@@ -508,31 +655,46 @@ class WebSearchAgent:
     ) -> WebSearchResult:
         clean_query = self._normalize_query(query)
         capped_max_results = self._normalize_max_results(max_results)
-        primary_query, alternates, warnings = await self._prepare_query_candidates_async(clean_query)
-        query_sequence = self._dedupe_queries([primary_query, *alternates, clean_query])
-        results, final_query, attempts = await self._execute_query_sequence_async(
+        query_sequence, warnings = await self._prepare_query_candidates_async(clean_query)
+        results, attempts, attempt_warnings = await self._execute_query_sequence_async(
             query_sequence,
             max_results=capped_max_results,
             region=region,
             safe_search=safe_search,
             timebox_seconds=timebox_seconds,
         )
-        if final_query and final_query != clean_query:
-            warnings.append(f"Search used query '{final_query}' after {len(attempts)} attempt(s).")
+        warnings.extend(attempt_warnings)
+        triaged_results, weak_results = self._triage_results(
+            query=clean_query,
+            results=results,
+            max_results=capped_max_results,
+        )
+        answer, citations, weak_from_synthesis, follow_up = self._synthesize_answer(
+            query=clean_query,
+            triaged_results=triaged_results,
+        )
+        weak_results = weak_results or weak_from_synthesis
         if not results:
             warnings.append("No web results returned by the provider.")
-        self._apply_ranking(results)
+        if weak_results:
+            warnings.append("Search results were weak or only partially relevant.")
+        self._apply_ranking(triaged_results)
         self.logger.info(
-            "WebSearchAgent retrieved %d result(s) for query '%s' via %s",
-            len(results),
-            final_query or clean_query,
+            "WebSearchAgent retrieved %d result(s) for query '%s' via %s after %d attempt(s)",
+            len(triaged_results),
+            clean_query,
             self.provider.name,
+            len(attempts),
         )
         return WebSearchResult(
-            query=final_query or clean_query,
+            query=clean_query,
             provider=self.provider.name,
-            results=results,
+            results=triaged_results,
             warnings=warnings,
+            answer=answer,
+            citations=citations,
+            weak_results=weak_results,
+            follow_up_question=follow_up,
         )
 
     @staticmethod

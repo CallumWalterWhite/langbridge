@@ -1,5 +1,14 @@
 import { Button } from '@/components/ui/button';
-import { Save, Play, Plus, Settings, SlidersHorizontal, Trash2 } from 'lucide-react';
+import {
+  Eye,
+  PencilRuler,
+  Play,
+  Plus,
+  Save,
+  Settings,
+  SlidersHorizontal,
+  Trash2,
+} from 'lucide-react';
 import { Select } from '@/components/ui/select';
 
 type DashboardOption = {
@@ -24,6 +33,8 @@ interface BiHeaderProps {
   canRunActive: boolean;
   canRunAll: boolean;
   onToggleConfig: () => void;
+  isEditMode: boolean;
+  onToggleEditMode: () => void;
   title?: string;
 }
 
@@ -44,27 +55,31 @@ export function BiHeader({
   canRunActive,
   canRunAll,
   onToggleConfig,
+  isEditMode,
+  onToggleEditMode,
   title = 'Sales Intelligence Dashboard',
 }: BiHeaderProps) {
   return (
-    <header className="flex items-center justify-between px-6 py-4 z-30 bg-transparent">
-      <div className="flex items-center gap-4 min-w-0">
-        <div className="flex items-center gap-2">
-          <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">Workspace</span>
-          <span className="text-muted-foreground">/</span>
-          <span className="text-sm font-semibold text-foreground truncate max-w-[240px]" title={title}>
-            {title}
-          </span>
-          {dashboardDirty ? (
-            <span className="rounded-full border border-amber-300 bg-amber-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-widest text-amber-700">
-              Unsaved
+    <header className="flex flex-wrap items-center justify-between gap-3 border-b border-[color:var(--panel-border)] px-5 py-4 lg:px-6">
+      <div className="flex min-w-0 flex-wrap items-center gap-3">
+        <div className="min-w-0">
+          <p className="text-[10px] font-bold uppercase tracking-widest text-[color:var(--text-muted)]">Workspace / BI Studio</p>
+          <div className="flex items-center gap-2">
+            <span className="truncate text-sm font-semibold text-[color:var(--text-primary)]" title={title}>
+              {title}
             </span>
-          ) : null}
+            {dashboardDirty ? (
+              <span className="rounded-full border border-amber-300 bg-amber-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-widest text-amber-700">
+                Unsaved
+              </span>
+            ) : null}
+          </div>
         </div>
+
         <Select
           value={activeDashboardId ?? ''}
           onChange={(event) => onSelectDashboard(event.target.value)}
-          className="h-8 w-52 text-xs"
+          className="h-8 w-56 bg-[color:var(--panel-alt)] text-xs"
         >
           <option value="">Draft dashboard</option>
           {dashboards.map((dashboard) => (
@@ -74,12 +89,23 @@ export function BiHeader({
           ))}
         </Select>
       </div>
-      <div className="flex items-center gap-3">
+
+      <div className="flex flex-wrap items-center gap-2">
+        <Button
+          size="sm"
+          variant={isEditMode ? 'default' : 'outline'}
+          onClick={onToggleEditMode}
+          className="gap-2 rounded-full px-4 text-[10px] font-bold uppercase tracking-wider"
+          aria-pressed={isEditMode}
+        >
+          {isEditMode ? <PencilRuler className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
+          {isEditMode ? 'Edit mode' : 'View mode'}
+        </Button>
         <Button
           size="sm"
           variant="outline"
           onClick={onCreateDashboard}
-          className="gap-2 rounded-full px-4 uppercase tracking-wider text-[10px] font-bold shadow-sm"
+          className="gap-2 rounded-full px-4 text-[10px] font-bold uppercase tracking-wider"
         >
           <Plus className="h-3 w-3" />
           New
@@ -88,7 +114,7 @@ export function BiHeader({
           size="sm"
           onClick={onSaveDashboard}
           disabled={isSavingDashboard}
-          className="gap-2 rounded-full px-5 bg-primary text-primary-foreground hover:bg-primary/90 uppercase tracking-wider text-[10px] font-bold shadow-sm"
+          className="gap-2 rounded-full px-5 text-[10px] font-bold uppercase tracking-wider"
         >
           <Save className="h-3 w-3" />
           {isSavingDashboard ? 'Saving' : 'Save'}
@@ -98,7 +124,7 @@ export function BiHeader({
           variant="outline"
           onClick={onDeleteDashboard}
           disabled={!canDeleteDashboard}
-          className="gap-2 rounded-full px-4 uppercase tracking-wider text-[10px] font-bold shadow-sm"
+          className="gap-2 rounded-full px-4 text-[10px] font-bold uppercase tracking-wider"
         >
           <Trash2 className="h-3 w-3" />
           Delete
@@ -108,25 +134,37 @@ export function BiHeader({
           variant="outline"
           onClick={onRunAll}
           disabled={!canRunAll || isRunning}
-          className="gap-2 rounded-full px-5 uppercase tracking-wider text-[10px] font-bold shadow-sm"
+          className="gap-2 rounded-full px-4 text-[10px] font-bold uppercase tracking-wider"
         >
           <Play className="h-3 w-3 fill-current" />
-          Run All
+          Run all
         </Button>
         <Button
           size="sm"
           onClick={onRunActive}
           disabled={!canRunActive || isRunning}
-          className="gap-2 rounded-full px-5 bg-primary text-primary-foreground hover:bg-primary/90 uppercase tracking-wider text-[10px] font-bold shadow-sm"
+          className="gap-2 rounded-full px-4 text-[10px] font-bold uppercase tracking-wider"
         >
           <Play className="h-3 w-3 fill-current" />
-          Run Active
+          Run active
         </Button>
-        <div className="w-[1px] h-6 bg-border mx-1"></div>
-        <Button variant="outline" size="icon" className="h-9 w-9 rounded-full border-border bg-background shadow-sm hover:text-primary" onClick={onToggleGlobalConfig}>
+        <div className="mx-1 h-6 w-px bg-[color:var(--panel-border)]" />
+        <Button
+          variant="outline"
+          size="icon"
+          className="h-9 w-9 rounded-full border-[color:var(--panel-border)] bg-[color:var(--panel-bg)]"
+          onClick={onToggleGlobalConfig}
+          aria-label="Open global dashboard settings"
+        >
           <SlidersHorizontal className="h-4 w-4" />
         </Button>
-        <Button variant="outline" size="icon" className="h-9 w-9 rounded-full border-border bg-background shadow-sm hover:text-primary" onClick={onToggleConfig}>
+        <Button
+          variant="outline"
+          size="icon"
+          className="h-9 w-9 rounded-full border-[color:var(--panel-border)] bg-[color:var(--panel-bg)]"
+          onClick={onToggleConfig}
+          aria-label="Open widget settings"
+        >
           <Settings className="h-4 w-4" />
         </Button>
       </div>

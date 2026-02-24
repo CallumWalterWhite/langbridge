@@ -59,15 +59,18 @@ class PromptContract(BaseModel):
 
 
 class MemoryConfig(BaseModel):
-    strategy: MemoryStrategy = Field(..., description="How the agent persists/retrieves memory.")
+    strategy: MemoryStrategy = Field(
+        ...,
+        description="Legacy knob retained for compatibility. Runtime memory storage is system-managed.",
+    )
     ttl_seconds: Optional[int] = Field(
-        None, description="If transient, how long to keep memory entries (seconds)."
+        None, description="Optional retention hint; system-managed memory may cap or ignore this value."
     )
     vector_index: Optional[str] = Field(
-        None, description="Vector index name or identifier when using vector memory."
+        None, description="Ignored by runtime; vector memory index is managed by the system."
     )
     database_table: Optional[str] = Field(
-        None, description="Table or collection for database-backed memory."
+        None, description="Ignored by runtime; database memory table is managed by the system."
     )
 
 class ToolType(str, Enum):
