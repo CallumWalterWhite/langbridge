@@ -174,7 +174,7 @@ def upgrade() -> None:
     )
     op.create_table('threads',
     sa.Column('id', sa.UUID(), nullable=False),
-    sa.Column('organisation_id', sa.UUID(), nullable=False),
+    sa.Column('organization_id', sa.UUID(), nullable=False),
     sa.Column('project_id', sa.UUID(), nullable=False),
     sa.Column('title', sa.String(), nullable=True),
     sa.Column('status', sa.Enum('active', 'archived', 'error', 'completed', name='thread_status'), nullable=False),
