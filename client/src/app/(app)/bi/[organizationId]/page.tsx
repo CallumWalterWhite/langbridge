@@ -68,6 +68,7 @@ type BiStudioPageProps = {
 
 const DEFAULT_DASHBOARD_NAME = 'Untitled dashboard';
 const TERMINAL_JOB_STATUSES = new Set(['succeeded', 'failed', 'cancelled']);
+const JOB_STATUS_POLL_INTERVAL_MS = 1500;
 
 type CopilotAgentOption = {
   id: string;
@@ -559,7 +560,7 @@ export default function BiStudioPage({ params }: BiStudioPageProps) {
     void pollJobs();
     const intervalId = window.setInterval(() => {
       void pollJobs();
-    }, 1250);
+    }, JOB_STATUS_POLL_INTERVAL_MS);
 
     return () => {
       cancelled = true;
@@ -632,7 +633,7 @@ export default function BiStudioPage({ params }: BiStudioPageProps) {
     void pollCopilotJob();
     const intervalId = window.setInterval(() => {
       void pollCopilotJob();
-    }, 1250);
+    }, JOB_STATUS_POLL_INTERVAL_MS);
 
     return () => {
       cancelled = true;

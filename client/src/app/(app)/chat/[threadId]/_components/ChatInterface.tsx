@@ -118,6 +118,7 @@ const buildTurnsFromMessages = (messages: ThreadMessage[]): ConversationTurn[] =
 };
 
 const TERMINAL_JOB_STATUSES = new Set(['succeeded', 'failed', 'cancelled']);
+const JOB_STATUS_POLL_INTERVAL_MS = 1500;
 
 const isTerminalJobStatus = (status: string | undefined): boolean => {
   if (!status) {
@@ -647,7 +648,7 @@ export function ChatInterface({ threadId, organizationId }: ChatInterfaceProps) 
     };
 
     pollJobs();
-    const intervalId = window.setInterval(pollJobs, 1250);
+    const intervalId = window.setInterval(pollJobs, JOB_STATUS_POLL_INTERVAL_MS);
 
     return () => {
       cancelled = true;
