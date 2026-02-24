@@ -11,6 +11,7 @@ from langbridge.packages.common.langbridge_common.db.auth import (
     OrganizationInvite,
     ProjectInvite,
     OrganisationEnvironmentSetting,
+    UserPAT
 )
 
 __all__ = [
@@ -26,4 +27,5 @@ __all__ = [
     "OrganizationInvite",
     "ProjectInvite",
     "OrganisationEnvironmentSetting",
+    "UserPAT"
 ]

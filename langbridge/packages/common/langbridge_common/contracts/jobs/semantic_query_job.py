@@ -1,7 +1,13 @@
-from typing import Any
+from typing import Any, Literal
 import uuid
 
+from pydantic import model_validator
+
 from langbridge.packages.common.langbridge_common.contracts.base import _Base
+from langbridge.packages.common.langbridge_common.contracts.semantic.semantic_query import (
+    UnifiedSemanticJoinRequest,
+    UnifiedSemanticMetricRequest,
+)
 
 from .type import JobType
 
@@ -11,5 +17,24 @@ class CreateSemanticQueryJobRequest(_Base):
     organisation_id: uuid.UUID
     project_id: uuid.UUID | None = None
     user_id: uuid.UUID
-    semantic_model_id: uuid.UUID
+    query_scope: Literal["semantic_model", "unified"] = "semantic_model"
+    semantic_model_id: uuid.UUID | None = None
+    connector_id: uuid.UUID | None = None
+    semantic_model_ids: list[uuid.UUID] | None = None
+    joins: list[UnifiedSemanticJoinRequest] | None = None
+    metrics: dict[str, UnifiedSemanticMetricRequest] | None = None
     query: dict[str, Any]
+
+    @model_validator(mode="after")
+    def _validate_scope_payload(self) -> "CreateSemanticQueryJobRequest":
+        if self.query_scope == "semantic_model":
+            if self.semantic_model_id is None:
+                raise ValueError("semantic_model_id is required for semantic_model query scope.")
+            return self
+
+        if self.query_scope == "unified":
+            if not self.semantic_model_ids:
+                raise ValueError("semantic_model_ids must include at least one model id for unified query scope.")
+            return self
+
+        raise ValueError(f"Unsupported semantic query scope '{self.query_scope}'.")

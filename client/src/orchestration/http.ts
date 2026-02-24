@@ -10,16 +10,34 @@ export class ApiError extends Error {
   }
 }
 
-const API_BASE = process.env.NEXT_PUBLIC_BACKEND_URL ?? '';
+type RuntimeWindow = Window & {
+  __LANGBRIDGE_BACKEND_URL__?: string;
+};
+
+function getApiBase(): string {
+  if (typeof window !== 'undefined') {
+    const runtimeApiBase = (window as RuntimeWindow).__LANGBRIDGE_BACKEND_URL__;
+    if (runtimeApiBase) {
+      return runtimeApiBase;
+    }
+  }
+
+  return process.env.BACKEND_URL ?? process.env.NEXT_PUBLIC_BACKEND_URL ?? '';
+}
 
 function resolveUrl(path: string): string {
   if (path.startsWith('http://') || path.startsWith('https://')) {
     return path;
   }
-  if (!API_BASE) {
+  const apiBase = getApiBase();
+  if (!apiBase) {
     return path;
   }
-  return `${API_BASE}${path}`;
+  return `${apiBase}${path}`;
+}
+
+export function resolveApiUrl(path: string): string {
+  return resolveUrl(path);
 }
 
 export type ApiRequestOptions = RequestInit & {

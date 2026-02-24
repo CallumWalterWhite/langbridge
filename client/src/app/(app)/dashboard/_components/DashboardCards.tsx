@@ -27,21 +27,13 @@ import { useToast } from '@/components/ui/toast';
 import { useWorkspaceScope } from '@/context/workspaceScope';
 import { formatRelativeDate } from '@/lib/utils';
 import { fetchAgentDefinitions, fetchLLMConnections } from '@/orchestration/agents';
+import { resolveApiUrl } from '@/orchestration/http';
 import type { AgentDefinition, LLMConnection } from '@/orchestration/agents';
 import { createThread } from '@/orchestration/threads';
 import type { Thread } from '@/orchestration/threads';
 
 import { AddSourceDialog } from './AddSourceDialog';
 import type { DataSource } from '../types';
-
-const API_BASE = process.env.NEXT_PUBLIC_BACKEND_URL ?? '';
-
-function withApiBase(path: string) {
-  if (!API_BASE) {
-    return path;
-  }
-  return `${API_BASE}${path}`;
-}
 
 const quickPrompts = [
   'Investigate revenue variance across finance and product data.',
@@ -79,7 +71,7 @@ export function DashboardCards() {
       if (!selectedOrganizationId) {
         return [];
       }
-      const response = await fetch(withApiBase(`/api/v1/datasources/${selectedOrganizationId}`), {
+      const response = await fetch(resolveApiUrl(`/api/v1/datasources/${selectedOrganizationId}`), {
         credentials: 'include',
         headers: { Accept: 'application/json' },
       });

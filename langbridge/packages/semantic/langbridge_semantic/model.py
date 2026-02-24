@@ -39,6 +39,7 @@ class TableFilter(BaseModel):
 
 
 class Table(BaseModel):
+    catalog: Optional[str] = None
     schema: str
     name: str
     description: Optional[str] = None
@@ -50,10 +51,13 @@ class Table(BaseModel):
     def get_annotations(self) -> Dict[str, str]:
         #Build object with dimensions and measures, where has the key value pairs like {'sqllite_main_customer.customer_id': 'Customer Id'}
         annotations = {}
+        table_path = f"{self.schema}.{self.name}" if self.schema else self.name
+        if self.catalog:
+            table_path = f"{self.catalog}.{table_path}" if table_path else self.catalog
         for dimension in self.dimensions or []:
-            annotations[f"{self.schema}.{self.name}.{dimension.name}"] = dimension.name
+            annotations[f"{table_path}.{dimension.name}"] = dimension.name
         for measure in self.measures or []:
-            annotations[f"{self.schema}.{self.name}.{measure.name}"] = measure.name
+            annotations[f"{table_path}.{measure.name}"] = measure.name
         return annotations
     
     def model_post_init(self, __context):

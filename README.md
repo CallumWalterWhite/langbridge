@@ -10,7 +10,8 @@ run tool-backed workflows, and expose a shared UI for models, semantic data, and
 - Gateway (SQL via Trino): `uvicorn langbridge.apps.gateway.langbridge_gateway.main:app --reload --port 8001`.
 - Frontend (Next.js app): `cd client && npm install && npm run dev`.
 - Docker: `docker compose up --build` and visit `http://localhost:3000` for the UI,
-  `http://localhost:8000/docs` for the API, and `http://localhost:8001/health` for the gateway.
+  `http://localhost:8000/docs` for the API, `http://localhost:8001/health` for the gateway,
+  and `http://localhost:8080` for Trino.
 
 ## Repo structure
 - `langbridge/apps/api`: control plane (REST API, auth/tenancy, CRUD, job submission).
@@ -25,7 +26,20 @@ run tool-backed workflows, and expose a shared UI for models, semantic data, and
 ## Gateway notes
 - The gateway accepts `POST /v1/query` with `{sql, tenant_id, source_id?, session?}`.
 - Extra credentials are sent to Trino using `X-Trino-Extra-Credential: key=value` headers.
-- Trino plugin folders are stubs only (no code yet). See `langbridge/services/trino/plugins`.
+- Multi-tenant Trino connection-factory source lives under `langbridge/services/trino/plugins/multi_tenant`.
+
+## Trino Docker setup
+- Trino is included in both compose stacks and built from `langbridge/services/trino/custom/Dockerfile`.
+- The custom build applies `langbridge/services/trino/custom/patches/0001-tenant-aware-jdbc-routing.patch` to Trino 455.
+- Catalogs are tenant-aware and route to the SQL gateway proxy:
+  - `postgres` -> `jdbc:postgresql://gateway-proxy:55432/{tenant}`
+  - `mysql` -> `jdbc:mysql://gateway-proxy:53306` with `connection-user=tenant:{tenant};user:trino`
+  - `sqlserver` -> `jdbc:sqlserver://gateway-proxy:51433;databaseName={tenant}`
+- `gateway-proxy` is started in both compose stacks to accept Trino JDBC connector traffic.
+- `{tenant}` replacement is handled by the patched Trino JDBC connection factory in the custom image.
+- First image build is slower because Maven compiles patched Trino connector modules.
+- Quick health check:
+  - `curl http://localhost:8080/v1/info`
 
 ## Messaging notes
 - Messaging uses Redis Streams with consumer groups and a dead-letter stream.

@@ -367,6 +367,11 @@ def _score_deep_research(signals: RouteSignals, constraints: PlanningConstraints
     score = 0.0
     if signals.has_research_signals:
         score += 3.5
+    elif signals.has_web_search_signals:
+        score += 1.2
+    else:
+        # Do not over-trigger deep research for straightforward analytical asks.
+        score -= 1.25
     if not signals.has_sql_signals:
         score += 1.0
     if signals.has_sql_signals:

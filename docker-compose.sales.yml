@@ -14,6 +14,9 @@ services:
       POSTGRES_USER: langbridge
       POSTGRES_PASSWORD: langbridge
       POSTGRES_DB: langbridge
+    profiles:
+      - local
+      - development
     depends_on:
       db:
         condition: service_healthy
@@ -29,8 +32,8 @@ services:
       - ./langbridge/.env
     environment:
       ENVIRONMENT: development
-      BACKEND_URL: http://localhost:8000
-      FRONTEND_URL: http://localhost:3000
+      # BACKEND_URL: http://localhost:8000
+      # FRONTEND_URL: http://localhost:3000
       POSTGRES_SERVER: db
       POSTGRES_PORT: 5432
       POSTGRES_USER: langbridge
@@ -39,6 +42,18 @@ services:
       REDIS_HOST: redis
       REDIS_PORT: 6379
       RELOAD: true
+      UNIFIED_TRINO_HOST: trino
+      UNIFIED_TRINO_PORT: ${UNIFIED_TRINO_PORT:-8080}
+      UNIFIED_TRINO_USER: ${UNIFIED_TRINO_USER:-trino}
+      UNIFIED_TRINO_PASSWORD: ${UNIFIED_TRINO_PASSWORD:-}
+      UNIFIED_TRINO_CATALOG: ${UNIFIED_TRINO_CATALOG:-system}
+      UNIFIED_TRINO_SCHEMA: ${UNIFIED_TRINO_SCHEMA:-information_schema}
+      UNIFIED_TRINO_HTTP_SCHEME: ${UNIFIED_TRINO_HTTP_SCHEME:-http}
+      UNIFIED_TRINO_VERIFY: ${UNIFIED_TRINO_VERIFY:-false}
+      UNIFIED_TRINO_SOURCE: ${UNIFIED_TRINO_SOURCE:-langbridge}
+    profiles:
+      - local
+      - development
     depends_on:
       db:
         condition: service_healthy
@@ -68,7 +83,19 @@ services:
       REDIS_PORT: 6379
       WORKER_POLL_INTERVAL: 2.0
       WORKER_METRICS_PORT: 9101
+      UNIFIED_TRINO_HOST: trino
+      UNIFIED_TRINO_PORT: ${UNIFIED_TRINO_PORT:-8080}
+      UNIFIED_TRINO_USER: ${UNIFIED_TRINO_USER:-trino}
+      UNIFIED_TRINO_PASSWORD: ${UNIFIED_TRINO_PASSWORD:-}
+      UNIFIED_TRINO_CATALOG: ${UNIFIED_TRINO_CATALOG:-system}
+      UNIFIED_TRINO_SCHEMA: ${UNIFIED_TRINO_SCHEMA:-information_schema}
+      UNIFIED_TRINO_HTTP_SCHEME: ${UNIFIED_TRINO_HTTP_SCHEME:-http}
+      UNIFIED_TRINO_VERIFY: ${UNIFIED_TRINO_VERIFY:-false}
+      UNIFIED_TRINO_SOURCE: ${UNIFIED_TRINO_SOURCE:-langbridge}
     command: ["python", "-m", "langbridge.apps.worker.langbridge_worker.main", "--reload"]
+    profiles:
+      - local
+      - development
     depends_on:
       db:
         condition: service_healthy
@@ -86,21 +113,55 @@ services:
     env_file:
       - ./langbridge/.env
     environment:
-      TRINO_URL: ${TRINO_URL:-}
+      TRINO_URL: ${TRINO_URL:-http://trino:8080}
       GATEWAY_PORT: 8001
     command: ["uvicorn", "langbridge.apps.gateway.langbridge_gateway.main:app", "--host", "0.0.0.0", "--port", "8001"]
+    profiles:
+      - development
+    depends_on:
+      trino:
+        condition: service_started
     ports:
       - "8001:8001"
+  gateway-proxy:
+    build:
+      context: .
+      dockerfile: langbridge/Dockerfile.gateway
+    container_name: langbridge-gateway-proxy
+    env_file:
+      - ./langbridge/.env
+    environment:
+      PROXY_LISTEN_HOST: 0.0.0.0
+      PROXY_PG_PORT: 55432
+      PROXY_MYSQL_PORT: 53306
+      PROXY_POSTGRES_UPSTREAMS: '{"*":{"host":"db","port":5432,"database":"langbridge"}}'
+    command: ["python", "-m", "langbridge.apps.gateway.langbridge_gateway.app"]
+    profiles:
+      - development
+    depends_on:
+      db:
+        condition: service_healthy
+      sales-db:
+        condition: service_healthy
+    ports:
+      - "55432:55432"
+      - "53306:53306"
+      - "51433:51433"
   client:
     build:
       context: ./client
       dockerfile: Dockerfile
-      args:
-        NEXT_PUBLIC_BACKEND_URL: http://localhost:8000
+      # args:
+      #   NEXT_PUBLIC_BACKEND_URL: http://localhost:8000
     container_name: langbridge-client
+    env_file:
+      - ./client/.env
+    profiles:
+      - local
+      - development
     environment:
       NODE_ENV: production
-      NEXT_PUBLIC_BACKEND_URL: http://localhost:8000
+      # NEXT_PUBLIC_BACKEND_URL: http://localhost:8000
       PORT: 3000
     depends_on:
       - api
@@ -113,6 +174,9 @@ services:
       POSTGRES_USER: langbridge
       POSTGRES_PASSWORD: langbridge
       POSTGRES_DB: langbridge
+    profiles:
+      - local
+      - development
     volumes:
       - pg_data:/var/lib/postgresql/data
     ports:
@@ -132,6 +196,8 @@ services:
     volumes:
       - sales_pg_data:/var/lib/postgresql/data
       - ./seed/sales-db:/docker-entrypoint-initdb.d:ro
+    profiles:
+      - development
     ports:
       - "5433:5432"
     healthcheck:
@@ -142,6 +208,8 @@ services:
   redis:
     image: redis:7-alpine
     container_name: langbridge-redis
+    profiles:
+      - development
     ports:
       - "6379:6379"
     volumes:
@@ -156,6 +224,30 @@ services:
       - "6334:6334"
     volumes:
       - qdrant_data:/qdrant/storage
+  trino:
+    build:
+      context: .
+      dockerfile: langbridge/services/trino/custom/Dockerfile
+      args:
+        TRINO_VERSION: ${TRINO_VERSION:-455}
+        CUSTOM_CA_CERT_B64: ${CUSTOM_CA_CERT_B64:-}
+        CUSTOM_CA_ALIAS: ${CUSTOM_CA_ALIAS:-custom-root-ca}
+    image: langbridge-trino-custom:${TRINO_VERSION:-455}
+    container_name: langbridge-trino
+    profiles:
+      - development
+    depends_on:
+      db:
+        condition: service_healthy
+      sales-db:
+        condition: service_healthy
+      gateway-proxy:
+        condition: service_started
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./langbridge/services/trino/docker/config.properties:/etc/trino/config.properties:ro
+      - ./langbridge/services/trino/docker/catalog-gateway:/etc/trino/catalog:ro
   prometheus:
     image: prom/prometheus:v2.55.1
     container_name: langbridge-prometheus

@@ -5,7 +5,7 @@ from langbridge.packages.messaging.langbridge_messaging.contracts import Message
 from langbridge.packages.messaging.langbridge_messaging.handler import BaseMessageHandler
 
 
-class WorkerMessageHandler:
+class WorkerMessageDispatcher:
 
     def __init__(
             self,
@@ -46,6 +46,7 @@ class WorkerMessageHandler:
             self
     ):
         # Import handler modules so BaseMessageHandler subclasses are registered.
+        #TODO: create a more robust plugin system for handlers to avoid hardcoding imports here.
         from .jobs.agent_job_request_handler import AgentJobRequestHandler  # noqa: F401
         from .copilot.copilot_dashboard_request_handler import CopilotDashboardRequestHandler  # noqa: F401
         from .query.semantic_query_request_handler import SemanticQueryRequestHandler  # noqa: F401

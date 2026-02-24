@@ -25,7 +25,24 @@ from langbridge.packages.orchestrator.langbridge_orchestrator.agents.planner imp
     PlannerRequest,
     PlanningAgent,
     PlanningConstraints,
+    RouteName,
 )
+from langbridge.packages.orchestrator.langbridge_orchestrator.agents.supervisor.clarification_manager import (
+    ClarificationManager,
+)
+from langbridge.packages.orchestrator.langbridge_orchestrator.agents.supervisor.entity_resolver import (
+    EntityResolver,
+)
+from langbridge.packages.orchestrator.langbridge_orchestrator.agents.supervisor.question_classifier import (
+    QuestionClassifier,
+)
+from langbridge.packages.orchestrator.langbridge_orchestrator.agents.supervisor.schemas import (
+    ClarificationDecision,
+    ClarificationState,
+    ClassifiedQuestion,
+    ResolvedEntities,
+)
+from langbridge.packages.orchestrator.langbridge_orchestrator.llm.provider import LLMProvider
 from langbridge.packages.orchestrator.langbridge_orchestrator.agents.visual import VisualAgent
 from langbridge.packages.orchestrator.langbridge_orchestrator.agents.web_search import WebSearchAgent, WebSearchResult
 from langbridge.packages.orchestrator.langbridge_orchestrator.tools.semantic_query_builder import (
@@ -42,12 +59,22 @@ class OrchestrationContext:
     analyst_tools: Sequence[Any]  # Retained for backwards compatibility / auditing
     trace_metadata: Dict[str, Any] = field(default_factory=dict)
 
+
+@dataclass(slots=True)
+class SupervisorPreflight:
+    classification: ClassifiedQuestion
+    resolved_entities: ResolvedEntities
+    clarification_decision: ClarificationDecision
+    context_updates: Dict[str, Any] = field(default_factory=dict)
+
+
 class SupervisorOrchestrator:
     """High-level orchestrator routing between planner, analyst, research, and visual agents."""
 
     def __init__(
         self,
         *,
+        llm: LLMProvider,
         visual_agent: Optional[VisualAgent] = None,
         analyst_agent: Optional[AnalystAgent] = None,
         logger: Optional[logging.Logger] = None,
@@ -57,6 +84,9 @@ class SupervisorOrchestrator:
         reasoning_agent: Optional[ReasoningAgent] = None,
         bi_copilot_agent: Optional[BICopilotAgent] = None,
         event_emitter: Optional[IAgentEventEmitter] = None,
+        question_classifier: Optional[QuestionClassifier] = None,
+        entity_resolver: Optional[EntityResolver] = None,
+        clarification_manager: Optional[ClarificationManager] = None,
     ) -> None:
         self.analyst_agent = analyst_agent
         self.visual_agent = visual_agent
@@ -67,6 +97,9 @@ class SupervisorOrchestrator:
         self.reasoning_agent = reasoning_agent
         self.bi_copilot_agent = bi_copilot_agent
         self.event_emitter = event_emitter
+        self.question_classifier = question_classifier or QuestionClassifier(llm=llm, logger=self.logger)
+        self.entity_resolver = entity_resolver or EntityResolver(llm=llm, logger=self.logger)
+        self.clarification_manager = clarification_manager or ClarificationManager(default_max_turns=2)
 
     async def run_copilot(
         self,
@@ -103,6 +136,50 @@ class SupervisorOrchestrator:
         combined_artifacts = PlanExecutionArtifacts()
         final_decision: Optional[ReasoningDecision] = None
         extra_context: Dict[str, Any] = dict(planning_context or {})
+        preflight = await self._run_preflight(user_query=user_query, planning_context=extra_context)
+        classification = preflight.classification
+        resolved_entities = preflight.resolved_entities
+        clarification_state = preflight.clarification_decision.updated_state
+        assumptions_applied = list(preflight.clarification_decision.assumptions)
+        extra_context = self._merge_context(extra_context, preflight.context_updates)
+
+        if preflight.clarification_decision.requires_clarification:
+            clarifying_question = preflight.clarification_decision.clarifying_question or (
+                "Could you share the missing details to continue?"
+            )
+            await self._emit_event(
+                event_type="ClarificationRequested",
+                message="More detail is needed to continue.",
+                visibility=AgentEventVisibility.public,
+                source="agent:Clarify",
+                details={
+                    "question": clarifying_question,
+                    "missing_slots": preflight.clarification_decision.missing_blocking_slots,
+                },
+            )
+            return {
+                "sql_canonical": "",
+                "sql_executable": "",
+                "dialect": "n/a",
+                "model": "",
+                "result": {},
+                "visualization": None,
+                "summary": f"I need one clarification before continuing: {clarifying_question}",
+                "diagnostics": {
+                    "clarifying_question": clarifying_question,
+                    "classification": classification.model_dump(),
+                    "resolved_entities": resolved_entities.model_dump(),
+                    "clarification_state": clarification_state.model_dump(),
+                    "assumptions_applied": assumptions_applied,
+                    "plan": None,
+                    "iterations_diagnostics": [],
+                },
+                "tool_calls": [],
+            }
+
+        if not self.planning_agent or not self.reasoning_agent:
+            raise RuntimeError("Planning and reasoning agents must be configured for supervisor execution.")
+
         iteration_diagnostics: Dict[str, Any] = {}
         iteration_diagnostics_history: list[Dict[str, Any]] = []
         iterations_completed = 0
@@ -248,6 +325,10 @@ class SupervisorOrchestrator:
             "dialect": analyst_result.dialect,
             "iterations_diagnostics": iteration_diagnostics_history,
             "plan": plan.model_dump(),
+            "classification": classification.model_dump(),
+            "resolved_entities": resolved_entities.model_dump(),
+            "clarification_state": clarification_state.model_dump(),
+            "assumptions_applied": assumptions_applied,
         }
         if artifacts.research_result:
             diagnostics["research"] = artifacts.research_result.to_dict()
@@ -266,6 +347,9 @@ class SupervisorOrchestrator:
             visualization=visualization,
             analyst_result=analyst_result,
             clarifying_question=artifacts.clarifying_question,
+            web_search_result=web_search_result,
+            research_result=artifacts.research_result or combined_artifacts.research_result,
+            assumptions_applied=assumptions_applied,
         )
 
         self.logger.info(
@@ -318,6 +402,99 @@ class SupervisorOrchestrator:
             context=context or None,
             constraints=constraints or PlanningConstraints(),
         )
+
+    async def _run_preflight(
+        self,
+        *,
+        user_query: str,
+        planning_context: Dict[str, Any],
+    ) -> SupervisorPreflight:
+        classification = await self.question_classifier.classify_async(
+            user_query,
+            context=planning_context,
+        )
+        resolved_entities = await self.entity_resolver.resolve_async(
+            user_query,
+            classification=classification,
+            context=planning_context,
+        )
+        prior_state = self._coerce_clarification_state(planning_context.get("clarification_state"))
+        clarification_decision = self.clarification_manager.decide(
+            classification=classification,
+            prior_state=prior_state,
+        )
+
+        context_updates: Dict[str, Any] = {
+            "classification": classification.model_dump(),
+            "resolved_entities": resolved_entities.model_dump(),
+            "clarification_state": clarification_decision.updated_state.model_dump(),
+        }
+
+        routing_context: Dict[str, Any] = {}
+        route_hint = classification.route_hint
+        if (
+            route_hint
+            and route_hint in {route.value for route in RouteName}
+            and route_hint != RouteName.CLARIFY.value
+            and classification.confidence >= 0.55
+        ):
+            routing_context["force_route"] = route_hint
+
+        if clarification_decision.assumptions:
+            routing_context["avoid_routes"] = [RouteName.CLARIFY.value]
+            context_updates["assumptions"] = clarification_decision.assumptions
+
+        if routing_context:
+            context_updates["routing"] = routing_context
+
+        memory_context = self._build_memory_context(planning_context)
+        if memory_context:
+            existing_context = planning_context.get("conversation_context")
+            context_updates["conversation_context"] = self._merge_conversation_context(
+                existing_context if isinstance(existing_context, str) else None,
+                memory_context,
+            )
+
+        return SupervisorPreflight(
+            classification=classification,
+            resolved_entities=resolved_entities,
+            clarification_decision=clarification_decision,
+            context_updates=context_updates,
+        )
+
+    @staticmethod
+    def _coerce_clarification_state(payload: Any) -> ClarificationState:
+        if isinstance(payload, ClarificationState):
+            return payload
+        if isinstance(payload, dict):
+            try:
+                return ClarificationState.model_validate(payload)
+            except Exception:
+                return ClarificationState()
+        return ClarificationState()
+
+    @staticmethod
+    def _build_memory_context(planning_context: Dict[str, Any]) -> str:
+        sections: list[str] = []
+        short_term = planning_context.get("short_term_context")
+        if isinstance(short_term, str) and short_term.strip():
+            sections.append(f"Short-term conversation context:\n{short_term.strip()}")
+
+        retrieved = planning_context.get("retrieved_memories")
+        if isinstance(retrieved, list) and retrieved:
+            memory_lines: list[str] = []
+            for item in retrieved[:8]:
+                if not isinstance(item, dict):
+                    continue
+                category = str(item.get("category") or "memory")
+                content = str(item.get("content") or "").strip()
+                if not content:
+                    continue
+                memory_lines.append(f"[{category}] {content}")
+            if memory_lines:
+                sections.append("Relevant long-term memories:\n" + "\n".join(memory_lines))
+
+        return "\n\n".join(sections).strip()
 
     async def _execute_plan(
         self,
@@ -686,6 +863,29 @@ class SupervisorOrchestrator:
             context=context,
             timebox_seconds=timebox,
         )
+        await self._emit_event(
+            event_type="ResearchTraceAvailable",
+            message="Deep research trace captured.",
+            visibility=AgentEventVisibility.internal,
+            source="agent:DocRetrieval",
+            details={
+                "step_id": step.id,
+                "question": question,
+                "plan": result.plan.model_dump(mode="json") if result.plan else None,
+                "state": result.state.model_dump(mode="json") if result.state else None,
+                "sources": [
+                    {
+                        "id": item.id,
+                        "source_type": item.source_type,
+                        "source": item.source,
+                        "source_ref": item.source_ref,
+                        "domain": item.domain,
+                        "score": item.score,
+                    }
+                    for item in result.evidence[:12]
+                ],
+            },
+        )
         tool_args: Dict[str, Any] = {
             "step_id": step.id,
             "input": step.input,
@@ -789,9 +989,35 @@ class SupervisorOrchestrator:
         visualization: Dict[str, Any] | None,
         analyst_result: AnalystQueryResponse,
         clarifying_question: str | None,
+        web_search_result: WebSearchResult | None = None,
+        research_result: DeepResearchResult | None = None,
+        assumptions_applied: Sequence[str] | None = None,
     ) -> str:
         if clarifying_question:
             return f"I need one clarification before continuing: {clarifying_question}"
+
+        assumptions = [item for item in (assumptions_applied or []) if isinstance(item, str) and item.strip()]
+
+        if research_result:
+            summary = SupervisorOrchestrator._format_research_summary(research_result, user_query=user_query)
+            if assumptions:
+                summary = summary + "\n\nAssumptions: " + "; ".join(assumptions)
+            return summary
+
+        if web_search_result and not data_payload:
+            if web_search_result.answer:
+                summary = web_search_result.answer
+            elif web_search_result.results:
+                summary = f"Found {len(web_search_result.results)} web sources for '{user_query}'."
+            else:
+                follow_up = web_search_result.follow_up_question or "Could you narrow the topic or provide a target source?"
+                summary = (
+                    "I could not find strong enough external sources to answer confidently. "
+                    f"{follow_up}"
+                )
+            if assumptions:
+                summary = summary + " Assumptions: " + "; ".join(assumptions)
+            return summary
 
         if analyst_result.error:
             return f"I could not complete that request: {analyst_result.error}"
@@ -802,7 +1028,10 @@ class SupervisorOrchestrator:
         col_count = len(columns) if isinstance(columns, list) else 0
 
         if row_count == 0:
-            return "Completed, but no tabular rows were returned."
+            summary = "Completed, but no tabular rows were returned."
+            if assumptions:
+                summary = summary + " Assumptions: " + "; ".join(assumptions)
+            return summary
 
         requested_chart = SupervisorOrchestrator._detect_requested_chart_type(user_query)
         if visualization and isinstance(visualization, dict):
@@ -811,33 +1040,99 @@ class SupervisorOrchestrator:
             options = visualization.get("options") if isinstance(visualization.get("options"), dict) else {}
             warning = options.get("visualization_warning") if isinstance(options, dict) else None
             if isinstance(warning, str) and warning.strip():
-                return (
+                summary = (
                     f"Found {row_count} rows across {col_count} columns for '{user_query}'. "
                     f"{warning.strip()}"
                 )
+                if assumptions:
+                    summary = summary + " Assumptions: " + "; ".join(assumptions)
+                return summary
             if requested_chart and chart_type and chart_type != requested_chart:
-                return (
+                summary = (
                     f"Found {row_count} rows across {col_count} columns for '{user_query}'. "
                     f"I could not prepare the requested {requested_chart} chart from this dataset."
                 )
+                if assumptions:
+                    summary = summary + " Assumptions: " + "; ".join(assumptions)
+                return summary
             if chart_type and chart_type != "table":
-                return (
+                summary = (
                     f"Found {row_count} rows across {col_count} columns for '{user_query}'. "
                     f"I also prepared a {chart_type} visualization."
                 )
+                if assumptions:
+                    summary = summary + " Assumptions: " + "; ".join(assumptions)
+                return summary
             if requested_chart and chart_type == "table":
-                return (
+                summary = (
                     f"Found {row_count} rows across {col_count} columns for '{user_query}'. "
                     f"I could not prepare the requested {requested_chart} chart from this dataset."
                 )
+                if assumptions:
+                    summary = summary + " Assumptions: " + "; ".join(assumptions)
+                return summary
 
         if requested_chart:
-            return (
+            summary = (
                 f"Found {row_count} rows across {col_count} columns for '{user_query}'. "
                 f"I could not prepare the requested {requested_chart} chart from this dataset."
             )
+            if assumptions:
+                summary = summary + " Assumptions: " + "; ".join(assumptions)
+            return summary
 
-        return f"Found {row_count} rows across {col_count} columns for '{user_query}'."
+        summary = f"Found {row_count} rows across {col_count} columns for '{user_query}'."
+        if assumptions:
+            summary = summary + " Assumptions: " + "; ".join(assumptions)
+        return summary
+
+    @staticmethod
+    def _format_research_summary(result: DeepResearchResult, *, user_query: str) -> str:
+        report = result.report
+        if not report:
+            return result.synthesis or f"Completed deep research for '{user_query}'."
+
+        lines: list[str] = []
+        lines.append("Executive summary:")
+        lines.append(report.executive_summary.strip() or f"Completed deep research for '{user_query}'.")
+
+        lines.append("")
+        lines.append("Key findings:")
+        if report.key_findings:
+            for finding in report.key_findings[:5]:
+                citations = ", ".join(finding.citations) if finding.citations else "no citation"
+                lines.append(f"- {finding.claim} [{finding.confidence}] ({citations})")
+        else:
+            lines.append("- No high-confidence findings could be supported by current evidence.")
+
+        lines.append("")
+        lines.append("Supporting evidence:")
+        if report.supporting_evidence:
+            for finding_id, evidence_ids in list(report.supporting_evidence.items())[:8]:
+                evidence_text = ", ".join(evidence_ids) if evidence_ids else "none"
+                lines.append(f"- {finding_id}: {evidence_text}")
+        else:
+            lines.append("- No explicit evidence mapping was produced.")
+
+        lines.append("")
+        lines.append("Risks/uncertainties:")
+        if report.risks_uncertainties:
+            for risk in report.risks_uncertainties[:4]:
+                lines.append(f"- {risk}")
+        else:
+            lines.append("- None noted.")
+
+        lines.append("")
+        lines.append("What I'd do next:")
+        if report.next_steps:
+            for step in report.next_steps[:4]:
+                lines.append(f"- {step}")
+        else:
+            lines.append("- Gather additional primary sources for unresolved subquestions.")
+        if report.follow_up_question:
+            lines.append(f"- Follow-up needed: {report.follow_up_question}")
+
+        return "\n".join(lines).strip()
 
     @staticmethod
     def _detect_requested_chart_type(question: str) -> str | None:

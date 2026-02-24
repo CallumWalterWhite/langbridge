@@ -138,10 +138,17 @@ def _parse_entity_table(
     entity_meta: Mapping[str, Any],
     dimension_map: Mapping[str, Any],
 ) -> Table:
+    catalog = _string_or_none(entity_meta.get("catalog"))
     schema = entity_meta.get("schema")
     table_name = entity_meta.get("name") or entity_meta.get("table")
     if isinstance(table_name, str) and "." in table_name and not schema:
-        schema, table_name = table_name.split(".", 1)
+        table_parts = [part for part in table_name.split(".") if part]
+        if len(table_parts) >= 3:
+            catalog = table_parts[0]
+            schema = table_parts[1]
+            table_name = ".".join(table_parts[2:])
+        elif len(table_parts) == 2:
+            schema, table_name = table_parts
 
     columns = entity_meta.get("columns") or {}
     raw_primary_keys = entity_meta.get("primary_key") or []
@@ -217,6 +224,7 @@ def _parse_entity_table(
         }
 
     return Table(
+        catalog=catalog,
         schema=str(schema or ""),
         name=str(table_name or ""),
         description=_string_or_none(entity_meta.get("description")),

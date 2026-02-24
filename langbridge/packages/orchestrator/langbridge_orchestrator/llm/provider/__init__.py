@@ -15,9 +15,20 @@ from .factory import (
 )
 
 # Import concrete providers to register them with the factory.
-from .openai import OpenAIProvider  # noqa: F401
-from .anthropic import AnthropicProvider  # noqa: F401
-from .azure import AzureOpenAIProvider  # noqa: F401
+try:  # pragma: no cover - optional provider deps may be unavailable in some test environments
+    from .openai import OpenAIProvider  # type: ignore  # noqa: F401
+except Exception:  # pragma: no cover
+    OpenAIProvider = None  # type: ignore
+
+try:  # pragma: no cover
+    from .anthropic import AnthropicProvider  # type: ignore  # noqa: F401
+except Exception:  # pragma: no cover
+    AnthropicProvider = None  # type: ignore
+
+try:  # pragma: no cover
+    from .azure import AzureOpenAIProvider  # type: ignore  # noqa: F401
+except Exception:  # pragma: no cover
+    AzureOpenAIProvider = None  # type: ignore
 
 __all__ = [
     'LLMProvider',
@@ -35,4 +46,3 @@ __all__ = [
     'AnthropicProvider',
     'AzureOpenAIProvider',
 ]
-

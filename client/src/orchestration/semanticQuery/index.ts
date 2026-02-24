@@ -5,6 +5,10 @@ import type {
   SemanticQueryMetaResponse,
   SemanticQueryRequestPayload,
   SemanticQueryResponse,
+  UnifiedSemanticQueryMetaRequestPayload,
+  UnifiedSemanticQueryMetaResponse,
+  UnifiedSemanticQueryRequestPayload,
+  UnifiedSemanticQueryResponse,
 } from './types';
 
 const BASE_PATH = '/api/v1/semantic-query';
@@ -50,4 +54,34 @@ export async function enqueueSemanticQuery(
       body: JSON.stringify(payload),
     },
   );
+}
+
+export async function fetchUnifiedSemanticQueryMeta(
+  organizationId: string,
+  payload: UnifiedSemanticQueryMetaRequestPayload,
+): Promise<UnifiedSemanticQueryMetaResponse> {
+  return apiFetch<UnifiedSemanticQueryMetaResponse>(`${basePath(organizationId)}/unified/meta`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function runUnifiedSemanticQuery(
+  organizationId: string,
+  payload: UnifiedSemanticQueryRequestPayload,
+): Promise<UnifiedSemanticQueryResponse> {
+  return apiFetch<UnifiedSemanticQueryResponse>(`${basePath(organizationId)}/unified/q`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function enqueueUnifiedSemanticQuery(
+  organizationId: string,
+  payload: UnifiedSemanticQueryRequestPayload,
+): Promise<SemanticQueryJobResponse> {
+  return apiFetch<SemanticQueryJobResponse>(`${basePath(organizationId)}/unified/q/jobs`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
 }

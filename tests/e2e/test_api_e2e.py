@@ -121,6 +121,29 @@ def test_protected_routes_require_auth(running_api: str) -> None:
         response = client.get("/api/v1/organizations")
         assert response.status_code == 401
 
+        org_id = uuid.uuid4()
+        model_id = uuid.uuid4()
+        single_query_response = client.post(
+            f"/api/v1/semantic-query/{org_id}/{model_id}/q",
+            json={
+                "organizationId": str(org_id),
+                "semanticModelId": str(model_id),
+                "query": {"dimensions": ["orders.id"], "limit": 1},
+            },
+        )
+        assert single_query_response.status_code == 401
+
+        unified_query_response = client.post(
+            f"/api/v1/semantic-query/{org_id}/unified/q",
+            json={
+                "organizationId": str(org_id),
+                "connectorId": str(uuid.uuid4()),
+                "semanticModelIds": [str(uuid.uuid4())],
+                "query": {"dimensions": ["orders.id"], "limit": 1},
+            },
+        )
+        assert unified_query_response.status_code == 401
+
 
 def test_native_auth_org_project_thread_e2e(running_api: str) -> None:
     suffix = uuid.uuid4().hex[:8]

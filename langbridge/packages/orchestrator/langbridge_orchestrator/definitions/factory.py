@@ -3,7 +3,6 @@ import uuid
 
 from .model import (
     AgentDefinitionModel,
-    MemoryStrategy,
     ExecutionMode,
     OutputFormat,
 )
@@ -33,22 +32,10 @@ class AgentDefinitionFactory:
         self._validate_output(model)
 
     def _validate_memory(self, model: AgentDefinitionModel) -> None:
-        strategy = model.memory.strategy
-        
-        if strategy == MemoryStrategy.vector and not model.memory.vector_index:
-            raise ValueError(
-                "Memory strategy 'vector' requires 'vector_index' to be set."
-            )
-            
-        if strategy == MemoryStrategy.database and not model.memory.database_table:
-            raise ValueError(
-                "Memory strategy 'database' requires 'database_table' to be set."
-            )
-            
-        if strategy == MemoryStrategy.transient and model.memory.ttl_seconds is None:
-            raise ValueError(
-                "Memory strategy 'transient' requires 'ttl_seconds' to be set."
-            )
+        # Memory persistence is now system-owned. We validate only basic ranges and
+        # ignore user-selected storage destinations (vector_index / database_table).
+        if model.memory.ttl_seconds is not None and int(model.memory.ttl_seconds) <= 0:
+            raise ValueError("memory.ttl_seconds must be > 0 when provided.")
 
     def _validate_access_policy(self, model: AgentDefinitionModel) -> None:
         allowed = set(model.access_policy.allowed_connectors)

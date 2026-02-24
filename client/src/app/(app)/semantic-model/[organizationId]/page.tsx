@@ -35,7 +35,7 @@ export default function SemanticModelsIndex({ params }: SemanticModelsIndexProps
 
   const semanticModelsQuery = useQuery<SemanticModelRecord[]>({
     queryKey: semanticModelsQueryKey(organizationId, selectedProjectId),
-    queryFn: () => listSemanticModels(organizationId, selectedProjectId ?? undefined),
+    queryFn: () => listSemanticModels(organizationId, selectedProjectId ?? undefined, 'standard'),
     enabled: hasOrganization,
   });
 

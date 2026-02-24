@@ -64,7 +64,7 @@ const NAV_ITEMS: NavItem[] = [
       {
         href: '/semantic-model/unified',
         label: 'Unified semantic models',
-        description: 'Compose relationships across semantic models and query via Trino.',
+        description: 'Compose relationships across semantic models and query across sources.',
       },
     ],
   },

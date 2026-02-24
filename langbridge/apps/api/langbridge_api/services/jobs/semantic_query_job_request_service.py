@@ -51,7 +51,21 @@ class SemanticQueryJobRequestService:
                         "message": "Semantic query queued.",
                         "source": "api",
                         "details": {
-                            "semantic_model_id": str(request.semantic_model_id),
+                            "query_scope": request.query_scope,
+                            "semantic_model_id": (
+                                str(request.semantic_model_id)
+                                if request.semantic_model_id
+                                else None
+                            ),
+                            "semantic_model_ids": [
+                                str(model_id)
+                                for model_id in (request.semantic_model_ids or [])
+                            ],
+                            "connector_id": (
+                                str(request.connector_id)
+                                if request.connector_id
+                                else None
+                            ),
                         },
                     },
                 )
@@ -59,9 +73,9 @@ class SemanticQueryJobRequestService:
         )
         self._job_repository.add(job_record)
         self._logger.info(
-            "Created semantic query job %s for model %s",
+            "Created semantic query job %s for scope %s",
             job_id,
-            request.semantic_model_id,
+            request.query_scope,
         )
 
         message = SemanticQueryRequestMessage(

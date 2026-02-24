@@ -660,9 +660,18 @@ class TsqlSemanticTranslator:
         table = model.tables.get(table_key)
         if table is None:
             raise SemanticQueryError(f"Unknown table '{table_key}'.")
+        catalog = table.catalog
+        schema = table.schema
+
+        if not catalog and schema and "." in schema:
+            first, remainder = schema.split(".", 1)
+            catalog = first or None
+            schema = remainder
+
         return exp.table_(
             table.name,
-            db=table.schema,
+            db=schema or None,
+            catalog=catalog or None,
             quoted=True,
             alias=alias,
         )

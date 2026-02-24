@@ -71,3 +71,8 @@ class AuthManifest(_Base):
 
 class CurrentUser(_Base):
     username: str
+
+class UserPATResponse(_Base):
+    id: uuid.UUID
+    name: str
+    token: Optional[str] = None  # Only returned on creation, not on retrieval

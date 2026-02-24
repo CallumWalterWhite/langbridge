@@ -2,6 +2,7 @@ import { apiFetch } from '@/orchestration/http';
 
 import type {
   CreateSemanticModelPayload,
+  SemanticModelKind,
   SemanticModel,
   SemanticModelRecord,
   UpdateSemanticModelPayload,
@@ -37,11 +38,13 @@ export async function previewSemanticModel(
 export async function listSemanticModels(
   organizationId: string,
   projectId?: string,
+  modelKind: SemanticModelKind = 'all',
 ): Promise<SemanticModelRecord[]> {
   const params = new URLSearchParams();
   if (projectId) {
     params.set('project_id', projectId);
   }
+  params.set('model_kind', modelKind);
   const suffix = params.toString();
   return apiFetch<SemanticModelRecord[]>(
     `${basePath(organizationId)}${suffix ? `?${suffix}` : ''}`,

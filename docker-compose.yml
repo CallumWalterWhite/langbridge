@@ -38,6 +38,15 @@ services:
       POSTGRES_DB: langbridge
       REDIS_HOST: redis
       REDIS_PORT: 6379
+      UNIFIED_TRINO_HOST: trino
+      UNIFIED_TRINO_PORT: ${UNIFIED_TRINO_PORT:-8080}
+      UNIFIED_TRINO_USER: ${UNIFIED_TRINO_USER:-trino}
+      UNIFIED_TRINO_PASSWORD: ${UNIFIED_TRINO_PASSWORD:-}
+      UNIFIED_TRINO_CATALOG: ${UNIFIED_TRINO_CATALOG:-system}
+      UNIFIED_TRINO_SCHEMA: ${UNIFIED_TRINO_SCHEMA:-information_schema}
+      UNIFIED_TRINO_HTTP_SCHEME: ${UNIFIED_TRINO_HTTP_SCHEME:-http}
+      UNIFIED_TRINO_VERIFY: ${UNIFIED_TRINO_VERIFY:-false}
+      UNIFIED_TRINO_SOURCE: ${UNIFIED_TRINO_SOURCE:-langbridge}
     depends_on:
       db:
         condition: service_healthy
@@ -67,6 +76,15 @@ services:
       REDIS_PORT: 6379
       WORKER_POLL_INTERVAL: 2.0
       WORKER_METRICS_PORT: 9101
+      UNIFIED_TRINO_HOST: trino
+      UNIFIED_TRINO_PORT: ${UNIFIED_TRINO_PORT:-8080}
+      UNIFIED_TRINO_USER: ${UNIFIED_TRINO_USER:-trino}
+      UNIFIED_TRINO_PASSWORD: ${UNIFIED_TRINO_PASSWORD:-}
+      UNIFIED_TRINO_CATALOG: ${UNIFIED_TRINO_CATALOG:-system}
+      UNIFIED_TRINO_SCHEMA: ${UNIFIED_TRINO_SCHEMA:-information_schema}
+      UNIFIED_TRINO_HTTP_SCHEME: ${UNIFIED_TRINO_HTTP_SCHEME:-http}
+      UNIFIED_TRINO_VERIFY: ${UNIFIED_TRINO_VERIFY:-false}
+      UNIFIED_TRINO_SOURCE: ${UNIFIED_TRINO_SOURCE:-langbridge}
     command: ["python", "-m", "langbridge.apps.worker.langbridge_worker.main", "--reload"]
     depends_on:
       db:
@@ -83,11 +101,34 @@ services:
     env_file:
       - ./langbridge/.env
     environment:
-      TRINO_URL: ${TRINO_URL:-}
+      TRINO_URL: ${TRINO_URL:-http://trino:8080}
       GATEWAY_PORT: 8001
     command: ["uvicorn", "langbridge.apps.gateway.langbridge_gateway.main:app", "--host", "0.0.0.0", "--port", "8001"]
+    depends_on:
+      trino:
+        condition: service_started
     ports:
       - "8001:8001"
+  gateway-proxy:
+    build:
+      context: .
+      dockerfile: langbridge/Dockerfile.gateway
+    container_name: langbridge-gateway-proxy
+    env_file:
+      - ./langbridge/.env
+    environment:
+      PROXY_LISTEN_HOST: 0.0.0.0
+      PROXY_PG_PORT: 55432
+      PROXY_MYSQL_PORT: 53306
+      PROXY_POSTGRES_UPSTREAMS: '{"*":{"host":"db","port":5432,"database":"langbridge"}}'
+    command: ["python", "-m", "langbridge.apps.gateway.langbridge_gateway.app"]
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "55432:55432"
+      - "53306:53306"
+      - "51433:51433"
   client:
     build:
       context: ./client
@@ -135,12 +176,23 @@ services:
     volumes:
       - qdrant_data:/qdrant/storage
   trino:
-    image: trinodb/trino:455
+    build:
+      context: .
+      dockerfile: langbridge/services/trino/custom/Dockerfile
+      args:
+        TRINO_VERSION: ${TRINO_VERSION:-455}
+    image: langbridge-trino-custom:${TRINO_VERSION:-455}
     container_name: langbridge-trino
-    profiles:
-      - trino
+    depends_on:
+      db:
+        condition: service_healthy
+      gateway-proxy:
+        condition: service_started
     ports:
       - "8080:8080"
+    volumes:
+      - ./langbridge/services/trino/docker/config.properties:/etc/trino/config.properties:ro
+      - ./langbridge/services/trino/docker/catalog-gateway:/etc/trino/catalog:ro
   prometheus:
     image: prom/prometheus:v2.55.1
     container_name: langbridge-prometheus

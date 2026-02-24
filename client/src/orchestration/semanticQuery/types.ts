@@ -124,3 +124,54 @@ export interface SemanticQueryJobResponse {
   jobId: string;
   jobStatus: string;
 }
+
+export interface UnifiedSemanticJoinPayload {
+  name?: string | null;
+  from: string;
+  to: string;
+  type?: string;
+  on: string;
+}
+
+export interface UnifiedSemanticMetricPayload {
+  expression: string;
+  description?: string | null;
+}
+
+export interface UnifiedSemanticQueryRequestPayload {
+  organizationId: string;
+  projectId?: string | null;
+  connectorId?: string | null;
+  semanticModelIds: string[];
+  joins?: UnifiedSemanticJoinPayload[];
+  metrics?: Record<string, UnifiedSemanticMetricPayload>;
+  query: SemanticQueryPayload;
+}
+
+export interface UnifiedSemanticQueryMetaRequestPayload {
+  organizationId: string;
+  projectId?: string | null;
+  connectorId?: string | null;
+  semanticModelIds: string[];
+  joins?: UnifiedSemanticJoinPayload[];
+  metrics?: Record<string, UnifiedSemanticMetricPayload>;
+}
+
+export interface UnifiedSemanticQueryMetaResponse {
+  connectorId: string;
+  organizationId: string;
+  projectId?: string | null;
+  semanticModelIds: string[];
+  semanticModel: SemanticModelPayload;
+}
+
+export interface UnifiedSemanticQueryResponse {
+  id: string;
+  organizationId: string;
+  projectId?: string | null;
+  connectorId: string;
+  semanticModelIds: string[];
+  data: Array<Record<string, unknown>>;
+  annotations: Array<Record<string, unknown>>;
+  metadata?: Array<Record<string, unknown>>;
+}

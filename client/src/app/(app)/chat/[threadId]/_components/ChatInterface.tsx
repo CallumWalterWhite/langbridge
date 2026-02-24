@@ -118,6 +118,7 @@ const buildTurnsFromMessages = (messages: ThreadMessage[]): ConversationTurn[] =
 };
 
 const TERMINAL_JOB_STATUSES = new Set(['succeeded', 'failed', 'cancelled']);
+const JOB_STATUS_POLL_INTERVAL_MS = 1500;
 
 const isTerminalJobStatus = (status: string | undefined): boolean => {
   if (!status) {
@@ -569,85 +570,92 @@ export function ChatInterface({ threadId, organizationId }: ChatInterfaceProps) 
     }
 
     let cancelled = false;
+    let isPolling = false;
 
     const pollJobs = async () => {
+      if (isPolling) {
+        return;
+      }
+      isPolling = true;
       let shouldRefreshHistory = false;
-
-      await Promise.all(
-        pendingTurns.map(async (turn) => {
-          if (!turn.jobId) {
-            return;
-          }
-          try {
-            const job = await fetchAgentJobState(organizationId, turn.jobId, false);
-            if (cancelled) {
+      try {
+        await Promise.all(
+          pendingTurns.map(async (turn) => {
+            if (!turn.jobId) {
               return;
             }
+            try {
+              const job = await fetchAgentJobState(organizationId, turn.jobId, false);
+              if (cancelled) {
+                return;
+              }
 
-            const resultPayload = normalizeTabularResult(job.finalResponse?.result);
-            const visualizationPayload = normalizeVisualization(job.finalResponse?.visualization);
-            const errorPayload = asRecord(job.error);
-            const isFailed = job.status === 'failed' || job.status === 'cancelled';
-            const isReady = job.status === 'succeeded';
+              const resultPayload = normalizeTabularResult(job.finalResponse?.result);
+              const visualizationPayload = normalizeVisualization(job.finalResponse?.visualization);
+              const errorPayload = asRecord(job.error);
+              const isFailed = job.status === 'failed' || job.status === 'cancelled';
+              const isReady = job.status === 'succeeded';
 
-            setTurns((previous) =>
-              previous.map((currentTurn) => {
-                if (currentTurn.id !== turn.id) {
-                  return currentTurn;
-                }
+              setTurns((previous) =>
+                previous.map((currentTurn) => {
+                  if (currentTurn.id !== turn.id) {
+                    return currentTurn;
+                  }
 
-                if (isFailed) {
+                  if (isFailed) {
+                    return {
+                      ...currentTurn,
+                      status: 'error',
+                      jobStatus: job.status,
+                      events: job.events ?? currentTurn.events ?? [],
+                      hasInternalEvents: Boolean(job.hasInternalEvents),
+                      errorMessage: getErrorMessage(errorPayload?.message ?? errorPayload ?? 'Request failed.'),
+                    };
+                  }
+
+                  if (isReady) {
+                    return {
+                      ...currentTurn,
+                      status: 'ready',
+                      jobStatus: job.status,
+                      events: job.events ?? currentTurn.events ?? [],
+                      hasInternalEvents: Boolean(job.hasInternalEvents),
+                      summary: job.finalResponse?.summary ?? currentTurn.summary ?? 'Response completed.',
+                      result: resultPayload ?? currentTurn.result ?? null,
+                      visualization: visualizationPayload ?? currentTurn.visualization ?? null,
+                      errorMessage: undefined,
+                    };
+                  }
+
                   return {
                     ...currentTurn,
-                    status: 'error',
                     jobStatus: job.status,
                     events: job.events ?? currentTurn.events ?? [],
                     hasInternalEvents: Boolean(job.hasInternalEvents),
-                    errorMessage: getErrorMessage(errorPayload?.message ?? errorPayload ?? 'Request failed.'),
                   };
-                }
+                }),
+              );
 
-                if (isReady) {
-                  return {
-                    ...currentTurn,
-                    status: 'ready',
-                    jobStatus: job.status,
-                    events: job.events ?? currentTurn.events ?? [],
-                    hasInternalEvents: Boolean(job.hasInternalEvents),
-                    summary: job.finalResponse?.summary ?? currentTurn.summary ?? 'Response completed.',
-                    result: resultPayload ?? currentTurn.result ?? null,
-                    visualization: visualizationPayload ?? currentTurn.visualization ?? null,
-                    errorMessage: undefined,
-                  };
-                }
-
-                return {
-                  ...currentTurn,
-                  jobStatus: job.status,
-                  events: job.events ?? currentTurn.events ?? [],
-                  hasInternalEvents: Boolean(job.hasInternalEvents),
-                };
-              }),
-            );
-
-            if (isReady || isFailed) {
-              shouldRefreshHistory = true;
+              if (isReady || isFailed) {
+                shouldRefreshHistory = true;
+              }
+            } catch {
+              if (cancelled) {
+                return;
+              }
             }
-          } catch {
-            if (cancelled) {
-              return;
-            }
-          }
-        }),
-      );
+          }),
+        );
 
-      if (shouldRefreshHistory) {
-        queryClient.invalidateQueries({ queryKey: ['thread-messages', organizationId, threadId] });
+        if (shouldRefreshHistory) {
+          queryClient.invalidateQueries({ queryKey: ['thread-messages', organizationId, threadId] });
+        }
+      } finally {
+        isPolling = false;
       }
     };
 
-    pollJobs();
-    const intervalId = window.setInterval(pollJobs, 1250);
+    const intervalId = window.setInterval(pollJobs, JOB_STATUS_POLL_INTERVAL_MS);
 
     return () => {
       cancelled = true;

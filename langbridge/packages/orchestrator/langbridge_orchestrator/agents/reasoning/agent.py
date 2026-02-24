@@ -59,7 +59,7 @@ class ReasoningAgent:
 
     @staticmethod
     def _has_web_results(artifacts: PlanExecutionArtifacts) -> bool:
-        return bool(artifacts.web_search_result)
+        return bool(artifacts.web_search_result and artifacts.web_search_result.results)
 
     @staticmethod
     def _has_research_results(artifacts: PlanExecutionArtifacts) -> bool:

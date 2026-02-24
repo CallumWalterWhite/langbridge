@@ -8,6 +8,12 @@ from .semantic_query import (
     SemanticQueryMetaResponse,
     SemanticQueryRequest,
     SemanticQueryResponse,
+    UnifiedSemanticJoinRequest,
+    UnifiedSemanticMetricRequest,
+    UnifiedSemanticQueryMetaRequest,
+    UnifiedSemanticQueryMetaResponse,
+    UnifiedSemanticQueryRequest,
+    UnifiedSemanticQueryResponse,
 )
 
 __all__ = [
@@ -18,4 +24,10 @@ __all__ = [
     "SemanticQueryResponse",
     "SemanticQueryMetaResponse",
     "SemanticQueryJobResponse",
+    "UnifiedSemanticJoinRequest",
+    "UnifiedSemanticMetricRequest",
+    "UnifiedSemanticQueryMetaRequest",
+    "UnifiedSemanticQueryMetaResponse",
+    "UnifiedSemanticQueryRequest",
+    "UnifiedSemanticQueryResponse",
 ]

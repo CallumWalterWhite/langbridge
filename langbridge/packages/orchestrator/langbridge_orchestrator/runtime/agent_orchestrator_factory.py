@@ -327,10 +327,16 @@ class AgentOrchestratorFactory:
         planning_agent = PlanningAgent(llm=llm_provider, logger=self._logger)
         reasoning_agent = self._build_reasoning_agent(llm_provider, definition, planning_constraints)
         visual_agent = VisualAgent(llm=llm_provider, logger=self._logger)
-        deep_research_agent = DeepResearchAgent(llm=llm_provider, logger=self._logger)
         web_search_agent = WebSearchAgent(llm=llm_provider, logger=self._logger)
+        deep_research_agent = DeepResearchAgent(
+            llm=llm_provider,
+            web_search_agent=web_search_agent,
+            logger=self._logger,
+            event_emitter=event_emitter,
+        )
 
         return SupervisorOrchestrator(
+            llm=llm_provider,
             analyst_agent=analyst_agent,
             visual_agent=visual_agent,
             planning_agent=planning_agent,

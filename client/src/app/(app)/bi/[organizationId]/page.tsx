@@ -1,7 +1,8 @@
 'use client';
 
-import { use, useCallback, useEffect, useMemo, useState } from 'react';
+import { use, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import yaml from 'js-yaml';
 
 import { useToast } from '@/components/ui/toast';
 import { useWorkspaceScope } from '@/context/workspaceScope';
@@ -27,18 +28,29 @@ import type {
 import { listSemanticModels } from '@/orchestration/semanticModels';
 import type { SemanticModelRecord } from '@/orchestration/semanticModels/types';
 import { fetchAgentJobState } from '@/orchestration/jobs';
-import { enqueueSemanticQuery, fetchSemanticQueryMeta } from '@/orchestration/semanticQuery';
+import {
+  enqueueSemanticQuery,
+  enqueueUnifiedSemanticQuery,
+  fetchSemanticQueryMeta,
+  fetchUnifiedSemanticQueryMeta,
+} from '@/orchestration/semanticQuery';
 import type {
   SemanticModelPayload,
   SemanticQueryJobResponse,
   SemanticQueryMetaResponse,
+  SemanticQueryPayload,
   SemanticQueryRequestPayload,
   SemanticQueryResponse,
+  UnifiedSemanticJoinPayload,
+  UnifiedSemanticMetricPayload,
+  UnifiedSemanticQueryMetaRequestPayload,
+  UnifiedSemanticQueryMetaResponse,
+  UnifiedSemanticQueryRequestPayload,
 } from '@/orchestration/semanticQuery/types';
 
 import { BiAiInput } from '../_components/BiAiInput';
-import { BiCanvas } from '../_components/BiCanvas';
 import { BiConfigPanel } from '../_components/BiConfigPanel';
+import { Dashboard } from '../_components/Dashboard';
 import { BiGlobalConfigPanel } from '../_components/BiGlobalConfigPanel';
 import { BiHeader } from '../_components/BiHeader';
 import { BiSidebar } from '../_components/BiSidebar';
@@ -48,6 +60,7 @@ import type {
   FilterDraft,
   PersistedBiWidget,
   TableGroup,
+  WidgetLayout,
 } from '../types';
 
 type BiStudioPageProps = {
@@ -56,12 +69,28 @@ type BiStudioPageProps = {
 
 const DEFAULT_DASHBOARD_NAME = 'Untitled dashboard';
 const TERMINAL_JOB_STATUSES = new Set(['succeeded', 'failed', 'cancelled']);
+const JOB_STATUS_POLL_INTERVAL_MS = 1500;
 
 type CopilotAgentOption = {
   id: string;
   name: string;
   description?: string | null;
 };
+
+type SelectedModelConfig =
+  | { kind: 'standard' }
+  | {
+      kind: 'unified';
+      semanticModelIds: string[];
+      joins?: UnifiedSemanticJoinPayload[];
+      metrics?: Record<string, UnifiedSemanticMetricPayload>;
+    };
+
+type QueryRequestInput =
+  | { mode: 'standard'; payload: SemanticQueryRequestPayload }
+  | { mode: 'unified'; payload: UnifiedSemanticQueryRequestPayload };
+
+type QueryMutationInput = { widgetId: string } & QueryRequestInput;
 
 export default function BiStudioPage({ params }: BiStudioPageProps) {
   const { selectedOrganizationId, selectedProjectId, setSelectedOrganizationId } = useWorkspaceScope();
@@ -81,6 +110,7 @@ export default function BiStudioPage({ params }: BiStudioPageProps) {
   const [fieldSearch, setFieldSearch] = useState('');
   const [isConfigOpen, setIsConfigOpen] = useState(false);
   const [isGlobalConfigOpen, setIsGlobalConfigOpen] = useState(false);
+  const [isEditMode, setIsEditMode] = useState(true);
 
   const [dashboardName, setDashboardName] = useState(DEFAULT_DASHBOARD_NAME);
   const [dashboardDescription, setDashboardDescription] = useState('');
@@ -99,14 +129,27 @@ export default function BiStudioPage({ params }: BiStudioPageProps) {
   const [copilotJobId, setCopilotJobId] = useState<string | null>(null);
   const [copilotStatusMessage, setCopilotStatusMessage] = useState<string | null>(null);
   const [copilotSummary, setCopilotSummary] = useState<string | null>(null);
+  const layoutCommitTimeoutRef = useRef<number | null>(null);
+  const filterApplyTimeoutRef = useRef<number | null>(null);
 
   const updateWidget = useCallback((id: string, updates: Partial<BiWidget>) => {
     setWidgets((current) => current.map((widget) => (widget.id === id ? { ...widget, ...updates } : widget)));
   }, []);
 
+  useEffect(() => {
+    return () => {
+      if (layoutCommitTimeoutRef.current) {
+        window.clearTimeout(layoutCommitTimeoutRef.current);
+      }
+      if (filterApplyTimeoutRef.current) {
+        window.clearTimeout(filterApplyTimeoutRef.current);
+      }
+    };
+  }, []);
+
   const semanticModelsQuery = useQuery<SemanticModelRecord[]>({
     queryKey: ['semantic-models', organizationId, selectedProjectId],
-    queryFn: () => listSemanticModels(organizationId, selectedProjectId || undefined),
+    queryFn: () => listSemanticModels(organizationId, selectedProjectId || undefined, 'all'),
     enabled: Boolean(organizationId),
   });
 
@@ -121,10 +164,49 @@ export default function BiStudioPage({ params }: BiStudioPageProps) {
     enabled: Boolean(organizationId),
   });
 
-  const semanticMetaQuery = useQuery<SemanticQueryMetaResponse>({
-    queryKey: ['semantic-model-meta', organizationId, selectedModelId],
-    queryFn: () => fetchSemanticQueryMeta(organizationId, selectedModelId),
-    enabled: Boolean(organizationId && selectedModelId),
+  const selectedModelRecord = useMemo(
+    () => semanticModelsQuery.data?.find((model) => model.id === selectedModelId) ?? null,
+    [semanticModelsQuery.data, selectedModelId],
+  );
+  const unifiedModelIds = useMemo(
+    () =>
+      new Set(
+        (semanticModelsQuery.data || [])
+          .filter((model) => parseSelectedModelConfig(model).kind === 'unified')
+          .map((model) => model.id),
+      ),
+    [semanticModelsQuery.data],
+  );
+  const selectedModelConfig = useMemo(
+    () => parseSelectedModelConfig(selectedModelRecord),
+    [selectedModelRecord],
+  );
+  const semanticMetaQuery = useQuery<SemanticQueryMetaResponse | UnifiedSemanticQueryMetaResponse>({
+    queryKey: [
+      'semantic-model-meta',
+      organizationId,
+      selectedModelId,
+      selectedModelConfig.kind,
+      selectedModelConfig.kind === 'unified' ? selectedModelConfig.semanticModelIds.join(',') : 'standard',
+    ],
+    queryFn: () => {
+      if (selectedModelConfig.kind === 'unified') {
+        const payload: UnifiedSemanticQueryMetaRequestPayload = {
+          organizationId,
+          projectId: projectScope,
+          semanticModelIds: selectedModelConfig.semanticModelIds,
+          joins: selectedModelConfig.joins,
+          metrics: selectedModelConfig.metrics,
+        };
+        return fetchUnifiedSemanticQueryMeta(organizationId, payload);
+      }
+      return fetchSemanticQueryMeta(organizationId, selectedModelId);
+    },
+    enabled: Boolean(
+      organizationId &&
+        selectedModelId &&
+        (selectedModelConfig.kind === 'standard' || selectedModelConfig.semanticModelIds.length > 0),
+    ),
   });
 
   const semanticModel = semanticMetaQuery.data?.semanticModel;
@@ -220,6 +302,7 @@ export default function BiStudioPage({ params }: BiStudioPageProps) {
     setGlobalFilters(hydratedFilters);
     setWidgets(hydratedWidgets);
     setActiveWidgetId(hydratedWidgets[0]?.id ?? null);
+    setIsEditMode(false);
     setSnapshotDirty(false);
     setPendingAutoRefreshDashboardId(refreshMode === 'live' ? dashboard.id : null);
     setSavedSnapshot(
@@ -245,6 +328,7 @@ export default function BiStudioPage({ params }: BiStudioPageProps) {
     setGlobalFilters([]);
     setWidgets([]);
     setActiveWidgetId(null);
+    setIsEditMode(true);
     setSnapshotDirty(false);
     setPendingAutoRefreshDashboardId(null);
     setSavedSnapshot('');
@@ -300,9 +384,14 @@ export default function BiStudioPage({ params }: BiStudioPageProps) {
   const queryMutation = useMutation<
     SemanticQueryJobResponse,
     Error,
-    { widgetId: string; payload: SemanticQueryRequestPayload }
+    QueryMutationInput
   >({
-    mutationFn: async ({ payload }) => enqueueSemanticQuery(organizationId, payload),
+    mutationFn: async ({ mode, payload }) => {
+      if (mode === 'unified') {
+        return enqueueUnifiedSemanticQuery(organizationId, payload);
+      }
+      return enqueueSemanticQuery(organizationId, payload);
+    },
     onMutate: ({ widgetId }) => {
       updateWidget(widgetId, {
         queryResult: null,
@@ -314,13 +403,13 @@ export default function BiStudioPage({ params }: BiStudioPageProps) {
         error: null,
       });
     },
-    onSuccess: (data, { widgetId }) => {
+    onSuccess: (data, { widgetId, mode }) => {
       updateWidget(widgetId, {
         isLoading: true,
         jobId: data.jobId,
         jobStatus: data.jobStatus,
         progress: 5,
-        statusMessage: 'Semantic query job accepted.',
+        statusMessage: mode === 'unified' ? 'Unified semantic query job accepted.' : 'Semantic query job accepted.',
       });
     },
     onError: (error, { widgetId }) => {
@@ -370,6 +459,25 @@ export default function BiStudioPage({ params }: BiStudioPageProps) {
       });
     },
   });
+
+  const enqueueWidgetQuery = useCallback(
+    (widgetId: string, requestInput: QueryRequestInput) => {
+      if (requestInput.mode === 'unified') {
+        queryMutation.mutate({
+          widgetId,
+          mode: 'unified',
+          payload: requestInput.payload,
+        });
+        return;
+      }
+      queryMutation.mutate({
+        widgetId,
+        mode: 'standard',
+        payload: requestInput.payload,
+      });
+    },
+    [queryMutation],
+  );
 
   useEffect(() => {
     if (semanticModelsQuery.data?.length && !selectedModelId) {
@@ -421,90 +529,103 @@ export default function BiStudioPage({ params }: BiStudioPageProps) {
     }
 
     let cancelled = false;
+    let isPolling = false;
     const pollJobs = async () => {
-      await Promise.all(
-        pendingWidgets.map(async (widget) => {
-          if (!widget.jobId) {
-            return;
-          }
-          try {
-            const job = await fetchAgentJobState(organizationId, widget.jobId, false);
-            if (cancelled) {
+      if (isPolling) {
+        return;
+      }
+      isPolling = true;
+      try {
+        await Promise.all(
+          pendingWidgets.map(async (widget) => {
+            if (!widget.jobId) {
               return;
             }
-            const latestMessage = job.events[job.events.length - 1]?.message ?? `Status: ${job.status}`;
-            const progress = Math.max(0, Math.min(100, job.progress ?? 0));
+            try {
+              const job = await fetchAgentJobState(organizationId, widget.jobId, false);
+              if (cancelled) {
+                return;
+              }
+              const latestMessage = job.events[job.events.length - 1]?.message ?? `Status: ${job.status}`;
+              const progress = Math.max(0, Math.min(100, job.progress ?? 0));
 
-            if (job.status === 'failed' || job.status === 'cancelled') {
-              updateWidget(widget.id, {
-                isLoading: false,
-                jobStatus: job.status,
-                progress,
-                statusMessage: latestMessage,
-                error: getErrorMessage(job.error, 'Semantic query failed.'),
-              });
-              return;
-            }
-
-            if (job.status === 'succeeded') {
-              const result = normalizeSemanticQueryResponse(job.finalResponse?.result);
-              if (!result) {
+              if (job.status === 'failed' || job.status === 'cancelled') {
                 updateWidget(widget.id, {
                   isLoading: false,
-                  jobStatus: 'failed',
-                  progress: 100,
-                  statusMessage: 'Semantic query completed without result payload.',
-                  error: 'Semantic query job completed without a valid result.',
+                  jobStatus: job.status,
+                  progress,
+                  statusMessage: latestMessage,
+                  error: getErrorMessage(job.error, 'Semantic query failed.'),
                 });
                 return;
               }
 
+              if (job.status === 'succeeded') {
+                const result = normalizeSemanticQueryResponse(job.finalResponse?.result, selectedModelId);
+                if (!result) {
+                  updateWidget(widget.id, {
+                    isLoading: false,
+                    jobStatus: 'failed',
+                    progress: 100,
+                    statusMessage: 'Semantic query completed without result payload.',
+                    error: 'Semantic query job completed without a valid result.',
+                  });
+                  return;
+                }
+
+                updateWidget(widget.id, {
+                  isLoading: false,
+                  queryResult: result,
+                  jobStatus: job.status,
+                  progress: 100,
+                  statusMessage: latestMessage,
+                  error: null,
+                });
+                setSnapshotDirty(true);
+                return;
+              }
+
               updateWidget(widget.id, {
-                isLoading: false,
-                queryResult: result,
+                isLoading: true,
                 jobStatus: job.status,
-                progress: 100,
+                progress,
                 statusMessage: latestMessage,
                 error: null,
               });
-              setSnapshotDirty(true);
-              return;
+            } catch {
+              if (cancelled) {
+                return;
+              }
             }
-
-            updateWidget(widget.id, {
-              isLoading: true,
-              jobStatus: job.status,
-              progress,
-              statusMessage: latestMessage,
-              error: null,
-            });
-          } catch {
-            if (cancelled) {
-              return;
-            }
-          }
-        }),
-      );
+          }),
+        );
+      } finally {
+        isPolling = false;
+      }
     };
 
-    void pollJobs();
     const intervalId = window.setInterval(() => {
       void pollJobs();
-    }, 1250);
+    }, JOB_STATUS_POLL_INTERVAL_MS);
 
     return () => {
       cancelled = true;
       window.clearInterval(intervalId);
     };
-  }, [organizationId, updateWidget, widgets]);
+  }, [organizationId, selectedModelId, updateWidget, widgets]);
 
   useEffect(() => {
     if (!copilotJobId) {
       return;
     }
     let cancelled = false;
+    let isPolling = false;
 
     const pollCopilotJob = async () => {
+      if (isPolling) {
+        return;
+      }
+      isPolling = true;
       try {
         const job = await fetchAgentJobState(organizationId, copilotJobId, false);
         if (cancelled) {
@@ -557,13 +678,14 @@ export default function BiStudioPage({ params }: BiStudioPageProps) {
         if (cancelled) {
           return;
         }
+      } finally {
+        isPolling = false;
       }
     };
 
-    void pollCopilotJob();
     const intervalId = window.setInterval(() => {
       void pollCopilotJob();
-    }, 1250);
+    }, JOB_STATUS_POLL_INTERVAL_MS);
 
     return () => {
       cancelled = true;
@@ -610,14 +732,26 @@ export default function BiStudioPage({ params }: BiStudioPageProps) {
       return;
     }
     runnable.forEach((widget) => {
-      const payload = buildWidgetQueryPayload({
+      const requestInput = buildWidgetQueryRequestInput({
         widget,
         organizationId,
         projectId: projectScope,
         semanticModelId: selectedModelId,
+        selectedModelConfig,
         globalFilters,
       });
-      queryMutation.mutate({ widgetId: widget.id, payload });
+      if (!requestInput) {
+        updateWidget(widget.id, {
+          isLoading: false,
+          jobId: null,
+          jobStatus: 'failed',
+          progress: 0,
+          statusMessage: 'Unified model is missing source model bindings.',
+          error: 'Unified semantic model is missing source model ids.',
+        });
+        return;
+      }
+      enqueueWidgetQuery(widget.id, requestInput);
     });
     setPendingAutoRefreshDashboardId(null);
   }, [
@@ -627,16 +761,19 @@ export default function BiStudioPage({ params }: BiStudioPageProps) {
     organizationId,
     pendingAutoRefreshDashboardId,
     projectScope,
-    queryMutation,
+    enqueueWidgetQuery,
     selectedModelId,
+    selectedModelConfig,
+    updateWidget,
     widgets,
   ]);
 
   const handleAddWidget = () => {
-    const widget = buildEmptyWidget(widgets.length + 1);
+    const widget = buildEmptyWidget(widgets.length + 1, widgets);
     setWidgets((current) => [...current, widget]);
     setActiveWidgetId(widget.id);
     setIsConfigOpen(true);
+    setIsEditMode(true);
   };
 
   const handleDuplicateWidget = (widgetId: string) => {
@@ -648,6 +785,15 @@ export default function BiStudioPage({ params }: BiStudioPageProps) {
       ...source,
       id: makeLocalId(),
       title: `${source.title} copy`,
+      layout: resolveDefaultWidgetLayout(
+        widgets,
+        source.size,
+        {
+          ...source.layout,
+          x: source.layout.x + 1,
+          y: source.layout.y + 1,
+        },
+      ),
       queryResult: null,
       isLoading: false,
       jobId: null,
@@ -659,6 +805,7 @@ export default function BiStudioPage({ params }: BiStudioPageProps) {
     setWidgets((current) => [...current, copy]);
     setActiveWidgetId(copy.id);
     setIsConfigOpen(true);
+    setIsEditMode(true);
   };
 
   const handleRemoveWidget = (id: string) => {
@@ -706,29 +853,39 @@ export default function BiStudioPage({ params }: BiStudioPageProps) {
       return;
     }
     const kind = field.kind === 'measure' || field.kind === 'metric' ? 'measure' : 'dimension';
-    const widget = buildEmptyWidget(widgets.length + 1);
+    const widget = buildEmptyWidget(widgets.length + 1, widgets);
     widget.dimensions = kind === 'dimension' ? [field.id] : [];
     widget.measures = kind === 'measure' ? [field.id] : [];
     setWidgets((current) => [...current, widget]);
     setActiveWidgetId(widget.id);
     setIsConfigOpen(true);
+    setIsEditMode(true);
   };
 
   const handleRunQuery = () => {
     if (!activeWidget || !selectedModelId) {
       return;
     }
-    const payload = buildWidgetQueryPayload({
+    const requestInput = buildWidgetQueryRequestInput({
       widget: activeWidget,
       organizationId,
       projectId: projectScope,
       semanticModelId: selectedModelId,
+      selectedModelConfig,
       globalFilters,
     });
-    queryMutation.mutate({ widgetId: activeWidget.id, payload });
+    if (!requestInput) {
+      toast({
+        title: 'Unable to run query',
+        description: 'Unified model is missing source model bindings.',
+        variant: 'destructive',
+      });
+      return;
+    }
+    enqueueWidgetQuery(activeWidget.id, requestInput);
   };
 
-  const handleRunAllQueries = () => {
+  const handleRunAllQueries = useCallback(() => {
     if (!selectedModelId) {
       return;
     }
@@ -736,16 +893,85 @@ export default function BiStudioPage({ params }: BiStudioPageProps) {
       if (widget.dimensions.length === 0 && widget.measures.length === 0) {
         return;
       }
-      const payload = buildWidgetQueryPayload({
+      const requestInput = buildWidgetQueryRequestInput({
         widget,
         organizationId,
         projectId: projectScope,
         semanticModelId: selectedModelId,
+        selectedModelConfig,
         globalFilters,
       });
-      queryMutation.mutate({ widgetId: widget.id, payload });
+      if (!requestInput) {
+        updateWidget(widget.id, {
+          isLoading: false,
+          jobId: null,
+          jobStatus: 'failed',
+          progress: 0,
+          statusMessage: 'Unified model is missing source model bindings.',
+          error: 'Unified semantic model is missing source model ids.',
+        });
+        return;
+      }
+      enqueueWidgetQuery(widget.id, requestInput);
     });
-  };
+  }, [
+    globalFilters,
+    organizationId,
+    projectScope,
+    enqueueWidgetQuery,
+    selectedModelConfig,
+    selectedModelId,
+    updateWidget,
+    widgets,
+  ]);
+
+  const handleGlobalFiltersChange = useCallback(
+    (filters: FilterDraft[]) => {
+      setGlobalFilters(filters);
+      if (dashboardRefreshMode !== 'live') {
+        return;
+      }
+      if (filterApplyTimeoutRef.current) {
+        window.clearTimeout(filterApplyTimeoutRef.current);
+      }
+      filterApplyTimeoutRef.current = window.setTimeout(() => {
+        handleRunAllQueries();
+      }, 380);
+    },
+    [dashboardRefreshMode, handleRunAllQueries],
+  );
+
+  const handleGridLayoutCommit = useCallback((layoutUpdates: Record<string, WidgetLayout>) => {
+    if (Object.keys(layoutUpdates).length === 0) {
+      return;
+    }
+    if (layoutCommitTimeoutRef.current) {
+      window.clearTimeout(layoutCommitTimeoutRef.current);
+    }
+    layoutCommitTimeoutRef.current = window.setTimeout(() => {
+      setWidgets((current) =>
+        current.map((widget) => {
+          const nextLayout = layoutUpdates[widget.id];
+          if (!nextLayout) {
+            return widget;
+          }
+          const sameLayout =
+            widget.layout.x === nextLayout.x &&
+            widget.layout.y === nextLayout.y &&
+            widget.layout.w === nextLayout.w &&
+            widget.layout.h === nextLayout.h;
+          if (sameLayout) {
+            return widget;
+          }
+          return {
+            ...widget,
+            layout: nextLayout,
+            size: inferWidgetSizeFromLayout(nextLayout),
+          };
+        }),
+      );
+    }, 80);
+  }, []);
 
   const handleExportCsv = () => {
     if (!activeWidget?.queryResult?.data?.length) {
@@ -862,11 +1088,12 @@ export default function BiStudioPage({ params }: BiStudioPageProps) {
 
   return (
     <div className="flex h-[calc(100vh-4rem)] w-full overflow-hidden relative p-4 gap-4">
-      <BiSidebar
-        semanticModels={semanticModelsQuery.data || []}
-        selectedModelId={selectedModelId}
-        onSelectModel={setSelectedModelId}
-        tableGroups={tableGroups}
+        <BiSidebar
+          semanticModels={semanticModelsQuery.data || []}
+          unifiedModelIds={unifiedModelIds}
+          selectedModelId={selectedModelId}
+          onSelectModel={setSelectedModelId}
+          tableGroups={tableGroups}
         fieldSearch={fieldSearch}
         onFieldSearchChange={setFieldSearch}
         onAddField={handleSidebarAddField}
@@ -896,25 +1123,47 @@ export default function BiStudioPage({ params }: BiStudioPageProps) {
           canRunActive={canRunActive}
           canRunAll={canRunAll}
           onToggleConfig={() => {
+            if (!isEditMode) {
+              setIsEditMode(true);
+            }
             setIsConfigOpen(!isConfigOpen);
             if (!isConfigOpen) {
               setIsGlobalConfigOpen(false);
             }
           }}
+          isEditMode={isEditMode}
+          onToggleEditMode={() => {
+            setIsEditMode((current) => {
+              const next = !current;
+              if (!next) {
+                setIsConfigOpen(false);
+              }
+              return next;
+            });
+          }}
           title={dashboardName}
         />
 
-        <BiCanvas
+        <Dashboard
           widgets={widgets}
           activeWidgetId={activeWidgetId}
+          activeWidget={activeWidget}
+          fields={allFields}
+          globalFilters={globalFilters}
+          onGlobalFiltersChange={handleGlobalFiltersChange}
+          onApplyGlobalFilters={handleRunAllQueries}
+          isEditMode={isEditMode}
           onActivateWidget={(id) => {
             setActiveWidgetId(id);
-            setIsConfigOpen(true);
+            if (isEditMode) {
+              setIsConfigOpen(true);
+            }
           }}
           onRemoveWidget={handleRemoveWidget}
           onDuplicateWidget={handleDuplicateWidget}
           onAddWidget={handleAddWidget}
           onAddFieldToWidget={handleAddFieldToWidget}
+          onLayoutCommit={handleGridLayoutCommit}
         />
 
         <div
@@ -935,7 +1184,12 @@ export default function BiStudioPage({ params }: BiStudioPageProps) {
                 chartType={activeWidget.type}
                 setChartType={(type) => updateWidget(activeWidget.id, { type })}
                 widgetSize={activeWidget.size}
-                setWidgetSize={(size) => updateWidget(activeWidget.id, { size })}
+                setWidgetSize={(size) =>
+                  updateWidget(activeWidget.id, {
+                    size,
+                    layout: normalizeLayoutWithSize(activeWidget.layout, size),
+                  })
+                }
                 fields={allFields}
                 selectedDimensions={activeWidget.dimensions}
                 selectedMeasures={activeWidget.measures}
@@ -976,7 +1230,7 @@ export default function BiStudioPage({ params }: BiStudioPageProps) {
               lastRefreshedAt={dashboardLastRefreshedAt}
               fields={allFields}
               globalFilters={globalFilters}
-              setGlobalFilters={setGlobalFilters}
+              setGlobalFilters={handleGlobalFiltersChange}
               onApplyGlobalFilters={handleRunAllQueries}
             />
           </div>
@@ -1063,17 +1317,21 @@ function normalizeCopilotDashboardResult(value: unknown): {
 }
 
 function normalizeCopilotWidgets(value: Array<Record<string, unknown>>): BiWidget[] {
-  return value.map((entry, index) => {
+  const widgets: BiWidget[] = [];
+  value.forEach((entry, index) => {
     const id = typeof entry.id === 'string' && entry.id.length > 0 ? entry.id : makeLocalId();
     const title =
       typeof entry.title === 'string' && entry.title.trim().length > 0
         ? entry.title
         : `Analysis ${index + 1}`;
-    return {
+    const size = normalizeWidgetSize(entry.size);
+    const layout = resolveDefaultWidgetLayout(widgets, size, normalizeWidgetLayout(entry.layout));
+    widgets.push({
       id,
       title,
       type: normalizeChartType(entry.type),
-      size: normalizeWidgetSize(entry.size),
+      size,
+      layout,
       measures: toStringArray(entry.measures),
       dimensions: toStringArray(entry.dimensions),
       filters: normalizeFilters(asRecordArray(entry.filters)),
@@ -1091,16 +1349,19 @@ function normalizeCopilotWidgets(value: Array<Record<string, unknown>>): BiWidge
       progress: normalizeNumber(entry.progress, 0),
       statusMessage: readString(entry.statusMessage),
       error: readString(entry.error),
-    };
+    });
   });
+  return widgets;
 }
 
-function buildEmptyWidget(sequence: number): BiWidget {
+function buildEmptyWidget(sequence: number, existingWidgets: BiWidget[]): BiWidget {
+  const size: BiWidget['size'] = 'small';
   return {
     id: makeLocalId(),
     title: `Analysis ${sequence}`,
     type: 'bar',
-    size: 'small',
+    size,
+    layout: resolveDefaultWidgetLayout(existingWidgets, size),
     measures: [],
     dimensions: [],
     filters: [],
@@ -1134,6 +1395,7 @@ function toPersistedWidget(widget: BiWidget): PersistedBiWidget {
     title: widget.title,
     type: widget.type,
     size: widget.size,
+    layout: { ...widget.layout },
     measures: [...widget.measures],
     dimensions: [...widget.dimensions],
     filters: widget.filters.map((filter) => ({ ...filter })),
@@ -1167,17 +1429,21 @@ function normalizeFilters(value: Array<Record<string, unknown>>): FilterDraft[] 
 }
 
 function normalizeWidgets(value: Array<Record<string, unknown>>): BiWidget[] {
-  return value.map((entry, index) => {
+  const widgets: BiWidget[] = [];
+  value.forEach((entry, index) => {
     const id = typeof entry.id === 'string' && entry.id.length > 0 ? entry.id : makeLocalId();
     const title =
       typeof entry.title === 'string' && entry.title.trim().length > 0
         ? entry.title
         : `Analysis ${index + 1}`;
-    return {
+    const size = normalizeWidgetSize(entry.size);
+    const layout = resolveDefaultWidgetLayout(widgets, size, normalizeWidgetLayout(entry.layout));
+    widgets.push({
       id,
       title,
       type: normalizeChartType(entry.type),
-      size: normalizeWidgetSize(entry.size),
+      size,
+      layout,
       measures: toStringArray(entry.measures),
       dimensions: toStringArray(entry.dimensions),
       filters: normalizeFilters(asRecordArray(entry.filters)),
@@ -1195,8 +1461,9 @@ function normalizeWidgets(value: Array<Record<string, unknown>>): BiWidget[] {
       progress: 0,
       statusMessage: null,
       error: null,
-    };
+    });
   });
+  return widgets;
 }
 
 function normalizeOrderBys(value: Array<Record<string, unknown>>) {
@@ -1226,6 +1493,103 @@ function normalizeChartType(value: unknown): BiWidget['type'] {
 function normalizeWidgetSize(value: unknown): BiWidget['size'] {
   if (value === 'wide' || value === 'tall' || value === 'large') {
     return value;
+  }
+  return 'small';
+}
+
+function layoutForWidgetSize(size: BiWidget['size']): Pick<WidgetLayout, 'w' | 'h' | 'minW' | 'minH'> {
+  if (size === 'wide') {
+    return { w: 6, h: 5, minW: 4, minH: 4 };
+  }
+  if (size === 'tall') {
+    return { w: 4, h: 7, minW: 3, minH: 5 };
+  }
+  if (size === 'large') {
+    return { w: 8, h: 7, minW: 5, minH: 5 };
+  }
+  return { w: 4, h: 5, minW: 3, minH: 4 };
+}
+
+function normalizeWidgetLayout(value: unknown): WidgetLayout | null {
+  if (!isRecord(value)) {
+    return null;
+  }
+  const x = normalizeNumber(value.x, 0);
+  const y = normalizeNumber(value.y, 0);
+  const w = normalizeNumber(value.w, 4);
+  const h = normalizeNumber(value.h, 5);
+  const minW = normalizeNumber(value.minW, 2);
+  const minH = normalizeNumber(value.minH, 3);
+  if (w <= 0 || h <= 0) {
+    return null;
+  }
+  return {
+    x: Math.max(0, Math.floor(x)),
+    y: Math.max(0, Math.floor(y)),
+    w: Math.max(1, Math.floor(w)),
+    h: Math.max(1, Math.floor(h)),
+    minW: Math.max(1, Math.floor(minW)),
+    minH: Math.max(1, Math.floor(minH)),
+  };
+}
+
+function resolveDefaultWidgetLayout(
+  existingWidgets: Array<Pick<BiWidget, 'layout'>>,
+  size: BiWidget['size'],
+  preferredLayout?: WidgetLayout | null,
+): WidgetLayout {
+  const defaultSize = layoutForWidgetSize(size);
+  const base = preferredLayout
+    ? { ...defaultSize, ...preferredLayout }
+    : {
+        ...defaultSize,
+        x: 0,
+        y: existingWidgets.reduce((maxY, widget) => Math.max(maxY, widget.layout.y + widget.layout.h), 0),
+      };
+  const maxCols = 12;
+  const width = Math.min(base.w, maxCols);
+  const candidate: WidgetLayout = {
+    x: Math.max(0, Math.min(base.x, maxCols - width)),
+    y: Math.max(0, base.y),
+    w: width,
+    h: Math.max(1, base.h),
+    minW: base.minW,
+    minH: base.minH,
+  };
+
+  const occupied = existingWidgets.map((widget) => widget.layout);
+  while (occupied.some((layout) => spansOverlap(layout, candidate))) {
+    candidate.y += 1;
+  }
+  return candidate;
+}
+
+function spansOverlap(a: WidgetLayout, b: WidgetLayout): boolean {
+  const horizontal = a.x < b.x + b.w && a.x + a.w > b.x;
+  const vertical = a.y < b.y + b.h && a.y + a.h > b.y;
+  return horizontal && vertical;
+}
+
+function normalizeLayoutWithSize(currentLayout: WidgetLayout, size: BiWidget['size']): WidgetLayout {
+  const sizeDefaults = layoutForWidgetSize(size);
+  return {
+    ...currentLayout,
+    w: sizeDefaults.w,
+    h: sizeDefaults.h,
+    minW: sizeDefaults.minW,
+    minH: sizeDefaults.minH,
+  };
+}
+
+function inferWidgetSizeFromLayout(layout: WidgetLayout): BiWidget['size'] {
+  if (layout.w >= 8 || layout.h >= 7) {
+    return 'large';
+  }
+  if (layout.w >= 6) {
+    return 'wide';
+  }
+  if (layout.h >= 7) {
+    return 'tall';
   }
   return 'small';
 }
@@ -1284,40 +1648,65 @@ function serializeDashboardState(input: {
   });
 }
 
-function buildWidgetQueryPayload(input: {
+function buildWidgetQueryRequestInput(input: {
   widget: BiWidget;
   organizationId: string;
   projectId: string | null;
   semanticModelId: string;
+  selectedModelConfig: SelectedModelConfig;
   globalFilters: FilterDraft[];
-}): SemanticQueryRequestPayload {
-  const timeDimensionsPayload = input.widget.timeDimension
+}): QueryRequestInput | null {
+  const query = buildSemanticQueryPayload(input.widget, input.globalFilters);
+  if (input.selectedModelConfig.kind === 'unified') {
+    if (input.selectedModelConfig.semanticModelIds.length === 0) {
+      return null;
+    }
+    return {
+      mode: 'unified',
+      payload: {
+        organizationId: input.organizationId,
+        projectId: input.projectId,
+        semanticModelIds: input.selectedModelConfig.semanticModelIds,
+        joins: input.selectedModelConfig.joins,
+        metrics: input.selectedModelConfig.metrics,
+        query,
+      },
+    };
+  }
+  return {
+    mode: 'standard',
+    payload: {
+      organizationId: input.organizationId,
+      projectId: input.projectId,
+      semanticModelId: input.semanticModelId,
+      query,
+    },
+  };
+}
+
+function buildSemanticQueryPayload(widget: BiWidget, globalFilters: FilterDraft[]): SemanticQueryPayload {
+  const timeDimensionsPayload = widget.timeDimension
     ? [
         {
-          dimension: input.widget.timeDimension,
-          granularity: input.widget.timeGrain || undefined,
-          dateRange: input.widget.timeRangePreset || undefined,
+          dimension: widget.timeDimension,
+          granularity: widget.timeGrain || undefined,
+          dateRange: widget.timeRangePreset || undefined,
         },
       ]
     : [];
-  const filterPayload = buildSemanticFilters([...input.globalFilters, ...input.widget.filters]);
+  const filterPayload = buildSemanticFilters([...globalFilters, ...widget.filters]);
   const orderPayload =
-    input.widget.orderBys.length > 0
-      ? input.widget.orderBys.map((order) => ({ [order.member]: order.direction }))
+    widget.orderBys.length > 0
+      ? widget.orderBys.map((order) => ({ [order.member]: order.direction }))
       : undefined;
 
   return {
-    organizationId: input.organizationId,
-    projectId: input.projectId,
-    semanticModelId: input.semanticModelId,
-    query: {
-      measures: input.widget.measures,
-      dimensions: input.widget.dimensions,
-      timeDimensions: timeDimensionsPayload,
-      filters: filterPayload.length > 0 ? filterPayload : undefined,
-      order: orderPayload,
-      limit: input.widget.limit,
-    },
+    measures: widget.measures,
+    dimensions: widget.dimensions,
+    timeDimensions: timeDimensionsPayload,
+    filters: filterPayload.length > 0 ? filterPayload : undefined,
+    order: orderPayload,
+    limit: widget.limit,
   };
 }
 
@@ -1359,14 +1748,22 @@ function getErrorMessage(error: unknown, fallback: string): string {
   return fallback;
 }
 
-function normalizeSemanticQueryResponse(value: unknown): SemanticQueryResponse | null {
+function normalizeSemanticQueryResponse(
+  value: unknown,
+  fallbackSemanticModelId?: string | null,
+): SemanticQueryResponse | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     return null;
   }
   const payload = value as Record<string, unknown>;
   const id = readString(payload.id);
   const organizationId = readString(payload.organizationId) ?? readString(payload.organization_id);
-  const semanticModelId = readString(payload.semanticModelId) ?? readString(payload.semantic_model_id);
+  const semanticModelId =
+    readString(payload.semanticModelId) ??
+    readString(payload.semantic_model_id) ??
+    toStringArray(payload.semanticModelIds)[0] ??
+    toStringArray(payload.semantic_model_ids)[0] ??
+    (fallbackSemanticModelId ?? null);
   if (!id || !organizationId || !semanticModelId) {
     return null;
   }
@@ -1379,6 +1776,99 @@ function normalizeSemanticQueryResponse(value: unknown): SemanticQueryResponse |
     annotations: toRecordArray(payload.annotations),
     metadata: Array.isArray(payload.metadata) ? toRecordArray(payload.metadata) : undefined,
   };
+}
+
+function parseSelectedModelConfig(model: SemanticModelRecord | null): SelectedModelConfig {
+  if (!model || !model.contentYaml) {
+    return { kind: 'standard' };
+  }
+  const parsed = safeParseYaml(model.contentYaml);
+  if (!parsed) {
+    return { kind: 'standard' };
+  }
+  const sourceModels = Array.isArray(parsed.source_models)
+    ? parsed.source_models
+    : Array.isArray(parsed.sourceModels)
+      ? parsed.sourceModels
+      : null;
+  const hasUnifiedShape = Array.isArray(parsed.semantic_models) || Array.isArray(parsed.semanticModels) || sourceModels;
+  if (!hasUnifiedShape) {
+    return { kind: 'standard' };
+  }
+  const semanticModelIds = (sourceModels || [])
+    .map((entry) => (isRecord(entry) ? readString(entry.id) : null))
+    .filter((entry): entry is string => Boolean(entry));
+  const joins = parseUnifiedJoins(parsed.relationships);
+  const metrics = parseUnifiedMetrics(parsed.metrics);
+  return {
+    kind: 'unified',
+    semanticModelIds,
+    joins: joins.length > 0 ? joins : undefined,
+    metrics: metrics && Object.keys(metrics).length > 0 ? metrics : undefined,
+  };
+}
+
+function parseUnifiedJoins(value: unknown): UnifiedSemanticJoinPayload[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  const joins: UnifiedSemanticJoinPayload[] = [];
+  value.forEach((entry) => {
+    if (!isRecord(entry)) {
+      return;
+    }
+    const from = readString(entry.from_) ?? readString(entry.from);
+    const to = readString(entry.to);
+    const on = readString(entry.join_on) ?? readString(entry.on);
+    if (!from || !to || !on) {
+      return;
+    }
+    joins.push({
+      name: readString(entry.name),
+      from,
+      to,
+      type: readString(entry.type) ?? 'inner',
+      on,
+    });
+  });
+  return joins;
+}
+
+function parseUnifiedMetrics(value: unknown): Record<string, UnifiedSemanticMetricPayload> | null {
+  if (!isRecord(value)) {
+    return null;
+  }
+  const output: Record<string, UnifiedSemanticMetricPayload> = {};
+  Object.entries(value).forEach(([name, rawMetric]) => {
+    if (!isRecord(rawMetric)) {
+      return;
+    }
+    const expression = readString(rawMetric.expression);
+    if (!expression) {
+      return;
+    }
+    output[name] = {
+      expression,
+      description: readString(rawMetric.description) ?? undefined,
+    };
+  });
+  return output;
+}
+
+function safeParseYaml(content: string): Record<string, unknown> | null {
+  try {
+    const parsed = yaml.load(content);
+    if (!isRecord(parsed)) {
+      return null;
+    }
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value && typeof value === 'object' && !Array.isArray(value));
 }
 
 function readString(value: unknown): string | null {

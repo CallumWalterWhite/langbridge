@@ -32,6 +32,9 @@ from langbridge.packages.common.langbridge_common.interfaces.agent_events import
     AgentEventVisibility,
 )
 from langbridge.packages.common.langbridge_common.repositories.agent_repository import AgentRepository
+from langbridge.packages.common.langbridge_common.repositories.conversation_memory_repository import (
+    ConversationMemoryRepository,
+)
 from langbridge.packages.common.langbridge_common.interfaces.connectors import IConnectorStore
 from langbridge.packages.common.langbridge_common.interfaces.semantic_models import (
     ISemanticModelStore,
@@ -59,6 +62,7 @@ from langbridge.packages.orchestrator.langbridge_orchestrator.llm.provider impor
 from langbridge.packages.orchestrator.langbridge_orchestrator.runtime import (
     AgentOrchestratorFactory,
 )
+from langbridge.packages.orchestrator.langbridge_orchestrator.agents.supervisor import MemoryManager
 
 
 class AgentJobRequestHandler(BaseMessageHandler):
@@ -73,6 +77,7 @@ class AgentJobRequestHandler(BaseMessageHandler):
         connector_store: IConnectorStore,
         thread_repository: ThreadRepository,
         thread_message_repository: ThreadMessageRepository,
+        memory_repository: ConversationMemoryRepository,
         message_broker: MessageBroker,
     ) -> None:
         self._logger = logging.getLogger(__name__)
@@ -81,6 +86,7 @@ class AgentJobRequestHandler(BaseMessageHandler):
         self._llm_repository = llm_repository
         self._thread_repository = thread_repository
         self._thread_message_repository = thread_message_repository
+        self._memory_repository = memory_repository
         self._message_broker = message_broker
         self._agent_orchestrator_factory = AgentOrchestratorFactory(
             semantic_model_store=semantic_model_store,
@@ -132,7 +138,9 @@ class AgentJobRequestHandler(BaseMessageHandler):
 
         try:
             request = self._parse_job_payload(job_record)
-            thread, user_message = await self._get_thread_and_last_user_message(request.thread_id)
+            thread, user_message, thread_messages = await self._get_thread_and_last_user_message(
+                request.thread_id
+            )
             agent_definition, definition_model = await self._get_agent_definition(
                 request.agent_definition_id
             )
@@ -148,18 +156,41 @@ class AgentJobRequestHandler(BaseMessageHandler):
             )
 
             user_query = self._extract_user_query(user_message)
+            memory_manager = MemoryManager(
+                repository=self._memory_repository,
+                embedding_provider=embedding_provider,
+                logger=self._logger,
+            )
+            memory_context = await memory_manager.retrieve_context(
+                thread_id=thread.id,
+                query=user_query,
+                messages=thread_messages,
+                top_k=5,
+            )
+            planning_context = self._build_planning_context(
+                base_context=runtime.planning_context,
+                thread=thread,
+                memory_context=memory_context,
+            )
             response = await runtime.supervisor.handle(
                 user_query=user_query,
                 planning_constraints=runtime.planning_constraints,
-                planning_context=runtime.planning_context,
+                planning_context=planning_context,
             )
             response = self._ensure_response_defaults(response, user_query=user_query)
+            self._persist_supervisor_state(thread, response)
 
             self._record_assistant_message(
                 thread=thread,
                 user_message=user_message,
                 response=response,
                 agent_id=agent_definition.id,
+            )
+            await memory_manager.write_back(
+                thread_id=thread.id,
+                user_id=thread.created_by,
+                user_query=user_query,
+                response=response,
             )
 
             job_record.result = response
@@ -221,7 +252,7 @@ class AgentJobRequestHandler(BaseMessageHandler):
     async def _get_thread_and_last_user_message(
         self,
         thread_id: uuid.UUID,
-    ) -> Tuple[Thread, ThreadMessage]:
+    ) -> Tuple[Thread, ThreadMessage, list[ThreadMessage]]:
         thread = await self._thread_repository.get_by_id(thread_id)
         if thread is None:
             raise BusinessValidationError(f"Thread with ID {thread_id} does not exist.")
@@ -243,7 +274,46 @@ class AgentJobRequestHandler(BaseMessageHandler):
                 raise BusinessValidationError(f"Thread {thread.id} does not contain a user message.")
             last_message = user_messages[-1]
 
-        return thread, last_message
+        return thread, last_message, messages
+
+    @staticmethod
+    def _build_planning_context(
+        *,
+        base_context: Optional[dict[str, Any]],
+        thread: Thread,
+        memory_context: Any,
+    ) -> dict[str, Any]:
+        context: dict[str, Any] = dict(base_context or {})
+
+        short_term_context = getattr(memory_context, "short_term_context", "")
+        if isinstance(short_term_context, str) and short_term_context.strip():
+            context["short_term_context"] = short_term_context
+
+        retrieved_items = getattr(memory_context, "retrieved_items", [])
+        if isinstance(retrieved_items, list) and retrieved_items:
+            context["retrieved_memories"] = [
+                item.model_dump(mode="json") if hasattr(item, "model_dump") else item
+                for item in retrieved_items
+            ]
+
+        metadata = thread.metadata_json if isinstance(thread.metadata_json, dict) else {}
+        clarification_state = metadata.get("clarification_state")
+        if isinstance(clarification_state, dict):
+            context["clarification_state"] = clarification_state
+
+        return context
+
+    @staticmethod
+    def _persist_supervisor_state(thread: Thread, response: dict[str, Any]) -> None:
+        diagnostics = response.get("diagnostics")
+        if not isinstance(diagnostics, dict):
+            return
+        clarification_state = diagnostics.get("clarification_state")
+        if not isinstance(clarification_state, dict):
+            return
+        metadata = thread.metadata_json if isinstance(thread.metadata_json, dict) else {}
+        metadata["clarification_state"] = clarification_state
+        thread.metadata_json = metadata
 
     async def _get_agent_definition(
         self,

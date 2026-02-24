@@ -3,7 +3,11 @@ Factory and registry helpers for orchestrator LLM providers.
 """
 from typing import Any, Dict, Iterable, Type, TypeVar
 
-from langchain_core.language_models import BaseChatModel
+try:  # pragma: no cover - optional dependency fallback
+    from langchain_core.language_models import BaseChatModel
+except Exception:  # pragma: no cover
+    class BaseChatModel:  # type: ignore[no-redef]
+        pass
 
 from .base import (
     LLMConnectionConfig,

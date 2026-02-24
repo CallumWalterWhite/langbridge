@@ -1,7 +1,7 @@
 import json
 import uuid
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional, Tuple, Type
+from typing import Any, Dict, List, Literal, Optional, Tuple, Type
 from uuid import UUID
 
 import yaml
@@ -69,11 +69,18 @@ class SemanticModelService:
         self,
         organization_id: UUID,
         project_id: UUID | None = None,
+        model_kind: Literal["all", "standard", "unified"] = "all",
     ) -> list[SemanticModelRecordResponse]:
         models = await self._repository.list_for_scope(
             organization_id=organization_id,
             project_id=project_id,
         )
+        if model_kind != "all":
+            models = [
+                model
+                for model in models
+                if self._resolve_model_kind(model) == model_kind
+            ]
         return [self._normalize_record(model) for model in models]
 
     async def list_all_models(self) -> list[SemanticModelRecordResponse]:
@@ -112,20 +119,23 @@ class SemanticModelService:
                     "Project does not belong to the specified organization"
                 )
 
+        raw_model_payload: Dict[str, Any] | None = None
         if request.auto_generate or not request.model_yaml:
             semantic_model = await self._builder.build_for_scope(
                 connector_id=request.connector_id
             )
         else:
+            raw_model_payload = self._parse_yaml_payload(request.model_yaml)
             try:
                 semantic_model = load_semantic_model(request.model_yaml)
             except SemanticModelError as exc:
                 raise BusinessValidationError(
                     f"Semantic model failed validation: {exc}"
                 ) from exc
+        is_unified_model = self._is_unified_payload(raw_model_payload)
 
         connector = await self._connector_service.get_connector(request.connector_id)
-        if connector and not semantic_model.connector:
+        if connector and not semantic_model.connector and not is_unified_model:
             semantic_model.connector = connector.name if isinstance(connector.name, str) else connector.name.value
 
         if request.name and not semantic_model.name:
@@ -135,9 +145,17 @@ class SemanticModelService:
 
         semantic_id: UUID = uuid.uuid4()
 
-        await self._populate_vector_indexes(semantic_model, request.connector_id, semantic_id)
+        if not is_unified_model:
+            await self._populate_vector_indexes(semantic_model, request.connector_id, semantic_id)
 
-        payload = semantic_model.model_dump(by_alias=True, exclude_none=True)
+        if is_unified_model and raw_model_payload is not None:
+            payload = raw_model_payload
+            if request.name and not payload.get("name"):
+                payload["name"] = request.name
+            if request.description and not payload.get("description"):
+                payload["description"] = request.description
+        else:
+            payload = semantic_model.model_dump(by_alias=True, exclude_none=True)
         model_yaml = yaml.safe_dump(payload, sort_keys=False)
         content_json = json.dumps(payload)
 
@@ -185,7 +203,14 @@ class SemanticModelService:
         if request.name is not None and not request.name.strip():
             raise BusinessValidationError("Semantic model name is required")
 
+        existing_payload = self._parse_model_payload(model)
+        raw_model_payload = self._parse_yaml_payload(request.model_yaml) if request.model_yaml is not None else None
         rebuild_content = bool(request.auto_generate or request.model_yaml is not None)
+        is_unified_model = (
+            self._is_unified_payload(raw_model_payload)
+            if request.model_yaml is not None
+            else self._is_unified_payload(existing_payload)
+        )
         if rebuild_content:
             if request.auto_generate or not request.model_yaml:
                 semantic_model = await self._builder.build_for_scope(
@@ -207,7 +232,11 @@ class SemanticModelService:
                 ) from exc
 
         connector = await self._connector_service.get_connector(connector_id)
-        if connector and (request.connector_id is not None or not semantic_model.connector):
+        if (
+            connector
+            and (request.connector_id is not None or not semantic_model.connector)
+            and not is_unified_model
+        ):
             semantic_model.connector = connector.name if isinstance(connector.name, str) else connector.name.value
 
         if request.name is not None:
@@ -222,7 +251,7 @@ class SemanticModelService:
         model.connector_id = connector_id
         model.project_id = project_id
 
-        if rebuild_content:
+        if rebuild_content and not is_unified_model:
             await self._populate_vector_indexes(
                 semantic_model,
                 connector_id,
@@ -230,7 +259,17 @@ class SemanticModelService:
                 reset_index=True,
             )
 
-        payload = semantic_model.model_dump(by_alias=True, exclude_none=True)
+        if is_unified_model:
+            if rebuild_content and raw_model_payload is not None:
+                payload = raw_model_payload
+            else:
+                payload = existing_payload or semantic_model.model_dump(by_alias=True, exclude_none=True)
+            if model.name and not payload.get("name"):
+                payload["name"] = model.name
+            if model.description and not payload.get("description"):
+                payload["description"] = model.description
+        else:
+            payload = semantic_model.model_dump(by_alias=True, exclude_none=True)
         model.content_yaml = yaml.safe_dump(payload, sort_keys=False)
         model.content_json = json.dumps(payload)
         model.updated_at = datetime.now(timezone.utc)
@@ -248,6 +287,8 @@ class SemanticModelService:
 
     def _normalize_record(self, model: SemanticModelEntry) -> SemanticModelRecordResponse:
         response = SemanticModelRecordResponse.model_validate(model)
+        if self._resolve_model_kind(model) == "unified":
+            return response
         try:
             semantic_model = load_semantic_model(response.content_yaml)
         except SemanticModelError:
@@ -258,6 +299,52 @@ class SemanticModelService:
             semantic_model.description = response.description
         response.content_yaml = semantic_model.yml_dump()
         return response
+
+    @staticmethod
+    def _resolve_model_kind(model: SemanticModelEntry) -> Literal["standard", "unified"]:
+        payload = SemanticModelService._parse_model_payload(model)
+        if payload is None:
+            return "standard"
+        has_unified_shape = isinstance(payload.get("semantic_models"), list) or isinstance(
+            payload.get("source_models"), list
+        )
+        return "unified" if has_unified_shape else "standard"
+
+    @staticmethod
+    def _parse_model_payload(model: SemanticModelEntry) -> Dict[str, Any] | None:
+        if model.content_json:
+            try:
+                parsed_json = json.loads(model.content_json)
+                if isinstance(parsed_json, dict):
+                    return parsed_json
+            except Exception:
+                pass
+        if model.content_yaml:
+            try:
+                parsed_yaml = yaml.safe_load(model.content_yaml)
+                if isinstance(parsed_yaml, dict):
+                    return parsed_yaml
+            except Exception:
+                return None
+        return None
+
+    @staticmethod
+    def _parse_yaml_payload(content_yaml: str | None) -> Dict[str, Any] | None:
+        if not content_yaml:
+            return None
+        try:
+            parsed = yaml.safe_load(content_yaml)
+            if isinstance(parsed, dict):
+                return parsed
+        except Exception:
+            return None
+        return None
+
+    @staticmethod
+    def _is_unified_payload(payload: Dict[str, Any] | None) -> bool:
+        if payload is None:
+            return False
+        return isinstance(payload.get("semantic_models"), list) or isinstance(payload.get("source_models"), list)
 
     async def _populate_vector_indexes(
         self,

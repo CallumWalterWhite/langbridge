@@ -1,22 +1,17 @@
-from __future__ import annotations
-
 import asyncio
-import os
-from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple
 
 import trino
 from trino.auth import BasicAuthentication
 
-from langbridge.packages.connectors.langbridge_connectors.api.connector import ManagedConnector, QueryResult, SqlDialetcs, ensure_select_statement, apply_limit
+from langbridge.packages.connectors.langbridge_connectors.api.connector import ManagedConnector, QueryResult, SqlDialetcs, ensure_select_statement
 from langbridge.packages.connectors.langbridge_connectors.api.config import BaseConnectorConfig
 from langbridge.packages.common.langbridge_common.errors.connector_errors import AuthError, ConnectorError, QueryValidationError
 from langbridge.packages.connectors.langbridge_connectors.api.metadata import TableMetadata, ColumnMetadata, ForeignKeyMetadata
 
 
-@dataclass(slots=True)
 class TrinoConnectorConfig(BaseConnectorConfig):
-    host: str
+    host: str = "localhost"
     port: int = 8080
     user: str = "trino"
     catalog: str = "system"
@@ -57,8 +52,7 @@ class TrinoConnector(ManagedConnector):
             extra_credential=[
                 ("tenant", self.config.tenant)
             ],
-            verify=self.config.verify,
-            tenant=self.config.tenant,
+            verify=self.config.verify
         )
 
     async def test_connection(self) -> None:
@@ -93,14 +87,14 @@ class TrinoConnector(ManagedConnector):
         timeout_s: Optional[int] = 30,
     ) -> QueryResult:
         ensure_select_statement(sql)
-        prepared_sql = apply_limit(sql, max_rows)
-        columns, rows = await self._execute_select_async(prepared_sql, params or {}, timeout_s=timeout_s)
+        # prepared_sql = apply_limit(sql, max_rows)
+        columns, rows = await self._execute_select_async(sql, params or {}, timeout_s=timeout_s)
         return QueryResult(
             columns=columns,
             rows=rows,
             rowcount=len(rows),
             elapsed_ms=0,
-            sql=prepared_sql,
+            sql=sql,
         )
 
     # Schema introspection helpers leveraging Trino's information_schema

@@ -4,9 +4,18 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Mapping, MutableMapping, Union
-from langchain_core.messages import BaseMessage
 
-from langchain_core.language_models import BaseChatModel
+try:  # pragma: no cover - optional dependency fallback for lightweight test environments
+    from langchain_core.messages import BaseMessage
+except Exception:  # pragma: no cover
+    class BaseMessage:  # type: ignore[no-redef]
+        pass
+
+try:  # pragma: no cover - optional dependency fallback for lightweight test environments
+    from langchain_core.language_models import BaseChatModel
+except Exception:  # pragma: no cover
+    class BaseChatModel:  # type: ignore[no-redef]
+        pass
 
 
 class LLMProviderName(str, Enum):
