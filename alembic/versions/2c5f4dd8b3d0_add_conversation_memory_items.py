@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from alembic import op
 import sqlalchemy as sa
+from sqlalchemy.dialects import postgresql
 
 
 # revision identifiers, used by Alembic.
@@ -19,27 +20,39 @@ branch_labels = None
 depends_on = None
 
 
-_MEMORY_CATEGORY_ENUM = sa.Enum(
+_MEMORY_CATEGORY_ENUM = postgresql.ENUM(
     "fact",
     "preference",
     "decision",
     "tool_outcome",
     "answer",
     name="memory_category",
+    create_type=False,
 )
 
 
 def upgrade() -> None:
     bind = op.get_bind()
+    category_type: sa.TypeEngine
     if bind.dialect.name == "postgresql":
         _MEMORY_CATEGORY_ENUM.create(bind, checkfirst=True)
+        category_type = _MEMORY_CATEGORY_ENUM
+    else:
+        category_type = sa.Enum(
+            "fact",
+            "preference",
+            "decision",
+            "tool_outcome",
+            "answer",
+            name="memory_category",
+        )
 
     op.create_table(
         "conversation_memory_items",
         sa.Column("id", sa.UUID(), nullable=False),
         sa.Column("thread_id", sa.UUID(), nullable=False),
         sa.Column("user_id", sa.UUID(), nullable=True),
-        sa.Column("category", _MEMORY_CATEGORY_ENUM, nullable=False),
+        sa.Column("category", category_type, nullable=False),
         sa.Column("content", sa.Text(), nullable=False),
         sa.Column("metadata", sa.JSON(), nullable=True),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("(CURRENT_TIMESTAMP)"), nullable=False),
