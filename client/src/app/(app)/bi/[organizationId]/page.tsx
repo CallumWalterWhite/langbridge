@@ -491,73 +491,81 @@ export default function BiStudioPage({ params }: BiStudioPageProps) {
     }
 
     let cancelled = false;
+    let isPolling = false;
     const pollJobs = async () => {
-      await Promise.all(
-        pendingWidgets.map(async (widget) => {
-          if (!widget.jobId) {
-            return;
-          }
-          try {
-            const job = await fetchAgentJobState(organizationId, widget.jobId, false);
-            if (cancelled) {
+      if (isPolling) {
+        return;
+      }
+      isPolling = true;
+      try {
+        await Promise.all(
+          pendingWidgets.map(async (widget) => {
+            if (!widget.jobId) {
               return;
             }
-            const latestMessage = job.events[job.events.length - 1]?.message ?? `Status: ${job.status}`;
-            const progress = Math.max(0, Math.min(100, job.progress ?? 0));
+            try {
+              const job = await fetchAgentJobState(organizationId, widget.jobId, false);
+              if (cancelled) {
+                return;
+              }
+              const latestMessage = job.events[job.events.length - 1]?.message ?? `Status: ${job.status}`;
+              const progress = Math.max(0, Math.min(100, job.progress ?? 0));
 
-            if (job.status === 'failed' || job.status === 'cancelled') {
-              updateWidget(widget.id, {
-                isLoading: false,
-                jobStatus: job.status,
-                progress,
-                statusMessage: latestMessage,
-                error: getErrorMessage(job.error, 'Semantic query failed.'),
-              });
-              return;
-            }
-
-            if (job.status === 'succeeded') {
-              const result = normalizeSemanticQueryResponse(job.finalResponse?.result, selectedModelId);
-              if (!result) {
+              if (job.status === 'failed' || job.status === 'cancelled') {
                 updateWidget(widget.id, {
                   isLoading: false,
-                  jobStatus: 'failed',
-                  progress: 100,
-                  statusMessage: 'Semantic query completed without result payload.',
-                  error: 'Semantic query job completed without a valid result.',
+                  jobStatus: job.status,
+                  progress,
+                  statusMessage: latestMessage,
+                  error: getErrorMessage(job.error, 'Semantic query failed.'),
                 });
                 return;
               }
 
+              if (job.status === 'succeeded') {
+                const result = normalizeSemanticQueryResponse(job.finalResponse?.result, selectedModelId);
+                if (!result) {
+                  updateWidget(widget.id, {
+                    isLoading: false,
+                    jobStatus: 'failed',
+                    progress: 100,
+                    statusMessage: 'Semantic query completed without result payload.',
+                    error: 'Semantic query job completed without a valid result.',
+                  });
+                  return;
+                }
+
+                updateWidget(widget.id, {
+                  isLoading: false,
+                  queryResult: result,
+                  jobStatus: job.status,
+                  progress: 100,
+                  statusMessage: latestMessage,
+                  error: null,
+                });
+                setSnapshotDirty(true);
+                return;
+              }
+
               updateWidget(widget.id, {
-                isLoading: false,
-                queryResult: result,
+                isLoading: true,
                 jobStatus: job.status,
-                progress: 100,
+                progress,
                 statusMessage: latestMessage,
                 error: null,
               });
-              setSnapshotDirty(true);
-              return;
+            } catch {
+              if (cancelled) {
+                return;
+              }
             }
-
-            updateWidget(widget.id, {
-              isLoading: true,
-              jobStatus: job.status,
-              progress,
-              statusMessage: latestMessage,
-              error: null,
-            });
-          } catch {
-            if (cancelled) {
-              return;
-            }
-          }
-        }),
-      );
+          }),
+        );
+      } finally {
+        isPolling = false;
+      }
     };
 
-    void pollJobs();
     const intervalId = window.setInterval(() => {
       void pollJobs();
     }, JOB_STATUS_POLL_INTERVAL_MS);
@@ -573,8 +581,13 @@ export default function BiStudioPage({ params }: BiStudioPageProps) {
       return;
     }
     let cancelled = false;
+    let isPolling = false;
 
     const pollCopilotJob = async () => {
+      if (isPolling) {
+        return;
+      }
+      isPolling = true;
       try {
         const job = await fetchAgentJobState(organizationId, copilotJobId, false);
         if (cancelled) {
@@ -627,10 +640,11 @@ export default function BiStudioPage({ params }: BiStudioPageProps) {
         if (cancelled) {
           return;
         }
+      } finally {
+        isPolling = false;
       }
     };
 
-    void pollCopilotJob();
     const intervalId = window.setInterval(() => {
       void pollCopilotJob();
     }, JOB_STATUS_POLL_INTERVAL_MS);
