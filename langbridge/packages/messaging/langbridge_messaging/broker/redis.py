@@ -251,7 +251,8 @@ def _default_consumer() -> str:
     override = settings.REDIS_CONSUMER_NAME
     if override:
         return override
-    return os.environ.get("HOSTNAME") or socket.gethostname()
+    host = os.environ.get("HOSTNAME") or socket.gethostname()
+    return f"{host}-{os.getpid()}"
 
 
 def _default_dead_letter_stream() -> str:

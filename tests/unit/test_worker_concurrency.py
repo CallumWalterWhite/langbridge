@@ -118,7 +118,7 @@ async def test_run_worker_processes_batch_concurrently(monkeypatch) -> None:
     monkeypatch.setenv("WORKER_CONCURRENCY", "2")
     monkeypatch.setenv("WORKER_BATCH_SIZE", "2")
     monkeypatch.setattr(worker_main, "create_container", lambda: fake_container)
-    monkeypatch.setattr(worker_main, "WorkerMessageHandler", _FakeWorkerMessageHandler)
+    monkeypatch.setattr(worker_main, "WorkerMessageDispatcher", _FakeWorkerMessageHandler)
 
     worker_task = asyncio.create_task(worker_main.run_worker(poll_interval=0))
     try:

@@ -79,7 +79,7 @@ class Settings(BaseSettings):
     REDIS_CHANNEL: str = "events"
     REDIS_STREAM: str = "langbridge:events"
     REDIS_CONSUMER_GROUP: str = "langbridge-workers"
-    REDIS_CONSUMER_NAME: str = "langbridge-consumer-1"
+    REDIS_CONSUMER_NAME: str = ""
     REDIS_DEAD_LETTER_STREAM: str = "langbridge:dead-letter"
     REDIS_WORKER_STREAM: str = "langbridge:worker_stream"
     REDIS_WORKER_CONSUMER_GROUP: str = "langbridge-worker"

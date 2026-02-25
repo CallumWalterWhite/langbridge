@@ -17,13 +17,14 @@ from .ioc import create_container, DependencyResolver
 
 async def run_worker(poll_interval: float = 2.0) -> None:
     logger = logging.getLogger("langbridge.worker")
-    worker_concurrency = _read_positive_int_env("WORKER_CONCURRENCY", default=4, logger=logger)
+    worker_concurrency = _read_positive_int_env("WORKER_CONCURRENCY", default=10, logger=logger)
     batch_size = _read_positive_int_env(
         "WORKER_BATCH_SIZE",
         default=worker_concurrency,
         logger=logger,
     )
     processing_semaphore = asyncio.Semaphore(worker_concurrency)
+    consume_timeout_ms = max(1000, int(poll_interval * 1000))
     logger.info(
         "Worker starting. Poll interval: %s seconds. Concurrency: %s. Batch size: %s",
         poll_interval,
@@ -45,12 +46,19 @@ async def run_worker(poll_interval: float = 2.0) -> None:
     else:
         broker = container.message_broker()
 
+    in_flight_tasks: set[asyncio.Task[None]] = set()
+    idle_logged = False
     try:
         while True:
+            if len(in_flight_tasks) >= worker_concurrency:
+                await asyncio.wait(in_flight_tasks, return_when=asyncio.FIRST_COMPLETED)
+                continue
+
+            available_slots = worker_concurrency - len(in_flight_tasks)
             try:
                 messages = await broker.consume(
-                    timeout_ms=max(1000, int(poll_interval * 1000)),
-                    count=batch_size,
+                    timeout_ms=consume_timeout_ms,
+                    count=min(batch_size, available_slots),
                 )
             except RedisError as exc:
                 logger.error("Redis error: %s", exc)
@@ -60,10 +68,16 @@ async def run_worker(poll_interval: float = 2.0) -> None:
                 continue
 
             if not messages:
-                logger.info("Worker idle: awaiting jobs")
+                if not idle_logged:
+                    logger.info("Worker idle: awaiting jobs")
+                    idle_logged = True
+                if run_once:
+                    logger.info("Worker run-once enabled; exiting.")
+                    return
             else:
-                await asyncio.gather(
-                    *(
+                idle_logged = False
+                for message in messages:
+                    task = asyncio.create_task(
                         _process_message(
                             message=message,
                             container=container,
@@ -71,15 +85,16 @@ async def run_worker(poll_interval: float = 2.0) -> None:
                             broker=broker,
                             logger=logger,
                             processing_semaphore=processing_semaphore,
-                        )
-                        for message in messages
+                        ) 
                     )
-                )
-            if run_once:
-                logger.info("Worker run-once enabled; exiting.")
-                return
-            await asyncio.sleep(poll_interval)
+                    in_flight_tasks.add(task)
+                    _track_in_flight_task(task=task, in_flight_tasks=in_flight_tasks, logger=logger)
+                if run_once:
+                    logger.info("Worker run-once enabled; exiting.")
+                    return
     finally:
+        if in_flight_tasks:
+            await asyncio.gather(*in_flight_tasks, return_exceptions=True)
         await broker.close()
 
 
@@ -126,6 +141,24 @@ async def _process_message(
             await broker.nack(message, error=str(exc))
             return
         await broker.ack(message)
+
+
+def _track_in_flight_task(
+    *,
+    task: asyncio.Task[None],
+    in_flight_tasks: set[asyncio.Task[None]],
+    logger: logging.Logger,
+) -> None:
+    def _on_done(done_task: asyncio.Task[None]) -> None:
+        in_flight_tasks.discard(done_task)
+        try:
+            done_task.result()
+        except asyncio.CancelledError:
+            logger.warning("Worker message task was cancelled.")
+        except Exception:
+            logger.exception("Unhandled worker message task error.")
+
+    task.add_done_callback(_on_done)
 
 
 def _read_positive_int_env(
