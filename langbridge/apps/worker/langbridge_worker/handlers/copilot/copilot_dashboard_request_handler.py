@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import json
 import logging
 import uuid
@@ -50,6 +48,7 @@ from langbridge.packages.messaging.langbridge_messaging.contracts.jobs.copilot_d
 from langbridge.packages.messaging.langbridge_messaging.handler import BaseMessageHandler
 from langbridge.packages.orchestrator.langbridge_orchestrator.definitions import AgentDefinitionModel
 from langbridge.packages.orchestrator.langbridge_orchestrator.llm.provider import create_provider
+from langbridge.packages.orchestrator.langbridge_orchestrator.llm.provider.base import LLMProvider
 from langbridge.packages.semantic.langbridge_semantic.loader import SemanticModelError, load_semantic_model
 from langbridge.packages.semantic.langbridge_semantic.model import SemanticModel
 from langbridge.packages.semantic.langbridge_semantic.query import SemanticQuery, SemanticQueryEngine
@@ -336,7 +335,7 @@ class CopilotDashboardRequestHandler(BaseMessageHandler):
     async def _load_agent_and_provider(
         self,
         request: CreateCopilotDashboardJobRequest,
-    ) -> tuple[AgentDefinitionModel, Any]:
+    ) -> tuple[AgentDefinitionModel, LLMProvider]:
         agent = await self._agent_definition_repository.get_by_id(request.agent_definition_id)
         if agent is None:
             raise BusinessValidationError("Agent definition not found.")
@@ -428,7 +427,7 @@ class CopilotDashboardRequestHandler(BaseMessageHandler):
     async def _build_dashboard_plan(
         self,
         *,
-        llm_provider: Any,
+        llm_provider: LLMProvider,
         request: CreateCopilotDashboardJobRequest,
         semantic_model: SemanticModel,
     ) -> _CopilotDashboardPlan:
@@ -473,7 +472,7 @@ Keep widgets practical and diverse, max 6 widgets.
         response = await llm_provider.ainvoke(
             [SystemMessage(content=system_prompt), HumanMessage(content=user_prompt)],
             temperature=0.2,
-            max_tokens=1800,
+            # max_tokens=1800,
         )
 
         response_text = self._extract_response_text(response)

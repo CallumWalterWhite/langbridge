@@ -5,30 +5,40 @@
     "version": "0.2.0",
     "configurations": [
         {
-            "name": "Debug Langbirdge API",
+            "name": "Debug LangBridge API",
             "type": "debugpy",
             "request": "launch",
+            "python": "${workspaceFolder}/langbridge/venv/bin/python",
             "module": "uvicorn",
             "cwd": "${workspaceFolder}",
             "envFile": "${workspaceFolder}/.env",
             "args": [
                 "langbridge.apps.api.langbridge_api.main:app",
-                "--reload"
+                "--host", "0.0.0.0",
+                "--port", "8000"
             ],
-            "jinja": true
+            "jinja": true,
+            "console": "integratedTerminal"
         },
         {
-            "name": "Debug Langbirdge Worker",
+            "name": "Debug LangBridge Worker",
             "type": "debugpy",
             "request": "launch",
-            "module": "uvicorn",
+            "python": "${workspaceFolder}/langbridge/venv/bin/python",
+            "module": "langbridge.apps.worker.langbridge_worker.main",
             "cwd": "${workspaceFolder}",
             "envFile": "${workspaceFolder}/.env",
-            "args": [
-                "langbridge.apps.worker.langbridge_worker.main:app",
-                "--reload"
+            "console": "integratedTerminal"
+        }
+    ],
+    "compounds": [
+        {
+            "name": "Debug API + Worker",
+            "configurations": [
+                "Debug LangBridge API",
+                "Debug LangBridge Worker"
             ],
-            "jinja": true
+            "stopAll": true
         }
     ]
 }

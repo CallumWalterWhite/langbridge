@@ -21,11 +21,9 @@ import {
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Skeleton } from '@/components/ui/skeleton';
 import { Textarea } from '@/components/ui/textarea';
 import { useToast } from '@/components/ui/toast';
 import { useWorkspaceScope } from '@/context/workspaceScope';
-import { formatRelativeDate } from '@/lib/utils';
 import { fetchAgentDefinitions, fetchLLMConnections } from '@/orchestration/agents';
 import { resolveApiUrl } from '@/orchestration/http';
 import type { AgentDefinition, LLMConnection } from '@/orchestration/agents';
@@ -49,13 +47,6 @@ type FeatureHighlight = {
   icon: ComponentType<{ className?: string }>;
 };
 
-
-const statusVariantMap: Record<DataSource['status'], 'success' | 'destructive' | 'warning'> = {
-  connected: 'success',
-  error: 'destructive',
-  pending: 'warning',
-};
-
 export function DashboardCards() {
   const router = useRouter();
   const queryClient = useQueryClient();
@@ -63,8 +54,8 @@ export function DashboardCards() {
   const { selectedOrganizationId } = useWorkspaceScope();
   const [draftPrompt, setDraftPrompt] = useState('');
 
-  const dataSourcesQueryKey = ['datasources', selectedOrganizationId] as const;
-  const { data: sources, isLoading, isError, refetch } = useQuery<DataSource[]>({
+  const dataSourcesQueryKey = useMemo(() => ['datasources', selectedOrganizationId] as const, [selectedOrganizationId]);
+  const { data: sources, refetch } = useQuery<DataSource[]>({
     queryKey: dataSourcesQueryKey,
     enabled: Boolean(selectedOrganizationId),
     queryFn: async () => {
@@ -106,9 +97,8 @@ export function DashboardCards() {
     },
   });
 
-  const { recentSources, stats } = useMemo(() => {
+  const stats = useMemo(() => {
     const list = sources ?? [];
-    const recent = list.slice(0, 3);
 
     const connected = list.filter((source) => source.status === 'connected').length;
     const pending = list.filter((source) => source.status === 'pending').length;
@@ -116,18 +106,13 @@ export function DashboardCards() {
     const total = list.length;
 
     return {
-      recentSources: recent,
-      stats: {
-        total,
-        connected,
-        pending,
-        error,
-        readyPercentage: total === 0 ? 0 : Math.round((connected / total) * 100),
-      },
+      total,
+      connected,
+      pending,
+      error,
     };
   }, [sources]);
 
-  const attentionCount = stats.pending + stats.error;
   const hasAgents = (agentDefinitionsQuery.data ?? []).length > 0;
   const hasConnections = (llmConnectionsQuery.data ?? []).length > 0;
   const canUseChat = hasAgents && hasConnections;
@@ -182,22 +167,6 @@ export function DashboardCards() {
       icon: ShieldCheck,
     },
   ];
-
-  const workspaceStatus = isLoading
-    ? 'Syncing sources and workspace health.'
-    : stats.total === 0
-      ? 'No sources connected yet. Add one to unlock cross-source answers.'
-      : `${stats.connected} connected, ${attentionCount} need attention across ${stats.total} sources.`;
-
-  const readinessLabel = stats.total === 0 ? 'No sources' : `${stats.readyPercentage}% ready`;
-  const readinessVariant: 'success' | 'destructive' | 'warning' | 'secondary' =
-    stats.total === 0
-      ? 'secondary'
-      : stats.error > 0
-        ? 'destructive'
-        : stats.pending > 0
-          ? 'warning'
-          : 'success';
 
   const handleSourceCreated = useCallback(async () => {
     await queryClient.invalidateQueries({ queryKey: dataSourcesQueryKey });
@@ -427,17 +396,4 @@ function FeatureCard({ title, description, href, cta, icon: Icon }: FeatureHighl
       </div>
     </Link>
   );
-}
-
-function statusLabel(status: DataSource['status']) {
-  switch (status) {
-    case 'connected':
-      return 'Connected';
-    case 'pending':
-      return 'Pending';
-    case 'error':
-      return 'Needs attention';
-    default:
-      return status;
-  }
 }

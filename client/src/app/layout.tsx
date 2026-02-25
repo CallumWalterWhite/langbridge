@@ -29,7 +29,10 @@ export default function RootLayout({ children }: { children: ReactNode }) {
         <script dangerouslySetInnerHTML={{ __html: runtimeConfigScript }} />
         <script dangerouslySetInnerHTML={{ __html: themeInitScript }} />
       </head>
-      <body className="min-h-screen bg-[color:var(--app-bg)] font-sans text-[color:var(--text-primary)] antialiased transition-colors">
+      <body
+        suppressHydrationWarning
+        className="min-h-screen bg-[color:var(--app-bg)] font-sans text-[color:var(--text-primary)] antialiased transition-colors"
+      >
         <ThemeProvider>{children}</ThemeProvider>
       </body>
     </html>

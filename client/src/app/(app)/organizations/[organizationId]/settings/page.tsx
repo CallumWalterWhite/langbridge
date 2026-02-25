@@ -209,8 +209,9 @@ export default function OrganizationSettingsPage({ params }: OrganizationSetting
   const setEnvironmentAction = useCallback((settingKey: string, action?: 'save' | 'clear') => {
     setPendingEnvironmentActions((current) => {
       if (!action) {
-        const { [settingKey]: _, ...rest } = current;
-        return rest;
+        const next = { ...current };
+        delete next[settingKey];
+        return next;
       }
       return { ...current, [settingKey]: action };
     });

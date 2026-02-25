@@ -13,11 +13,8 @@ import { Textarea } from '@/components/ui/textarea';
 import { useWorkspaceScope } from '@/context/workspaceScope';
 import {
   createSemanticModel,
-  deleteSemanticModel,
   fetchSemanticModel,
-  fetchSemanticModelYaml,
   generateSemanticModelYaml,
-  listSemanticModels,
   updateSemanticModel,
 } from '@/orchestration/semanticModels';
 import type {
@@ -31,7 +28,7 @@ import type {
 import { fetchConnectors } from '@/orchestration/connectors';
 import type { ConnectorResponse } from '@/orchestration/connectors/types';
 import { ApiError } from '@/orchestration/http';
-import { cn, formatRelativeDate } from '@/lib/utils';
+import { cn } from '@/lib/utils';
 
 interface FormState {
   name: string;
@@ -106,12 +103,9 @@ export default function SemanticModelPage({ params }: SemanticModelPageProps): J
   const [builder, setBuilder] = useState<BuilderModel>(() => createEmptyBuilderModel());
   const [editingModel, setEditingModel] = useState<SemanticModelRecord | null>(null);
   const [loadingModel, setLoadingModel] = useState(false);
-  const [storedModels, setStoredModels] = useState<SemanticModelRecord[]>([]);
-  const [storedLoading, setStoredLoading] = useState(false);
   const [autoGenerating, setAutoGenerating] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [isClient, setIsClient] = useState(false);
 
   const organizationAvailable = Boolean(organizationId);
   const headerTitle = isEditMode ? 'Edit semantic model' : 'Semantic model builder';
@@ -130,17 +124,6 @@ export default function SemanticModelPage({ params }: SemanticModelPageProps): J
   const selectedConnector = useMemo(
     () => connectors.find((connector) => connector.id === selectedConnectorId),
     [connectors, selectedConnectorId],
-  );
-
-  const connectorLookup = useMemo(
-    () =>
-      connectors.reduce<Record<string, string>>((acc, connector) => {
-        if (connector.id) {
-          acc[connector.id] = connector.name;
-        }
-        return acc;
-      }, {}),
-    [connectors],
   );
 
   const builderYamlPreview = useMemo(() => {
@@ -178,22 +161,6 @@ export default function SemanticModelPage({ params }: SemanticModelPageProps): J
       setConnectorsLoading(false);
     }
   }, [organizationId]);
-
-  const refreshStoredModels = useCallback(async () => {
-    if (!organizationId) {
-      setStoredModels([]);
-      return;
-    }
-    setStoredLoading(true);
-    try {
-      const models = await listSemanticModels(organizationId, selectedProjectId ?? undefined, 'standard');
-      setStoredModels(models);
-    } catch (err) {
-      setError(resolveError(err));
-    } finally {
-      setStoredLoading(false);
-    }
-  }, [organizationId, selectedProjectId]);
 
   useEffect(() => {
     if (!organizationId) {
@@ -247,14 +214,6 @@ export default function SemanticModelPage({ params }: SemanticModelPageProps): J
   }, [editingModelId, isEditMode, organizationId]);
 
   useEffect(() => {
-    if (!organizationId) {
-      setStoredModels([]);
-      return;
-    }
-    void refreshStoredModels();
-  }, [organizationId, selectedProjectId, refreshStoredModels]);
-
-  useEffect(() => {
     if (!selectedConnectorId) {
       setBuilder(createEmptyBuilderModel());
       return;
@@ -263,10 +222,6 @@ export default function SemanticModelPage({ params }: SemanticModelPageProps): J
       setBuilder(createEmptyBuilderModel());
     }
   }, [isEditMode, selectedConnectorId]);
-
-  useEffect(() => {
-    setIsClient(true);
-  }, []);
 
   async function handleSave(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -336,7 +291,6 @@ export default function SemanticModelPage({ params }: SemanticModelPageProps): J
           autoGenerate: false,
         });
       }
-      await refreshStoredModels();
     } catch (err) {
       setError(resolveError(err));
     } finally {
@@ -365,38 +319,6 @@ export default function SemanticModelPage({ params }: SemanticModelPageProps): J
       setAutoGenerating(false);
     }
   }, [organizationId, selectedConnectorId]);
-
-  async function handleDelete(modelId: string) {
-    if (!organizationId) {
-      return;
-    }
-    try {
-      await deleteSemanticModel(modelId, organizationId);
-      await refreshStoredModels();
-    } catch (err) {
-      setError(resolveError(err));
-    }
-  }
-
-  async function handleDownloadYaml(modelId: string, name: string) {
-    if (!organizationId) {
-      return;
-    }
-    try {
-      const yamlText = await fetchSemanticModelYaml(modelId, organizationId);
-      const blob = new Blob([yamlText], { type: 'text/yaml;charset=utf-8;' });
-      const url = URL.createObjectURL(blob);
-      const anchor = document.createElement('a');
-      anchor.href = url;
-      anchor.download = `${name.replace(/\s+/g, '_').toLowerCase()}.yml`;
-      document.body.appendChild(anchor);
-      anchor.click();
-      document.body.removeChild(anchor);
-      URL.revokeObjectURL(url);
-    } catch (err) {
-      setError(resolveError(err));
-    }
-  }
 
   return (
     <div className="space-y-6 text-[color:var(--text-secondary)]">
@@ -1527,76 +1449,92 @@ function buildSemanticModelPayload(builder: BuilderModel, connectorName?: string
   };
 }
 
+function toRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === 'object' ? (value as Record<string, unknown>) : {};
+}
+
+function toArray(value: unknown): unknown[] {
+  return Array.isArray(value) ? value : [];
+}
+
+function toStringValue(value: unknown, fallback = ''): string {
+  return typeof value === 'string' ? value : fallback;
+}
+
 function parseYamlToBuilderModel(yamlText: string): BuilderModel {
   const parsed = yaml.load(yamlText);
   if (!parsed || typeof parsed !== 'object') {
     throw new Error('Generated YAML was empty.');
   }
 
-  const candidate = parsed as Record<string, any>;
-  const tablesEntries = Object.entries((candidate.tables ?? {}) as Record<string, any>);
-  const tables: BuilderTable[] = tablesEntries.map(([entityName, rawTable], index) => {
-    const table = rawTable ?? {};
-    const dimensions = Array.isArray(table.dimensions) ? table.dimensions : [];
-    const measures = Array.isArray(table.measures) ? table.measures : [];
+  const candidate = toRecord(parsed);
+  const tablesEntries = Object.entries(toRecord(candidate.tables));
+  const tables: BuilderTable[] = tablesEntries.map(([entityName, rawTable]) => {
+    const table = toRecord(rawTable);
+    const dimensions = toArray(table.dimensions);
+    const measures = toArray(table.measures);
     return {
       id: createId('table'),
       entityName,
-      schema: table.schema ?? '',
-      name: table.name ?? '',
-      description: table.description ?? '',
-      synonyms: table.synonyms ?? null,
-      filters: table.filters ?? null,
-      dimensions: dimensions.map((dimension: any) => ({
-        id: createId('dimension'),
-        name: dimension.name ?? '',
-        type: dimension.type ?? '',
-        description: dimension.description ?? '',
-        primaryKey: Boolean(dimension.primary_key ?? dimension.primaryKey),
-        vectorized: Boolean(dimension.vectorized),
-      })),
-      measures: measures.map((measure: any) => ({
-        id: createId('measure'),
-        name: measure.name ?? '',
-        type: measure.type ?? '',
-        description: measure.description ?? '',
-        aggregation: measure.aggregation ?? '',
-      })),
+      schema: toStringValue(table.schema),
+      name: toStringValue(table.name),
+      description: toStringValue(table.description),
+      synonyms: (table.synonyms as SemanticTable['synonyms']) ?? null,
+      filters: (table.filters as SemanticTable['filters']) ?? null,
+      dimensions: dimensions.map((dimension) => {
+        const mappedDimension = toRecord(dimension);
+        return {
+          id: createId('dimension'),
+          name: toStringValue(mappedDimension.name),
+          type: toStringValue(mappedDimension.type),
+          description: toStringValue(mappedDimension.description),
+          primaryKey: Boolean(mappedDimension.primary_key ?? mappedDimension.primaryKey),
+          vectorized: Boolean(mappedDimension.vectorized),
+        };
+      }),
+      measures: measures.map((measure) => {
+        const mappedMeasure = toRecord(measure);
+        return {
+          id: createId('measure'),
+          name: toStringValue(mappedMeasure.name),
+          type: toStringValue(mappedMeasure.type),
+          description: toStringValue(mappedMeasure.description),
+          aggregation: toStringValue(mappedMeasure.aggregation),
+        };
+      }),
     };
   });
 
-  const relationshipSource = Array.isArray(candidate.relationships)
-    ? candidate.relationships
-    : Array.isArray(candidate.joins)
-      ? candidate.joins
-      : [];
-
-  const relationships: BuilderRelationship[] = relationshipSource.map((relationship: any) => {
-    const candidateType =
-      (relationship.type as RelationshipType | undefined) ??
-      (relationship.cardinality as RelationshipType | undefined);
+  const relationshipSource = candidate.relationships ?? candidate.joins;
+  const relationships: BuilderRelationship[] = toArray(relationshipSource).map((relationship) => {
+    const mappedRelationship = toRecord(relationship);
+    const rawType = mappedRelationship.type ?? mappedRelationship.cardinality;
+    const candidateType = typeof rawType === 'string' ? (rawType as RelationshipType) : undefined;
     const resolvedType = candidateType && RELATIONSHIP_TYPES.includes(candidateType) ? candidateType : 'many_to_one';
     return {
       id: createId('relationship'),
-      name: relationship.name ?? '',
-      from: relationship.from_ ?? relationship.from ?? relationship.left ?? '',
-      to: relationship.to ?? relationship.right ?? '',
+      name: toStringValue(mappedRelationship.name),
+      from: toStringValue(mappedRelationship.from_ ?? mappedRelationship.from ?? mappedRelationship.left),
+      to: toStringValue(mappedRelationship.to ?? mappedRelationship.right),
       type: resolvedType,
-      joinOn: relationship.join_on ?? relationship.joinOn ?? relationship.on ?? '',
+      joinOn: toStringValue(mappedRelationship.join_on ?? mappedRelationship.joinOn ?? mappedRelationship.on),
     };
   });
 
-  const metricsEntries = candidate.metrics ?? {};
-  const metrics: BuilderMetric[] = Object.entries(metricsEntries as Record<string, any>).map(([metricName, metric]) => ({
-    id: createId('metric'),
-    name: metricName,
-    expression: metric.expression ?? '',
-    description: metric.description ?? '',
-  }));
+  const metricsEntries = Object.entries(toRecord(candidate.metrics));
+  const metrics: BuilderMetric[] = metricsEntries.map(([metricName, metric]) => {
+    const mappedMetric = toRecord(metric);
+    return {
+      id: createId('metric'),
+      name: metricName,
+      expression: toStringValue(mappedMetric.expression),
+      description: toStringValue(mappedMetric.description),
+    };
+  });
 
   return {
     version: typeof candidate.version === 'string' ? candidate.version : DEFAULT_MODEL_VERSION,
-    description: candidate.description ?? '',
+    description: toStringValue(candidate.description),
     tables,
     relationships,
     metrics,

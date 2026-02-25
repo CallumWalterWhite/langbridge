@@ -260,65 +260,107 @@ function readConfigField(config: string, key: string): string {
   return '';
 }
 
+function toRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === 'object' ? (value as Record<string, unknown>) : {};
+}
+
+function toArray(value: unknown): unknown[] {
+  return Array.isArray(value) ? value : [];
+}
+
+function toStringValue(value: unknown, fallback = ''): string {
+  if (typeof value === 'string') {
+    return value;
+  }
+  if (typeof value === 'number') {
+    return String(value);
+  }
+  return fallback;
+}
+
+function toBooleanValue(value: unknown, fallback: boolean): boolean {
+  return typeof value === 'boolean' ? value : fallback;
+}
+
+function toCsvString(value: unknown): string {
+  return toArray(value)
+    .filter((item): item is string => typeof item === 'string')
+    .join(', ');
+}
+
+function isOption<T extends string>(value: unknown, options: readonly T[]): value is T {
+  return typeof value === 'string' && options.includes(value as T);
+}
+
 function hydrateFromDefinition(definition: unknown, base: FormState): FormState {
   if (!definition || typeof definition !== 'object') {
     return base;
   }
 
-  const payload = definition as Record<string, any>;
-  const prompt = (payload.prompt as Record<string, any>) ?? {};
-  const memory = (payload.memory as Record<string, any>) ?? {};
-  const tools = Array.isArray(payload.tools) ? payload.tools : [];
-  const accessPolicy = (payload.access_policy as Record<string, any>) ?? {};
-  const execution = (payload.execution as Record<string, any>) ?? {};
-  const output = (payload.output as Record<string, any>) ?? {};
-  const guardrails = (payload.guardrails as Record<string, any>) ?? {};
-  const observability = (payload.observability as Record<string, any>) ?? {};
-  const features = (payload.features as Record<string, any>) ?? {};
+  const payload = toRecord(definition);
+  const prompt = toRecord(payload.prompt);
+  const memory = toRecord(payload.memory);
+  const tools = toArray(payload.tools);
+  const accessPolicy = toRecord(payload.access_policy);
+  const execution = toRecord(payload.execution);
+  const output = toRecord(payload.output);
+  const guardrails = toRecord(payload.guardrails);
+  const observability = toRecord(payload.observability);
+  const features = toRecord(payload.features);
 
   return {
     ...base,
-    llmConnectionId: payload.llm_connection_id ?? base.llmConnectionId,
-    biCopilotEnabled: features.bi_copilot_enabled ?? base.biCopilotEnabled,
-    deepResearchEnabled: features.deep_research_enabled ?? base.deepResearchEnabled,
-    visualizationEnabled: features.visualization_enabled ?? base.visualizationEnabled,
-    mcpEnabled: features.mcp_enabled ?? base.mcpEnabled,
-    systemPrompt: prompt.system_prompt ?? '',
-    userInstructions: prompt.user_instructions ?? '',
-    styleGuidance: prompt.style_guidance ?? '',
-    memoryStrategy: memory.strategy ?? base.memoryStrategy,
-    ttlSeconds: memory.ttl_seconds?.toString() ?? '',
-    vectorIndex: memory.vector_index ?? '',
-    databaseTable: memory.database_table ?? '',
+    llmConnectionId: toStringValue(payload.llm_connection_id, base.llmConnectionId),
+    biCopilotEnabled: toBooleanValue(features.bi_copilot_enabled, base.biCopilotEnabled),
+    deepResearchEnabled: toBooleanValue(features.deep_research_enabled, base.deepResearchEnabled),
+    visualizationEnabled: toBooleanValue(features.visualization_enabled, base.visualizationEnabled),
+    mcpEnabled: toBooleanValue(features.mcp_enabled, base.mcpEnabled),
+    systemPrompt: toStringValue(prompt.system_prompt),
+    userInstructions: toStringValue(prompt.user_instructions),
+    styleGuidance: toStringValue(prompt.style_guidance),
+    memoryStrategy: isOption(memory.strategy, memoryStrategies) ? memory.strategy : base.memoryStrategy,
+    ttlSeconds: memory.ttl_seconds === null || memory.ttl_seconds === undefined ? '' : String(memory.ttl_seconds),
+    vectorIndex: toStringValue(memory.vector_index),
+    databaseTable: toStringValue(memory.database_table),
     tools: tools.length
-      ? tools.map((tool: any) => ({
-          toolType: resolveToolType(tool.tool_type, tool.name ?? ''),
-          name: tool.name ?? '',
-          connectorId: tool.connector_id ?? '',
-          description: tool.description ?? '',
-          config: stringifyConfig(tool.config ?? {}),
-        }))
+      ? tools.map((tool) => {
+          const candidateTool = toRecord(tool);
+          const name = toStringValue(candidateTool.name);
+          return {
+            toolType: resolveToolType(candidateTool.tool_type, name),
+            name,
+            connectorId: toStringValue(candidateTool.connector_id),
+            description: toStringValue(candidateTool.description),
+            config: stringifyConfig(candidateTool.config ?? {}),
+          };
+        })
       : base.tools,
-    allowedConnectors: (accessPolicy.allowed_connectors ?? []).join(', '),
-    deniedConnectors: (accessPolicy.denied_connectors ?? []).join(', '),
-    piiHandling: accessPolicy.pii_handling ?? '',
-    rowLevelFilter: accessPolicy.row_level_filter ?? '',
-    executionMode: execution.mode ?? base.executionMode,
-    responseMode: execution.response_mode ?? base.responseMode,
-    maxIterations: execution.max_iterations?.toString() ?? base.maxIterations,
-    maxStepsPerIteration: execution.max_steps_per_iteration?.toString() ?? base.maxStepsPerIteration,
-    allowParallelTools: Boolean(execution.allow_parallel_tools ?? base.allowParallelTools),
-    outputFormat: output.format ?? base.outputFormat,
+    allowedConnectors: toCsvString(accessPolicy.allowed_connectors),
+    deniedConnectors: toCsvString(accessPolicy.denied_connectors),
+    piiHandling: toStringValue(accessPolicy.pii_handling),
+    rowLevelFilter: toStringValue(accessPolicy.row_level_filter),
+    executionMode: isOption(execution.mode, executionModes) ? execution.mode : base.executionMode,
+    responseMode: isOption(execution.response_mode, responseModes) ? execution.response_mode : base.responseMode,
+    maxIterations:
+      execution.max_iterations === null || execution.max_iterations === undefined
+        ? base.maxIterations
+        : String(execution.max_iterations),
+    maxStepsPerIteration:
+      execution.max_steps_per_iteration === null || execution.max_steps_per_iteration === undefined
+        ? base.maxStepsPerIteration
+        : String(execution.max_steps_per_iteration),
+    allowParallelTools: toBooleanValue(execution.allow_parallel_tools, base.allowParallelTools),
+    outputFormat: isOption(output.format, outputFormats) ? output.format : base.outputFormat,
     jsonSchema: output.json_schema ? stringifyConfig(output.json_schema) : '',
-    markdownTemplate: output.markdown_template ?? '',
-    moderationEnabled: guardrails.moderation_enabled ?? base.moderationEnabled,
-    blockedCategories: (guardrails.blocked_categories ?? []).join(', '),
-    regexDenylist: (guardrails.regex_denylist ?? []).join(', '),
-    escalationMessage: guardrails.escalation_message ?? '',
+    markdownTemplate: toStringValue(output.markdown_template),
+    moderationEnabled: toBooleanValue(guardrails.moderation_enabled, base.moderationEnabled),
+    blockedCategories: toCsvString(guardrails.blocked_categories),
+    regexDenylist: toCsvString(guardrails.regex_denylist),
+    escalationMessage: toStringValue(guardrails.escalation_message),
     // logLevel: observability.log_level ?? base.logLevel,
-    emitTraces: observability.emit_traces ?? base.emitTraces,
-    capturePrompts: observability.capture_prompts ?? base.capturePrompts,
-    auditFields: (observability.audit_fields ?? []).join(', '),
+    emitTraces: toBooleanValue(observability.emit_traces, base.emitTraces),
+    capturePrompts: toBooleanValue(observability.capture_prompts, base.capturePrompts),
+    auditFields: toCsvString(observability.audit_fields),
   };
 }
 
