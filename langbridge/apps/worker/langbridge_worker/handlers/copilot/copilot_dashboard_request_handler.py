@@ -692,7 +692,7 @@ Keep widgets practical and diverse, max 6 widgets.
                 {
                     "dimension": time_dimension,
                     "granularity": str(widget.get("timeGrain") or "").strip() or None,
-                    "dateRange": str(widget.get("timeRangePreset") or "").strip() or None,
+                    "dateRange": self._resolve_widget_time_date_range(widget),
                 }
             )
 
@@ -713,6 +713,31 @@ Keep widgets practical and diverse, max 6 widgets.
             "order": order_payload or None,
             "limit": int(widget.get("limit") or 500),
         }
+
+    @staticmethod
+    def _resolve_widget_time_date_range(widget: dict[str, Any]) -> str | list[str] | None:
+        preset = str(widget.get("timeRangePreset") or "").strip()
+        if not preset or preset == "no_filter":
+            return None
+        if preset in {"today", "yesterday", "last_7_days", "last_30_days", "month_to_date", "year_to_date"}:
+            return preset
+
+        from_date = str(widget.get("timeRangeFrom") or "").strip()
+        to_date = str(widget.get("timeRangeTo") or "").strip()
+        if preset == "custom_between":
+            if from_date and to_date:
+                return [from_date, to_date]
+            return None
+        if preset == "custom_before":
+            date = from_date or to_date
+            return f"before:{date}" if date else None
+        if preset == "custom_after":
+            date = from_date or to_date
+            return f"after:{date}" if date else None
+        if preset == "custom_on":
+            date = from_date or to_date
+            return f"on:{date}" if date else None
+        return None
 
     @staticmethod
     def _to_semantic_filters(filters: list[dict[str, Any]]) -> list[dict[str, Any]]:

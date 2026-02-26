@@ -4,16 +4,19 @@ import { Select } from '@/components/ui/select';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { cn } from '@/lib/utils';
 import { FieldSelect } from './FieldSelect';
 import { 
   ChartType,
   WidgetSize,
+  WidgetVisualConfig,
   FilterDraft, 
   OrderByDraft, 
   FILTER_OPERATORS, 
   TIME_GRAIN_OPTIONS, 
   DATE_PRESETS,
-  FieldOption
+  FieldOption,
+  PALETTE_OPTIONS,
 } from '../types';
 
 interface BiConfigPanelProps {
@@ -30,6 +33,8 @@ interface BiConfigPanelProps {
   setChartType: (type: ChartType) => void;
   widgetSize: WidgetSize;
   setWidgetSize: (size: WidgetSize) => void;
+  visualConfig: WidgetVisualConfig;
+  setVisualConfig: (config: WidgetVisualConfig) => void;
   // Data Props
   fields: FieldOption[];
   selectedDimensions: string[];
@@ -47,6 +52,10 @@ interface BiConfigPanelProps {
   setTimeGrain: (grain: string) => void;
   timeRangePreset: string;
   setTimeRangePreset: (preset: string) => void;
+  timeRangeFrom: string;
+  setTimeRangeFrom: (value: string) => void;
+  timeRangeTo: string;
+  setTimeRangeTo: (value: string) => void;
   onExportCsv: () => void;
   onShowSql: () => void;
 }
@@ -63,6 +72,8 @@ export function BiConfigPanel({
   setChartType,
   widgetSize,
   setWidgetSize,
+  visualConfig,
+  setVisualConfig,
   fields,
   selectedDimensions,
   selectedMeasures,
@@ -79,11 +90,21 @@ export function BiConfigPanel({
   setTimeGrain,
   timeRangePreset,
   setTimeRangePreset,
+  timeRangeFrom,
+  setTimeRangeFrom,
+  timeRangeTo,
+  setTimeRangeTo,
   onExportCsv,
   onShowSql
 }: BiConfigPanelProps) {
-  
-  const timeFields = fields.filter(f => f.type === 'date' || f.type === 'timestamp' || f.kind === 'dimension'); 
+  const timeFields = fields.filter((field) => {
+    if (field.kind !== 'dimension') {
+      return false;
+    }
+    const normalizedType = (field.type || '').toLowerCase();
+    return normalizedType === 'date' || normalizedType === 'datetime' || normalizedType === 'timestamp' || normalizedType === 'time';
+  });
+  const activeTimeRangePreset = timeRangePreset || 'no_filter';
   
   // Field lookup for labels
   const getFieldLabel = (id: string) => fields.find(f => f.id === id)?.label || id;
@@ -120,6 +141,10 @@ export function BiConfigPanel({
 
   const handleRemoveOrder = (id: string) => {
     setOrderBys(orderBys.filter(o => o.id !== id));
+  };
+
+  const updateVisualConfig = (updates: Partial<WidgetVisualConfig>) => {
+    setVisualConfig({ ...visualConfig, ...updates });
   };
 
   return (
@@ -207,14 +232,142 @@ export function BiConfigPanel({
 
           <section>
             <label className="text-[10px] font-bold uppercase tracking-[0.15em] text-muted-foreground mb-4 block">Palette</label>
-            <div className="grid grid-cols-5 gap-3">
-              <button className="aspect-square rounded-full bg-primary ring-2 ring-offset-2 ring-primary"></button>
-              <button className="aspect-square rounded-full bg-blue-500 hover:ring-2 ring-blue-100 transition-all"></button>
-              <button className="aspect-square rounded-full bg-orange-500 hover:ring-2 ring-orange-100 transition-all"></button>
-              <button className="aspect-square rounded-full bg-pink-500 hover:ring-2 ring-pink-100 transition-all"></button>
-              <button className="aspect-square rounded-full bg-slate-800 hover:ring-2 ring-slate-100 transition-all"></button>
+            <div className="grid grid-cols-2 gap-2">
+              {PALETTE_OPTIONS.map((palette) => (
+                <button
+                  key={palette.id}
+                  type="button"
+                  className={cn(
+                    'flex items-center gap-2 rounded-lg border px-2 py-2 text-left transition',
+                    visualConfig.paletteId === palette.id
+                      ? 'border-primary bg-primary/5 ring-1 ring-primary/40'
+                      : 'border-border hover:border-primary/50',
+                  )}
+                  onClick={() => updateVisualConfig({ paletteId: palette.id })}
+                >
+                  <span className="flex items-center gap-1">
+                    {palette.colors.slice(0, 4).map((color) => (
+                      <span
+                        key={`${palette.id}-${color}`}
+                        className="h-3 w-3 rounded-full border border-white/40"
+                        style={{ backgroundColor: color }}
+                      />
+                    ))}
+                  </span>
+                  <span className="text-[11px] font-medium text-muted-foreground">{palette.label}</span>
+                </button>
+              ))}
             </div>
           </section>
+
+          <section className="space-y-3">
+            <label className="text-[10px] font-bold uppercase tracking-[0.15em] text-muted-foreground mb-2 block">Display</label>
+            <label className="flex items-center justify-between rounded-lg border border-border px-3 py-2 text-xs">
+              <span>Show grid</span>
+              <input
+                type="checkbox"
+                checked={visualConfig.showGrid}
+                onChange={(event) => updateVisualConfig({ showGrid: event.target.checked })}
+              />
+            </label>
+            <label className="flex items-center justify-between rounded-lg border border-border px-3 py-2 text-xs">
+              <span>Show legend</span>
+              <input
+                type="checkbox"
+                checked={visualConfig.showLegend}
+                onChange={(event) => updateVisualConfig({ showLegend: event.target.checked })}
+              />
+            </label>
+            <label className="flex items-center justify-between rounded-lg border border-border px-3 py-2 text-xs">
+              <span>Show value labels</span>
+              <input
+                type="checkbox"
+                checked={visualConfig.showDataLabels}
+                onChange={(event) => updateVisualConfig({ showDataLabels: event.target.checked })}
+              />
+            </label>
+          </section>
+
+          {chartType === 'line' ? (
+            <section className="space-y-3">
+              <label className="text-[10px] font-bold uppercase tracking-[0.15em] text-muted-foreground mb-2 block">Line Style</label>
+              <Select
+                value={visualConfig.lineCurve}
+                onChange={(event) =>
+                  updateVisualConfig({ lineCurve: event.target.value as WidgetVisualConfig['lineCurve'] })
+                }
+              >
+                <option value="smooth">Smooth</option>
+                <option value="linear">Linear</option>
+                <option value="step">Step</option>
+              </Select>
+              <div>
+                <div className="mb-1 flex items-center justify-between text-[11px] text-muted-foreground">
+                  <span>Stroke width</span>
+                  <span>{visualConfig.lineStrokeWidth.toFixed(1)}</span>
+                </div>
+                <Input
+                  type="range"
+                  min={1}
+                  max={6}
+                  step={0.5}
+                  value={visualConfig.lineStrokeWidth}
+                  onChange={(event) => updateVisualConfig({ lineStrokeWidth: Number(event.target.value) })}
+                />
+              </div>
+            </section>
+          ) : null}
+
+          {chartType === 'bar' ? (
+            <section className="space-y-3">
+              <label className="text-[10px] font-bold uppercase tracking-[0.15em] text-muted-foreground mb-2 block">Bar Style</label>
+              <div>
+                <div className="mb-1 flex items-center justify-between text-[11px] text-muted-foreground">
+                  <span>Corner radius</span>
+                  <span>{Math.round(visualConfig.barRadius)}px</span>
+                </div>
+                <Input
+                  type="range"
+                  min={0}
+                  max={14}
+                  step={1}
+                  value={visualConfig.barRadius}
+                  onChange={(event) => updateVisualConfig({ barRadius: Number(event.target.value) })}
+                />
+              </div>
+            </section>
+          ) : null}
+
+          {chartType === 'pie' ? (
+            <section className="space-y-3">
+              <label className="text-[10px] font-bold uppercase tracking-[0.15em] text-muted-foreground mb-2 block">Pie Style</label>
+              <div>
+                <div className="mb-1 flex items-center justify-between text-[11px] text-muted-foreground">
+                  <span>Donut hole</span>
+                  <span>{Math.round(visualConfig.pieInnerRadius)}%</span>
+                </div>
+                <Input
+                  type="range"
+                  min={0}
+                  max={70}
+                  step={1}
+                  value={visualConfig.pieInnerRadius}
+                  onChange={(event) => updateVisualConfig({ pieInnerRadius: Number(event.target.value) })}
+                />
+              </div>
+              <Select
+                value={visualConfig.pieLabelMode}
+                onChange={(event) =>
+                  updateVisualConfig({ pieLabelMode: event.target.value as WidgetVisualConfig['pieLabelMode'] })
+                }
+              >
+                <option value="none">No slice labels</option>
+                <option value="name">Slice name</option>
+                <option value="value">Slice value</option>
+                <option value="percent">Slice percent</option>
+              </Select>
+            </section>
+          ) : null}
         </TabsContent>
 
         <TabsContent value="data" className="flex-1 overflow-y-auto p-4 space-y-6 custom-scrollbar">
@@ -282,16 +435,47 @@ export function BiConfigPanel({
                     ))}
                   </Select>
                   <Select 
-                    value={timeRangePreset} 
+                    value={activeTimeRangePreset} 
                     onChange={(e) => setTimeRangePreset(e.target.value)}
                   >
-                    <option value="">Custom</option>
+                    <option value="no_filter">No Filter</option>
                     {DATE_PRESETS.map(o => (
                       <option key={o.value} value={o.value}>{o.label}</option>
                     ))}
+                    <option value="custom_between">Custom: Between</option>
+                    <option value="custom_before">Custom: Before date</option>
+                    <option value="custom_after">Custom: After date</option>
+                    <option value="custom_on">Custom: On date</option>
                   </Select>
               </div>
             )}
+            {timeDimension && activeTimeRangePreset === 'custom_between' ? (
+              <div className="grid grid-cols-2 gap-2">
+                <Input
+                  type="date"
+                  value={timeRangeFrom}
+                  onChange={(event) => setTimeRangeFrom(event.target.value)}
+                  placeholder="From date"
+                  className="h-9 text-xs"
+                />
+                <Input
+                  type="date"
+                  value={timeRangeTo}
+                  onChange={(event) => setTimeRangeTo(event.target.value)}
+                  placeholder="To date"
+                  className="h-9 text-xs"
+                />
+              </div>
+            ) : null}
+            {timeDimension && (activeTimeRangePreset === 'custom_before' || activeTimeRangePreset === 'custom_after' || activeTimeRangePreset === 'custom_on') ? (
+              <Input
+                type="date"
+                value={timeRangeFrom}
+                onChange={(event) => setTimeRangeFrom(event.target.value)}
+                placeholder="Select date"
+                className="h-9 text-xs"
+              />
+            ) : null}
           </section>
 
           {/* Filters */}

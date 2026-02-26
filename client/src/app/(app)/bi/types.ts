@@ -44,6 +44,27 @@ export type OrderByDraft = {
   direction: 'asc' | 'desc';
 };
 
+export type PaletteOption = {
+  id: string;
+  label: string;
+  colors: string[];
+};
+
+export type PieLabelMode = 'none' | 'name' | 'value' | 'percent';
+export type LineCurveMode = 'smooth' | 'linear' | 'step';
+
+export type WidgetVisualConfig = {
+  paletteId: string;
+  showGrid: boolean;
+  showLegend: boolean;
+  showDataLabels: boolean;
+  lineCurve: LineCurveMode;
+  lineStrokeWidth: number;
+  barRadius: number;
+  pieInnerRadius: number;
+  pieLabelMode: PieLabelMode;
+};
+
 export type BiWidget = {
   id: string;
   title: string;
@@ -59,9 +80,12 @@ export type BiWidget = {
   timeDimension: string;
   timeGrain: string;
   timeRangePreset: string;
+  timeRangeFrom: string;
+  timeRangeTo: string;
   // Visual State
   chartX: string;
   chartY: string;
+  visualConfig: WidgetVisualConfig;
   // Execution State
   queryResult: SemanticQueryResponse | null;
   isLoading: boolean;
@@ -117,3 +141,23 @@ export const DATE_PRESETS = [
   { value: 'month_to_date', label: 'Month to date' },
   { value: 'year_to_date', label: 'Year to date' },
 ];
+
+export const PALETTE_OPTIONS: PaletteOption[] = [
+  { id: 'emerald', label: 'Emerald', colors: ['#10a37f', '#0ea5e9', '#f59e0b', '#f97316', '#ec4899', '#6366f1'] },
+  { id: 'ocean', label: 'Ocean', colors: ['#0369a1', '#0284c7', '#0ea5e9', '#22d3ee', '#14b8a6', '#0f766e'] },
+  { id: 'sunset', label: 'Sunset', colors: ['#f97316', '#fb7185', '#f43f5e', '#f59e0b', '#ef4444', '#be123c'] },
+  { id: 'slate', label: 'Slate', colors: ['#334155', '#475569', '#64748b', '#94a3b8', '#0f172a', '#1e293b'] },
+  { id: 'orchard', label: 'Orchard', colors: ['#65a30d', '#84cc16', '#16a34a', '#22c55e', '#15803d', '#4d7c0f'] },
+];
+
+export const DEFAULT_WIDGET_VISUAL_CONFIG: WidgetVisualConfig = {
+  paletteId: PALETTE_OPTIONS[0].id,
+  showGrid: true,
+  showLegend: false,
+  showDataLabels: false,
+  lineCurve: 'smooth',
+  lineStrokeWidth: 2.25,
+  barRadius: 6,
+  pieInnerRadius: 42,
+  pieLabelMode: 'none',
+};

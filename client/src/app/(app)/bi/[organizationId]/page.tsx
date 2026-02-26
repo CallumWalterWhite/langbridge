@@ -54,12 +54,14 @@ import { Dashboard } from '../_components/Dashboard';
 import { BiGlobalConfigPanel } from '../_components/BiGlobalConfigPanel';
 import { BiHeader } from '../_components/BiHeader';
 import { BiSidebar } from '../_components/BiSidebar';
+import { DEFAULT_WIDGET_VISUAL_CONFIG } from '../types';
 import type {
   BiWidget,
   FieldOption,
   FilterDraft,
   PersistedBiWidget,
   TableGroup,
+  WidgetVisualConfig,
   WidgetLayout,
 } from '../types';
 
@@ -1190,6 +1192,8 @@ export default function BiStudioPage({ params }: BiStudioPageProps) {
                     layout: normalizeLayoutWithSize(activeWidget.layout, size),
                   })
                 }
+                visualConfig={activeWidget.visualConfig}
+                setVisualConfig={(visualConfig) => updateWidget(activeWidget.id, { visualConfig })}
                 fields={allFields}
                 selectedDimensions={activeWidget.dimensions}
                 selectedMeasures={activeWidget.measures}
@@ -1201,11 +1205,35 @@ export default function BiStudioPage({ params }: BiStudioPageProps) {
                 limit={activeWidget.limit}
                 setLimit={(limit) => updateWidget(activeWidget.id, { limit })}
                 timeDimension={activeWidget.timeDimension}
-                setTimeDimension={(id) => updateWidget(activeWidget.id, { timeDimension: id })}
+                setTimeDimension={(id) =>
+                  updateWidget(
+                    activeWidget.id,
+                    id
+                      ? { timeDimension: id }
+                      : { timeDimension: '', timeRangePreset: 'no_filter', timeRangeFrom: '', timeRangeTo: '' },
+                  )
+                }
                 timeGrain={activeWidget.timeGrain}
                 setTimeGrain={(grain) => updateWidget(activeWidget.id, { timeGrain: grain })}
                 timeRangePreset={activeWidget.timeRangePreset}
-                setTimeRangePreset={(preset) => updateWidget(activeWidget.id, { timeRangePreset: preset })}
+                setTimeRangePreset={(preset) =>
+                  updateWidget(
+                    activeWidget.id,
+                    preset === 'today' ||
+                      preset === 'yesterday' ||
+                      preset === 'last_7_days' ||
+                      preset === 'last_30_days' ||
+                      preset === 'month_to_date' ||
+                      preset === 'year_to_date' ||
+                      preset === 'no_filter'
+                      ? { timeRangePreset: preset, timeRangeFrom: '', timeRangeTo: '' }
+                      : { timeRangePreset: preset },
+                  )
+                }
+                timeRangeFrom={activeWidget.timeRangeFrom}
+                setTimeRangeFrom={(timeRangeFrom) => updateWidget(activeWidget.id, { timeRangeFrom })}
+                timeRangeTo={activeWidget.timeRangeTo}
+                setTimeRangeTo={(timeRangeTo) => updateWidget(activeWidget.id, { timeRangeTo })}
                 onExportCsv={handleExportCsv}
                 onShowSql={() => toast({ title: 'SQL preview', description: 'SQL preview is coming soon.' })}
               />
@@ -1339,9 +1367,12 @@ function normalizeCopilotWidgets(value: Array<Record<string, unknown>>): BiWidge
       limit: normalizeNumber(entry.limit, 500),
       timeDimension: normalizeString(entry.timeDimension),
       timeGrain: normalizeString(entry.timeGrain),
-      timeRangePreset: normalizeString(entry.timeRangePreset),
+      timeRangePreset: normalizeString(entry.timeRangePreset) || 'no_filter',
+      timeRangeFrom: normalizeString(entry.timeRangeFrom),
+      timeRangeTo: normalizeString(entry.timeRangeTo),
       chartX: normalizeString(entry.chartX),
       chartY: normalizeString(entry.chartY),
+      visualConfig: normalizeWidgetVisualConfig(entry.visualConfig),
       queryResult: normalizeSemanticQueryResponse(entry.queryResult),
       isLoading: false,
       jobId: null,
@@ -1369,9 +1400,12 @@ function buildEmptyWidget(sequence: number, existingWidgets: BiWidget[]): BiWidg
     limit: 500,
     timeDimension: '',
     timeGrain: '',
-    timeRangePreset: '',
+    timeRangePreset: 'no_filter',
+    timeRangeFrom: '',
+    timeRangeTo: '',
     chartX: '',
     chartY: '',
+    visualConfig: { ...DEFAULT_WIDGET_VISUAL_CONFIG },
     queryResult: null,
     isLoading: false,
     jobId: null,
@@ -1404,8 +1438,11 @@ function toPersistedWidget(widget: BiWidget): PersistedBiWidget {
     timeDimension: widget.timeDimension,
     timeGrain: widget.timeGrain,
     timeRangePreset: widget.timeRangePreset,
+    timeRangeFrom: widget.timeRangeFrom,
+    timeRangeTo: widget.timeRangeTo,
     chartX: widget.chartX,
     chartY: widget.chartY,
+    visualConfig: { ...widget.visualConfig },
   };
 }
 
@@ -1451,9 +1488,12 @@ function normalizeWidgets(value: Array<Record<string, unknown>>): BiWidget[] {
       limit: normalizeNumber(entry.limit, 500),
       timeDimension: normalizeString(entry.timeDimension),
       timeGrain: normalizeString(entry.timeGrain),
-      timeRangePreset: normalizeString(entry.timeRangePreset),
+      timeRangePreset: normalizeString(entry.timeRangePreset) || 'no_filter',
+      timeRangeFrom: normalizeString(entry.timeRangeFrom),
+      timeRangeTo: normalizeString(entry.timeRangeTo),
       chartX: normalizeString(entry.chartX),
       chartY: normalizeString(entry.chartY),
+      visualConfig: normalizeWidgetVisualConfig(entry.visualConfig),
       queryResult: null,
       isLoading: false,
       jobId: null,
@@ -1601,6 +1641,29 @@ function normalizeNumber(value: unknown, fallback: number): number {
   return value;
 }
 
+function normalizeWidgetVisualConfig(value: unknown): WidgetVisualConfig {
+  if (!isRecord(value)) {
+    return { ...DEFAULT_WIDGET_VISUAL_CONFIG };
+  }
+  const lineCurve = value.lineCurve;
+  const pieLabelMode = value.pieLabelMode;
+  return {
+    paletteId: normalizeString(value.paletteId) || DEFAULT_WIDGET_VISUAL_CONFIG.paletteId,
+    showGrid: typeof value.showGrid === 'boolean' ? value.showGrid : DEFAULT_WIDGET_VISUAL_CONFIG.showGrid,
+    showLegend: typeof value.showLegend === 'boolean' ? value.showLegend : DEFAULT_WIDGET_VISUAL_CONFIG.showLegend,
+    showDataLabels:
+      typeof value.showDataLabels === 'boolean' ? value.showDataLabels : DEFAULT_WIDGET_VISUAL_CONFIG.showDataLabels,
+    lineCurve: lineCurve === 'linear' || lineCurve === 'step' || lineCurve === 'smooth' ? lineCurve : DEFAULT_WIDGET_VISUAL_CONFIG.lineCurve,
+    lineStrokeWidth: Math.min(Math.max(normalizeNumber(value.lineStrokeWidth, DEFAULT_WIDGET_VISUAL_CONFIG.lineStrokeWidth), 1), 6),
+    barRadius: Math.min(Math.max(normalizeNumber(value.barRadius, DEFAULT_WIDGET_VISUAL_CONFIG.barRadius), 0), 14),
+    pieInnerRadius: Math.min(Math.max(normalizeNumber(value.pieInnerRadius, DEFAULT_WIDGET_VISUAL_CONFIG.pieInnerRadius), 0), 70),
+    pieLabelMode:
+      pieLabelMode === 'name' || pieLabelMode === 'value' || pieLabelMode === 'percent' || pieLabelMode === 'none'
+        ? pieLabelMode
+        : DEFAULT_WIDGET_VISUAL_CONFIG.pieLabelMode,
+  };
+}
+
 function normalizeString(value: unknown): string {
   return typeof value === 'string' ? value : '';
 }
@@ -1685,12 +1748,13 @@ function buildWidgetQueryRequestInput(input: {
 }
 
 function buildSemanticQueryPayload(widget: BiWidget, globalFilters: FilterDraft[]): SemanticQueryPayload {
+  const timeDateRange = resolveTimeDateRange(widget);
   const timeDimensionsPayload = widget.timeDimension
     ? [
         {
           dimension: widget.timeDimension,
           granularity: widget.timeGrain || undefined,
-          dateRange: widget.timeRangePreset || undefined,
+          dateRange: timeDateRange,
         },
       ]
     : [];
@@ -1708,6 +1772,41 @@ function buildSemanticQueryPayload(widget: BiWidget, globalFilters: FilterDraft[
     order: orderPayload,
     limit: widget.limit,
   };
+}
+
+const PRESET_TIME_RANGES = new Set(['today', 'yesterday', 'last_7_days', 'last_30_days', 'month_to_date', 'year_to_date']);
+
+function resolveTimeDateRange(widget: BiWidget): string | string[] | undefined {
+  const preset = widget.timeRangePreset.trim();
+  if (!preset || preset === 'no_filter') {
+    return undefined;
+  }
+  if (PRESET_TIME_RANGES.has(preset)) {
+    return preset;
+  }
+
+  const from = widget.timeRangeFrom.trim();
+  const to = widget.timeRangeTo.trim();
+  if (preset === 'custom_between') {
+    if (from && to) {
+      return [from, to];
+    }
+    return undefined;
+  }
+  if (preset === 'custom_before') {
+    const date = from || to;
+    return date ? `before:${date}` : undefined;
+  }
+  if (preset === 'custom_after') {
+    const date = from || to;
+    return date ? `after:${date}` : undefined;
+  }
+  if (preset === 'custom_on') {
+    const date = from || to;
+    return date ? `on:${date}` : undefined;
+  }
+
+  return undefined;
 }
 
 function buildSemanticFilters(filters: FilterDraft[]) {

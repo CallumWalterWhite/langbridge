@@ -13,6 +13,8 @@ import {
   BarChart,
   CartesianGrid,
   Cell,
+  LabelList,
+  Legend,
   Line,
   LineChart as RechartsLine,
   Pie,
@@ -27,7 +29,9 @@ import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { cn } from '@/lib/utils';
 
+import { DEFAULT_WIDGET_VISUAL_CONFIG, PALETTE_OPTIONS } from '../types';
 import type { BiWidget, FieldOption } from '../types';
+import { resolveChartDataKey } from './chartFieldMapping';
 
 type WidgetCardProps = {
   widget: BiWidget;
@@ -39,7 +43,18 @@ type WidgetCardProps = {
   onAddField: (widgetId: string, field: FieldOption, targetKind?: 'dimension' | 'measure') => void;
 };
 
-const PIE_COLORS = ['#0ea5e9', '#10a37f', '#f59e0b', '#f97316', '#ec4899', '#6366f1'];
+const DEFAULT_PALETTE = PALETTE_OPTIONS[0]?.colors ?? ['#10a37f'];
+
+function resolvePaletteColors(paletteId: string): string[] {
+  return PALETTE_OPTIONS.find((palette) => palette.id === paletteId)?.colors ?? DEFAULT_PALETTE;
+}
+
+function formatLabelValue(value: unknown): string {
+  if (typeof value === 'number') {
+    return Number.isInteger(value) ? String(value) : value.toFixed(2);
+  }
+  return String(value);
+}
 
 function resolveChartIcon(type: BiWidget['type']) {
   if (type === 'line') {
@@ -64,7 +79,11 @@ function WidgetCardComponent({
   onAddField,
 }: WidgetCardProps) {
   const hasData = Boolean(widget.queryResult?.data && widget.queryResult.data.length > 0);
+  const hasQueryResult = Boolean(widget.queryResult);
   const resultRows = widget.queryResult?.data ?? [];
+  const resultMetadata = widget.queryResult?.metadata ?? [];
+  const visualConfig = widget.visualConfig ?? DEFAULT_WIDGET_VISUAL_CONFIG;
+  const paletteColors = resolvePaletteColors(visualConfig.paletteId);
 
   const columnLabelMap = new Map<string, string>();
   (widget.queryResult?.metadata ?? []).forEach((entry) => {
@@ -110,16 +129,36 @@ function WidgetCardComponent({
     }
 
     const row = resultRows[0];
-    const xKey = widget.chartX || Object.keys(row)[0];
-    const yKey = widget.chartY || Object.keys(row).find((candidate) => candidate !== xKey) || Object.keys(row)[1];
+    const rowKeys = Object.keys(row);
+    if (rowKeys.length === 0) {
+      return null;
+    }
+    const xKey = resolveChartDataKey({
+      selectedKey: widget.chartX,
+      rowKeys,
+      metadata: resultMetadata,
+      fallbackKey: rowKeys[0],
+    });
+    const yFallbackKey = rowKeys.find((candidate) => candidate !== xKey) ?? rowKeys[1] ?? rowKeys[0];
+    const yKey = resolveChartDataKey({
+      selectedKey: widget.chartY,
+      rowKeys,
+      metadata: resultMetadata,
+      fallbackKey: yFallbackKey,
+      excludeKey: rowKeys.length > 1 ? xKey : undefined,
+    });
+    const lineType = visualConfig.lineCurve === 'linear' ? 'linear' : visualConfig.lineCurve === 'step' ? 'step' : 'monotone';
 
     if (widget.type === 'bar') {
       return (
         <ResponsiveContainer width="100%" height="100%">
           <BarChart data={resultRows}>
-            <CartesianGrid strokeDasharray="4 4" vertical={false} stroke="var(--panel-border)" />
+            {visualConfig.showGrid ? (
+              <CartesianGrid strokeDasharray="4 4" vertical={false} stroke="var(--panel-border)" />
+            ) : null}
             <XAxis dataKey={xKey} axisLine={false} tickLine={false} tick={{ fontSize: 11, fill: 'var(--text-muted)' }} />
             <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 11, fill: 'var(--text-muted)' }} />
+            {visualConfig.showLegend ? <Legend wrapperStyle={{ fontSize: '11px' }} /> : null}
             <Tooltip
               contentStyle={{
                 borderRadius: '10px',
@@ -130,7 +169,16 @@ function WidgetCardComponent({
               }}
               cursor={{ fill: 'var(--accent-soft)' }}
             />
-            <Bar dataKey={yKey} name={getColumnLabel(yKey)} fill="var(--accent)" radius={[6, 6, 0, 0]} />
+            <Bar
+              dataKey={yKey}
+              name={getColumnLabel(yKey)}
+              fill={paletteColors[0]}
+              radius={[visualConfig.barRadius, visualConfig.barRadius, 0, 0]}
+            >
+              {visualConfig.showDataLabels ? (
+                <LabelList dataKey={yKey} position="top" formatter={(value: unknown) => formatLabelValue(value)} />
+              ) : null}
+            </Bar>
           </BarChart>
         </ResponsiveContainer>
       );
@@ -140,9 +188,12 @@ function WidgetCardComponent({
       return (
         <ResponsiveContainer width="100%" height="100%">
           <RechartsLine data={resultRows}>
-            <CartesianGrid strokeDasharray="4 4" vertical={false} stroke="var(--panel-border)" />
+            {visualConfig.showGrid ? (
+              <CartesianGrid strokeDasharray="4 4" vertical={false} stroke="var(--panel-border)" />
+            ) : null}
             <XAxis dataKey={xKey} axisLine={false} tickLine={false} tick={{ fontSize: 11, fill: 'var(--text-muted)' }} />
             <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 11, fill: 'var(--text-muted)' }} />
+            {visualConfig.showLegend ? <Legend wrapperStyle={{ fontSize: '11px' }} /> : null}
             <Tooltip
               contentStyle={{
                 borderRadius: '10px',
@@ -153,14 +204,18 @@ function WidgetCardComponent({
               }}
             />
             <Line
-              type="monotone"
+              type={lineType}
               dataKey={yKey}
               name={getColumnLabel(yKey)}
-              stroke="var(--accent)"
-              strokeWidth={2.25}
-              dot={{ r: 2.4, fill: 'var(--accent)' }}
+              stroke={paletteColors[0]}
+              strokeWidth={visualConfig.lineStrokeWidth}
+              dot={{ r: 2.4, fill: paletteColors[0] }}
               activeDot={{ r: 4 }}
-            />
+            >
+              {visualConfig.showDataLabels ? (
+                <LabelList dataKey={yKey} position="top" formatter={(value: unknown) => formatLabelValue(value)} />
+              ) : null}
+            </Line>
           </RechartsLine>
         </ResponsiveContainer>
       );
@@ -175,6 +230,7 @@ function WidgetCardComponent({
       return (
         <ResponsiveContainer width="100%" height="100%">
           <PieChart>
+            {visualConfig.showLegend ? <Legend wrapperStyle={{ fontSize: '11px' }} /> : null}
             <Tooltip
               contentStyle={{
                 borderRadius: '10px',
@@ -184,9 +240,30 @@ function WidgetCardComponent({
                 fontSize: '12px',
               }}
             />
-            <Pie data={pieData} dataKey="value" nameKey="name" outerRadius="80%" innerRadius="42%" paddingAngle={2}>
+            <Pie
+              data={pieData}
+              dataKey="value"
+              nameKey="name"
+              outerRadius="80%"
+              innerRadius={`${visualConfig.pieInnerRadius}%`}
+              paddingAngle={2}
+              labelLine={false}
+              label={
+                visualConfig.pieLabelMode === 'none'
+                  ? false
+                  : (payload: { name: string; value: number; percent: number }) => {
+                      if (visualConfig.pieLabelMode === 'name') {
+                        return payload.name;
+                      }
+                      if (visualConfig.pieLabelMode === 'percent') {
+                        return `${Math.round(payload.percent * 100)}%`;
+                      }
+                      return formatLabelValue(payload.value);
+                    }
+              }
+            >
               {pieData.map((entry, index) => (
-                <Cell key={`${entry.name}-${index}`} fill={PIE_COLORS[index % PIE_COLORS.length]} />
+                <Cell key={`${entry.name}-${index}`} fill={paletteColors[index % paletteColors.length]} />
               ))}
             </Pie>
           </PieChart>
@@ -308,6 +385,11 @@ function WidgetCardComponent({
           <div className="flex h-full min-h-[220px] flex-col items-center justify-center gap-2 rounded-xl border border-red-200 bg-red-50/70 p-5 text-center">
             <p className="text-xs font-semibold text-red-700">Query failed</p>
             <p className="text-xs text-red-600/90">{widget.error}</p>
+          </div>
+        ) : hasQueryResult ? (
+          <div className="flex h-full min-h-[220px] flex-col items-center justify-center gap-2 rounded-xl border border-[color:var(--panel-border)] bg-[color:var(--panel-alt)]/50 p-5 text-center">
+            <p className="text-xs font-semibold text-[color:var(--text-secondary)]">No records</p>
+            <p className="text-[11px] text-[color:var(--text-muted)]">Query returned no results.</p>
           </div>
         ) : (
           <div

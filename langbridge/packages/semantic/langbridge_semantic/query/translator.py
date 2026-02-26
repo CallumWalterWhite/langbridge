@@ -229,8 +229,13 @@ class TsqlSemanticTranslator:
             alias = self._alias_for_member(f"{dimension.table}.{dimension.column}")
             select_clauses.append(exp.alias_(expr, alias, quoted=True))
             group_by_expressions.append(expr)
-            order_aliases[alias] = alias
-            order_aliases[f"{dimension.table}.{dimension.column}"] = alias
+            self._register_column_order_aliases(
+                order_aliases=order_aliases,
+                alias=alias,
+                resolver=resolver,
+                table=dimension.table,
+                column=dimension.column,
+            )
 
         for time_dimension in time_dimensions:
             base_expr = self._column_expression(
@@ -248,19 +253,26 @@ class TsqlSemanticTranslator:
             )
             select_clauses.append(exp.alias_(expr, alias, quoted=True))
             group_by_expressions.append(expr)
-            order_aliases[alias] = alias
-            order_aliases[f"{time_dimension.dimension.table}.{time_dimension.dimension.column}"] = alias
-            if time_dimension.granularity:
-                order_aliases[
-                    f"{time_dimension.dimension.table}.{time_dimension.dimension.column}.{time_dimension.granularity}"
-                ] = alias
+            self._register_column_order_aliases(
+                order_aliases=order_aliases,
+                alias=alias,
+                resolver=resolver,
+                table=time_dimension.dimension.table,
+                column=time_dimension.dimension.column,
+                granularity=time_dimension.granularity,
+            )
 
         for measure in measures:
             expr = self._measure_expression(alias_map, measure)
             alias = self._alias_for_member(f"{measure.table}.{measure.column}")
             select_clauses.append(exp.alias_(expr, alias, quoted=True))
-            order_aliases[alias] = alias
-            order_aliases[f"{measure.table}.{measure.column}"] = alias
+            self._register_column_order_aliases(
+                order_aliases=order_aliases,
+                alias=alias,
+                resolver=resolver,
+                table=measure.table,
+                column=measure.column,
+            )
 
         for metric in metrics:
             expr = self._replace_table_refs(metric.expression, alias_map)
@@ -290,11 +302,14 @@ class TsqlSemanticTranslator:
         for time_dimension in time_dimensions:
             if not time_dimension.date_range:
                 continue
+            dimension_expression: Optional[str] = time_dimension.dimension.expression
+            if dimension_expression and dimension_expression.strip() == time_dimension.dimension.column:
+                dimension_expression = None
             column_expr = self._column_expression(
                 alias_map,
                 time_dimension.dimension.table,
                 time_dimension.dimension.column,
-                time_dimension.dimension.expression,
+                dimension_expression,
             )
             conditions.append(
                 build_date_range_condition(
@@ -377,6 +392,18 @@ class TsqlSemanticTranslator:
                 if time_dimension.granularity:
                     return date_trunc(time_dimension.granularity, expr, dialect=self._dialect)
                 return expr
+
+        matching_time_dimension = self._resolve_matching_time_dimension(member, resolver, time_dimensions)
+        if matching_time_dimension is not None:
+            expr = self._column_expression(
+                alias_map,
+                matching_time_dimension.dimension.table,
+                matching_time_dimension.dimension.column,
+                matching_time_dimension.dimension.expression,
+            )
+            if matching_time_dimension.granularity:
+                return date_trunc(matching_time_dimension.granularity, expr, dialect=self._dialect)
+            return expr
 
         try:
             dimension = resolver.resolve_dimension(member)
@@ -724,3 +751,63 @@ class TsqlSemanticTranslator:
         if relationship_type in {"one_to_many", "many_to_one", "one_to_one"}:
             return "LEFT"
         return "INNER"
+
+    def _register_column_order_aliases(
+        self,
+        *,
+        order_aliases: Dict[str, str],
+        alias: str,
+        resolver: SemanticModelResolver,
+        table: str,
+        column: str,
+        granularity: Optional[str] = None,
+    ) -> None:
+        order_aliases[alias] = alias
+        for key in self._build_member_candidates(resolver, table, column):
+            order_aliases[key] = alias
+            if granularity:
+                order_aliases[f"{key}.{granularity}"] = alias
+
+    def _build_member_candidates(
+        self,
+        resolver: SemanticModelResolver,
+        table: str,
+        column: str,
+    ) -> List[str]:
+        candidates = [f"{table}.{column}"]
+        table_meta = resolver.model.tables.get(table)
+        if table_meta:
+            if table_meta.name:
+                candidates.append(f"{table_meta.name}.{column}")
+            schema_table = ".".join(part for part in [table_meta.schema, table_meta.name] if part)
+            if schema_table:
+                candidates.append(f"{schema_table}.{column}")
+                if table_meta.catalog:
+                    candidates.append(f"{table_meta.catalog}.{schema_table}.{column}")
+        deduped: List[str] = []
+        seen: Set[str] = set()
+        for candidate in candidates:
+            if candidate in seen:
+                continue
+            seen.add(candidate)
+            deduped.append(candidate)
+        return deduped
+
+    def _resolve_matching_time_dimension(
+        self,
+        member: str,
+        resolver: SemanticModelResolver,
+        time_dimensions: Sequence[TimeDimensionRef],
+    ) -> Optional[TimeDimensionRef]:
+        try:
+            resolved_member = resolver.resolve_dimension(member)
+        except SemanticModelError:
+            return None
+
+        for time_dimension in time_dimensions:
+            if (
+                time_dimension.dimension.table == resolved_member.table
+                and time_dimension.dimension.column == resolved_member.column
+            ):
+                return time_dimension
+        return None
