@@ -11,6 +11,7 @@ from langbridge.packages.semantic.langbridge_semantic.model import Dimension, Me
 class DimensionRef:
     table: str
     column: str
+    expression: str
     data_type: Optional[str]
     alias: Optional[str]
 
@@ -19,9 +20,9 @@ class DimensionRef:
 class MeasureRef:
     table: str
     column: str
+    expression: str
     data_type: Optional[str]
     aggregation: Optional[str]
-
 
 @dataclass(frozen=True)
 class MetricRef:
@@ -60,6 +61,7 @@ class SemanticModelResolver:
         return DimensionRef(
             table=table,
             column=dimension.name,
+            expression=dimension.expression or dimension.name,
             data_type=dimension.type,
             alias=dimension.alias,
         )
@@ -69,6 +71,7 @@ class SemanticModelResolver:
         return MeasureRef(
             table=table,
             column=measure.name,
+            expression=measure.expression or measure.name,
             data_type=measure.type,
             aggregation=measure.aggregation,
         )

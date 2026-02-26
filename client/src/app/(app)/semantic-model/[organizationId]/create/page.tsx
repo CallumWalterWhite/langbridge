@@ -705,6 +705,26 @@ export default function SemanticModelPage({ params }: SemanticModelPageProps): J
                                           placeholder="Name"
                                         />
                                         <Input
+                                          value={dimension.expression ?? ''}
+                                          onChange={(event) =>
+                                            setBuilder((current) => ({
+                                              ...current,
+                                              tables: current.tables.map((entry) => {
+                                                if (entry.id !== table.id) {
+                                                  return entry;
+                                                }
+                                                return {
+                                                  ...entry,
+                                                  dimensions: entry.dimensions.map((item) =>
+                                                    item.id === dimension.id ? { ...item, expression: event.target.value } : item,
+                                                  ),
+                                                };
+                                              }),
+                                            }))
+                                          }
+                                          placeholder="Optional SQL expression if different from column name"
+                                        />
+                                        <Input
                                           value={dimension.type}
                                           onChange={(event) =>
                                             setBuilder((current) => ({
@@ -824,6 +844,7 @@ export default function SemanticModelPage({ params }: SemanticModelPageProps): J
                                                 ...entry.measures,
                                                 {
                                                   id: createId('measure'),
+                                                  expression: '',
                                                   name: '',
                                                   type: '',
                                                   aggregation: '',
@@ -884,6 +905,27 @@ export default function SemanticModelPage({ params }: SemanticModelPageProps): J
                                                   ...entry,
                                                   measures: entry.measures.map((item) =>
                                                     item.id === measure.id ? { ...item, name: event.target.value } : item,
+                                                  ),
+                                                };
+                                              }),
+                                            }))
+                                          }
+                                          placeholder="Name"
+                                        />
+                                        
+                                        <Input
+                                          value={measure.expression ?? ''}
+                                          onChange={(event) =>
+                                            setBuilder((current) => ({
+                                              ...current,
+                                              tables: current.tables.map((entry) => {
+                                                if (entry.id !== table.id) {
+                                                  return entry;
+                                                }
+                                                return {
+                                                  ...entry,
+                                                  measures: entry.measures.map((item) =>
+                                                    item.id === measure.id ? { ...item, expression: event.target.value } : item,
                                                   ),
                                                 };
                                               }),
@@ -1392,6 +1434,7 @@ function buildSemanticModelPayload(builder: BuilderModel, connectorName?: string
                 .filter((dimension) => dimension.name && dimension.type)
                 .map((dimension) => ({
                   name: dimension.name,
+                  expression: dimension.expression || undefined,
                   type: dimension.type,
                   description: dimension.description || undefined,
                   primary_key: dimension.primaryKey || undefined,
@@ -1405,6 +1448,7 @@ function buildSemanticModelPayload(builder: BuilderModel, connectorName?: string
                 .filter((measure) => measure.name && measure.type)
                 .map((measure) => ({
                   name: measure.name,
+                  expression: measure.expression || undefined,
                   type: measure.type,
                   aggregation: measure.aggregation || undefined,
                   description: measure.description || undefined,
@@ -1485,6 +1529,7 @@ function parseYamlToBuilderModel(yamlText: string): BuilderModel {
         const mappedDimension = toRecord(dimension);
         return {
           id: createId('dimension'),
+          expression: toStringValue(mappedDimension.expression),
           name: toStringValue(mappedDimension.name),
           type: toStringValue(mappedDimension.type),
           description: toStringValue(mappedDimension.description),
@@ -1497,6 +1542,7 @@ function parseYamlToBuilderModel(yamlText: string): BuilderModel {
         return {
           id: createId('measure'),
           name: toStringValue(mappedMeasure.name),
+          expression: toStringValue(mappedMeasure.expression),
           type: toStringValue(mappedMeasure.type),
           description: toStringValue(mappedMeasure.description),
           aggregation: toStringValue(mappedMeasure.aggregation),

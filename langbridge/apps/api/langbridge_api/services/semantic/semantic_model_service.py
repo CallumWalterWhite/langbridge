@@ -121,7 +121,7 @@ class SemanticModelService:
 
         raw_model_payload: Dict[str, Any] | None = None
         if request.auto_generate or not request.model_yaml:
-            semantic_model = await self._builder.build_for_scope(
+            semantic_model: SemanticModel = await self._builder.build_for_scope(
                 connector_id=request.connector_id
             )
         else:

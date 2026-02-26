@@ -172,6 +172,7 @@ def _parse_entity_table(
                 Measure(
                     name=column_name,
                     type=str(data_type),
+                    expression=_string_or_none(column_meta.get("expression") or column_meta.get("sql") or column_meta.get("expr")),
                     description=_string_or_none(column_meta.get("description")),
                     aggregation=_string_or_none(column_meta.get("aggregation") or column_meta.get("agg")),
                     synonyms=_list_or_none(column_meta.get("synonyms")),
@@ -203,6 +204,7 @@ def _parse_entity_table(
         data_type = meta.get("type") or "string"
         dimension = _build_dimension(
             column_name=str(column),
+            expression=_string_or_none(meta.get("expression") or meta.get("sql") or meta.get("expr")),
             data_type=str(data_type),
             column_meta={},
             dimension_meta=meta,
@@ -248,6 +250,7 @@ def _resolve_dimension_meta(
 def _build_dimension(
     *,
     column_name: str,
+    expression: Optional[str] = None,
     data_type: str,
     column_meta: Mapping[str, Any],
     dimension_meta: Mapping[str, Any],
@@ -267,6 +270,7 @@ def _build_dimension(
 
     return Dimension(
         name=str(column_name),
+        expression=_string_or_none(expression),
         type=str(data_type),
         primary_key=primary_key,
         alias=alias,

@@ -582,14 +582,14 @@ class SqlAnalystTool:
                 if table.dimensions:
                     parts.append("      dimensions:")
                     for dimension in table.dimensions:
-                        label = f"{table_ref}.{dimension.name} ({dimension.type})"
+                        label = f"{table_ref}.{dimension.name if dimension.expression is None else dimension.expression} ({dimension.type})"
                         if dimension.primary_key:
                             label = f"{label} [pk]"
                         parts.append(f"        * {label}")
                 if table.measures:
                     parts.append("      measures:")
                     for measure in table.measures:
-                        label = f"{table_ref}.{measure.name} ({measure.type})"
+                        label = f"{table_ref}.{measure.name if measure.expression is None else measure.expression} ({measure.type})"
                         if measure.aggregation:
                             label = f"{label} agg={measure.aggregation}"
                         parts.append(f"        * {label}")

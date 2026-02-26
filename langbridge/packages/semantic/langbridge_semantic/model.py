@@ -13,6 +13,7 @@ class MeasureAggregation(str, Enum):
 class Dimension(BaseModel):
     _table: "Table" # forward reference
     name: str
+    expression: Optional[str] = None
     type: str
     primary_key: bool = False
     alias: Optional[str] = None
@@ -27,6 +28,7 @@ class Dimension(BaseModel):
 class Measure(BaseModel):
     _table: "Table" # forward reference 
     name: str
+    expression: Optional[str] = None
     type: str
     description: Optional[str] = None
     aggregation: Optional[str] = None

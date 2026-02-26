@@ -1,5 +1,6 @@
 export interface SemanticDimension {
   name: string;
+  expression?: string | null;
   type: string;
   primaryKey?: boolean;
   alias?: string | null;
@@ -10,6 +11,7 @@ export interface SemanticDimension {
 
 export interface SemanticMeasure {
   name: string;
+  expression: string | null;
   type: string;
   description?: string | null;
   aggregation?: string | null;

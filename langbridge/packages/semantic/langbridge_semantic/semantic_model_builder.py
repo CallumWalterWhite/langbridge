@@ -125,6 +125,7 @@ class SemanticModelBuilder:
                     measures.append(
                         Measure(
                             name=column.name,
+                            expression=column.name,
                             type=normalized_type,
                             aggregation=MeasureAggregation.sum.value,
                             description=f"Aggregate {column.name} from {scope.table_metadata.name}",
@@ -135,6 +136,7 @@ class SemanticModelBuilder:
                     is_pk = self._is_probable_primary_key(column.name, scope.table_metadata.name)
                     dimension = Dimension(
                         name=column.name,
+                        expression=column.name,
                         type=normalized_type,
                         primary_key=is_pk,
                         description=f"Column {column.name} from {scope.table_metadata.name}",

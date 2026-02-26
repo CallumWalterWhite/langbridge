@@ -225,7 +225,7 @@ class TsqlSemanticTranslator:
         order_aliases: Dict[str, str] = {}
 
         for dimension in dimensions:
-            expr = self._column_expression(alias_map, dimension.table, dimension.column)
+            expr = self._column_expression(alias_map, dimension.table, dimension.column, dimension.expression)
             alias = self._alias_for_member(f"{dimension.table}.{dimension.column}")
             select_clauses.append(exp.alias_(expr, alias, quoted=True))
             group_by_expressions.append(expr)
@@ -294,6 +294,7 @@ class TsqlSemanticTranslator:
                 alias_map,
                 time_dimension.dimension.table,
                 time_dimension.dimension.column,
+                time_dimension.dimension.expression,
             )
             conditions.append(
                 build_date_range_condition(
@@ -371,6 +372,7 @@ class TsqlSemanticTranslator:
                     alias_map,
                     time_dimension.dimension.table,
                     time_dimension.dimension.column,
+                    time_dimension.dimension.expression,
                 )
                 if time_dimension.granularity:
                     return date_trunc(time_dimension.granularity, expr, dialect=self._dialect)
@@ -378,7 +380,7 @@ class TsqlSemanticTranslator:
 
         try:
             dimension = resolver.resolve_dimension(member)
-            return self._column_expression(alias_map, dimension.table, dimension.column)
+            return self._column_expression(alias_map, dimension.table, dimension.column, dimension.expression)
         except SemanticModelError:
             pass
 
@@ -442,7 +444,7 @@ class TsqlSemanticTranslator:
 
         if item.dimension or item.time_dimension:
             dimension = resolver.resolve_dimension(member)
-            expr = self._column_expression({}, dimension.table, dimension.column, allow_placeholder=True)
+            expr = self._column_expression({}, dimension.table, dimension.column, dimension.expression, allow_placeholder=True)
             condition = self._build_filter_expression(expr, operator, values, dimension.data_type)
             return FilterTarget(
                 kind="dimension",
@@ -484,7 +486,7 @@ class TsqlSemanticTranslator:
 
         try:
             dimension = resolver.resolve_dimension(member)
-            expr = self._column_expression({}, dimension.table, dimension.column, allow_placeholder=True)
+            expr = self._column_expression({}, dimension.table, dimension.column, dimension.expression, allow_placeholder=True)
             condition = self._build_filter_expression(expr, operator, values, dimension.data_type)
             return FilterTarget(
                 kind="dimension",
@@ -599,6 +601,7 @@ class TsqlSemanticTranslator:
             alias_map,
             measure.table,
             measure.column,
+            expression=measure.expression,
             allow_placeholder=allow_placeholder,
         )
         aggregation = (measure.aggregation or "").strip().lower()
@@ -626,6 +629,7 @@ class TsqlSemanticTranslator:
         alias_map: Dict[str, str],
         table: str,
         column: str,
+        expression: Optional[str] = None,
         allow_placeholder: bool = False,
     ) -> exp.Expression:
         if not alias_map:
@@ -634,6 +638,9 @@ class TsqlSemanticTranslator:
             alias = table
         else:
             alias = alias_map[table]
+        if expression:
+            expr = self._ensure_expression(expression)
+            return self._replace_table_refs(expr, alias_map)
         return exp.Column(
             this=exp.Identifier(this=column, quoted=True),
             table=exp.Identifier(this=alias, quoted=False),
