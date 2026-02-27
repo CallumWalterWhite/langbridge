@@ -29,3 +29,5 @@ faiss-cpu==1.13.2
 trino==0.336.0
 qdrant-client==1.9.1
 redis==5.0.8
+pyarrow==19.0.1
+duckdb==1.2.1
