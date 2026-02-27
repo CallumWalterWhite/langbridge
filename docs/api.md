@@ -27,6 +27,7 @@ This page is a partial overview.
 - `POST /semantic-query/{semantic_model_id}/q`
   - Body: `SemanticQueryRequest`
   - Returns: `SemanticQueryResponse`
+- Unified semantic query jobs now execute through the Worker federation engine (`FederatedQueryService`) instead of requiring Trino in the worker data plane.
 - `GET /semantic-query/{semantic_model_id}/meta?organization_id=...`
   - Returns: `SemanticQueryMetaResponse` including `semantic_model`.
 

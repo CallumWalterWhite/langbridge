@@ -5,10 +5,10 @@
     "version": "0.2.0",
     "configurations": [
         {
-            "name": "Debug LangBridge API",
+            "name": "Debug LangBridge API (Linux/Mac)",
             "type": "debugpy",
             "request": "launch",
-            "python": "${workspaceFolder}/langbridge/venv/bin/python",
+            "python": "${workspaceFolder}/langbridge/venv/Scripts/python",
             "module": "uvicorn",
             "cwd": "${workspaceFolder}",
             "envFile": "${workspaceFolder}/.env",
@@ -21,14 +21,30 @@
             "console": "integratedTerminal"
         },
         {
-            "name": "Debug LangBridge Worker",
+            "name": "Debug LangBridge Worker (Linux/Mac)",
             "type": "debugpy",
             "request": "launch",
-            "python": "${workspaceFolder}/langbridge/venv/bin/python",
+            "python": "${workspaceFolder}/langbridge/venv/Scripts/python",
             "module": "langbridge.apps.worker.langbridge_worker.main",
             "cwd": "${workspaceFolder}",
-            "envFile": "${workspaceFolder}/.env",
+            "envFile": "${workspaceFolder}/langbridge/.env-worker",
             "console": "integratedTerminal"
+        },
+        {
+            "name": "Attach LangBridge Worker (Docker)",
+            "type": "debugpy",
+            "request": "attach",
+            "connect": {
+                "host": "localhost",
+                "port": 5678
+            },
+            "pathMappings": [
+                {
+                    "localRoot": "${workspaceFolder}",
+                    "remoteRoot": "/app"
+                }
+            ],
+            "justMyCode": false
         }
     ],
     "compounds": [

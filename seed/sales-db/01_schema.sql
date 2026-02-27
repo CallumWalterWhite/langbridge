@@ -14,6 +14,8 @@ DROP TABLE IF EXISTS inventory CASCADE;
 
 CREATE TABLE customers (
   id BIGSERIAL PRIMARY KEY,
+  -- Shared key for cross-source joins with crm.contacts.contact_external_id
+  crm_contact_external_id TEXT UNIQUE,
   first_name TEXT NOT NULL,
   last_name TEXT NOT NULL,
   email TEXT NOT NULL UNIQUE,
@@ -109,6 +111,7 @@ CREATE TABLE inventory (
 );
 
 CREATE INDEX idx_orders_customer_id ON orders(customer_id);
+CREATE INDEX idx_customers_crm_contact_external_id ON customers(crm_contact_external_id);
 CREATE INDEX idx_orders_shop_id ON orders(shop_id);
 CREATE INDEX idx_orders_channel ON orders(channel);
 CREATE INDEX idx_orders_order_ts ON orders(order_ts);

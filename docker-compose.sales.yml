@@ -1,9 +1,7 @@
 version: "3.9"
 services:
   migrate:
-    build:
-      context: .
-      dockerfile: langbridge/Dockerfile.migrate
+    image: callumwhite/langbridge-migrate:latest
     container_name: langbridge-migrate
     env_file:
       - ./langbridge/.env
@@ -23,9 +21,7 @@ services:
     command: ["alembic", "upgrade", "head"]
     restart: "no"
   api:
-    build:
-      context: .
-      dockerfile: langbridge/Dockerfile.api
+    image: callumwhite/langbridge-api:latest
     container_name: langbridge-api
     command: ["uvicorn", "langbridge.apps.api.langbridge_api.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
     env_file:
@@ -66,9 +62,7 @@ services:
     volumes:
       - ./:/app
   worker:
-    build:
-      context: .
-      dockerfile: langbridge/Dockerfile.worker
+    image: callumwhite/langbridge-worker:latest
     container_name: langbridge-worker
     env_file:
       - ./langbridge/.env
@@ -106,9 +100,7 @@ services:
     volumes:
       - ./:/app
   gateway:
-    build:
-      context: .
-      dockerfile: langbridge/Dockerfile.gateway
+    image: callumwhite/langbridge-gateway:latest
     container_name: langbridge-gateway
     env_file:
       - ./langbridge/.env
@@ -124,9 +116,7 @@ services:
     ports:
       - "8001:8001"
   gateway-proxy:
-    build:
-      context: .
-      dockerfile: langbridge/Dockerfile.gateway
+    image: callumwhite/langbridge-gateway:latest
     container_name: langbridge-gateway-proxy
     env_file:
       - ./langbridge/.env
@@ -134,7 +124,11 @@ services:
       PROXY_LISTEN_HOST: 0.0.0.0
       PROXY_PG_PORT: 55432
       PROXY_MYSQL_PORT: 53306
-      PROXY_POSTGRES_UPSTREAMS: '{"*":{"host":"db","port":5432,"database":"langbridge"}}'
+      # Demo routing map:
+      # - langbridge: platform metadata database
+      # - sales: transactional sales domain
+      # - crm: customer relationship domain
+      PROXY_POSTGRES_UPSTREAMS: '{"langbridge":{"host":"db","port":5432,"database":"langbridge"},"sales":{"host":"sales-db","port":5432,"database":"sales"},"crm":{"host":"crm-db","port":5432,"database":"crm"},"*":{"host":"db","port":5432,"database":"langbridge"}}'
     command: ["python", "-m", "langbridge.apps.gateway.langbridge_gateway.app"]
     profiles:
       - development
@@ -143,16 +137,14 @@ services:
         condition: service_healthy
       sales-db:
         condition: service_healthy
+      crm-db:
+        condition: service_healthy
     ports:
       - "55432:55432"
       - "53306:53306"
       - "51433:51433"
   client:
-    build:
-      context: ./client
-      dockerfile: Dockerfile
-      # args:
-      #   NEXT_PUBLIC_BACKEND_URL: http://localhost:8000
+    image: callumwhite/langbridge-client:latest
     container_name: langbridge-client
     env_file:
       - ./client/.env
@@ -205,6 +197,25 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+  crm-db:
+    image: postgres:16-alpine
+    container_name: langbridge-crm-db
+    environment:
+      POSTGRES_USER: crm
+      POSTGRES_PASSWORD: crm
+      POSTGRES_DB: crm
+    volumes:
+      - crm_pg_data:/var/lib/postgresql/data
+      - ./seed/crm-db:/docker-entrypoint-initdb.d:ro
+    profiles:
+      - development
+    ports:
+      - "5434:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U crm"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
   redis:
     image: redis:7-alpine
     container_name: langbridge-redis
@@ -240,6 +251,8 @@ services:
       db:
         condition: service_healthy
       sales-db:
+        condition: service_healthy
+      crm-db:
         condition: service_healthy
       gateway-proxy:
         condition: service_started
@@ -302,6 +315,7 @@ services:
 volumes:
   pg_data:
   sales_pg_data:
+  crm_pg_data:
   redis_data:
   qdrant_data:
   prometheus_data:

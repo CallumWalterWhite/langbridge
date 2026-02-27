@@ -43,6 +43,20 @@ This doc is aimed at quick onboarding for Codex and contributors.
   - `POST /api/v1/edge/tasks/result`
   - `POST /api/v1/edge/tasks/fail`
 
+## Federated query engine (Trino-free data plane path)
+- Core docs: `docs/federated-query-engine.md`
+- Worker tool entrypoint:
+  - `langbridge/apps/worker/langbridge_worker/tools/federated_query_tool.py`
+  - method: `execute_federated_query(query_payload)`
+- Runtime knobs (env):
+  - `FEDERATION_ARTIFACT_DIR` (default `.cache/federation`)
+  - `FEDERATION_BROADCAST_THRESHOLD_BYTES` (default `67108864`)
+  - `FEDERATION_PARTITION_COUNT` (default `8`)
+  - `FEDERATION_STAGE_MAX_RETRIES` (default `2`)
+  - `FEDERATION_STAGE_PARALLELISM` (default `4`)
+- Optional local source profile for federation testing:
+  - `docker compose --profile federation-sources up federation-db-a federation-db-b`
+
 ## Change safety checklist
 - Keep API models and client types aligned.
 - When modifying semantic models, update `semantic/loader.py` and `docs/semantic-model.md`.

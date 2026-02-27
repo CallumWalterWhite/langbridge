@@ -41,10 +41,6 @@ from langbridge.packages.connectors.langbridge_connectors.api import (
     get_connector_config_factory,
 )
 from langbridge.packages.connectors.langbridge_connectors.api.config import ConnectorRuntimeType
-from langbridge.packages.connectors.langbridge_connectors.api._trino.connector import (
-    TrinoConnector,
-    TrinoConnectorConfig,
-)
 from langbridge.packages.messaging.langbridge_messaging.broker.base import MessageBroker
 from langbridge.packages.messaging.langbridge_messaging.broker.redis import RedisStreams
 from langbridge.packages.messaging.langbridge_messaging.contracts.base import MessageType
@@ -57,6 +53,7 @@ from langbridge.packages.messaging.langbridge_messaging.contracts.jobs.semantic_
     SemanticQueryRequestMessage,
 )
 from langbridge.packages.messaging.langbridge_messaging.handler import BaseMessageHandler
+from langbridge.apps.worker.langbridge_worker.tools import FederatedQueryTool
 from langbridge.packages.semantic.langbridge_semantic.loader import (
     SemanticModelError,
     load_semantic_model,
@@ -82,6 +79,7 @@ class SemanticQueryRequestHandler(BaseMessageHandler):
         semantic_model_repository: SemanticModelRepository | None = None,
         connector_repository: ConnectorRepository | None = None,
         secret_provider_registry: SecretProviderRegistry | None = None,
+        federated_query_tool: FederatedQueryTool | None = None,
     ) -> None:
         self._logger = logging.getLogger(__name__)
         self._job_repository = job_repository
@@ -89,6 +87,7 @@ class SemanticQueryRequestHandler(BaseMessageHandler):
         self._connector_repository = connector_repository
         self._message_broker = message_broker
         self._secret_provider_registry = secret_provider_registry or SecretProviderRegistry()
+        self._federated_query_tool = federated_query_tool
         self._engine = SemanticQueryEngine()
         self._sql_connector_factory = SqlConnectorFactory()
 
@@ -339,70 +338,124 @@ class SemanticQueryRequestHandler(BaseMessageHandler):
         )
 
         semantic_query = self._load_query_payload(request.query)
-        semantic_model: SemanticModel
-        table_connector_map: dict[str, uuid.UUID] | None = None
-        execution_connector_id: uuid.UUID
-        sql_connector: Any
-        semantic_model_id: uuid.UUID | None = None
 
         if request.query_scope == "unified":
             if not request.semantic_model_ids:
                 raise BusinessValidationError(
                     "semantic_model_ids must include at least one model id for unified query scope."
                 )
+
             semantic_model, table_connector_map = await self._build_unified_model_and_map(
                 organization_id=request.organisation_id,
                 semantic_model_ids=request.semantic_model_ids,
                 joins=request.joins,
                 metrics=request.metrics,
             )
-            execution_connector_id, sql_connector = await self._create_unified_trino_connector(
-                organization_id=request.organisation_id,
-            )
-        else:
-            if request.semantic_model_id is None:
-                raise BusinessValidationError(
-                    "semantic_model_id is required for semantic_model query scope."
-                )
-            semantic_model_record = await self._semantic_model_repository.get_for_scope(
-                model_id=request.semantic_model_id,
-                organization_id=request.organisation_id,
-            )
-            if semantic_model_record is None:
-                raise BusinessValidationError("Semantic model not found.")
-            semantic_model = self._load_model_payload(semantic_model_record.content_yaml)
-            execution_connector_id = semantic_model_record.connector_id
-            semantic_model_id = request.semantic_model_id
-            connector = await self._connector_repository.get_by_id(execution_connector_id)
-            if connector is None:
-                raise BusinessValidationError("Connector not found for semantic query.")
-            connector_response = ConnectorResponse.from_connector(
-                connector,
-                organization_id=request.organisation_id,
-                project_id=request.project_id,
-            )
-            if connector_response.connector_type is None:
-                raise BusinessValidationError("Connector type is required for semantic query execution.")
-
-            connector_type = ConnectorRuntimeType(connector_response.connector_type.upper())
-            resolved_connector_config = self._resolve_connector_config(connector_response)
-            sql_connector = await self._create_sql_connector(
-                connector_type=connector_type,
-                connector_config=resolved_connector_config,
-            )
-            if not isinstance(sql_connector, SqlConnector):
-                raise BusinessValidationError("Only SQL connectors are supported for semantic queries.")
-
-        execution_model = semantic_model
-        if request.query_scope == "unified":
+            if self._federated_query_tool is None:
+                raise BusinessValidationError("Federated query tool is not configured on this worker.")
             execution_model = apply_tenant_aware_context(
                 semantic_model,
                 context=TenantAwareQueryContext(
                     organization_id=request.organisation_id,
-                    execution_connector_id=execution_connector_id,
+                    execution_connector_id=self._build_unified_execution_connector_id(
+                        organization_id=request.organisation_id
+                    ),
                 ),
                 table_connector_map=table_connector_map,
             )
+
+            job_record.progress = 45
+            job_record.status_message = "Compiling semantic query."
+            await event_emitter.emit(
+                event_type="SemanticQueryCompiling",
+                message="Compiling semantic query.",
+                visibility=AgentEventVisibility.public,
+                source="worker",
+            )
+
+            try:
+                plan = self._engine.compile(
+                    semantic_query,
+                    execution_model,
+                    dialect="tsql",
+                )
+            except Exception as exc:
+                raise BusinessValidationError(f"Semantic query translation failed: {exc}") from exc
+
+            workflow_payload = self._build_federation_workflow_payload(
+                organization_id=request.organisation_id,
+                semantic_model=execution_model,
+                source_semantic_model=semantic_model,
+                table_connector_map=table_connector_map,
+            )
+            tool_payload = {
+                "workspace_id": str(request.organisation_id),
+                "query": semantic_query.model_dump(by_alias=True, exclude_none=True),
+                "dialect": "tsql",
+                "workflow": workflow_payload,
+                "semantic_model": execution_model.model_dump(by_alias=True, exclude_none=True),
+            }
+
+            job_record.progress = 70
+            job_record.status_message = "Executing federated semantic query."
+            await event_emitter.emit(
+                event_type="SemanticQueryExecuting",
+                message="Executing semantic query SQL.",
+                visibility=AgentEventVisibility.public,
+                source="worker",
+                details={"sql": plan.sql, "query_scope": request.query_scope},
+            )
+
+            execution = await self._federated_query_tool.execute_federated_query(tool_payload)
+            data_payload = execution.get("rows", [])
+            if not isinstance(data_payload, list):
+                raise BusinessValidationError("Federated query execution returned an invalid row payload.")
+
+            return UnifiedSemanticQueryResponse(
+                id=uuid.uuid4(),
+                organization_id=request.organisation_id,
+                project_id=request.project_id,
+                connector_id=self._build_unified_execution_connector_id(
+                    organization_id=request.organisation_id
+                ),
+                semantic_model_ids=request.semantic_model_ids or [],
+                data=data_payload,
+                annotations=plan.annotations,
+                metadata=plan.metadata,
+            )
+
+        if request.semantic_model_id is None:
+            raise BusinessValidationError(
+                "semantic_model_id is required for semantic_model query scope."
+            )
+
+        semantic_model_record = await self._semantic_model_repository.get_for_scope(
+            model_id=request.semantic_model_id,
+            organization_id=request.organisation_id,
+        )
+        if semantic_model_record is None:
+            raise BusinessValidationError("Semantic model not found.")
+        semantic_model = self._load_model_payload(semantic_model_record.content_yaml)
+        semantic_model_id = request.semantic_model_id
+        connector = await self._connector_repository.get_by_id(semantic_model_record.connector_id)
+        if connector is None:
+            raise BusinessValidationError("Connector not found for semantic query.")
+        connector_response = ConnectorResponse.from_connector(
+            connector,
+            organization_id=request.organisation_id,
+            project_id=request.project_id,
+        )
+        if connector_response.connector_type is None:
+            raise BusinessValidationError("Connector type is required for semantic query execution.")
+
+        connector_type = ConnectorRuntimeType(connector_response.connector_type.upper())
+        resolved_connector_config = self._resolve_connector_config(connector_response)
+        sql_connector = await self._create_sql_connector(
+            connector_type=connector_type,
+            connector_config=resolved_connector_config,
+        )
+        if not isinstance(sql_connector, SqlConnector):
+            raise BusinessValidationError("Only SQL connectors are supported for semantic queries.")
 
         job_record.progress = 45
         job_record.status_message = "Compiling semantic query."
@@ -424,7 +477,7 @@ class SemanticQueryRequestHandler(BaseMessageHandler):
         try:
             plan = self._engine.compile(
                 semantic_query,
-                execution_model,
+                semantic_model,
                 dialect=sql_connector.DIALECT.value.lower(),
                 rewrite_expression=rewrite_expression,
             )
@@ -443,21 +496,6 @@ class SemanticQueryRequestHandler(BaseMessageHandler):
 
         query_result = await sql_connector.execute(plan.sql)
         data = self._engine.format_rows(query_result.columns, query_result.rows)
-
-        if request.query_scope == "unified":
-            return UnifiedSemanticQueryResponse(
-                id=uuid.uuid4(),
-                organization_id=request.organisation_id,
-                project_id=request.project_id,
-                connector_id=execution_connector_id,
-                semantic_model_ids=request.semantic_model_ids or [],
-                data=data,
-                annotations=plan.annotations,
-                metadata=plan.metadata,
-            )
-
-        if semantic_model_id is None:
-            raise BusinessValidationError("semantic_model_id is required for semantic model query scope.")
         return SemanticQueryResponse(
             id=uuid.uuid4(),
             organization_id=request.organisation_id,
@@ -522,40 +560,76 @@ class SemanticQueryRequestHandler(BaseMessageHandler):
                 f"Unified semantic model failed validation: {exc}"
             ) from exc
 
-    async def _create_unified_trino_connector(
-        self,
-        *,
-        organization_id: uuid.UUID,
-    ) -> tuple[uuid.UUID, TrinoConnector]:
-        host = settings.UNIFIED_TRINO_HOST.strip()
-        if not host:
-            raise BusinessValidationError(
-                "UNIFIED_TRINO_HOST must be configured for unified semantic query execution."
-            )
-
-        connector = TrinoConnector(
-            TrinoConnectorConfig(
-                host=host,
-                port=settings.UNIFIED_TRINO_PORT,
-                user=settings.UNIFIED_TRINO_USER,
-                password=settings.UNIFIED_TRINO_PASSWORD,
-                catalog=settings.UNIFIED_TRINO_CATALOG,
-                schema=settings.UNIFIED_TRINO_SCHEMA,
-                http_scheme=settings.UNIFIED_TRINO_HTTP_SCHEME,
-                verify=settings.UNIFIED_TRINO_VERIFY,
-                tenant=str(organization_id),
-                source=settings.UNIFIED_TRINO_SOURCE,
-            )
-        )
-        await connector.test_connection()
-        return self._build_unified_execution_connector_id(organization_id=organization_id), connector
-
     @staticmethod
     def _build_unified_execution_connector_id(*, organization_id: uuid.UUID) -> uuid.UUID:
         return uuid.uuid5(
             uuid.NAMESPACE_DNS,
-            f"langbridge-unified-trino:{organization_id}",
+            f"langbridge-unified-federation:{organization_id}",
         )
+
+    def _build_federation_workflow_payload(
+        self,
+        *,
+        organization_id: uuid.UUID,
+        semantic_model: SemanticModel,
+        source_semantic_model: SemanticModel,
+        table_connector_map: Mapping[str, uuid.UUID],
+    ) -> dict[str, Any]:
+        workspace_id = str(organization_id)
+        dataset_id = f"unified_semantic_{organization_id.hex[:12]}"
+        tables: dict[str, dict[str, Any]] = {}
+        for table_key, table in semantic_model.tables.items():
+            source_table = source_semantic_model.tables.get(table_key, table)
+            connector_id = table_connector_map.get(table_key)
+            if connector_id is None:
+                raise BusinessValidationError(
+                    f"Missing connector binding for unified table '{table_key}'."
+                )
+            source_catalog = source_table.catalog
+            uses_synthetic_catalog = (
+                source_catalog is None
+                and table.catalog is not None
+            )
+            tables[table_key] = {
+                "table_key": table_key,
+                "source_id": f"source_{connector_id.hex[:12]}",
+                "connector_id": str(connector_id),
+                "schema": table.schema,
+                "table": table.name,
+                "catalog": table.catalog,
+                "metadata": {
+                    "physical_catalog": source_catalog,
+                    "physical_schema": source_table.schema,
+                    "physical_table": source_table.name,
+                    "skip_catalog_in_pushdown": uses_synthetic_catalog,
+                },
+            }
+
+        relationships = [
+            {
+                "name": relationship.name,
+                "left_table": relationship.from_,
+                "right_table": relationship.to,
+                "join_type": relationship.type,
+                "condition": relationship.join_on,
+            }
+            for relationship in (semantic_model.relationships or [])
+        ]
+        return {
+            "id": f"workflow_{dataset_id}",
+            "workspace_id": workspace_id,
+            "dataset": {
+                "id": dataset_id,
+                "name": "Unified Semantic Dataset",
+                "workspace_id": workspace_id,
+                "tables": tables,
+                "relationships": relationships,
+            },
+            "broadcast_threshold_bytes": settings.FEDERATION_BROADCAST_THRESHOLD_BYTES,
+            "partition_count": settings.FEDERATION_PARTITION_COUNT,
+            "max_stage_retries": settings.FEDERATION_STAGE_MAX_RETRIES,
+            "stage_parallelism": settings.FEDERATION_STAGE_PARALLELISM,
+        }
 
     async def _create_sql_connector(
         self,

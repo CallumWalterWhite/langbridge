@@ -151,5 +151,10 @@ class Settings(BaseSettings):
     UNIFIED_TRINO_HTTP_SCHEME: str = "http"
     UNIFIED_TRINO_VERIFY: bool = True
     UNIFIED_TRINO_SOURCE: str = "langbridge"
+    FEDERATION_ARTIFACT_DIR: str = ".cache/federation"
+    FEDERATION_BROADCAST_THRESHOLD_BYTES: int = 64 * 1024 * 1024
+    FEDERATION_PARTITION_COUNT: int = 8
+    FEDERATION_STAGE_MAX_RETRIES: int = 2
+    FEDERATION_STAGE_PARALLELISM: int = 4
 
 settings = Settings()  # type: ignore

@@ -132,6 +132,7 @@ class CustomerRuntimeBroker(MessageBroker):
 
     async def _ensure_access_token(self) -> None:
         if self._access_token and self._token_expires_at is not None:
+            self._token_expires_at = self._coerce_utc(self._token_expires_at)
             if self._token_expires_at > datetime.now(timezone.utc) + timedelta(seconds=60):
                 return
             await self._heartbeat()
@@ -168,7 +169,7 @@ class CustomerRuntimeBroker(MessageBroker):
         )
         payload = RuntimeRegistrationResponse.model_validate(response.json())
         self._access_token = payload.access_token
-        self._token_expires_at = payload.expires_at
+        self._token_expires_at = self._coerce_utc(payload.expires_at)
         self._runtime_id = str(payload.ep_id)
 
     async def _heartbeat(self) -> None:
@@ -186,7 +187,8 @@ class CustomerRuntimeBroker(MessageBroker):
         if token:
             self._access_token = token
         if expires_at_raw:
-            self._token_expires_at = datetime.fromisoformat(str(expires_at_raw).replace("Z", "+00:00"))
+            parsed = datetime.fromisoformat(str(expires_at_raw).replace("Z", "+00:00"))
+            self._token_expires_at = self._coerce_utc(parsed)
 
     async def _update_capabilities(self) -> None:
         if not self._access_token:
@@ -248,3 +250,9 @@ class CustomerRuntimeBroker(MessageBroker):
         if not isinstance(parsed, dict):
             raise RuntimeError("WORKER_RUNTIME_CAPABILITIES must deserialize to an object.")
         return parsed
+
+    @staticmethod
+    def _coerce_utc(value: datetime) -> datetime:
+        if value.tzinfo is None or value.tzinfo.utcoffset(value) is None:
+            return value.replace(tzinfo=timezone.utc)
+        return value.astimezone(timezone.utc)

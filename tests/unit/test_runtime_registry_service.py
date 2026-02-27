@@ -172,3 +172,41 @@ async def test_runtime_registry_lists_instances_for_tenant() -> None:
     assert len(runtimes) == 1
     assert runtimes[0].tenant_id == tenant_id
     assert runtimes[0].display_name == "runtime-a"
+
+
+@pytest.mark.anyio
+async def test_runtime_registration_allows_naive_future_expiry_token() -> None:
+    runtime_repo = _FakeRuntimeRepo()
+    token_repo = _FakeRuntimeTokenRepo()
+    auth_service = RuntimeAuthService()
+    service = RuntimeRegistryService(
+        runtime_repository=runtime_repo,
+        runtime_registration_token_repository=token_repo,
+        runtime_auth_service=auth_service,
+    )
+    raw_token = "naive-future-token"
+    token_hash = auth_service.hash_registration_token(raw_token)
+
+    @dataclass
+    class _NaiveFutureTokenRecord:
+        tenant_id: uuid.UUID
+        token_hash: str
+        expires_at: datetime
+        used_at: datetime | None
+        runtime_id: uuid.UUID | None = None
+
+    tenant_id = uuid.uuid4()
+    token_repo.by_hash[token_hash] = _NaiveFutureTokenRecord(
+        tenant_id=tenant_id,
+        token_hash=token_hash,
+        expires_at=datetime.now() + timedelta(minutes=5),
+        used_at=None,
+    )
+
+    response = await service.register_runtime(
+        RuntimeRegistrationRequest(
+            registration_token=raw_token,
+            display_name="rt-naive",
+        )
+    )
+    assert response.tenant_id == tenant_id

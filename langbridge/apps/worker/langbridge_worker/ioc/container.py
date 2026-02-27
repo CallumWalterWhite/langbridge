@@ -31,6 +31,7 @@ from langbridge.packages.common.langbridge_common.repositories.thread_repository
 from langbridge.packages.messaging.langbridge_messaging.broker.redis import RedisBroker
 from langbridge.packages.messaging.langbridge_messaging.flusher.flusher import MessageFlusher
 from langbridge.apps.worker.langbridge_worker.secrets import SecretProviderRegistry
+from langbridge.apps.worker.langbridge_worker.tools import FederatedQueryTool
 
 
 class WorkerContainer(containers.DeclarativeContainer):
@@ -87,6 +88,11 @@ class WorkerContainer(containers.DeclarativeContainer):
         message_bus=message_broker,
     )
     secret_provider_registry = providers.Singleton(SecretProviderRegistry)
+    federated_query_tool = providers.Factory(
+        FederatedQueryTool,
+        connector_repository=connector_repository,
+        secret_provider_registry=secret_provider_registry,
+    )
 
 
 def build_config(settings_obj: Settings) -> dict[str, Any]:

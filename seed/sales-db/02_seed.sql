@@ -10,6 +10,7 @@ WITH params AS (
     ARRAY['NY','CA','IL','TX','AZ','PA','OH','WA','MA','TN','GA','FL','OR','NV','CO','NC'] AS states
 )
 INSERT INTO customers (
+  crm_contact_external_id,
   first_name,
   last_name,
   email,
@@ -23,6 +24,7 @@ INSERT INTO customers (
   postal_code
 )
 SELECT
+  format('CRM-%08s', s),
   p.fn,
   p.ln,
   format('%s.%s%05s@example.com', lower(p.fn), lower(p.ln), s),

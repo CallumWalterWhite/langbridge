@@ -25,6 +25,14 @@ from langbridge.packages.common.langbridge_common.repositories.runtime_repositor
 )
 
 
+def _coerce_utc(value: datetime | None) -> datetime | None:
+    if value is None:
+        return None
+    if value.tzinfo is None or value.tzinfo.utcoffset(value) is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
 class RuntimeRegistryService:
     def __init__(
         self,
@@ -67,9 +75,11 @@ class RuntimeRegistryService:
             raise BusinessValidationError("Registration token is invalid.")
 
         now = datetime.now(timezone.utc)
-        if registration_token.used_at is not None:
+        used_at = _coerce_utc(registration_token.used_at)
+        token_expires_at = _coerce_utc(registration_token.expires_at)
+        if used_at is not None:
             raise BusinessValidationError("Registration token has already been used.")
-        if registration_token.expires_at <= now:
+        if token_expires_at is None or token_expires_at <= now:
             raise BusinessValidationError("Registration token has expired.")
 
         runtime = RuntimeInstanceRecord(
@@ -187,9 +197,9 @@ class RuntimeRegistryService:
                 tags=list(runtime.tags or []),
                 capabilities=dict(runtime.capabilities or {}),
                 metadata=dict(runtime.metadata_json or {}),
-                registered_at=runtime.registered_at,
-                last_seen_at=runtime.last_seen_at,
-                updated_at=runtime.updated_at,
+                registered_at=_coerce_utc(runtime.registered_at) or datetime.now(timezone.utc),
+                last_seen_at=_coerce_utc(runtime.last_seen_at),
+                updated_at=_coerce_utc(runtime.updated_at),
             )
             for runtime in runtimes
         ]

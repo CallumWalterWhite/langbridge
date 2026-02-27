@@ -49,6 +49,11 @@ services:
       UNIFIED_TRINO_HTTP_SCHEME: ${UNIFIED_TRINO_HTTP_SCHEME:-http}
       UNIFIED_TRINO_VERIFY: ${UNIFIED_TRINO_VERIFY:-false}
       UNIFIED_TRINO_SOURCE: ${UNIFIED_TRINO_SOURCE:-langbridge}
+      FEDERATION_ARTIFACT_DIR: ${FEDERATION_ARTIFACT_DIR:-/tmp/langbridge-federation}
+      FEDERATION_BROADCAST_THRESHOLD_BYTES: ${FEDERATION_BROADCAST_THRESHOLD_BYTES:-67108864}
+      FEDERATION_PARTITION_COUNT: ${FEDERATION_PARTITION_COUNT:-8}
+      FEDERATION_STAGE_MAX_RETRIES: ${FEDERATION_STAGE_MAX_RETRIES:-2}
+      FEDERATION_STAGE_PARALLELISM: ${FEDERATION_STAGE_PARALLELISM:-4}
     depends_on:
       db:
         condition: service_healthy
@@ -66,7 +71,7 @@ services:
       dockerfile: langbridge/Dockerfile.worker
     container_name: langbridge-worker
     env_file:
-      - ./langbridge/.env
+      - ./langbridge/.env-worker
     environment:
       ENVIRONMENT: development
       POSTGRES_SERVER: db
@@ -87,6 +92,11 @@ services:
       UNIFIED_TRINO_HTTP_SCHEME: ${UNIFIED_TRINO_HTTP_SCHEME:-http}
       UNIFIED_TRINO_VERIFY: ${UNIFIED_TRINO_VERIFY:-false}
       UNIFIED_TRINO_SOURCE: ${UNIFIED_TRINO_SOURCE:-langbridge}
+      FEDERATION_ARTIFACT_DIR: ${FEDERATION_ARTIFACT_DIR:-/tmp/langbridge-federation}
+      FEDERATION_BROADCAST_THRESHOLD_BYTES: ${FEDERATION_BROADCAST_THRESHOLD_BYTES:-67108864}
+      FEDERATION_PARTITION_COUNT: ${FEDERATION_PARTITION_COUNT:-8}
+      FEDERATION_STAGE_MAX_RETRIES: ${FEDERATION_STAGE_MAX_RETRIES:-2}
+      FEDERATION_STAGE_PARALLELISM: ${FEDERATION_STAGE_PARALLELISM:-4}
     command: ["python", "-m", "langbridge.apps.worker.langbridge_worker.main", "--reload"]
     depends_on:
       db:
@@ -182,6 +192,30 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+  federation-db-a:
+    image: postgres:16-alpine
+    profiles:
+      - federation-sources
+    environment:
+      POSTGRES_USER: federation_a
+      POSTGRES_PASSWORD: federation_a
+      POSTGRES_DB: federation_a
+    ports:
+      - "55433:5432"
+    volumes:
+      - federation_pg_a_data:/var/lib/postgresql/data
+  federation-db-b:
+    image: postgres:16-alpine
+    profiles:
+      - federation-sources
+    environment:
+      POSTGRES_USER: federation_b
+      POSTGRES_PASSWORD: federation_b
+      POSTGRES_DB: federation_b
+    ports:
+      - "55434:5432"
+    volumes:
+      - federation_pg_b_data:/var/lib/postgresql/data
   redis:
     image: redis:7-alpine
     container_name: langbridge-redis
@@ -268,6 +302,8 @@ services:
       - loki
 volumes:
   pg_data:
+  federation_pg_a_data:
+  federation_pg_b_data:
   redis_data:
   qdrant_data:
   prometheus_data:

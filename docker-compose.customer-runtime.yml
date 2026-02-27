@@ -1,7 +1,7 @@
 version: "3.9"
 services:
   langbridge-customer-worker:
-    image: callumwalterwhite/langbridge-worker:latest
+    image: callumwhite/langbridge-worker:latest
     container_name: langbridge-customer-worker
     restart: unless-stopped
     environment:
