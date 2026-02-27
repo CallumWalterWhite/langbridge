@@ -1,6 +1,6 @@
 import uuid
 
-from langbridge.packages.semantic.langbridge_semantic.model import Dimension, SemanticModel, Table
+from langbridge.packages.semantic.langbridge_semantic.model import Dimension, Relationship, SemanticModel, Table
 from langbridge.packages.semantic.langbridge_semantic.query import SemanticQuery, SemanticQueryEngine
 from langbridge.packages.semantic.langbridge_semantic.unified_query import (
     TenantAwareQueryContext,
@@ -113,4 +113,41 @@ def test_trino_translation_uses_catalog_schema_table_when_catalog_is_available()
 
     plan = SemanticQueryEngine().compile(query, model, dialect="trino")
     assert '"tenant_catalog"."analytics"."orders"' in plan.sql
+
+
+def test_joined_dimensions_are_qualified_to_avoid_ambiguous_column_names() -> None:
+    model = SemanticModel(
+        version="1.0",
+        tables={
+            "orders": Table(
+                schema="public",
+                name="orders",
+                dimensions=[
+                    Dimension(name="id", type="integer", primary_key=True),
+                    Dimension(name="customer_id", type="integer"),
+                ],
+            ),
+            "customers": Table(
+                schema="public",
+                name="customers",
+                dimensions=[Dimension(name="id", type="integer", primary_key=True)],
+            ),
+        },
+        relationships=[
+            Relationship(
+                name="orders_to_customers",
+                from_="orders",
+                to="customers",
+                type="inner",
+                join_on="orders.customer_id = customers.id",
+            )
+        ],
+    )
+    query = SemanticQuery(dimensions=["orders.id", "customers.id"])
+
+    sql = SemanticQueryEngine().compile(query, model, dialect="postgres").sql
+
+    assert 't0."id" AS "orders__id"' in sql
+    assert 't1."id" AS "customers__id"' in sql
+    assert "ON t0.customer_id = t1.id" in sql
 

@@ -27,7 +27,7 @@ def test_measure_with_time_dimension_is_selected_and_grouped_when_no_dimensions(
 
     sql = SemanticQueryEngine().compile(query, model, dialect="postgres").sql
 
-    assert 'SELECT DATE_TRUNC(\'DAY\', t0."created_at") AS "orders__created_at_day", SUM(amount)' in sql
+    assert 'SELECT DATE_TRUNC(\'DAY\', t0."created_at") AS "orders__created_at_day", SUM(t0."amount")' in sql
     assert 'GROUP BY DATE_TRUNC(\'DAY\', t0."created_at")' in sql
 
 

@@ -61,7 +61,7 @@ class SemanticModelResolver:
         return DimensionRef(
             table=table,
             column=dimension.name,
-            expression=dimension.expression or dimension.name,
+            expression=dimension.expression,
             data_type=dimension.type,
             alias=dimension.alias,
         )
@@ -71,7 +71,7 @@ class SemanticModelResolver:
         return MeasureRef(
             table=table,
             column=measure.name,
-            expression=measure.expression or measure.name,
+            expression=measure.expression,
             data_type=measure.type,
             aggregation=measure.aggregation,
         )
