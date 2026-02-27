@@ -71,6 +71,18 @@ interface BuilderModel {
 }
 
 const RELATIONSHIP_TYPES: RelationshipType[] = ['one_to_many', 'many_to_one', 'one_to_one', 'many_to_many'];
+const COLUMN_TYPE_OPTIONS = [
+  'string',
+  'integer',
+  'decimal',
+  'float',
+  'number',
+  'boolean',
+  'date',
+  'datetime',
+  'timestamp',
+  'time',
+] as const;
 const DEFAULT_MODEL_VERSION = '1.0';
 
 type SemanticModelPageProps = {
@@ -724,7 +736,7 @@ export default function SemanticModelPage({ params }: SemanticModelPageProps): J
                                           }
                                           placeholder="Optional SQL expression if different from column name"
                                         />
-                                        <Input
+                                        <Select
                                           value={dimension.type}
                                           onChange={(event) =>
                                             setBuilder((current) => ({
@@ -742,8 +754,14 @@ export default function SemanticModelPage({ params }: SemanticModelPageProps): J
                                               }),
                                             }))
                                           }
-                                          placeholder="Type e.g. string"
-                                        />
+                                          placeholder="Select type"
+                                        >
+                                          {COLUMN_TYPE_OPTIONS.map((typeOption) => (
+                                            <option key={typeOption} value={typeOption}>
+                                              {typeOption}
+                                            </option>
+                                          ))}
+                                        </Select>
                                       </div>
                                       <Textarea
                                         className="mt-3"
@@ -933,7 +951,7 @@ export default function SemanticModelPage({ params }: SemanticModelPageProps): J
                                           }
                                           placeholder="Name"
                                         />
-                                        <Input
+                                        <Select
                                           value={measure.type}
                                           onChange={(event) =>
                                             setBuilder((current) => ({
@@ -951,8 +969,14 @@ export default function SemanticModelPage({ params }: SemanticModelPageProps): J
                                               }),
                                             }))
                                           }
-                                          placeholder="Type"
-                                        />
+                                          placeholder="Select type"
+                                        >
+                                          {COLUMN_TYPE_OPTIONS.map((typeOption) => (
+                                            <option key={typeOption} value={typeOption}>
+                                              {typeOption}
+                                            </option>
+                                          ))}
+                                        </Select>
                                         <Input
                                           value={measure.aggregation ?? ''}
                                           onChange={(event) =>

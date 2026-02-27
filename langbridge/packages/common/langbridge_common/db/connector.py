@@ -1,5 +1,5 @@
 import uuid
-from sqlalchemy import UUID, Column, String, ForeignKey
+from sqlalchemy import UUID, Column, String, ForeignKey, JSON
 from sqlalchemy.orm import Mapped, relationship
 from .base import Base
 from .associations import organization_connectors, project_connectors
@@ -14,6 +14,9 @@ class Connector(Base):
     connector_type = Column(String(50), nullable=False)
     type = Column(String(50), nullable=False)
     config_json = Column(String, nullable=False)
+    connection_metadata_json = Column(JSON, nullable=True)
+    secret_references_json = Column(JSON, nullable=True)
+    access_policy_json = Column(JSON, nullable=True)
 
     # polymorphic
     __mapper_args__ = {"polymorphic_identity": "connector", "polymorphic_on": type}

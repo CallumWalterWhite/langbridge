@@ -13,6 +13,8 @@ from .bi_dashboards import router as bi_dashboards_router
 from .copilot import router as copilot_router
 from .messages import router as messages_router
 from .jobs import router as jobs_router
+from .runtimes import router as runtimes_router
+from .edge_tasks import router as edge_tasks_router
 
 v1_routes: List[APIRouter] = [
     auth_router,
@@ -26,6 +28,8 @@ v1_routes: List[APIRouter] = [
     copilot_router,
     messages_router,
     jobs_router,
+    runtimes_router,
+    edge_tasks_router,
 ]
 
 __all__ = [
@@ -40,5 +44,7 @@ __all__ = [
     "copilot_router",
     "messages_router",
     "jobs_router",
+    "runtimes_router",
+    "edge_tasks_router",
     "v1_routes",
 ]

@@ -24,5 +24,8 @@ class DependencyResolver:
             provider = getattr(self._container, name, None)
             if provider is None or not isinstance(provider, providers.Provider):
                 continue
-            kwargs[name] = provider()
+            try:
+                kwargs[name] = provider()
+            except Exception:
+                continue
         return handler(**kwargs)

@@ -30,6 +30,7 @@ from langbridge.packages.common.langbridge_common.repositories.thread_message_re
 from langbridge.packages.common.langbridge_common.repositories.thread_repository import ThreadRepository
 from langbridge.packages.messaging.langbridge_messaging.broker.redis import RedisBroker
 from langbridge.packages.messaging.langbridge_messaging.flusher.flusher import MessageFlusher
+from langbridge.apps.worker.langbridge_worker.secrets import SecretProviderRegistry
 
 
 class WorkerContainer(containers.DeclarativeContainer):
@@ -85,6 +86,7 @@ class WorkerContainer(containers.DeclarativeContainer):
         message_repository=message_repository,
         message_bus=message_broker,
     )
+    secret_provider_registry = providers.Singleton(SecretProviderRegistry)
 
 
 def build_config(settings_obj: Settings) -> dict[str, Any]:

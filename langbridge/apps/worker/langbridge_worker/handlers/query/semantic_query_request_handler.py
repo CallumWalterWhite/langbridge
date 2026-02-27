@@ -1,5 +1,6 @@
 import json
 import logging
+import os
 import uuid
 from collections.abc import Mapping
 from datetime import datetime, timezone
@@ -45,7 +46,13 @@ from langbridge.packages.connectors.langbridge_connectors.api._trino.connector i
     TrinoConnectorConfig,
 )
 from langbridge.packages.messaging.langbridge_messaging.broker.base import MessageBroker
+from langbridge.packages.messaging.langbridge_messaging.broker.redis import RedisStreams
 from langbridge.packages.messaging.langbridge_messaging.contracts.base import MessageType
+from langbridge.packages.messaging.langbridge_messaging.contracts.jobs.event import JobEventMessage
+from langbridge.packages.messaging.langbridge_messaging.contracts.messages import (
+    MessageEnvelope,
+    MessageHeaders,
+)
 from langbridge.packages.messaging.langbridge_messaging.contracts.jobs.semantic_query import (
     SemanticQueryRequestMessage,
 )
@@ -54,6 +61,7 @@ from langbridge.packages.semantic.langbridge_semantic.loader import (
     SemanticModelError,
     load_semantic_model,
 )
+from langbridge.apps.worker.langbridge_worker.secrets import SecretProviderRegistry
 from langbridge.packages.semantic.langbridge_semantic.model import SemanticModel
 from langbridge.packages.semantic.langbridge_semantic.query import SemanticQuery, SemanticQueryEngine
 from langbridge.packages.semantic.langbridge_semantic.unified_query import (
@@ -69,20 +77,37 @@ class SemanticQueryRequestHandler(BaseMessageHandler):
 
     def __init__(
         self,
-        job_repository: JobRepository,
-        semantic_model_repository: SemanticModelRepository,
-        connector_repository: ConnectorRepository,
         message_broker: MessageBroker,
+        job_repository: JobRepository | None = None,
+        semantic_model_repository: SemanticModelRepository | None = None,
+        connector_repository: ConnectorRepository | None = None,
+        secret_provider_registry: SecretProviderRegistry | None = None,
     ) -> None:
         self._logger = logging.getLogger(__name__)
         self._job_repository = job_repository
         self._semantic_model_repository = semantic_model_repository
         self._connector_repository = connector_repository
         self._message_broker = message_broker
+        self._secret_provider_registry = secret_provider_registry or SecretProviderRegistry()
         self._engine = SemanticQueryEngine()
         self._sql_connector_factory = SqlConnectorFactory()
 
     async def handle(self, payload: SemanticQueryRequestMessage) -> None:
+        if (
+            self._job_repository is None
+            or os.environ.get("WORKER_EXECUTION_MODE", "").strip().lower()
+            in {"customer_runtime", "customer-runtime", "edge"}
+        ) and payload.job_request and payload.semantic_model_yaml and payload.connector:
+            await self._handle_runtime_payload(payload)
+            return None
+
+        if self._job_repository is None:
+            raise BusinessValidationError("Job repository is required for hosted semantic query handling.")
+        if self._semantic_model_repository is None or self._connector_repository is None:
+            raise BusinessValidationError(
+                "Semantic query repositories are required for hosted semantic query handling."
+            )
+
         self._logger.info("Received semantic query job request %s", payload.job_id)
         job_record = await self._job_repository.get_by_id(payload.job_id)
         if job_record is None:
@@ -154,6 +179,125 @@ class SemanticQueryRequestHandler(BaseMessageHandler):
             )
 
         return None
+
+    async def _handle_runtime_payload(self, payload: SemanticQueryRequestMessage) -> None:
+        if payload.job_request is None or payload.semantic_model_yaml is None or payload.connector is None:
+            raise BusinessValidationError("Runtime semantic query payload is incomplete.")
+
+        request = CreateSemanticQueryJobRequest.model_validate(payload.job_request)
+        if request.query_scope != "semantic_model":
+            raise BusinessValidationError(
+                "Customer-runtime semantic execution currently supports semantic_model scope only."
+            )
+
+        await self._emit_runtime_event(
+            job_id=payload.job_id,
+            event_type="SemanticQueryStarted",
+            message="Semantic query started.",
+            details={"job_id": str(payload.job_id)},
+        )
+
+        try:
+            connector_response = ConnectorResponse.model_validate(payload.connector)
+            semantic_model = self._load_model_payload(payload.semantic_model_yaml)
+            semantic_query = self._load_query_payload(request.query)
+            resolved_connector_config = self._resolve_connector_config(connector_response)
+
+            if connector_response.connector_type is None:
+                raise BusinessValidationError("Connector type is required for semantic query execution.")
+
+            connector_type = ConnectorRuntimeType(connector_response.connector_type.upper())
+            sql_connector = await self._create_sql_connector(
+                connector_type=connector_type,
+                connector_config=resolved_connector_config,
+            )
+
+            await self._emit_runtime_event(
+                job_id=payload.job_id,
+                event_type="SemanticQueryCompiling",
+                message="Compiling semantic query.",
+                details={"query_scope": request.query_scope},
+            )
+
+            rewrite_expression = None
+            if getattr(sql_connector, "EXPRESSION_REWRITE", False):
+                rewrite_expression = getattr(sql_connector, "rewrite_expression", None)
+                if rewrite_expression is None:
+                    raise BusinessValidationError(
+                        "Semantic query translation failed: connector expression rewriter missing."
+                    )
+
+            plan = self._engine.compile(
+                semantic_query,
+                semantic_model,
+                dialect=sql_connector.DIALECT.value.lower(),
+                rewrite_expression=rewrite_expression,
+            )
+            await self._emit_runtime_event(
+                job_id=payload.job_id,
+                event_type="SemanticQueryExecuting",
+                message="Executing semantic query SQL.",
+                details={"sql": plan.sql},
+            )
+
+            query_result = await sql_connector.execute(plan.sql)
+            data = self._engine.format_rows(query_result.columns, query_result.rows)
+            row_count = len(data)
+            response = SemanticQueryResponse(
+                id=uuid.uuid4(),
+                organization_id=request.organisation_id,
+                project_id=request.project_id,
+                semantic_model_id=request.semantic_model_id
+                if request.semantic_model_id is not None
+                else uuid.uuid4(),
+                data=data,
+                annotations=plan.annotations,
+                metadata=plan.metadata,
+            )
+            await self._emit_runtime_event(
+                job_id=payload.job_id,
+                event_type="SemanticQueryCompleted",
+                message="Semantic query completed.",
+                details={
+                    "job_id": str(payload.job_id),
+                    "row_count": row_count,
+                    "result": {
+                        "result": response.model_dump(mode="json"),
+                        "summary": f"Semantic query completed with {row_count} rows.",
+                    },
+                },
+            )
+        except Exception as exc:
+            await self._emit_runtime_event(
+                job_id=payload.job_id,
+                event_type="SemanticQueryFailed",
+                message="Semantic query failed.",
+                details={"job_id": str(payload.job_id), "error": str(exc)},
+            )
+            raise
+
+    async def _emit_runtime_event(
+        self,
+        *,
+        job_id: uuid.UUID,
+        event_type: str,
+        message: str,
+        details: dict[str, Any] | None = None,
+    ) -> None:
+        payload = JobEventMessage(
+            job_id=job_id,
+            event_type=event_type,
+            message=message,
+            visibility=AgentEventVisibility.public.value,
+            source="worker",
+            details=details or {},
+        )
+        envelope = MessageEnvelope(
+            message_type=payload.message_type,
+            payload=payload,
+            headers=MessageHeaders.default(),
+        )
+        await self._message_broker.publish(envelope, stream=RedisStreams.API)
 
     def _parse_job_payload(self, job_record: JobRecord) -> CreateSemanticQueryJobRequest:
         raw_payload = job_record.payload
@@ -241,9 +385,10 @@ class SemanticQueryRequestHandler(BaseMessageHandler):
                 raise BusinessValidationError("Connector type is required for semantic query execution.")
 
             connector_type = ConnectorRuntimeType(connector_response.connector_type.upper())
+            resolved_connector_config = self._resolve_connector_config(connector_response)
             sql_connector = await self._create_sql_connector(
                 connector_type=connector_type,
-                connector_config=connector_response.config or {},
+                connector_config=resolved_connector_config,
             )
             if not isinstance(sql_connector, SqlConnector):
                 raise BusinessValidationError("Only SQL connectors are supported for semantic queries.")
@@ -432,6 +577,31 @@ class SemanticQueryRequestHandler(BaseMessageHandler):
         )
         await sql_connector.test_connection()
         return sql_connector
+
+    def _resolve_connector_config(self, connector: ConnectorResponse) -> dict[str, Any]:
+        resolved_payload = dict(connector.config or {})
+        runtime_config = dict(resolved_payload.get("config") or {})
+
+        if connector.connection_metadata is not None:
+            metadata = connector.connection_metadata.model_dump(exclude_none=True)
+            extra = metadata.pop("extra", {})
+            for key, value in metadata.items():
+                runtime_config.setdefault(key, value)
+            if isinstance(extra, dict):
+                for key, value in extra.items():
+                    if value is not None:
+                        runtime_config.setdefault(key, value)
+
+        for secret_name, secret_ref in connector.secret_references.items():
+            try:
+                runtime_config[secret_name] = self._secret_provider_registry.resolve(secret_ref)
+            except Exception as exc:  # pragma: no cover - defensive runtime guard
+                raise BusinessValidationError(
+                    f"Unable to resolve connector secret '{secret_name}'."
+                ) from exc
+
+        resolved_payload["config"] = runtime_config
+        return resolved_payload
 
     @staticmethod
     def _load_model_payload(content_yaml: str) -> SemanticModel:

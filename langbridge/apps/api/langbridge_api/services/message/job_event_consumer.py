@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from langbridge.packages.common.langbridge_common.db.job import (
     JobEventRecord,
     JobEventVisibility as JobEventRecordVisibility,
+    JobStatus,
 )
 from langbridge.packages.common.langbridge_common.interfaces.agent_events import (
     AgentEventVisibility,
@@ -152,6 +153,11 @@ class JobEventConsumer:
                     for _, payload in valid_messages
                 ]
                 session.add_all(events)
+                for _, payload in valid_messages:
+                    job_record = await repository.get_by_id(payload.job_id)
+                    if job_record is None:
+                        continue
+                    _apply_event_to_job(job_record=job_record, payload=payload)
                 await session.commit()
                 acked.extend(message for message, _ in valid_messages)
         except Exception as exc:  # pragma: no cover - defensive guard for background loop
@@ -176,3 +182,43 @@ class JobEventConsumer:
             *(self._broker_client.nack(message, error=error) for message, error in messages),
             return_exceptions=True,
         )
+
+
+def _apply_event_to_job(*, job_record, payload: JobEventMessage) -> None:
+    event_name = payload.event_type.lower()
+    job_record.status_message = payload.message
+
+    if event_name.endswith("started"):
+        job_record.status = JobStatus.running
+        job_record.progress = max(job_record.progress, 5)
+        if job_record.started_at is None:
+            from datetime import datetime, timezone
+            job_record.started_at = datetime.now(timezone.utc)
+        return
+
+    if event_name.endswith("compiling") or event_name.endswith("loadingmodel"):
+        job_record.status = JobStatus.running
+        job_record.progress = max(job_record.progress, 45)
+        return
+
+    if event_name.endswith("executing"):
+        job_record.status = JobStatus.running
+        job_record.progress = max(job_record.progress, 70)
+        return
+
+    if event_name.endswith("completed"):
+        job_record.status = JobStatus.succeeded
+        job_record.progress = 100
+        details = payload.details if isinstance(payload.details, dict) else {}
+        result_payload = details.get("result")
+        if isinstance(result_payload, dict):
+            job_record.result = result_payload
+        from datetime import datetime, timezone
+        job_record.finished_at = datetime.now(timezone.utc)
+        return
+
+    if event_name.endswith("failed"):
+        job_record.status = JobStatus.failed
+        job_record.error = {"message": payload.details.get("error") or payload.message}
+        from datetime import datetime, timezone
+        job_record.finished_at = datetime.now(timezone.utc)

@@ -29,6 +29,10 @@ from langbridge.packages.common.langbridge_common.repositories.conversation_memo
     ConversationMemoryRepository,
 )
 from langbridge.packages.common.langbridge_common.repositories.dashboard_repository import DashboardRepository
+from langbridge.packages.common.langbridge_common.repositories.edge_task_repository import (
+    EdgeResultReceiptRepository,
+    EdgeTaskRepository,
+)
 from langbridge.packages.common.langbridge_common.repositories.environment_repository import OrganizationEnvironmentSettingRepository
 from langbridge.packages.common.langbridge_common.repositories.job_repository import JobRepository
 from langbridge.packages.common.langbridge_common.repositories.llm_connection_repository import LLMConnectionRepository
@@ -43,6 +47,10 @@ from langbridge.packages.common.langbridge_common.repositories.semantic_search_r
 from langbridge.packages.common.langbridge_common.repositories.thread_message_repository import ThreadMessageRepository
 from langbridge.packages.common.langbridge_common.repositories.thread_repository import ThreadRepository
 from langbridge.packages.common.langbridge_common.repositories.tool_call_repository import ToolCallRepository
+from langbridge.packages.common.langbridge_common.repositories.runtime_repository import (
+    RuntimeInstanceRepository,
+    RuntimeRegistrationTokenRepository,
+)
 from langbridge.packages.common.langbridge_common.repositories.user_repository import OAuthAccountRepository, UserRepository
 from langbridge.packages.common.langbridge_common.repositories.message_repository import MessageRepository
 from langbridge.packages.semantic.langbridge_semantic.semantic_model_builder import SemanticModelBuilder
@@ -54,17 +62,30 @@ from langbridge.apps.api.langbridge_api.services.connector_service import Connec
 from langbridge.apps.api.langbridge_api.services.dashboard_service import DashboardService
 from langbridge.apps.api.langbridge_api.services.environment_service import EnvironmentService
 from langbridge.apps.api.langbridge_api.services.internal_api_client import InternalApiClient
+from langbridge.apps.api.langbridge_api.services.execution_routing_service import (
+    ExecutionRoutingService,
+)
+from langbridge.apps.api.langbridge_api.services.edge_task_gateway_service import (
+    EdgeTaskGatewayService,
+)
 from langbridge.apps.api.langbridge_api.services.organization_service import OrganizationService
 from langbridge.apps.api.langbridge_api.services.orchestrator_service import OrchestratorService
 from langbridge.apps.api.langbridge_api.services.message.message_serivce import MessageService
 from langbridge.apps.api.langbridge_api.services.message.job_event_consumer import (
     JobEventConsumer,
 )
+from langbridge.apps.api.langbridge_api.services.runtime_auth_service import RuntimeAuthService
+from langbridge.apps.api.langbridge_api.services.runtime_registry_service import (
+    RuntimeRegistryService,
+)
 from langbridge.apps.api.langbridge_api.services.request_context_provider import RequestContextProvider
 from langbridge.apps.api.langbridge_api.services.semantic import (
     SemanticModelService,
     SemanticQueryService,
     SemanticSearchService,
+)
+from langbridge.apps.api.langbridge_api.services.task_dispatch_service import (
+    TaskDispatchService,
 )
 from langbridge.apps.api.langbridge_api.services.thread_service import ThreadService
 from langbridge.apps.api.langbridge_api.services.storage import create_dashboard_snapshot_storage
@@ -141,6 +162,16 @@ class Container(containers.DeclarativeContainer):
     message_repository = providers.Factory(MessageRepository, session=async_session)
     job_repository = providers.Factory(JobRepository, session=async_session)
     user_pat_repository = providers.Factory(UserPATRepository, session=async_session)
+    runtime_repository = providers.Factory(RuntimeInstanceRepository, session=async_session)
+    runtime_registration_token_repository = providers.Factory(
+        RuntimeRegistrationTokenRepository,
+        session=async_session,
+    )
+    edge_task_repository = providers.Factory(EdgeTaskRepository, session=async_session)
+    edge_result_receipt_repository = providers.Factory(
+        EdgeResultReceiptRepository,
+        session=async_session,
+    )
     message_broker = providers.Singleton(RedisBroker)
     api_message_broker = providers.Singleton(
         RedisBroker,
@@ -206,10 +237,36 @@ class Container(containers.DeclarativeContainer):
         SemanticSearchService,
         vector_store_entry_repository=semantic_vector_store_repository,
     )
+
+    runtime_auth_service = providers.Singleton(RuntimeAuthService)
+    runtime_registry_service = providers.Factory(
+        RuntimeRegistryService,
+        runtime_repository=runtime_repository,
+        runtime_registration_token_repository=runtime_registration_token_repository,
+        runtime_auth_service=runtime_auth_service,
+    )
+    edge_task_gateway_service = providers.Factory(
+        EdgeTaskGatewayService,
+        edge_task_repository=edge_task_repository,
+        edge_result_receipt_repository=edge_result_receipt_repository,
+    )
+    execution_routing_service = providers.Factory(
+        ExecutionRoutingService,
+        environment_service=environment_service,
+    )
     
     message_service = providers.Factory(
         MessageService,
         message_repository=message_repository,
+        request_context_provider=request_context_provider,
+    )
+
+    task_dispatch_service = providers.Factory(
+        TaskDispatchService,
+        execution_routing_service=execution_routing_service,
+        message_service=message_service,
+        runtime_registry_service=runtime_registry_service,
+        edge_task_gateway_service=edge_task_gateway_service,
         request_context_provider=request_context_provider,
     )
 
@@ -246,19 +303,21 @@ class Container(containers.DeclarativeContainer):
         AgentJobRequestService,
         job_repository=job_repository,
         agent_repository=agent_definition_repository,
-        message_service=message_service
+        task_dispatch_service=task_dispatch_service,
     )
     semantic_query_job_request_service = providers.Factory(
         SemanticQueryJobRequestService,
         job_repository=job_repository,
-        message_service=message_service,
+        task_dispatch_service=task_dispatch_service,
+        semantic_model_repository=semantic_model_repository,
+        connector_repository=connector_repository,
     )
     copilot_dashboard_job_request_service = providers.Factory(
         CopilotDashboardJobRequestService,
         job_repository=job_repository,
         agent_definition_repository=agent_definition_repository,
         semantic_model_repository=semantic_model_repository,
-        message_service=message_service,
+        task_dispatch_service=task_dispatch_service,
     )
     job_service = providers.Factory(
         JobService,

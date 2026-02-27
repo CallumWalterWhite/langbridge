@@ -34,6 +34,13 @@ PATHS_TO_EXCLUDE = [
     "/metrics",
     "/docs",
     "/openapi.json",
+    "/api/v1/runtimes/register",
+    "/api/v1/runtimes/heartbeat",
+    "/api/v1/runtimes/capabilities",
+    "/api/v1/edge/tasks/pull",
+    "/api/v1/edge/tasks/ack",
+    "/api/v1/edge/tasks/result",
+    "/api/v1/edge/tasks/fail",
 ]
 
 INTERNAL_SERVICE_HEADER = "x-langbridge-service-token"

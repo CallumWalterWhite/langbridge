@@ -29,3 +29,21 @@ export interface OrganizationEnvironmentSetting {
   settingKey: string;
   settingValue: string;
 }
+
+export interface RuntimeRegistrationToken {
+  registrationToken: string;
+  expiresAt: string;
+}
+
+export interface RuntimeInstance {
+  epId: string;
+  tenantId: string;
+  displayName: string | null;
+  status: string;
+  tags: string[];
+  capabilities: Record<string, unknown>;
+  metadata: Record<string, unknown>;
+  registeredAt: string;
+  lastSeenAt: string | null;
+  updatedAt: string | null;
+}

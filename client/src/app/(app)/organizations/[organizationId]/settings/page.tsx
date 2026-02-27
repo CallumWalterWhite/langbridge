@@ -13,14 +13,17 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Textarea } from '@/components/ui/textarea';
 import { ApiError } from '@/orchestration/http';
 import {
+  createRuntimeRegistrationToken,
   createProject,
   deleteOrganizationEnvironmentSetting,
   fetchOrganizationEnvironmentKeys,
   fetchOrganizationEnvironmentSettings,
+  fetchRuntimeInstances,
   inviteToOrganization,
   inviteToProject,
   setOrganizationEnvironmentSetting,
   type OrganizationEnvironmentSetting,
+  type RuntimeInstance,
 } from '@/orchestration/organizations';
 import { useWorkspaceScope } from '@/context/workspaceScope';
 
@@ -31,6 +34,8 @@ type OrganizationSettingsPageProps = {
 const environmentKeysQueryKey = ['organization-env-keys'] as const;
 const environmentSettingsQueryKey = (organizationId: string | null | undefined) =>
   ['organization-env-settings', organizationId] as const;
+const runtimeInstancesQueryKey = (organizationId: string | null | undefined) =>
+  ['organization-runtime-instances', organizationId] as const;
 
 const ENVIRONMENT_SETTING_META: Record<
   string,
@@ -79,6 +84,27 @@ function formatSettingLabel(settingKey: string): string {
     .join(' ');
 }
 
+function formatTimestamp(value: string | null | undefined): string {
+  if (!value) {
+    return 'N/A';
+  }
+  const asDate = new Date(value);
+  if (Number.isNaN(asDate.getTime())) {
+    return value;
+  }
+  return asDate.toLocaleString();
+}
+
+function runtimeStatusVariant(status: string): 'success' | 'warning' | 'secondary' {
+  if (status === 'active') {
+    return 'success';
+  }
+  if (status === 'draining') {
+    return 'warning';
+  }
+  return 'secondary';
+}
+
 export default function OrganizationSettingsPage({ params }: OrganizationSettingsPageProps): JSX.Element {
   const { organizations, loading, refreshOrganizations: reloadOrganizations } = useWorkspaceScope();
   const queryClient = useQueryClient();
@@ -116,8 +142,19 @@ export default function OrganizationSettingsPage({ params }: OrganizationSetting
     refetchOnWindowFocus: false,
   });
 
+  const runtimeInstancesQuery = useQuery<RuntimeInstance[]>({
+    queryKey: runtimeInstancesQueryKey(params.organizationId),
+    queryFn: () => fetchRuntimeInstances(params.organizationId),
+    enabled: Boolean(params.organizationId),
+    refetchOnWindowFocus: false,
+  });
+
   const [environmentDraft, setEnvironmentDraft] = useState<Record<string, string>>({});
   const [environmentDraftOrgId, setEnvironmentDraftOrgId] = useState<string>('');
+  const [latestRuntimeToken, setLatestRuntimeToken] = useState<{
+    token: string;
+    expiresAt: string;
+  } | null>(null);
   const [pendingEnvironmentActions, setPendingEnvironmentActions] = useState<
     Record<string, 'save' | 'clear'>
   >({});
@@ -184,6 +221,10 @@ export default function OrganizationSettingsPage({ params }: OrganizationSetting
     hydrateEnvironmentDraft,
   ]);
 
+  useEffect(() => {
+    setLatestRuntimeToken(null);
+  }, [params.organizationId]);
+
   const saveEnvironmentSettingMutation = useMutation({
     mutationFn: async ({
       organizationId,
@@ -204,6 +245,11 @@ export default function OrganizationSettingsPage({ params }: OrganizationSetting
       organizationId: string;
       settingKey: string;
     }) => deleteOrganizationEnvironmentSetting(organizationId, settingKey),
+  });
+
+  const createRuntimeTokenMutation = useMutation({
+    mutationFn: async ({ organizationId }: { organizationId: string }) =>
+      createRuntimeRegistrationToken(organizationId),
   });
 
   const setEnvironmentAction = useCallback((settingKey: string, action?: 'save' | 'clear') => {
@@ -341,6 +387,47 @@ export default function OrganizationSettingsPage({ params }: OrganizationSetting
     environmentKeysQuery.isLoading || environmentSettingsQuery.isLoading;
   const environmentRefreshing =
     environmentKeysQuery.isFetching || environmentSettingsQuery.isFetching;
+
+  const runtimeInstancesErrorMessage = useMemo(() => {
+    if (runtimeInstancesQuery.error) {
+      return resolveErrorMessage(runtimeInstancesQuery.error);
+    }
+    return null;
+  }, [runtimeInstancesQuery.error]);
+
+  const runtimeInstancesLoading = runtimeInstancesQuery.isLoading;
+  const runtimeInstancesRefreshing = runtimeInstancesQuery.isFetching;
+
+  const handleRefreshRuntimeInstances = useCallback(async () => {
+    await runtimeInstancesQuery.refetch();
+  }, [runtimeInstancesQuery]);
+
+  const handleCreateRuntimeRegistrationToken = useCallback(async () => {
+    try {
+      const token = await createRuntimeTokenMutation.mutateAsync({
+        organizationId: params.organizationId,
+      });
+      setLatestRuntimeToken({
+        token: token.registrationToken,
+        expiresAt: token.expiresAt,
+      });
+      showFeedback('Runtime registration token created.', 'positive');
+    } catch (error) {
+      showFeedback(resolveErrorMessage(error), 'negative');
+    }
+  }, [createRuntimeTokenMutation, params.organizationId, showFeedback]);
+
+  const handleCopyRuntimeToken = useCallback(async () => {
+    if (!latestRuntimeToken?.token) {
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(latestRuntimeToken.token);
+      showFeedback('Runtime registration token copied to clipboard.', 'positive');
+    } catch {
+      showFeedback('Unable to copy token. Copy it manually.', 'negative');
+    }
+  }, [latestRuntimeToken, showFeedback]);
 
   const handleCreateProject = useCallback(
     async (event: React.FormEvent<HTMLFormElement>) => {
@@ -612,6 +699,157 @@ export default function OrganizationSettingsPage({ params }: OrganizationSetting
                               placeholder={meta?.placeholder}
                               disabled={isPending}
                             />
+                          )}
+                        </div>
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
+            </div>
+          </section>
+
+          <section className="surface-panel rounded-3xl p-6 shadow-soft">
+            <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+              <div className="space-y-2">
+                <h2 className="text-lg font-semibold text-[color:var(--text-primary)]">
+                  Runtime registration token
+                </h2>
+                <p className="text-sm">
+                  Create a one-time token for customer-runtime worker registration.
+                </p>
+              </div>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={handleCreateRuntimeRegistrationToken}
+                isLoading={createRuntimeTokenMutation.isPending}
+              >
+                Generate token
+              </Button>
+            </div>
+
+            {latestRuntimeToken ? (
+              <div className="mt-5 space-y-3 rounded-2xl border border-amber-400/40 bg-amber-500/10 p-4">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <p className="text-sm font-semibold text-[color:var(--text-primary)]">One-time token</p>
+                  <Badge variant="warning">Expires {formatTimestamp(latestRuntimeToken.expiresAt)}</Badge>
+                </div>
+                <Textarea
+                  readOnly
+                  value={latestRuntimeToken.token}
+                  className="min-h-[88px] font-mono text-xs"
+                />
+                <div className="flex justify-end">
+                  <Button variant="secondary" size="sm" onClick={handleCopyRuntimeToken}>
+                    Copy token
+                  </Button>
+                </div>
+                <p className="text-xs text-[color:var(--text-muted)]">
+                  This token is shown once and can only be used for a single runtime registration.
+                </p>
+              </div>
+            ) : (
+              <div className="mt-5 rounded-2xl border border-dashed border-[color:var(--panel-border)] p-4 text-sm text-[color:var(--text-muted)]">
+                Generate a token when you are ready to bootstrap a customer-runtime worker.
+              </div>
+            )}
+          </section>
+
+          <section className="surface-panel rounded-3xl p-6 shadow-soft">
+            <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+              <div className="space-y-2">
+                <h2 className="text-lg font-semibold text-[color:var(--text-primary)]">
+                  Runtime instances
+                </h2>
+                <p className="text-sm">
+                  View registered execution-plane instances for this organization.
+                </p>
+              </div>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={handleRefreshRuntimeInstances}
+                disabled={runtimeInstancesLoading || runtimeInstancesRefreshing}
+              >
+                Refresh
+              </Button>
+            </div>
+
+            <div className="mt-5">
+              {runtimeInstancesLoading ? (
+                <div className="space-y-3">
+                  {Array.from({ length: 2 }).map((_, index) => (
+                    <div
+                      key={index}
+                      className="rounded-2xl border border-[color:var(--panel-border)] bg-[color:var(--panel-alt)] p-4"
+                    >
+                      <Skeleton className="h-4 w-56" />
+                      <Skeleton className="mt-3 h-4 w-full" />
+                      <Skeleton className="mt-2 h-4 w-4/5" />
+                    </div>
+                  ))}
+                </div>
+              ) : runtimeInstancesErrorMessage ? (
+                <div className="flex flex-col items-center justify-center gap-4 rounded-2xl border border-[color:var(--panel-border)] bg-[color:var(--panel-alt)] p-6 text-center text-[color:var(--text-muted)]">
+                  <p className="text-sm">{runtimeInstancesErrorMessage}</p>
+                  <Button onClick={handleRefreshRuntimeInstances} variant="outline" size="sm">
+                    Try again
+                  </Button>
+                </div>
+              ) : (runtimeInstancesQuery.data ?? []).length === 0 ? (
+                <div className="rounded-2xl border border-dashed border-[color:var(--panel-border)] p-6 text-center text-sm text-[color:var(--text-muted)]">
+                  No runtime instances have registered yet.
+                </div>
+              ) : (
+                <ul className="space-y-3">
+                  {(runtimeInstancesQuery.data ?? []).map((runtime) => {
+                    const rawMessageTypes = runtime.capabilities?.['message_types'];
+                    const messageTypes = Array.isArray(rawMessageTypes)
+                      ? (rawMessageTypes as unknown[]).filter(
+                          (value): value is string => typeof value === 'string',
+                        )
+                      : [];
+                    return (
+                      <li
+                        key={runtime.epId}
+                        className="rounded-2xl border border-[color:var(--panel-border)] bg-[color:var(--panel-alt)] p-4"
+                      >
+                        <div className="flex flex-wrap items-start justify-between gap-3">
+                          <div className="space-y-1">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <p className="text-sm font-semibold text-[color:var(--text-primary)]">
+                                {runtime.displayName || `Runtime ${runtime.epId.slice(0, 8)}`}
+                              </p>
+                              <Badge variant={runtimeStatusVariant(runtime.status)}>{runtime.status}</Badge>
+                            </div>
+                            <p className="text-[11px] font-mono text-[color:var(--text-muted)]">{runtime.epId}</p>
+                          </div>
+                          <div className="text-right text-xs text-[color:var(--text-muted)]">
+                            <p>Last seen: {formatTimestamp(runtime.lastSeenAt)}</p>
+                            <p>Registered: {formatTimestamp(runtime.registeredAt)}</p>
+                          </div>
+                        </div>
+                        <div className="mt-3 flex flex-wrap gap-2">
+                          {(runtime.tags ?? []).length > 0 ? (
+                            runtime.tags.map((tag) => (
+                              <Badge key={tag} variant="secondary">
+                                {tag}
+                              </Badge>
+                            ))
+                          ) : (
+                            <span className="text-xs text-[color:var(--text-muted)]">No tags</span>
+                          )}
+                        </div>
+                        <div className="mt-3">
+                          {messageTypes.length > 0 ? (
+                            <p className="text-xs text-[color:var(--text-muted)]">
+                              Message types: {messageTypes.join(', ')}
+                            </p>
+                          ) : (
+                            <p className="text-xs text-[color:var(--text-muted)]">
+                              Message types: not declared
+                            </p>
                           )}
                         </div>
                       </li>

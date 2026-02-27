@@ -42,6 +42,28 @@ This page is a partial overview.
 - `DELETE /bi-dashboard/{organization_id}/{dashboard_id}`
   - Delete a saved dashboard.
 
+## Runtime registry (customer-runtime)
+- `POST /runtimes/register`
+  - Exchange one-time registration token for an EP runtime identity and short-lived access token.
+- `POST /runtimes/heartbeat`
+  - Refresh runtime liveness and rotate access token.
+- `POST /runtimes/capabilities`
+  - Update runtime tags/capabilities for task routing.
+- `POST /runtimes/{organization_id}/tokens`
+  - Provision one-time registration tokens (authenticated org users).
+- `GET /runtimes/{organization_id}/instances`
+  - List runtime instances registered for an organization.
+
+## Edge task gateway
+- `POST /edge/tasks/pull`
+  - Long-poll for leased tasks (at-least-once delivery with visibility timeout).
+- `POST /edge/tasks/ack`
+  - Acknowledge successful task processing.
+- `POST /edge/tasks/result`
+  - Submit worker events/results with idempotency key (`request_id`).
+- `POST /edge/tasks/fail`
+  - Negative-ack a task and trigger retry/backoff/dead-letter behavior.
+
 ## Example: meta
 ```http
 GET /api/v1/semantic-query/00000000-0000-0000-0000-000000000000/meta?organization_id=00000000-0000-0000-0000-000000000000

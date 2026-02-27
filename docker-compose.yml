@@ -38,6 +38,8 @@ services:
       POSTGRES_DB: langbridge
       REDIS_HOST: redis
       REDIS_PORT: 6379
+      EDGE_RUNTIME_JWT_SECRET: ${EDGE_RUNTIME_JWT_SECRET:-dev-edge-runtime-secret}
+      DEFAULT_EXECUTION_MODE: ${DEFAULT_EXECUTION_MODE:-hosted}
       UNIFIED_TRINO_HOST: trino
       UNIFIED_TRINO_PORT: ${UNIFIED_TRINO_PORT:-8080}
       UNIFIED_TRINO_USER: ${UNIFIED_TRINO_USER:-trino}
@@ -93,6 +95,26 @@ services:
         condition: service_started
       migrate:
         condition: service_completed_successfully
+  customer-worker:
+    build:
+      context: .
+      dockerfile: langbridge/Dockerfile.worker
+    profiles:
+      - customer-runtime
+    env_file:
+      - ./langbridge/.env
+    environment:
+      WORKER_EXECUTION_MODE: customer_runtime
+      WORKER_POLL_INTERVAL: 2.0
+      EDGE_API_BASE_URL: http://api:8000/api/v1
+      EDGE_REGISTRATION_TOKEN: ${EDGE_REGISTRATION_TOKEN:-replace-me}
+      WORKER_RUNTIME_TAGS: "semantic_query,region:local"
+      WORKER_RUNTIME_CAPABILITIES: '{"message_types":["semantic_query_request"]}'
+      WORKER_BROKER: redis
+    command: ["python", "-m", "langbridge.apps.worker.langbridge_worker.main"]
+    depends_on:
+      api:
+        condition: service_started
   gateway:
     build:
       context: .

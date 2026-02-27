@@ -4,10 +4,13 @@ import type {
   Project,
   ProjectInvite,
   OrganizationEnvironmentSetting,
+  RuntimeInstance,
+  RuntimeRegistrationToken,
 } from './types';
 import { apiFetch } from '../http';
 
 const BASE_PATH = '/api/v1/organizations';
+const RUNTIMES_BASE_PATH = '/api/v1/runtimes';
 
 export async function fetchOrganizations(): Promise<Organization[]> {
   return apiFetch<Organization[]>(BASE_PATH);
@@ -85,6 +88,20 @@ export async function deleteOrganizationEnvironmentSetting(
   });
 }
 
+export async function createRuntimeRegistrationToken(
+  organizationId: string,
+): Promise<RuntimeRegistrationToken> {
+  return apiFetch<RuntimeRegistrationToken>(`${RUNTIMES_BASE_PATH}/${organizationId}/tokens`, {
+    method: 'POST',
+  });
+}
+
+export async function fetchRuntimeInstances(
+  organizationId: string,
+): Promise<RuntimeInstance[]> {
+  return apiFetch<RuntimeInstance[]>(`${RUNTIMES_BASE_PATH}/${organizationId}/instances`);
+}
+
 export type {
   InviteStatus,
   Organization,
@@ -92,4 +109,6 @@ export type {
   OrganizationEnvironmentSetting,
   Project,
   ProjectInvite,
+  RuntimeInstance,
+  RuntimeRegistrationToken,
 } from './types';

@@ -1,7 +1,7 @@
 
 import logging
 import uuid
-from langbridge.apps.api.langbridge_api.services.message.message_serivce import MessageService
+from langbridge.apps.api.langbridge_api.services.task_dispatch_service import TaskDispatchService
 from langbridge.packages.common.langbridge_common.contracts.jobs.agent_job import CreateAgentJobRequest
 from langbridge.packages.common.langbridge_common.errors.application_errors import BusinessValidationError
 from langbridge.packages.common.langbridge_common.repositories.job_repository import JobRepository
@@ -20,10 +20,10 @@ class AgentJobRequestService:
     def __init__(self, 
                     job_repository: JobRepository,
                     agent_repository: AgentRepository,
-                    message_service: MessageService):
+                    task_dispatch_service: TaskDispatchService):
         self._job_repository = job_repository
         self._agent_repository = agent_repository
-        self._message_service = message_service
+        self._task_dispatch_service = task_dispatch_service
         self._logger = logging.getLogger(__name__)
         
     async def create_agent_job_request(
@@ -68,8 +68,10 @@ class AgentJobRequestService:
             job_type=JobType.AGENT,
         )
         
-        await self._message_service.create_outbox_message(
-            payload=agent_job_message
+        await self._task_dispatch_service.dispatch_job_message(
+            tenant_id=request.organisation_id,
+            payload=agent_job_message,
+            required_tags=["agent"],
         )
         
         return job_record

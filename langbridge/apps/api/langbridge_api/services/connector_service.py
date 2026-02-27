@@ -1,6 +1,7 @@
 import json
 import logging
 import uuid
+from copy import deepcopy
 from typing import Any, Dict, Optional, Type
 
 from langbridge.packages.connectors.langbridge_connectors.api import (
@@ -116,12 +117,18 @@ class ConnectorService:
         if not getattr(create_request, "config", None):
             raise BusinessValidationError("Connector config must be provided")
 
-        config_json = json.dumps(create_request.config)
+        config_payload = deepcopy(create_request.config or {})
+        if isinstance(config_payload.get("config"), dict):
+            for secret_name in create_request.secret_references.keys():
+                config_payload["config"].pop(secret_name, None)
+        config_json = json.dumps(config_payload)
 
-        try:
-            await self._validate_connector_config(connector_type, create_request.config)
-        except Exception as exc:
-            raise BusinessValidationError(str(exc)) from exc
+        # Hosted mode can still validate live credentials. Runtime secret-ref mode cannot.
+        if not create_request.secret_references:
+            try:
+                await self._validate_connector_config(connector_type, create_request.config)
+            except Exception as exc:
+                raise BusinessValidationError(str(exc)) from exc
 
         connector = DatabaseConnector(
             id=uuid.uuid4(),
@@ -130,6 +137,22 @@ class ConnectorService:
             connector_type=connector_type.value,
             config_json=config_json,
             description=create_request.description,
+            connection_metadata_json=(
+                create_request.connection_metadata.model_dump(mode="json")
+                if create_request.connection_metadata
+                else None
+            ),
+            secret_references_json={
+                key: value.model_dump(mode="json")
+                for key, value in create_request.secret_references.items()
+            }
+            if create_request.secret_references
+            else None,
+            access_policy_json=(
+                create_request.connection_policy.model_dump(mode="json")
+                if create_request.connection_policy
+                else None
+            ),
         )
 
         self._connector_repository.add(connector)
@@ -188,18 +211,27 @@ class ConnectorService:
         connector_entity = await self._connector_repository.get_by_id(connector_id)
         if not connector_entity:
             raise BusinessValidationError("Connector not found")
-        for field in [
-            "name",
-            "description",
-            "version",
-            "label",
-            "icon",
-            "connector_type",
-            "config",
-        ]:
-            value = getattr(update_request, field, None)
-            if value is not None:
-                setattr(connector_entity, field, value)
+        if update_request.name is not None:
+            connector_entity.name = update_request.name
+        if update_request.description is not None:
+            connector_entity.description = update_request.description
+        if update_request.connector_type is not None:
+            connector_entity.connector_type = update_request.connector_type
+        if update_request.config is not None:
+            connector_entity.config_json = json.dumps(update_request.config)
+        if update_request.connection_metadata is not None:
+            connector_entity.connection_metadata_json = update_request.connection_metadata.model_dump(
+                mode="json"
+            )
+        if update_request.secret_references is not None:
+            connector_entity.secret_references_json = {
+                key: value.model_dump(mode="json")
+                for key, value in update_request.secret_references.items()
+            }
+        if update_request.connection_policy is not None:
+            connector_entity.access_policy_json = update_request.connection_policy.model_dump(
+                mode="json"
+            )
         return ConnectorResponse.from_connector(connector_entity)
 
     async def delete_connector(self, connector_id: uuid.UUID) -> None:

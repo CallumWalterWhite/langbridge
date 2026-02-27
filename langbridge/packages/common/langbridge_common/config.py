@@ -85,6 +85,7 @@ class Settings(BaseSettings):
     REDIS_WORKER_CONSUMER_GROUP: str = "langbridge-worker"
     REDIS_API_STREAM: str = "langbridge:api_stream"
     REDIS_API_CONSUMER_GROUP: str = "langbridge-api"
+    EDGE_REDIS_PREFIX: str = "langbridge:edge"
     
     AGENT_MEMORY_EXCHANGE_SIZE: int = 100
     
@@ -117,6 +118,10 @@ class Settings(BaseSettings):
     JWT_SECRET: str
     JWT_ALG: str = "HS256"
     JWT_EXPIRES_MIN: int = 60 * 24 * 30 # 30 days
+    EDGE_RUNTIME_JWT_SECRET: str = ""
+    EDGE_RUNTIME_TOKEN_TTL_SECONDS: int = 900
+    EDGE_RUNTIME_REGISTRATION_TOKEN_TTL_MINUTES: int = 60
+    DEFAULT_EXECUTION_MODE: Literal["hosted", "customer_runtime"] = "hosted"
     COOKIE_NAME: str = "langbridge_token"
     COOKIE_SECURE: bool = False  # set True in production with HTTPS
 

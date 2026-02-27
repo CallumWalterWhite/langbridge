@@ -1,4 +1,5 @@
 import uuid
+from typing import Any
 
 from langbridge.packages.common.langbridge_common.contracts.jobs.type import JobType
 
@@ -11,3 +12,6 @@ class SemanticQueryRequestMessage(BaseMessagePayload):
 
     job_id: uuid.UUID
     job_type: JobType
+    job_request: dict[str, Any] | None = None
+    semantic_model_yaml: str | None = None
+    connector: dict[str, Any] | None = None

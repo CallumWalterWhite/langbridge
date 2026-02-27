@@ -6,7 +6,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from ..contracts.connectors import ConnectorDTO
+from ..contracts.connectors import ConnectionMetadata, ConnectionPolicy, ConnectorDTO, SecretReference
 from ..db.connector import Connector
 from ..interfaces.connectors import IConnectorStore
 from .base import AsyncBaseRepository
@@ -88,6 +88,23 @@ class ConnectorStore(IConnectorStore):
             organization_id=org_id,
             project_id=project_id,
             config=config,
+            connection_metadata=(
+                ConnectionMetadata.model_validate(connector.connection_metadata_json)
+                if isinstance(getattr(connector, "connection_metadata_json", None), dict)
+                else None
+            ),
+            secret_references={
+                key: SecretReference.model_validate(value)
+                for key, value in (getattr(connector, "secret_references_json", None) or {}).items()
+                if isinstance(value, dict)
+            }
+            if isinstance(getattr(connector, "secret_references_json", None), dict)
+            else {},
+            connection_policy=(
+                ConnectionPolicy.model_validate(connector.access_policy_json)
+                if isinstance(getattr(connector, "access_policy_json", None), dict)
+                else None
+            ),
         )
 
     async def get_by_name(self, name: str) -> ConnectorDTO | None:

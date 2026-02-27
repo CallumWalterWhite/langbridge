@@ -24,6 +24,7 @@ from langbridge.packages.common.langbridge_common.db import semantic as _semanti
 from langbridge.packages.common.langbridge_common.db import threads as _threads  # noqa: F401
 from langbridge.packages.common.langbridge_common.db import job as _job  # noqa: F401
 from langbridge.packages.common.langbridge_common.db import messages as _messages  # noqa: F401
+from langbridge.packages.common.langbridge_common.db import runtime as _runtime  # noqa: F401
 
 
 config = context.config

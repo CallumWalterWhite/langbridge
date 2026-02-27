@@ -4,6 +4,7 @@ import logging
 import os
 from typing import Sequence
 
+from dependency_injector import providers
 from redis.exceptions import RedisError
 
 from langbridge.packages.common.langbridge_common.db.session_context import reset_session, set_session
@@ -11,6 +12,7 @@ from langbridge.packages.messaging.langbridge_messaging.contracts.messages impor
     MessageEnvelope,
 )
 from langbridge.packages.common.langbridge_common.monitoring import start_metrics_server
+from .broker.customer_runtime import CustomerRuntimeBroker
 from .handlers import WorkerMessageDispatcher
 from .ioc import create_container, DependencyResolver
 
@@ -34,6 +36,8 @@ async def run_worker(poll_interval: float = 2.0) -> None:
 
     run_once = os.environ.get("WORKER_RUN_ONCE", "false").lower() in {"1", "true", "yes"}
     broker_mode = os.environ.get("WORKER_BROKER", "redis").lower()
+    execution_mode = os.environ.get("WORKER_EXECUTION_MODE", "hosted").strip().lower()
+    use_database_session = execution_mode not in {"customer_runtime", "customer-runtime", "edge"}
 
     container = create_container()
     container.wire(packages=["langbridge.apps.worker.langbridge_worker"])
@@ -43,8 +47,14 @@ async def run_worker(poll_interval: float = 2.0) -> None:
     if broker_mode in {"none", "noop", "disabled"}:
         broker = _NoopBroker()
         logger.info("Worker broker disabled; running in noop mode")
+    elif execution_mode in {"customer_runtime", "customer-runtime", "edge"}:
+        broker = CustomerRuntimeBroker()
+        logger.info("Worker running in customer-runtime mode via edge gateway transport")
     else:
         broker = container.message_broker()
+    message_broker_provider: providers.Provider | None = getattr(container, "message_broker", None)
+    if hasattr(message_broker_provider, "override"):
+        message_broker_provider.override(providers.Object(broker))
 
     in_flight_tasks: set[asyncio.Task[None]] = set()
     idle_logged = False
@@ -62,6 +72,12 @@ async def run_worker(poll_interval: float = 2.0) -> None:
                 )
             except RedisError as exc:
                 logger.error("Redis error: %s", exc)
+                if run_once:
+                    return
+                await asyncio.sleep(poll_interval)
+                continue
+            except Exception as exc:
+                logger.error("Worker consume error: %s", exc)
                 if run_once:
                     return
                 await asyncio.sleep(poll_interval)
@@ -85,6 +101,7 @@ async def run_worker(poll_interval: float = 2.0) -> None:
                             broker=broker,
                             logger=logger,
                             processing_semaphore=processing_semaphore,
+                            use_database_session=use_database_session,
                         ) 
                     )
                     in_flight_tasks.add(task)
@@ -106,6 +123,7 @@ async def _process_message(
     broker,
     logger: logging.Logger,
     processing_semaphore: asyncio.Semaphore,
+    use_database_session: bool,
 ) -> None:
     async with processing_semaphore:
         envelope = message.envelope
@@ -115,24 +133,27 @@ async def _process_message(
             envelope.message_type,
         )
         try:
-            session_factory = container.async_session_factory()
-            session = session_factory()
-            token = set_session(session)
-            try:
-                logger.debug("UnitOfWork: starting async DB session")
-                new_messages: Sequence[MessageEnvelope] | None = await worker_dispatcher.handle_message(
-                    envelope
-                )
-                logger.debug("UnitOfWork: committing session")
-                await session.commit()
-            except BaseException as exc:
-                logger.error("UnitOfWork: rolling back due to exception: %s", exc)
-                await session.rollback()
-                raise
-            finally:
-                reset_session(token)
-                await session.close()
-                logger.debug("UnitOfWork: session closed")
+            if use_database_session:
+                session_factory = container.async_session_factory()
+                session = session_factory()
+                token = set_session(session)
+                try:
+                    logger.debug("UnitOfWork: starting async DB session")
+                    new_messages: Sequence[MessageEnvelope] | None = await worker_dispatcher.handle_message(
+                        envelope
+                    )
+                    logger.debug("UnitOfWork: committing session")
+                    await session.commit()
+                except BaseException as exc:
+                    logger.error("UnitOfWork: rolling back due to exception: %s", exc)
+                    await session.rollback()
+                    raise
+                finally:
+                    reset_session(token)
+                    await session.close()
+                    logger.debug("UnitOfWork: session closed")
+            else:
+                new_messages = await worker_dispatcher.handle_message(envelope)
             if new_messages:
                 for new_message in new_messages:
                     await broker.publish(new_message)

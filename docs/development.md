@@ -26,6 +26,23 @@ This doc is aimed at quick onboarding for Codex and contributors.
   - If required backend dependencies are missing, the test is skipped with an actionable message.
 - Frontend lint: `cd client && npm run lint`
 
+## Hybrid runtime (control plane + customer runtime)
+- Set API runtime token settings:
+  - `EDGE_RUNTIME_JWT_SECRET=<strong-random-secret>`
+  - `DEFAULT_EXECUTION_MODE=hosted` (or `customer_runtime` for a tenant when enabled through environment settings)
+- Create a one-time registration token from the API:
+  - `POST /api/v1/runtimes/{organization_id}/tokens`
+- Start local stack with optional customer runtime profile:
+  - `docker compose --profile customer-runtime up --build`
+- In customer environments, use `docker-compose.customer-runtime.yml` and set:
+  - `EDGE_API_BASE_URL` to the control-plane URL
+  - `EDGE_REGISTRATION_TOKEN` to the one-time token
+- Customer runtime transport uses outbound HTTPS long-polling:
+  - `POST /api/v1/edge/tasks/pull`
+  - `POST /api/v1/edge/tasks/ack`
+  - `POST /api/v1/edge/tasks/result`
+  - `POST /api/v1/edge/tasks/fail`
+
 ## Change safety checklist
 - Keep API models and client types aligned.
 - When modifying semantic models, update `semantic/loader.py` and `docs/semantic-model.md`.
