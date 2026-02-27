@@ -263,3 +263,8 @@ faiss_data/
 #.log files with incremental logs
 *.log
 *.log.*
+
+# Experimental workspace
+experimental/
+
+
