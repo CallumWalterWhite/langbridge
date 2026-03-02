@@ -54,4 +54,4 @@ async def test_error_middleware_catches_generic_exception():
     body = json.loads(response.body.decode())
     assert body["error"] == "InternalServerError"
     # Ensure strict message is not leaked
-    assert body["message"] == "An unexpected error occurred."
+    assert body["message"] == "An internal server error occurred."
