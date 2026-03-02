@@ -1,38 +1,19 @@
-# Architecture Overview
+# Architecture
 
-This project is split into a FastAPI backend and a Next.js frontend. The key goal is to build semantic models that power both agent tooling and lightweight BI queries.
+This page is a short index for the current architecture docs.
 
-## Backend (FastAPI)
-- Entry point: `langbridge/main.py`
-- Routers: `langbridge/api/v1/`
-- Services: `langbridge/services/`
-- Models: `langbridge/models/`
-- Semantic system: `langbridge/semantic/`
-- Orchestrator: `langbridge/orchestrator/`
+Langbridge architecture is now defined by:
+- Control Plane (API/UI/orchestrator/policies/runtime registry)
+- Execution Plane (Worker runtime)
+- Built-in Federated Query Engine (planner + executor)
 
-Core flows:
-1) Semantic model creation
-   - `SemanticModelService.create_model` stores canonical YAML and JSON.
-   - Legacy payloads are normalized via `semantic/loader.py`.
-2) Semantic query execution
-   - `SemanticQueryService.query_request` loads canonical model and executes SQL via a connector.
-   - `SemanticQueryEngine.compile` in `semantic/query/engine.py` translates semantic query to SQL and builds annotations.
-3) Orchestrated SQL analyst
-   - `SqlAnalystTool` consumes the canonical `SemanticModel` and generates SQL via the LLM.
+Trino and SQL gateway are legacy/deprecated and are no longer required in the target architecture.
 
-## Frontend (Next.js)
-- App routes: `client/src/app/(app)/...`
-- API helpers: `client/src/orchestration/`
-- Shared UI: `client/src/components/ui/`
+## Read Next
 
-Core screens:
-- Semantic model builder: `client/src/app/(app)/semantic-model/create/page.tsx`
-- Unified semantic model builder: `client/src/app/(app)/semantic-model/unified/page.tsx`
-- BI Studio: `client/src/app/(app)/bi/page.tsx`
-
-## Data flow
-1) User builds or uploads a semantic model.
-2) Backend normalizes to canonical schema and persists YAML.
-3) BI Studio calls `/semantic-query/{id}/meta` to fetch the model.
-4) User builds a query and calls `/semantic-query/{id}/q`.
-5) Results render as tables or charts.
+- `docs/architecture/overview.md`
+- `docs/architecture/control-plane.md`
+- `docs/architecture/execution-plane.md`
+- `docs/architecture/federated-query-engine.md`
+- `docs/architecture/hybrid-deployment.md`
+- `docs/architecture/deprecations.md`

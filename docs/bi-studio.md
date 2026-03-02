@@ -1,23 +1,24 @@
 # BI Studio
 
-BI Studio is the lightweight dashboard builder. It reads semantic models via the meta endpoint and sends queries to the semantic query endpoint.
+BI Studio is a lightweight semantic dashboard surface inside Langbridge.
 
-## Data flow
-1) UI loads `/semantic-query/{id}/meta` to fetch the canonical model.
-2) UI loads saved dashboards from `/bi-dashboard/{organization_id}`.
-3) User configures widgets, per-widget filters, and global filters.
-4) UI submits `/semantic-query/{id}/q` with global filters merged into every widget query.
-5) Results render as tables or charts and dashboards can be saved/updated/deleted.
+It is intentionally not the primary product surface. Langbridge's core product direction is agentic analytics infrastructure (semantic + SQL + federated execution + agents).
 
-## UI entry points
-- Page: `client/src/app/(app)/bi/page.tsx`
-- Main studio: `client/src/app/(app)/bi/[organizationId]/page.tsx`
-- API helpers: `client/src/orchestration/semanticQuery/*`
-- Dashboard API helpers: `client/src/orchestration/dashboards/*`
-- Charts: `recharts` (bar, line, pie)
+## Data Flow
 
-## Adding features
-- New chart type: extend `client/src/app/(app)/bi/_components/BiWidgetTile.tsx`.
-- New query options: update the UI builder and `SemanticQueryPayload` types.
-- New persisted dashboard fields: update `langbridge/packages/common/langbridge_common/contracts/dashboards.py`.
-- New model fields: update `docs/semantic-model.md` and `semantic/loader.py`.
+1. UI loads semantic metadata from `/semantic-query/{id}/meta`.
+2. UI loads/saves dashboards via `/bi-dashboard/*`.
+3. Widget queries are dispatched via semantic query APIs.
+4. Worker runtime executes underlying jobs and returns results.
+
+## UI Entry Points
+
+- `client/src/app/(app)/bi/page.tsx`
+- `client/src/app/(app)/bi/[organizationId]/page.tsx`
+- `client/src/orchestration/semanticQuery/*`
+- `client/src/orchestration/dashboards/*`
+
+## Notes
+
+- BI Studio complements, but does not replace, SQL Workbench and agent workflows.
+- Federated execution capabilities are shared with semantic and SQL workloads.

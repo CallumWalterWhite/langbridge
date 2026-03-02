@@ -1,8 +1,12 @@
 # Semantic Model Guide
 
-The canonical semantic model is defined in `langbridge/semantic/model.py`. All runtime paths must use this schema.
+The canonical semantic model is defined in:
+- `langbridge/packages/semantic/langbridge_semantic/model.py`
 
-## Canonical fields
+All runtime paths should normalize incoming payloads to this schema.
+
+## Canonical Fields
+
 - `version`: string
 - `name`: optional string
 - `connector`: optional string
@@ -13,7 +17,8 @@ The canonical semantic model is defined in `langbridge/semantic/model.py`. All r
 - `relationships`: optional list of `Relationship`
 - `metrics`: optional map of metric key to `Metric`
 
-### Table
+## Table
+
 - `schema`: database schema name
 - `name`: physical table name
 - `description`: optional
@@ -22,74 +27,42 @@ The canonical semantic model is defined in `langbridge/semantic/model.py`. All r
 - `measures`: optional list of `Measure`
 - `filters`: optional map of filter name to `TableFilter`
 
-### Dimension
+## Dimension
+
 - `name`, `type`, `primary_key`
 - `description`, `alias`, `synonyms`
 - `vectorized`: boolean
 - `vector_reference`: string reference for managed vector stores
 - `vector_index`: metadata payload used by semantic search
 
-### Measure
+## Measure
+
 - `name`, `type`
 - `aggregation`: optional
 - `description`, `synonyms`
 
-### Relationship
+## Relationship
+
 - `name`
 - `from_`: table key
 - `to`: table key
 - `type`: one_to_many, many_to_one, one_to_one, many_to_many, inner, left, right, full
 - `join_on`: join condition string
 
-### Metric
+## Metric
+
 - `expression`: SQL expression referencing table keys
 - `description`: optional
 
-## Legacy payload support
-`semantic/loader.py` accepts:
-- Legacy entities-first payloads (`entities`, `joins`, `dimensions`).
-- Unified payloads (`semantic_models` list).
+## Legacy Payload Support
 
-Both are normalized into the canonical table-based model.
+Loader:
+- `langbridge/packages/semantic/langbridge_semantic/loader.py`
 
-## Example YAML
-```yaml
-version: "1.0"
-name: sales_semantic
-connector: warehouse
-tables:
-  sales:
-    schema: public
-    name: sales
-    dimensions:
-      - name: order_id
-        type: string
-        primary_key: true
-      - name: customer_id
-        type: string
-    measures:
-      - name: revenue
-        type: decimal
-        aggregation: sum
-  customers:
-    schema: public
-    name: customers
-    dimensions:
-      - name: id
-        type: string
-        primary_key: true
-relationships:
-  - name: sales_to_customers
-    from_: sales
-    to: customers
-    type: many_to_one
-    join_on: sales.customer_id = customers.id
-metrics:
-  revenue_per_order:
-    expression: sales.revenue / sales.order_id
-```
+Supported input styles include legacy and unified payload shapes, both normalized into canonical model.
 
-## Rules for changes
-- Do not create a second Pydantic semantic model.
-- Parse all inputs through `semantic/loader.py`.
-- Update this doc if fields or semantics change.
+## Change Rules
+
+- Do not create parallel semantic schemas.
+- Parse all semantic payloads through the loader.
+- Update this document when semantic contract fields or meaning change.
