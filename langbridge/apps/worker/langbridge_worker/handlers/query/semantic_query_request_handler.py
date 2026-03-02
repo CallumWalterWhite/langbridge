@@ -144,7 +144,7 @@ class SemanticQueryRequestHandler(BaseMessageHandler):
 
         try:
             request = self._parse_job_payload(job_record)
-            semantic_response = await self._run_query(job_record, request, event_emitter)
+            semantic_response: UnifiedSemanticQueryResponse | SemanticQueryResponse = await self._run_query(job_record, request, event_emitter)
 
             row_count = len(semantic_response.data)
             job_record.result = {
@@ -338,92 +338,31 @@ class SemanticQueryRequestHandler(BaseMessageHandler):
         )
 
         semantic_query = self._load_query_payload(request.query)
-
+        
         if request.query_scope == "unified":
-            if not request.semantic_model_ids:
-                raise BusinessValidationError(
-                    "semantic_model_ids must include at least one model id for unified query scope."
-                )
-
-            semantic_model, table_connector_map = await self._build_unified_model_and_map(
-                organization_id=request.organisation_id,
-                semantic_model_ids=request.semantic_model_ids,
-                joins=request.joins,
-                metrics=request.metrics,
+            return await self._run_federated_query(
+                semantic_query=semantic_query,
+                job_record=job_record,
+                request=request,
+                event_emitter=event_emitter,
             )
-            if self._federated_query_tool is None:
-                raise BusinessValidationError("Federated query tool is not configured on this worker.")
-            execution_model = apply_tenant_aware_context(
-                semantic_model,
-                context=TenantAwareQueryContext(
-                    organization_id=request.organisation_id,
-                    execution_connector_id=self._build_unified_execution_connector_id(
-                        organization_id=request.organisation_id
-                    ),
-                ),
-                table_connector_map=table_connector_map,
+        else:            
+            return await self._run_semantic_query(
+                semantic_query=semantic_query,
+                job_record=job_record,
+                request=request,
+                event_emitter=event_emitter,
             )
 
-            job_record.progress = 45
-            job_record.status_message = "Compiling semantic query."
-            await event_emitter.emit(
-                event_type="SemanticQueryCompiling",
-                message="Compiling semantic query.",
-                visibility=AgentEventVisibility.public,
-                source="worker",
-            )
+        
 
-            try:
-                plan = self._engine.compile(
-                    semantic_query,
-                    execution_model,
-                    dialect="tsql",
-                )
-            except Exception as exc:
-                raise BusinessValidationError(f"Semantic query translation failed: {exc}") from exc
-
-            workflow_payload = self._build_federation_workflow_payload(
-                organization_id=request.organisation_id,
-                semantic_model=execution_model,
-                source_semantic_model=semantic_model,
-                table_connector_map=table_connector_map,
-            )
-            tool_payload = {
-                "workspace_id": str(request.organisation_id),
-                "query": semantic_query.model_dump(by_alias=True, exclude_none=True),
-                "dialect": "tsql",
-                "workflow": workflow_payload,
-                "semantic_model": execution_model.model_dump(by_alias=True, exclude_none=True),
-            }
-
-            job_record.progress = 70
-            job_record.status_message = "Executing federated semantic query."
-            await event_emitter.emit(
-                event_type="SemanticQueryExecuting",
-                message="Executing semantic query SQL.",
-                visibility=AgentEventVisibility.public,
-                source="worker",
-                details={"sql": plan.sql, "query_scope": request.query_scope},
-            )
-
-            execution = await self._federated_query_tool.execute_federated_query(tool_payload)
-            data_payload = execution.get("rows", [])
-            if not isinstance(data_payload, list):
-                raise BusinessValidationError("Federated query execution returned an invalid row payload.")
-
-            return UnifiedSemanticQueryResponse(
-                id=uuid.uuid4(),
-                organization_id=request.organisation_id,
-                project_id=request.project_id,
-                connector_id=self._build_unified_execution_connector_id(
-                    organization_id=request.organisation_id
-                ),
-                semantic_model_ids=request.semantic_model_ids or [],
-                data=data_payload,
-                annotations=plan.annotations,
-                metadata=plan.metadata,
-            )
-
+    async def _run_semantic_query(
+        self,
+        semantic_query: SemanticQuery,
+        job_record: JobRecord,
+        request: CreateSemanticQueryJobRequest,
+        event_emitter: BrokerJobEventEmitter,
+    ) -> SemanticQueryResponse:
         if request.semantic_model_id is None:
             raise BusinessValidationError(
                 "semantic_model_id is required for semantic_model query scope."
@@ -506,6 +445,97 @@ class SemanticQueryRequestHandler(BaseMessageHandler):
             metadata=plan.metadata,
         )
 
+    async def _run_federated_query(
+        self,
+        semantic_query: SemanticQuery,
+        job_record: JobRecord,
+        request: CreateSemanticQueryJobRequest,
+        event_emitter: BrokerJobEventEmitter,
+    ) -> UnifiedSemanticQueryResponse:
+        if not request.semantic_model_ids:
+                raise BusinessValidationError(
+                    "semantic_model_ids must include at least one model id for unified query scope."
+                )
+
+        semantic_model, table_connector_map = await self._build_unified_model_and_map(
+            organization_id=request.organisation_id,
+            semantic_model_ids=request.semantic_model_ids,
+            joins=request.joins,
+            metrics=request.metrics,
+        )
+        if self._federated_query_tool is None:
+            raise BusinessValidationError("Federated query tool is not configured on this worker.")
+        execution_model = apply_tenant_aware_context(
+            semantic_model,
+            context=TenantAwareQueryContext(
+                organization_id=request.organisation_id,
+                execution_connector_id=self._build_unified_execution_connector_id(
+                    organization_id=request.organisation_id
+                ),
+            ),
+            table_connector_map=table_connector_map,
+        )
+
+        job_record.progress = 45
+        job_record.status_message = "Compiling semantic query."
+        await event_emitter.emit(
+            event_type="SemanticQueryCompiling",
+            message="Compiling semantic query.",
+            visibility=AgentEventVisibility.public,
+            source="worker",
+        )
+
+        try:
+            plan = self._engine.compile(
+                semantic_query,
+                execution_model,
+                dialect="tsql",
+            )
+        except Exception as exc:
+            raise BusinessValidationError(f"Semantic query translation failed: {exc}") from exc
+
+        workflow_payload = self._build_federation_workflow_payload(
+            organization_id=request.organisation_id,
+            semantic_model=execution_model,
+            source_semantic_model=semantic_model,
+            table_connector_map=table_connector_map,
+        )
+        tool_payload = {
+            "workspace_id": str(request.organisation_id),
+            "query": semantic_query.model_dump(by_alias=True, exclude_none=True),
+            "dialect": "tsql",
+            "workflow": workflow_payload,
+            "semantic_model": execution_model.model_dump(by_alias=True, exclude_none=True),
+        }
+
+        job_record.progress = 70
+        job_record.status_message = "Executing federated semantic query."
+        await event_emitter.emit(
+            event_type="SemanticQueryExecuting",
+            message="Executing semantic query SQL.",
+            visibility=AgentEventVisibility.public,
+            source="worker",
+            details={"sql": plan.sql, "query_scope": request.query_scope},
+        )
+
+        execution = await self._federated_query_tool.execute_federated_query(tool_payload)
+        data_payload = execution.get("rows", [])
+        if not isinstance(data_payload, list):
+            raise BusinessValidationError("Federated query execution returned an invalid row payload.")
+
+        return UnifiedSemanticQueryResponse(
+            id=uuid.uuid4(),
+            organization_id=request.organisation_id,
+            project_id=request.project_id,
+            connector_id=self._build_unified_execution_connector_id(
+                organization_id=request.organisation_id
+            ),
+            semantic_model_ids=request.semantic_model_ids or [],
+            data=data_payload,
+            annotations=plan.annotations,
+            metadata=plan.metadata,
+        )
+        
     async def _build_unified_model_and_map(
         self,
         *,
@@ -576,7 +606,8 @@ class SemanticQueryRequestHandler(BaseMessageHandler):
         table_connector_map: Mapping[str, uuid.UUID],
     ) -> dict[str, Any]:
         workspace_id = str(organization_id)
-        dataset_id = f"unified_semantic_{organization_id.hex[:12]}"
+        semantic_model_id = str(uuid.uuid4())
+        dataset_id = f"unified_semantic_{organization_id.hex[:12]}_{semantic_model_id[:12]}"
         tables: dict[str, dict[str, Any]] = {}
         for table_key, table in semantic_model.tables.items():
             source_table = source_semantic_model.tables.get(table_key, table)

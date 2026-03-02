@@ -154,7 +154,7 @@ class Settings(BaseSettings):
     FEDERATION_ARTIFACT_DIR: str = ".cache/federation"
     FEDERATION_BROADCAST_THRESHOLD_BYTES: int = 64 * 1024 * 1024
     FEDERATION_PARTITION_COUNT: int = 8
-    FEDERATION_STAGE_MAX_RETRIES: int = 2
+    FEDERATION_STAGE_MAX_RETRIES: int = 4
     FEDERATION_STAGE_PARALLELISM: int = 4
 
 settings = Settings()  # type: ignore

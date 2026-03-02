@@ -74,14 +74,6 @@ class SqlConnectorRemoteSource(RemoteSource):
         return ".".join(part for part in parts if part)
 
 
-class PostgresRemoteSource(SqlConnectorRemoteSource):
-    pass
-
-
-class SnowflakeRemoteSource(SqlConnectorRemoteSource):
-    pass
-
-
 def estimate_bytes(*, rows: float | None, bytes_per_row: float) -> float | None:
     if rows is None:
         return None

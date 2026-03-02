@@ -9,6 +9,7 @@ from pydantic import BaseModel
 from langbridge.apps.worker.langbridge_worker.secrets import SecretProviderRegistry
 from langbridge.packages.common.langbridge_common.config import settings
 from langbridge.packages.common.langbridge_common.contracts.connectors import ConnectorResponse
+from langbridge.packages.common.langbridge_common.db.connector import APIConnector, DatabaseConnector
 from langbridge.packages.common.langbridge_common.repositories.connector_repository import ConnectorRepository
 from langbridge.packages.connectors.langbridge_connectors.api import (
     ConnectorRuntimeTypeSqlDialectMap,
@@ -17,7 +18,7 @@ from langbridge.packages.connectors.langbridge_connectors.api import (
 )
 from langbridge.packages.connectors.langbridge_connectors.api.config import ConnectorRuntimeType
 from langbridge.packages.connectors.langbridge_connectors.api.connector import SqlConnector, SqlDialetcs
-from langbridge.packages.federation.connectors import PostgresRemoteSource, SnowflakeRemoteSource, SqlConnectorRemoteSource
+from langbridge.packages.federation.connectors import SqlConnectorRemoteSource
 from langbridge.packages.federation.executor import ArtifactStore
 from langbridge.packages.federation.models import FederationWorkflow, SMQQuery
 from langbridge.packages.federation.service import FederatedQueryService
@@ -131,8 +132,10 @@ class FederatedQueryTool:
         for source_id, connector_id in source_to_connector.items():
             connector = await self._connector_repository.get_by_id(connector_id)
             if connector is None:
-                raise ValueError(f"Connector '{connector_id}' not found for source '{source_id}'.")
-
+                raise ValueError(f"Connector '{connector_id}' not found for source '{source_id}'.") 
+            if type(connector) is APIConnector:
+                raise ValueError(f"Connector '{connector_id}' for source '{source_id}' is an API connector, which is not supported for federation sources.")
+            
             connector_response = ConnectorResponse.from_connector(connector)
             resolved_config = self._resolve_connector_config(connector_response)
             runtime_type = ConnectorRuntimeType((connector_response.connector_type or "").upper())
@@ -141,27 +144,12 @@ class FederatedQueryTool:
                 connector_config=resolved_config,
             )
             source_dialect = _DIALECT_MAP.get(sql_connector.DIALECT, "tsql")
-            if runtime_type == ConnectorRuntimeType.POSTGRES:
-                sources[source_id] = PostgresRemoteSource(
-                    source_id=source_id,
-                    connector=sql_connector,
-                    dialect=source_dialect,
-                    logger=self._logger,
-                )
-            elif runtime_type == ConnectorRuntimeType.SNOWFLAKE:
-                sources[source_id] = SnowflakeRemoteSource(
-                    source_id=source_id,
-                    connector=sql_connector,
-                    dialect=source_dialect,
-                    logger=self._logger,
-                )
-            else:
-                sources[source_id] = SqlConnectorRemoteSource(
-                    source_id=source_id,
-                    connector=sql_connector,
-                    dialect=source_dialect,
-                    logger=self._logger,
-                )
+            sources[source_id] = SqlConnectorRemoteSource(
+                source_id=source_id,
+                connector=sql_connector,
+                dialect=source_dialect,
+                logger=self._logger,
+            )
 
         return sources
 
