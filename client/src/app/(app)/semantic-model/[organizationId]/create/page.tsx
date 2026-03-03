@@ -1,6 +1,6 @@
 'use client';
 
-import { useSearchParams } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { JSX, useCallback, useEffect, useMemo, useState } from 'react';
 import yaml from 'js-yaml';
 
@@ -131,6 +131,7 @@ type SemanticModelPageProps = {
 };
 
 export default function SemanticModelPage({ params }: SemanticModelPageProps): JSX.Element {
+  const router = useRouter();
   const {
     selectedOrganizationId,
     selectedProjectId,
@@ -187,7 +188,23 @@ export default function SemanticModelPage({ params }: SemanticModelPageProps): J
   const [submitting, setSubmitting] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const handleCreationModalOpenChange = useCallback(() => undefined, []);
+
+  const closeCreationModal = useCallback(() => {
+    if (organizationId) {
+      router.push(`/semantic-model/${organizationId}`);
+      return;
+    }
+    router.push('/semantic-model');
+  }, [organizationId, router]);
+
+  const handleCreationModalOpenChange = useCallback(
+    (open: boolean) => {
+      if (!open) {
+        closeCreationModal();
+      }
+    },
+    [closeCreationModal],
+  );
 
   const organizationAvailable = Boolean(organizationId);
   const activeModelId = editingModelId || workingModelId || '';
@@ -1083,6 +1100,9 @@ export default function SemanticModelPage({ params }: SemanticModelPageProps): J
             </div>
           </div>
           <DialogFooter>
+            <Button type="button" variant="outline" onClick={closeCreationModal}>
+              Cancel
+            </Button>
             <Button type="button" onClick={() => void handleModalContinue()}>
               Continue
             </Button>
