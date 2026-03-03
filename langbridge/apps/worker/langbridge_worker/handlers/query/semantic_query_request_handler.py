@@ -31,11 +31,16 @@ from langbridge.packages.common.langbridge_common.interfaces.agent_events import
 from langbridge.packages.common.langbridge_common.repositories.connector_repository import (
     ConnectorRepository,
 )
+from langbridge.packages.common.langbridge_common.repositories.dataset_repository import (
+    DatasetColumnRepository,
+    DatasetRepository,
+)
 from langbridge.packages.common.langbridge_common.repositories.job_repository import JobRepository
 from langbridge.packages.common.langbridge_common.repositories.semantic_model_repository import (
     SemanticModelRepository,
 )
 from langbridge.packages.common.langbridge_common.utils.sql import (
+    enforce_read_only_sql,
     normalize_sql_dialect,
     transpile_sql,
 )
@@ -72,6 +77,7 @@ from langbridge.packages.semantic.langbridge_semantic.unified_query import (
     apply_tenant_aware_context,
     build_unified_semantic_model,
 )
+from langbridge.packages.federation.models import FederationWorkflow, VirtualDataset, VirtualTableBinding
 
 
 class SemanticQueryRequestHandler(BaseMessageHandler):
@@ -83,6 +89,8 @@ class SemanticQueryRequestHandler(BaseMessageHandler):
         job_repository: JobRepository | None = None,
         semantic_model_repository: SemanticModelRepository | None = None,
         connector_repository: ConnectorRepository | None = None,
+        dataset_repository: DatasetRepository | None = None,
+        dataset_column_repository: DatasetColumnRepository | None = None,
         secret_provider_registry: SecretProviderRegistry | None = None,
         federated_query_tool: FederatedQueryTool | None = None,
     ) -> None:
@@ -90,6 +98,8 @@ class SemanticQueryRequestHandler(BaseMessageHandler):
         self._job_repository = job_repository
         self._semantic_model_repository = semantic_model_repository
         self._connector_repository = connector_repository
+        self._dataset_repository = dataset_repository
+        self._dataset_column_repository = dataset_column_repository
         self._message_broker = message_broker
         self._secret_provider_registry = secret_provider_registry or SecretProviderRegistry()
         self._federated_query_tool = federated_query_tool
@@ -386,8 +396,22 @@ class SemanticQueryRequestHandler(BaseMessageHandler):
         )
         if semantic_model_record is None:
             raise BusinessValidationError("Semantic model not found.")
+        raw_model_payload = self._parse_semantic_model_payload(semantic_model_record)
         semantic_model = self._load_model_payload(semantic_model_record.content_yaml)
         semantic_model_id = request.semantic_model_id
+
+        if self._has_dataset_table_refs(raw_model_payload):
+            return await self._run_dataset_backed_semantic_query(
+                semantic_query=semantic_query,
+                semantic_model=semantic_model,
+                semantic_model_id=semantic_model_id,
+                organization_id=request.organisation_id,
+                project_id=request.project_id,
+                legacy_connector_id=semantic_model_record.connector_id,
+                raw_model_payload=raw_model_payload,
+                event_emitter=event_emitter,
+            )
+
         connector = await self._connector_repository.get_by_id(semantic_model_record.connector_id)
         if connector is None:
             raise BusinessValidationError("Connector not found for semantic query.")
@@ -465,6 +489,224 @@ class SemanticQueryRequestHandler(BaseMessageHandler):
             metadata=plan.metadata,
         )
 
+    async def _run_dataset_backed_semantic_query(
+        self,
+        *,
+        semantic_query: SemanticQuery,
+        semantic_model: SemanticModel,
+        semantic_model_id: uuid.UUID,
+        organization_id: uuid.UUID,
+        project_id: uuid.UUID | None,
+        legacy_connector_id: uuid.UUID,
+        raw_model_payload: Mapping[str, Any],
+        event_emitter: BrokerJobEventEmitter,
+    ) -> SemanticQueryResponse:
+        if self._dataset_repository is None or self._dataset_column_repository is None:
+            raise BusinessValidationError("Dataset repositories are required for dataset-backed semantic queries.")
+        if self._federated_query_tool is None:
+            raise BusinessValidationError("Federated query tool is required for dataset-backed semantic queries.")
+
+        workflow = await self._build_dataset_workflow_payload_from_semantic(
+            organization_id=organization_id,
+            semantic_model_id=semantic_model_id,
+            semantic_model=semantic_model,
+            raw_model_payload=raw_model_payload,
+            legacy_connector_id=legacy_connector_id,
+        )
+
+        try:
+            plan = self._engine.compile(
+                semantic_query,
+                semantic_model,
+                dialect="tsql",
+            )
+        except Exception as exc:
+            raise BusinessValidationError(f"Semantic query translation failed: {exc}") from exc
+
+        await event_emitter.emit(
+            event_type="SemanticQueryExecuting",
+            message="Executing semantic query via datasets.",
+            visibility=AgentEventVisibility.public,
+            source="worker",
+            details={"sql": plan.sql, "query_scope": "semantic_model_dataset"},
+        )
+        execution = await self._federated_query_tool.execute_federated_query(
+            {
+                "workspace_id": str(organization_id),
+                "query": semantic_query.model_dump(by_alias=True, exclude_none=True),
+                "dialect": "tsql",
+                "workflow": workflow,
+                "semantic_model": semantic_model.model_dump(by_alias=True, exclude_none=True),
+            }
+        )
+        rows_payload = execution.get("rows", [])
+        if not isinstance(rows_payload, list):
+            raise BusinessValidationError("Dataset-backed semantic query returned an invalid row payload.")
+        data_payload = [row for row in rows_payload if isinstance(row, dict)]
+        return SemanticQueryResponse(
+            id=uuid.uuid4(),
+            organization_id=organization_id,
+            project_id=project_id,
+            semantic_model_id=semantic_model_id,
+            data=data_payload,
+            annotations=plan.annotations,
+            metadata=plan.metadata,
+        )
+
+    async def _build_dataset_workflow_payload_from_semantic(
+        self,
+        *,
+        organization_id: uuid.UUID,
+        semantic_model_id: uuid.UUID,
+        semantic_model: SemanticModel,
+        raw_model_payload: Mapping[str, Any],
+        legacy_connector_id: uuid.UUID,
+    ) -> dict[str, Any]:
+        if self._dataset_repository is None:
+            raise BusinessValidationError("Dataset repository is required for dataset-backed semantic queries.")
+
+        tables_payload = raw_model_payload.get("tables")
+        if not isinstance(tables_payload, Mapping):
+            raise BusinessValidationError("Semantic model tables payload is invalid.")
+
+        tables: dict[str, dict[str, Any]] = {}
+        for table_key, table in semantic_model.tables.items():
+            raw_table = tables_payload.get(table_key)
+            table_payload = raw_table if isinstance(raw_table, Mapping) else {}
+            dataset_ref = table_payload.get("dataset_id") or table_payload.get("datasetId")
+            if dataset_ref:
+                dataset_id = self._parse_dataset_id(dataset_ref, table_key=table_key)
+                dataset = await self._dataset_repository.get_for_workspace(
+                    dataset_id=dataset_id,
+                    workspace_id=organization_id,
+                )
+                if dataset is None:
+                    raise BusinessValidationError(
+                        f"Dataset '{dataset_id}' referenced by table '{table_key}' was not found."
+                    )
+                if dataset.connection_id is None:
+                    raise BusinessValidationError(
+                        f"Dataset '{dataset.id}' referenced by table '{table_key}' has no connection binding."
+                    )
+                dataset_type = str(dataset.dataset_type or "").upper()
+                metadata: dict[str, Any]
+                if dataset_type == "TABLE":
+                    metadata = {
+                        "physical_catalog": dataset.catalog_name,
+                        "physical_schema": dataset.schema_name,
+                        "physical_table": dataset.table_name,
+                    }
+                elif dataset_type == "SQL":
+                    sql_text = (dataset.sql_text or "").strip()
+                    if not sql_text:
+                        raise BusinessValidationError(
+                            f"Dataset '{dataset.id}' referenced by table '{table_key}' has empty sql_text."
+                        )
+                    enforce_read_only_sql(
+                        sql_text,
+                        allow_dml=False,
+                        dialect=(dataset.dialect or "tsql"),
+                    )
+                    metadata = {
+                        "physical_sql": sql_text,
+                        "sql_dialect": dataset.dialect or "tsql",
+                    }
+                else:
+                    raise BusinessValidationError(
+                        f"Dataset type '{dataset.dataset_type}' is not executable for semantic queries."
+                    )
+
+                source_connector_id = dataset.connection_id
+            else:
+                metadata = {
+                    "physical_catalog": table.catalog,
+                    "physical_schema": table.schema,
+                    "physical_table": table.name,
+                }
+                source_connector_id = legacy_connector_id
+
+            tables[table_key] = {
+                "table_key": table_key,
+                "source_id": f"source_{source_connector_id.hex[:12]}",
+                "connector_id": str(source_connector_id),
+                "schema": table.schema,
+                "table": table.name,
+                "catalog": table.catalog,
+                "metadata": metadata,
+            }
+
+        relationships = [
+            {
+                "name": relationship.name,
+                "left_table": relationship.from_,
+                "right_table": relationship.to,
+                "join_type": relationship.type,
+                "condition": relationship.join_on,
+            }
+            for relationship in (semantic_model.relationships or [])
+        ]
+        workflow = FederationWorkflow(
+            id=f"workflow_semantic_dataset_{semantic_model_id.hex[:12]}",
+            workspace_id=str(organization_id),
+            dataset=VirtualDataset(
+                id=f"semantic_dataset_{semantic_model_id.hex[:12]}",
+                name=f"semantic_dataset_{semantic_model_id.hex[:12]}",
+                workspace_id=str(organization_id),
+                tables={table_key: VirtualTableBinding.model_validate(binding) for table_key, binding in tables.items()},
+                relationships=[],
+            ),
+            broadcast_threshold_bytes=settings.FEDERATION_BROADCAST_THRESHOLD_BYTES,
+            partition_count=settings.FEDERATION_PARTITION_COUNT,
+            max_stage_retries=settings.FEDERATION_STAGE_MAX_RETRIES,
+            stage_parallelism=settings.FEDERATION_STAGE_PARALLELISM,
+        )
+        payload = workflow.model_dump(mode="json")
+        payload["dataset"]["relationships"] = relationships
+        return payload
+
+    @staticmethod
+    def _parse_semantic_model_payload(semantic_model_record) -> dict[str, Any]:
+        content_json = getattr(semantic_model_record, "content_json", None)
+        if isinstance(content_json, str) and content_json.strip():
+            try:
+                parsed = json.loads(content_json)
+                if isinstance(parsed, dict):
+                    return parsed
+            except json.JSONDecodeError:
+                pass
+        content_yaml = getattr(semantic_model_record, "content_yaml", None)
+        if isinstance(content_yaml, str) and content_yaml.strip():
+            import yaml
+
+            try:
+                parsed_yaml = yaml.safe_load(content_yaml)
+                if isinstance(parsed_yaml, dict):
+                    return parsed_yaml
+            except Exception:
+                return {}
+        return {}
+
+    @staticmethod
+    def _has_dataset_table_refs(payload: Mapping[str, Any]) -> bool:
+        tables = payload.get("tables")
+        if not isinstance(tables, Mapping):
+            return False
+        for table in tables.values():
+            if not isinstance(table, Mapping):
+                continue
+            if table.get("dataset_id") or table.get("datasetId"):
+                return True
+        return False
+
+    @staticmethod
+    def _parse_dataset_id(value: Any, *, table_key: str) -> uuid.UUID:
+        try:
+            return uuid.UUID(str(value))
+        except (TypeError, ValueError) as exc:
+            raise BusinessValidationError(
+                f"Table '{table_key}' has an invalid dataset_id reference."
+            ) from exc
+        
     async def _run_federated_query(
         self,
         semantic_query: SemanticQuery,

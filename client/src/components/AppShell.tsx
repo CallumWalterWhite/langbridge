@@ -6,6 +6,7 @@ import { usePathname, useRouter } from 'next/navigation';
 import {
   LayoutDashboard,
   Database,
+  Table2,
   FileCode2,
   BrainCircuit,
   BarChart3,
@@ -50,6 +51,12 @@ const NAV_ITEMS: NavItem[] = [
     label: 'Data connections',
     description: 'Manage structured connectors and retrievers powering your agents.',
     icon: Database,
+  },
+  {
+    href: '/datasets',
+    label: 'Datasets',
+    description: 'Curate governed virtual datasets between connectors and semantic models.',
+    icon: Table2,
   },
   {
     href: '/sql',
@@ -132,6 +139,7 @@ export function AppShell({ children }: { children: ReactNode }): JSX.Element {
   const navItems = useMemo(() => {
     const agentsBase = selectedOrganizationId ? `/agents/${selectedOrganizationId}` : '/agents';
     const datasourcesBase = selectedOrganizationId ? `/datasources/${selectedOrganizationId}` : '/datasources';
+    const datasetsBase = selectedOrganizationId ? `/datasets/${selectedOrganizationId}` : '/datasets';
     const semanticModelBase = selectedOrganizationId ? `/semantic-model/${selectedOrganizationId}` : '/semantic-model';
     const biBase = selectedOrganizationId ? `/bi/${selectedOrganizationId}` : '/bi';
     const sqlBase = selectedOrganizationId ? `/sql/${selectedOrganizationId}` : '/sql';
@@ -156,6 +164,9 @@ export function AppShell({ children }: { children: ReactNode }): JSX.Element {
       }
       if (item.href === '/datasources') {
         return { ...item, href: datasourcesBase };
+      }
+      if (item.href === '/datasets') {
+        return { ...item, href: datasetsBase };
       }
       if (item.href === '/semantic-model') {
         const children = remapChildren(item.children, semanticModelBase, '/semantic-model');

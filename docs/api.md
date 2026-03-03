@@ -37,6 +37,22 @@ Base: `/sql`
 - `PUT /sql/policies`
 - `POST /sql/assist`
 
+## Dataset APIs
+
+Base: `/datasets`
+
+- `GET /datasets?workspace_id=...&project_id=...&search=...&tags=...&dataset_types=...`
+- `POST /datasets`
+- `GET /datasets/{dataset_id}?workspace_id=...`
+- `PUT /datasets/{dataset_id}`
+- `DELETE /datasets/{dataset_id}?workspace_id=...`
+- `POST /datasets/{dataset_id}/preview`
+- `POST /datasets/{dataset_id}/profile`
+- `GET /datasets/catalog?workspace_id=...&project_id=...`
+- `GET /datasets/{dataset_id}/used-by?workspace_id=...`
+
+Dataset preview/profile execution is dispatched to Worker runtime and executed through the federated query planner path.
+
 ## Semantic Model APIs
 
 - `GET /semantic-model?organization_id=...&project_id=...`

@@ -77,7 +77,18 @@ class ErrorMiddleware(BaseHTTPMiddleware):
             )
         except Exception as e:
             self.logger.error("Unhandled exception", exc_info=True)
-            return JSONResponse(
-                status_code=500,
-                content={"error": "InternalServerError", "message": "An internal server error occurred."}
-            )
+            if settings.IS_LOCAL:
+                import traceback
+                return JSONResponse(
+                    status_code=500,
+                    content={
+                        "error": "InternalServerError",
+                        "message": str(e),
+                        "trace": traceback.format_exc()
+                    }
+                )
+            else:
+                return JSONResponse(
+                    status_code=500,
+                    content={"error": "InternalServerError", "message": "An internal server error occurred."}
+                )

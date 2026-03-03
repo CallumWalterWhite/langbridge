@@ -22,6 +22,7 @@ import { useWorkspaceScope } from '@/context/workspaceScope';
 import { fetchLLMConnections } from '@/orchestration/agents';
 import { fetchConnectors } from '@/orchestration/connectors';
 import type { ConnectorResponse } from '@/orchestration/connectors/types';
+import { fetchDatasetCatalog, type DatasetCatalogItem } from '@/orchestration/datasets';
 import {
   createSemanticModel,
   fetchSemanticModel,
@@ -165,6 +166,7 @@ export default function SemanticModelPage({ params }: SemanticModelPageProps): J
   const [catalog, setCatalog] = useState<SemanticModelCatalogResponse | null>(null);
   const [catalogLoading, setCatalogLoading] = useState(false);
   const [catalogConnectorId, setCatalogConnectorId] = useState<string | null>(null);
+  const [datasetCatalog, setDatasetCatalog] = useState<DatasetCatalogItem[]>([]);
   const [tableTab, setTableTab] = useState<SelectionTab>('all');
   const [columnTab, setColumnTab] = useState<SelectionTab>('all');
   const [columnSearch, setColumnSearch] = useState('');
@@ -306,6 +308,22 @@ export default function SemanticModelPage({ params }: SemanticModelPageProps): J
     }
   }, [organizationId]);
 
+  const loadDatasetCatalog = useCallback(async () => {
+    if (!organizationId) {
+      setDatasetCatalog([]);
+      return;
+    }
+    try {
+      const response = await fetchDatasetCatalog(
+        organizationId,
+        normalizedProjectId || undefined,
+      );
+      setDatasetCatalog(response.items || []);
+    } catch {
+      setDatasetCatalog([]);
+    }
+  }, [normalizedProjectId, organizationId]);
+
   const applyBuilderFromYaml = useCallback(
     (yamlText: string) => {
       const nextBuilder = parseYamlToBuilderModel(yamlText);
@@ -367,7 +385,8 @@ export default function SemanticModelPage({ params }: SemanticModelPageProps): J
     setSelectedConnectorId('');
     void loadConnectors();
     void loadLlmConnections();
-  }, [organizationId, loadConnectors, loadLlmConnections]);
+    void loadDatasetCatalog();
+  }, [organizationId, loadConnectors, loadDatasetCatalog, loadLlmConnections]);
 
   useEffect(() => {
     if (isEditMode) {
@@ -1635,7 +1654,11 @@ export default function SemanticModelPage({ params }: SemanticModelPageProps): J
                                 {table.entityName || `Table ${index + 1}`}
                               </p>
                               <p className="text-xs text-[color:var(--text-muted)]">
-                                {table.schema && table.name ? `${table.schema}.${table.name}` : 'Define schema and table name'}
+                                {table.datasetId
+                                  ? `Dataset reference: ${table.datasetId}`
+                                  : table.schema && table.name
+                                    ? `${table.schema}.${table.name}`
+                                    : 'Define schema and table name'}
                               </p>
                             </div>
                             <Button
@@ -1669,6 +1692,72 @@ export default function SemanticModelPage({ params }: SemanticModelPageProps): J
                                 }
                                 placeholder="Alias used inside YAML"
                               />
+                            </div>
+                            <div className="space-y-1">
+                              <Label htmlFor={`dataset-${table.id}`}>Dataset source (optional)</Label>
+                              <Select
+                                value={table.datasetId ?? ''}
+                                onChange={(event) => {
+                                  const datasetId = event.target.value || null;
+                                  const selectedDataset = datasetCatalog.find((item) => item.id === datasetId);
+                                  setBuilder((current) => ({
+                                    ...current,
+                                    tables: current.tables.map((entry) => {
+                                      if (entry.id !== table.id) {
+                                        return entry;
+                                      }
+                                      if (!selectedDataset) {
+                                        return { ...entry, datasetId: null };
+                                      }
+                                      const inferredMeasures = selectedDataset.columns
+                                        .filter((column) =>
+                                          ['integer', 'decimal', 'float', 'number', 'bigint'].some((token) =>
+                                            (column.dataType || '').toLowerCase().includes(token),
+                                          ),
+                                        )
+                                        .slice(0, 6)
+                                        .map((column) => ({
+                                          id: createId('measure'),
+                                          name: column.name,
+                                          expression: column.name,
+                                          type: normalizeSemanticType(column.dataType || 'number'),
+                                          description: undefined,
+                                          aggregation: 'sum',
+                                        }));
+                                      const inferredDimensions = selectedDataset.columns
+                                        .filter(
+                                          (column) =>
+                                            !inferredMeasures.some((measure) => measure.name === column.name),
+                                        )
+                                        .slice(0, 12)
+                                        .map((column) => ({
+                                          id: createId('dimension'),
+                                          name: column.name,
+                                          expression: column.name,
+                                          type: normalizeSemanticType(column.dataType || 'string'),
+                                          description: undefined,
+                                          primaryKey: false,
+                                          vectorized: false,
+                                        }));
+                                      return {
+                                        ...entry,
+                                        datasetId,
+                                        schema: entry.schema || selectedDataset.name.toLowerCase().replace(/[^a-z0-9_]/g, '_'),
+                                        name: entry.name || selectedDataset.name.toLowerCase().replace(/[^a-z0-9_]/g, '_'),
+                                        dimensions: entry.dimensions.length > 0 ? entry.dimensions : inferredDimensions,
+                                        measures: entry.measures.length > 0 ? entry.measures : inferredMeasures,
+                                      };
+                                    }),
+                                  }));
+                                }}
+                              >
+                                <option value="">Use physical table</option>
+                                {datasetCatalog.map((dataset) => (
+                                  <option key={dataset.id} value={dataset.id}>
+                                    {dataset.name}
+                                  </option>
+                                ))}
+                              </Select>
                             </div>
                             <div className="space-y-1">
                               <Label htmlFor={`schema-${table.id}`}>Schema</Label>
@@ -2532,6 +2621,7 @@ function createEmptyTable(position: number): BuilderTable {
   return {
     id: createId('table'),
     entityName: `entity_${position}`,
+    datasetId: null,
     schema: '',
     name: '',
     description: '',
@@ -2544,6 +2634,7 @@ function createEmptyTable(position: number): BuilderTable {
 
 function tableHasContent(table: BuilderTable): boolean {
   return Boolean(
+    (table.datasetId && table.datasetId.trim()) ||
     table.entityName.trim() ||
       table.schema.trim() ||
       table.name.trim() ||
@@ -2558,8 +2649,15 @@ function validateBuilderModel(builder: BuilderModel): void {
     throw new Error('Add at least one table with dimensions or measures.');
   }
   populatedTables.forEach((table) => {
-    if (!table.entityName.trim() || !table.schema.trim() || !table.name.trim()) {
-      throw new Error('Each table must include an entity name, schema, and table name.');
+    if (!table.entityName.trim()) {
+      throw new Error('Each table must include an entity name.');
+    }
+    const hasDatasetBinding = Boolean(table.datasetId && table.datasetId.trim());
+    if (!table.name.trim()) {
+      throw new Error('Each table must include a table name.');
+    }
+    if (!hasDatasetBinding && !table.schema.trim()) {
+      throw new Error('Each physical table must include a schema.');
     }
     if (table.dimensions.length === 0 && table.measures.length === 0) {
       throw new Error(`Table "${table.entityName}" must include at least one dimension or measure.`);
@@ -2576,12 +2674,16 @@ function buildSemanticModelPayload(builder: BuilderModel, connectorName?: string
   const tables = builder.tables
     .filter(tableHasContent)
     .reduce<Record<string, unknown>>((acc, table) => {
-      if (!table.entityName.trim() || !table.schema.trim() || !table.name.trim()) {
+      const hasDatasetBinding = Boolean(table.datasetId && table.datasetId.trim());
+      const schemaName = table.schema.trim() || (hasDatasetBinding ? 'dataset' : '');
+      const tableName = table.name.trim() || table.entityName.trim();
+      if (!table.entityName.trim() || !tableName || (!hasDatasetBinding && !schemaName)) {
         return acc;
       }
       acc[table.entityName] = {
-        schema: table.schema,
-        name: table.name,
+        dataset_id: hasDatasetBinding ? table.datasetId : undefined,
+        schema: schemaName,
+        name: tableName,
         description: table.description || undefined,
         dimensions:
           table.dimensions.length > 0
@@ -2675,6 +2777,7 @@ function parseYamlToBuilderModel(yamlText: string): BuilderModel {
     return {
       id: createId('table'),
       entityName,
+      datasetId: toStringValue(table.dataset_id ?? table.datasetId) || null,
       schema: toStringValue(table.schema),
       name: toStringValue(table.name),
       description: toStringValue(table.description),
@@ -2740,4 +2843,26 @@ function parseYamlToBuilderModel(yamlText: string): BuilderModel {
     relationships,
     metrics,
   };
+}
+
+function normalizeSemanticType(dataType: string): string {
+  const normalized = (dataType || '').toLowerCase();
+  if (
+    normalized.includes('int') ||
+    normalized.includes('decimal') ||
+    normalized.includes('numeric') ||
+    normalized.includes('float') ||
+    normalized.includes('double') ||
+    normalized.includes('real') ||
+    normalized.includes('number')
+  ) {
+    return normalized.includes('int') ? 'integer' : 'number';
+  }
+  if (normalized.includes('bool')) {
+    return 'boolean';
+  }
+  if (normalized.includes('date') || normalized.includes('time')) {
+    return 'date';
+  }
+  return 'string';
 }

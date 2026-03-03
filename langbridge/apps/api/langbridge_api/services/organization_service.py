@@ -142,7 +142,9 @@ class OrganizationService:
                 "A project with this name already exists in the organization"
             )
 
-        project = Project(name=normalized_name, organization=organization)
+        project_id = uuid.uuid4()
+
+        project = Project(id=project_id, organization_id=organization_id, name=normalized_name, organization=organization)
         self._project_repository.add(project)
         await self._project_repository.add_member(project, db_requester)
         return self._serialize_project(project)

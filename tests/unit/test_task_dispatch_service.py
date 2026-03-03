@@ -18,6 +18,9 @@ from langbridge.packages.messaging.langbridge_messaging.contracts.jobs.agentic_s
 from langbridge.packages.messaging.langbridge_messaging.contracts.jobs.sql_job import (
     SqlJobRequestMessage,
 )
+from langbridge.packages.messaging.langbridge_messaging.contracts.jobs.dataset_job import (
+    DatasetJobRequestMessage,
+)
 
 
 @pytest.fixture
@@ -198,3 +201,40 @@ async def test_dispatch_service_routes_agentic_semantic_jobs_to_edge_queue_for_c
     assert queued_tenant == tenant_id
     assert queued_runtime == runtime_id
     assert envelope.headers.correlation_id == "corr-agentic"
+
+
+@pytest.mark.anyio
+async def test_dispatch_service_routes_dataset_jobs_to_edge_queue_for_customer_runtime() -> None:
+    tenant_id = uuid.uuid4()
+    runtime_id = uuid.uuid4()
+    message_service = _FakeMessageService()
+    edge_gateway = _FakeEdgeTaskGatewayService()
+    service = TaskDispatchService(
+        execution_routing_service=_FakeExecutionRoutingService(ExecutionMode.customer_runtime),
+        message_service=message_service,
+        runtime_registry_service=_FakeRuntimeRegistryService(runtime_id),
+        edge_task_gateway_service=edge_gateway,
+        request_context_provider=_FakeRequestContextProvider(correlation_id="corr-dataset"),
+    )
+
+    mode = await service.dispatch_job_message(
+        tenant_id=tenant_id,
+        payload=DatasetJobRequestMessage(
+            job_id=uuid.uuid4(),
+            job_type=JobType.DATASET_PREVIEW,
+            job_request={
+                "dataset_id": str(uuid.uuid4()),
+                "workspace_id": str(tenant_id),
+                "user_id": str(uuid.uuid4()),
+                "enforced_limit": 100,
+            },
+        ),
+    )
+
+    assert mode == ExecutionMode.customer_runtime
+    assert message_service.outbox_payloads == []
+    assert len(edge_gateway.enqueued) == 1
+    queued_tenant, queued_runtime, envelope = edge_gateway.enqueued[0]
+    assert queued_tenant == tenant_id
+    assert queued_runtime == runtime_id
+    assert envelope.headers.correlation_id == "corr-dataset"

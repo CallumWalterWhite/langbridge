@@ -25,6 +25,8 @@ export interface SemanticFilter {
 }
 
 export interface SemanticTable {
+  datasetId?: string | null;
+  catalog?: string | null;
   schema: string;
   name: string;
   description?: string | null;

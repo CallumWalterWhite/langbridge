@@ -5,6 +5,7 @@ from dataclasses import dataclass
 import sqlglot
 from sqlglot import exp
 
+from langbridge.packages.common.langbridge_common.utils.sql import enforce_preview_limit
 from langbridge.packages.federation.connectors import estimate_bytes
 from langbridge.packages.federation.models.plans import JoinStrategy, LogicalPlan, SourceSubplan
 from langbridge.packages.federation.models.virtual_dataset import TableStatistics, VirtualDataset
@@ -162,6 +163,26 @@ def _build_scan_sql(
     dialect: str,
 ) -> str:
     metadata = binding.metadata if isinstance(getattr(binding, "metadata", None), dict) else {}
+    physical_sql = metadata.get("physical_sql")
+    if isinstance(physical_sql, str) and physical_sql.strip():
+        sql_text = physical_sql.strip().rstrip(";")
+        alias_identifier = exp.Identifier(this=alias, quoted=True).sql(dialect=dialect)
+        if not projected_columns or "*" in projected_columns:
+            select_clause = "*"
+        else:
+            projected = []
+            for column in projected_columns:
+                column_identifier = exp.Identifier(this=column, quoted=True).sql(dialect=dialect)
+                projected.append(f"{alias_identifier}.{column_identifier}")
+            select_clause = ", ".join(projected)
+        query_sql = f"SELECT {select_clause} FROM ({sql_text}) AS {alias_identifier}"
+        if pushed_filters:
+            where_sql = " AND ".join(expression.sql(dialect=dialect) for expression in pushed_filters)
+            query_sql = f"{query_sql} WHERE {where_sql}"
+        if pushed_limit is not None:
+            query_sql, _ = enforce_preview_limit(query_sql, max_rows=pushed_limit, dialect=dialect)
+        return query_sql
+
     physical_catalog = metadata.get("physical_catalog", binding.catalog)
     physical_schema = metadata.get("physical_schema", binding.schema)
     physical_table = metadata.get("physical_table", binding.table)
@@ -199,6 +220,8 @@ def _build_scan_sql(
 
 def _binding_requires_scan_level_rewrite(binding) -> bool:
     metadata = binding.metadata if isinstance(getattr(binding, "metadata", None), dict) else {}
+    if bool(metadata.get("physical_sql")):
+        return True
     if bool(metadata.get("skip_catalog_in_pushdown")):
         return True
 

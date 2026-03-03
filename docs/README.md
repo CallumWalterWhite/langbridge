@@ -31,3 +31,4 @@
 
 - `docs/api.md`
 - `docs/semantic-model.md`
+- `docs/datasets.md`

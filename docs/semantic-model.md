@@ -19,6 +19,7 @@ All runtime paths should normalize incoming payloads to this schema.
 
 ## Table
 
+- `dataset_id`: optional dataset reference (preferred for new models)
 - `schema`: database schema name
 - `name`: physical table name
 - `description`: optional
@@ -26,6 +27,10 @@ All runtime paths should normalize incoming payloads to this schema.
 - `dimensions`: optional list of `Dimension`
 - `measures`: optional list of `Measure`
 - `filters`: optional map of filter name to `TableFilter`
+
+Compatibility rules:
+- If `dataset_id` is present, execution resolves table bindings from the referenced dataset.
+- If `dataset_id` is absent, execution uses legacy physical table binding (`schema` + `name`).
 
 ## Dimension
 

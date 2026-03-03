@@ -41,8 +41,9 @@ class TableFilter(BaseModel):
 
 
 class Table(BaseModel):
+    dataset_id: Optional[str] = None
     catalog: Optional[str] = None
-    schema: str
+    schema: str = ""
     name: str
     description: Optional[str] = None
     synonyms: Optional[List[str]] = None

@@ -262,7 +262,9 @@ def apply_result_redaction(
             if rule is None or value is None:
                 continue
             redaction_applied = True
-            if rule == "null":
+            if rule in {"omit", "drop", "remove"}:
+                next_row.pop(column, None)
+            elif rule == "null":
                 next_row[column] = None
             elif rule == "hash":
                 digest = hashlib.sha256(str(value).encode("utf-8")).hexdigest()

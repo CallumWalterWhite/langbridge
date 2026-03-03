@@ -53,6 +53,16 @@ def test_apply_result_redaction_hashes_configured_columns() -> None:
     assert len(rows[0]["email"]) == 16
 
 
+def test_apply_result_redaction_can_omit_columns() -> None:
+    rows, applied = apply_result_redaction(
+        rows=[{"id": 1, "ssn": "123-45-6789"}],
+        redaction_rules={"ssn": "omit"},
+    )
+    assert applied is True
+    assert rows[0]["id"] == 1
+    assert "ssn" not in rows[0]
+
+
 def test_transpile_sql_converts_tsql_top_to_postgres_limit() -> None:
     output = transpile_sql(
         "SELECT TOP 5 id FROM dbo.users ORDER BY id DESC",

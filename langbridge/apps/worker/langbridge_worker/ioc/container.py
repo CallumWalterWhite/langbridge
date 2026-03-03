@@ -14,6 +14,11 @@ from langbridge.packages.common.langbridge_common.repositories.connector_reposit
 from langbridge.packages.common.langbridge_common.repositories.conversation_memory_repository import (
     ConversationMemoryRepository,
 )
+from langbridge.packages.common.langbridge_common.repositories.dataset_repository import (
+    DatasetColumnRepository,
+    DatasetPolicyRepository,
+    DatasetRepository,
+)
 from langbridge.packages.common.langbridge_common.repositories.job_repository import JobRepository
 from langbridge.packages.common.langbridge_common.repositories.llm_connection_repository import (
     LLMConnectionRepository,
@@ -71,6 +76,9 @@ class WorkerContainer(containers.DeclarativeContainer):
     semantic_model_repository = providers.Factory(SemanticModelRepository, session=async_session)
     llm_repository = providers.Factory(LLMConnectionRepository, session=async_session)
     connector_repository = providers.Factory(ConnectorRepository, session=async_session)
+    dataset_repository = providers.Factory(DatasetRepository, session=async_session)
+    dataset_column_repository = providers.Factory(DatasetColumnRepository, session=async_session)
+    dataset_policy_repository = providers.Factory(DatasetPolicyRepository, session=async_session)
     thread_repository = providers.Factory(ThreadRepository, session=async_session)
     thread_message_repository = providers.Factory(ThreadMessageRepository, session=async_session)
     memory_repository = providers.Factory(ConversationMemoryRepository, session=async_session)

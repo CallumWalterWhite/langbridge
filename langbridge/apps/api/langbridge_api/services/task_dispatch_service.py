@@ -51,6 +51,7 @@ class TaskDispatchService:
             "semantic_query_request",
             "sql_job_request",
             "agentic_semantic_model_job_request",
+            "dataset_job_request",
         }
         if (
             mode == ExecutionMode.hosted

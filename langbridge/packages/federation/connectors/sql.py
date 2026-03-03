@@ -58,19 +58,30 @@ class SqlConnectorRemoteSource(RemoteSource):
         if binding.stats is not None:
             return binding.stats
 
-        table_name = self._format_qualified_name(binding)
-        query = f"SELECT COUNT(*) AS row_count FROM {table_name}"
+        metadata = binding.metadata if isinstance(binding.metadata, dict) else {}
+        physical_sql = metadata.get("physical_sql")
+        if isinstance(physical_sql, str) and physical_sql.strip():
+            query = f"SELECT COUNT(*) AS row_count FROM ({physical_sql.strip().rstrip(';')}) AS dataset_stats"
+        else:
+            table_name = self._format_qualified_name(binding)
+            query = f"SELECT COUNT(*) AS row_count FROM {table_name}"
         try:
             result = await self._connector.execute(query, timeout_s=10)
             row_count = float(result.rows[0][0]) if result.rows else None
             return TableStatistics(row_count_estimate=row_count, bytes_per_row=128.0)
         except Exception:
+            table_name = self._format_qualified_name(binding)
             self._logger.warning("Falling back to heuristic stats for source=%s table=%s", self.source_id, table_name)
             return TableStatistics(row_count_estimate=1_000_000.0, bytes_per_row=128.0)
 
     @staticmethod
     def _format_qualified_name(binding: VirtualTableBinding) -> str:
-        parts = [binding.catalog, binding.schema, binding.table]
+        metadata = binding.metadata if isinstance(binding.metadata, dict) else {}
+        parts = [
+            metadata.get("physical_catalog", binding.catalog),
+            metadata.get("physical_schema", binding.schema),
+            metadata.get("physical_table", binding.table),
+        ]
         return ".".join(part for part in parts if part)
 
 

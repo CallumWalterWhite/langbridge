@@ -13,6 +13,9 @@ from langbridge.apps.api.langbridge_api.services.jobs.agentic_semantic_model_job
 from langbridge.apps.api.langbridge_api.services.jobs.copilot_dashboard_job_request_service import (
     CopilotDashboardJobRequestService,
 )
+from langbridge.apps.api.langbridge_api.services.jobs.dataset_job_request_service import (
+    DatasetJobRequestService,
+)
 from langbridge.apps.api.langbridge_api.services.jobs.job_service import JobService
 from langbridge.apps.api.langbridge_api.services.jobs.semantic_query_job_request_service import (
     SemanticQueryJobRequestService,
@@ -35,6 +38,12 @@ from langbridge.packages.common.langbridge_common.repositories.conversation_memo
     ConversationMemoryRepository,
 )
 from langbridge.packages.common.langbridge_common.repositories.dashboard_repository import DashboardRepository
+from langbridge.packages.common.langbridge_common.repositories.dataset_repository import (
+    DatasetColumnRepository,
+    DatasetPolicyRepository,
+    DatasetRepository,
+    DatasetRevisionRepository,
+)
 from langbridge.packages.common.langbridge_common.repositories.edge_task_repository import (
     EdgeResultReceiptRepository,
     EdgeTaskRepository,
@@ -71,6 +80,7 @@ from langbridge.apps.api.langbridge_api.services.auth.auth_service import AuthSe
 from langbridge.apps.api.langbridge_api.services.auth.token_service import TokenService
 from langbridge.apps.api.langbridge_api.services.connector_schema_service import ConnectorSchemaService
 from langbridge.apps.api.langbridge_api.services.connector_service import ConnectorService
+from langbridge.apps.api.langbridge_api.services.dataset_service import DatasetService
 from langbridge.apps.api.langbridge_api.services.dashboard_service import DashboardService
 from langbridge.apps.api.langbridge_api.services.environment_service import EnvironmentService
 from langbridge.apps.api.langbridge_api.services.internal_api_client import InternalApiClient
@@ -163,6 +173,10 @@ class Container(containers.DeclarativeContainer):
     project_invite_repository = providers.Factory(ProjectInviteRepository, session=async_session)
     connector_repository = providers.Factory(ConnectorRepository, session=async_session)
     dashboard_repository = providers.Factory(DashboardRepository, session=async_session)
+    dataset_repository = providers.Factory(DatasetRepository, session=async_session)
+    dataset_column_repository = providers.Factory(DatasetColumnRepository, session=async_session)
+    dataset_policy_repository = providers.Factory(DatasetPolicyRepository, session=async_session)
+    dataset_revision_repository = providers.Factory(DatasetRevisionRepository, session=async_session)
     environment_repository = providers.Factory(OrganizationEnvironmentSettingRepository, session=async_session)
     llm_connection_repository = providers.Factory(LLMConnectionRepository, session=async_session)
     semantic_model_repository = providers.Factory(SemanticModelRepository, session=async_session)
@@ -351,6 +365,11 @@ class Container(containers.DeclarativeContainer):
         SqlJobRequestService,
         task_dispatch_service=task_dispatch_service,
     )
+    dataset_job_request_service = providers.Factory(
+        DatasetJobRequestService,
+        job_repository=job_repository,
+        task_dispatch_service=task_dispatch_service,
+    )
     job_service = providers.Factory(
         JobService,
         job_repository=job_repository,
@@ -365,6 +384,22 @@ class Container(containers.DeclarativeContainer):
         organization_repository=organization_repository,
         user_repository=user_repository,
         sql_job_request_service=sql_job_request_service,
+        request_context_provider=request_context_provider,
+    )
+    dataset_service = providers.Factory(
+        DatasetService,
+        dataset_repository=dataset_repository,
+        dataset_column_repository=dataset_column_repository,
+        dataset_policy_repository=dataset_policy_repository,
+        dataset_revision_repository=dataset_revision_repository,
+        connector_repository=connector_repository,
+        semantic_model_repository=semantic_model_repository,
+        sql_workspace_policy_repository=sql_workspace_policy_repository,
+        organization_repository=organization_repository,
+        user_repository=user_repository,
+        connector_service=connector_service,
+        dataset_job_request_service=dataset_job_request_service,
+        job_repository=job_repository,
         request_context_provider=request_context_provider,
     )
 

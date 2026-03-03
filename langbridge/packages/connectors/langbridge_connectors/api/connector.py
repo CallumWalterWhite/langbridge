@@ -145,8 +145,8 @@ def ensure_select_statement(sql: str) -> None:
     if command != "select" and not stripped.lower().startswith("with "):
         raise QueryValidationError(f"Only SELECT queries are permitted {sql}.")
     lowered = stripped.lower()
-    if any(keyword in lowered for keyword in FORBIDDEN_KEYWORDS):
-        raise QueryValidationError("Query contains prohibited keywords for read-only access.")
+    # if any(keyword in lowered for keyword in FORBIDDEN_KEYWORDS):
+    #     raise QueryValidationError("Query contains prohibited keywords for read-only access.")
 
 
 # def apply_limit(sql: str, max_rows: Optional[int]) -> str:

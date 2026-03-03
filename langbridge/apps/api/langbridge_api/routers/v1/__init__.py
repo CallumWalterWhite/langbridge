@@ -16,6 +16,7 @@ from .jobs import router as jobs_router
 from .runtimes import router as runtimes_router
 from .edge_tasks import router as edge_tasks_router
 from .sql import router as sql_router
+from .datasets import router as datasets_router
 
 v1_routes: List[APIRouter] = [
     auth_router,
@@ -32,6 +33,7 @@ v1_routes: List[APIRouter] = [
     runtimes_router,
     edge_tasks_router,
     sql_router,
+    datasets_router,
 ]
 
 __all__ = [
@@ -49,5 +51,6 @@ __all__ = [
     "runtimes_router",
     "edge_tasks_router",
     "sql_router",
+    "datasets_router",
     "v1_routes",
 ]
