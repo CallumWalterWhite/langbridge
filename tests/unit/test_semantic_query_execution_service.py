@@ -99,6 +99,55 @@ def test_build_widget_query_payload_translates_filters_and_time_range() -> None:
     assert payload["limit"] == 100
 
 
+def test_build_widget_query_payload_normalizes_year_to_date_equals_filter() -> None:
+    widget = {
+        "measures": ["orders.total"],
+        "dimensions": [],
+        "timeDimension": "orders.order_ts",
+        "timeGrain": "month",
+        "timeRangePreset": "year_to_date",
+        "filters": [{"member": "orders.order_ts", "operator": "equals", "values": "year_to_date"}],
+    }
+
+    payload = SemanticQueryExecutionService.build_widget_query_payload(
+        widget=widget,
+        global_filters=[],
+    )
+
+    assert payload["timeDimensions"] == [
+        {
+            "dimension": "orders.order_ts",
+            "granularity": "month",
+            "dateRange": "year_to_date",
+        }
+    ]
+    assert payload["filters"] == [
+        {"member": "orders.order_ts", "operator": "indaterange", "values": ["year_to_date"]}
+    ]
+
+
+def test_to_semantic_filters_keeps_non_date_member_equals_unchanged() -> None:
+    payload = SemanticQueryExecutionService.to_semantic_filters(
+        [{"member": "orders.total", "operator": "equals", "values": "2026"}]
+    )
+
+    assert payload == [{"member": "orders.total", "operator": "equals", "values": ["2026"]}]
+
+
+def test_to_semantic_filters_normalizes_iso_dot_date_range_for_date_member() -> None:
+    payload = SemanticQueryExecutionService.to_semantic_filters(
+        [{"member": "orders.order_ts", "operator": "equals", "values": "2026-01-01..2026-12-31"}]
+    )
+
+    assert payload == [
+        {
+            "member": "orders.order_ts",
+            "operator": "indaterange",
+            "values": ["2026-01-01", "2026-12-31"],
+        }
+    ]
+
+
 class _FakeSemanticModelRepository:
     def __init__(self, models: dict[uuid.UUID, _ModelRecord]) -> None:
         self._models = models

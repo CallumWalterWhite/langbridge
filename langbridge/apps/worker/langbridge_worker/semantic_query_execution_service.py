@@ -1,8 +1,10 @@
 import json
 import logging
+import re
 import uuid
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any
 
 import yaml
@@ -36,6 +38,22 @@ from langbridge.packages.semantic.langbridge_semantic.unified_query import (
     apply_tenant_aware_context,
     build_unified_semantic_model,
 )
+
+_DATE_RANGE_PRESETS = {
+    "today",
+    "yesterday",
+    "last_7_days",
+    "last_30_days",
+    "month_to_date",
+    "year_to_date",
+}
+_YEAR_PATTERN = re.compile(r"^\d{4}$")
+_YEAR_MONTH_PATTERN = re.compile(r"^\d{4}-(0[1-9]|1[0-2])$")
+_ISO_DATE_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+_ISO_DATE_DOT_RANGE_PATTERN = re.compile(
+    r"^\s*(\d{4}-\d{2}-\d{2})\s*\.\.\s*(\d{4}-\d{2}-\d{2})\s*$"
+)
+_DATE_MEMBER_HINTS = ("date", "time", "timestamp", "_at", "_ts")
 
 
 @dataclass(frozen=True)
@@ -168,8 +186,90 @@ class SemanticQueryExecutionService:
 
             if not values:
                 continue
-            payload.append({"member": member, "operator": operator, "values": values})
+            normalized_operator, normalized_values = SemanticQueryExecutionService._normalize_filter_values(
+                member=member,
+                operator=operator,
+                values=values,
+            )
+            payload.append(
+                {
+                    "member": member,
+                    "operator": normalized_operator,
+                    "values": normalized_values,
+                }
+            )
         return payload
+
+    @staticmethod
+    def _normalize_filter_values(
+        *,
+        member: str,
+        operator: str,
+        values: list[str],
+    ) -> tuple[str, list[str]]:
+        op = operator.strip().lower()
+        if op not in {"equals", "notequals", "indaterange", "notindaterange"}:
+            return operator, values
+
+        single_value = values[0].strip() if len(values) == 1 else None
+        if single_value:
+            preset = single_value.lower()
+            if preset in _DATE_RANGE_PRESETS:
+                return SemanticQueryExecutionService._to_date_range_operator(op), [preset]
+            if preset.startswith(("before:", "after:", "on:")):
+                return SemanticQueryExecutionService._to_date_range_operator(op), [single_value]
+
+        if len(values) == 2 and all(_ISO_DATE_PATTERN.match(value.strip()) for value in values):
+            return SemanticQueryExecutionService._to_date_range_operator(op), values
+
+        if not SemanticQueryExecutionService._looks_date_like_member(member):
+            return operator, values
+
+        if single_value:
+            normalized = SemanticQueryExecutionService._normalize_single_date_like_value(single_value)
+            if normalized is not None:
+                return SemanticQueryExecutionService._to_date_range_operator(op), normalized
+
+        return operator, values
+
+    @staticmethod
+    def _to_date_range_operator(operator: str) -> str:
+        return "notindaterange" if operator in {"notequals", "notindaterange"} else "indaterange"
+
+    @staticmethod
+    def _looks_date_like_member(member: str) -> bool:
+        normalized = member.strip().lower()
+        return any(hint in normalized for hint in _DATE_MEMBER_HINTS)
+
+    @staticmethod
+    def _normalize_single_date_like_value(value: str) -> list[str] | None:
+        trimmed = value.strip()
+        if not trimmed:
+            return None
+
+        if _YEAR_PATTERN.match(trimmed):
+            return [f"{trimmed}-01-01", f"{trimmed}-12-31"]
+
+        year_month_match = _YEAR_MONTH_PATTERN.match(trimmed)
+        if year_month_match:
+            year_str, month_str = trimmed.split("-")
+            year = int(year_str)
+            month = int(month_str)
+            if month == 12:
+                next_year, next_month = year + 1, 1
+            else:
+                next_year, next_month = year, month + 1
+            last_day = (datetime(next_year, next_month, 1) - datetime(year, month, 1)).days
+            return [f"{trimmed}-01", f"{trimmed}-{last_day:02d}"]
+
+        if _ISO_DATE_PATTERN.match(trimmed):
+            return [f"on:{trimmed}"]
+
+        dot_range_match = _ISO_DATE_DOT_RANGE_PATTERN.match(trimmed)
+        if dot_range_match:
+            return [dot_range_match.group(1), dot_range_match.group(2)]
+
+        return None
 
     async def execute_unified_query(
         self,
