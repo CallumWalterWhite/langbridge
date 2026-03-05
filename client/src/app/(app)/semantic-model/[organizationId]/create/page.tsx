@@ -29,6 +29,7 @@ import {
 } from '@/orchestration/datasets';
 import {
   createSemanticModel,
+  deleteSemanticModel,
   fetchSemanticModel,
   fetchSemanticModelCatalog,
   generateSemanticModelYaml,
@@ -191,6 +192,10 @@ export default function SemanticModelPage({ params }: SemanticModelPageProps): J
   const [autoGenerating, setAutoGenerating] = useState(false);
   const [wizardSubmitting, setWizardSubmitting] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [collapsedTables, setCollapsedTables] = useState<Record<string, boolean>>({});
+  const [collapsedRelationships, setCollapsedRelationships] = useState<Record<string, boolean>>({});
+  const [collapsedMetrics, setCollapsedMetrics] = useState<Record<string, boolean>>({});
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -291,6 +296,20 @@ export default function SemanticModelPage({ params }: SemanticModelPageProps): J
       relationships,
     };
   }, [builder]);
+
+  useEffect(() => {
+    setCollapsedTables((current) => syncCollapsedState(current, builder.tables.map((table) => table.id)));
+  }, [builder.tables]);
+
+  useEffect(() => {
+    setCollapsedRelationships((current) =>
+      syncCollapsedState(current, builder.relationships.map((relationship) => relationship.id)),
+    );
+  }, [builder.relationships]);
+
+  useEffect(() => {
+    setCollapsedMetrics((current) => syncCollapsedState(current, builder.metrics.map((metric) => metric.id)));
+  }, [builder.metrics]);
 
   const loadConnectors = useCallback(async () => {
     if (!organizationId) {
@@ -563,6 +582,28 @@ export default function SemanticModelPage({ params }: SemanticModelPageProps): J
       setSubmitting(false);
     }
   }
+
+  const handleDeleteModel = useCallback(async () => {
+    if (!organizationId || !activeModelId) {
+      setError('Choose a semantic model to delete.');
+      return;
+    }
+    const confirmed = window.confirm('Delete this semantic model? This action cannot be undone.');
+    if (!confirmed) {
+      return;
+    }
+    setDeleting(true);
+    setError(null);
+    setNotice(null);
+    try {
+      await deleteSemanticModel(activeModelId, organizationId);
+      router.push(`/semantic-model/${organizationId}`);
+    } catch (err) {
+      setError(resolveError(err));
+    } finally {
+      setDeleting(false);
+    }
+  }, [activeModelId, organizationId, router]);
 
   const handleAutoGenerate = useCallback(async () => {
     if (!organizationId) {
@@ -1803,22 +1844,39 @@ export default function SemanticModelPage({ params }: SemanticModelPageProps): J
                                     : 'Define schema and table name'}
                               </p>
                             </div>
-                            <Button
-                              type="button"
-                              variant="ghost"
-                              size="sm"
-                              onClick={() =>
-                                setBuilder((current) => ({
-                                  ...current,
-                                  tables: current.tables.filter((entry) => entry.id !== table.id),
-                                }))
-                              }
-                            >
-                              Remove
-                            </Button>
+                            <div className="flex items-center gap-2">
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="sm"
+                                onClick={() =>
+                                  setCollapsedTables((current) => ({
+                                    ...current,
+                                    [table.id]: !(current[table.id] ?? true),
+                                  }))
+                                }
+                              >
+                                {(collapsedTables[table.id] ?? true) ? 'Expand' : 'Collapse'}
+                              </Button>
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="sm"
+                                onClick={() =>
+                                  setBuilder((current) => ({
+                                    ...current,
+                                    tables: current.tables.filter((entry) => entry.id !== table.id),
+                                  }))
+                                }
+                              >
+                                Remove
+                              </Button>
+                            </div>
                           </header>
 
-                          <div className="grid gap-4 md:grid-cols-2">
+                          {(collapsedTables[table.id] ?? true) ? null : (
+                            <>
+                              <div className="grid gap-4 md:grid-cols-2">
                             <div className="space-y-1">
                               <Label htmlFor={`entity-${table.id}`}>Entity name</Label>
                               <Input
@@ -1949,9 +2007,9 @@ export default function SemanticModelPage({ params }: SemanticModelPageProps): J
                                 }
                               />
                             </div>
-                          </div>
+                              </div>
 
-                          <div className="grid gap-4 lg:grid-cols-2">
+                              <div className="grid gap-4 lg:grid-cols-2">
                             <div className="rounded-xl border border-[color:var(--panel-border)] bg-[color:var(--surface-muted)] p-4">
                               <div className="mb-3 flex items-center justify-between">
                                 <h4 className="text-sm font-semibold text-[color:var(--text-primary)]">
@@ -2357,7 +2415,9 @@ export default function SemanticModelPage({ params }: SemanticModelPageProps): J
                                 </div>
                               )}
                             </div>
-                          </div>
+                              </div>
+                            </>
+                          )}
                         </article>
                       ))
                     )}
@@ -2410,21 +2470,38 @@ export default function SemanticModelPage({ params }: SemanticModelPageProps): J
                                     : 'Define the source and target entities'}
                                 </p>
                               </div>
-                              <Button
-                                type="button"
-                                variant="ghost"
-                                size="sm"
-                                onClick={() =>
-                                  setBuilder((current) => ({
-                                    ...current,
-                                    relationships: current.relationships.filter((entry) => entry.id !== relationship.id),
-                                  }))
-                                }
-                              >
-                                Remove
-                              </Button>
+                              <div className="flex items-center gap-2">
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() =>
+                                    setCollapsedRelationships((current) => ({
+                                      ...current,
+                                      [relationship.id]: !(current[relationship.id] ?? true),
+                                    }))
+                                  }
+                                >
+                                  {(collapsedRelationships[relationship.id] ?? true) ? 'Expand' : 'Collapse'}
+                                </Button>
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() =>
+                                    setBuilder((current) => ({
+                                      ...current,
+                                      relationships: current.relationships.filter((entry) => entry.id !== relationship.id),
+                                    }))
+                                  }
+                                >
+                                  Remove
+                                </Button>
+                              </div>
                             </div>
-                            <div className="grid gap-3 md:grid-cols-2">
+                            {(collapsedRelationships[relationship.id] ?? true) ? null : (
+                              <>
+                                <div className="grid gap-3 md:grid-cols-2">
                               <div className="space-y-1">
                                 <Label htmlFor={`join-name-${relationship.id}`}>Join name</Label>
                                 <Input
@@ -2465,8 +2542,8 @@ export default function SemanticModelPage({ params }: SemanticModelPageProps): J
                                   ))}
                                 </Select>
                               </div>
-                            </div>
-                            <div className="grid gap-3 md:grid-cols-2">
+                                </div>
+                                <div className="grid gap-3 md:grid-cols-2">
                               <div className="space-y-1">
                                 <Label htmlFor={`join-from-${relationship.id}`}>From entity</Label>
                                 <Input
@@ -2499,8 +2576,8 @@ export default function SemanticModelPage({ params }: SemanticModelPageProps): J
                                   placeholder="_main_customers"
                                 />
                               </div>
-                            </div>
-                            <div className="space-y-1">
+                                </div>
+                                <div className="space-y-1">
                               <Label htmlFor={`join-condition-${relationship.id}`}>Join condition</Label>
                               <Textarea
                                 id={`join-condition-${relationship.id}`}
@@ -2516,7 +2593,9 @@ export default function SemanticModelPage({ params }: SemanticModelPageProps): J
                                 }
                                 placeholder="_main_sales.customer_id = _main_customers.customer_id"
                               />
-                            </div>
+                                </div>
+                              </>
+                            )}
                           </div>
                         ))}
                       </div>
@@ -2550,28 +2629,47 @@ export default function SemanticModelPage({ params }: SemanticModelPageProps): J
                       <p className="text-sm text-[color:var(--text-muted)]">No derived metrics defined.</p>
                     ) : (
                       <div className="space-y-3">
-                        {builder.metrics.map((metric) => (
+                        {builder.metrics.map((metric, index) => (
                           <div
                             key={metric.id}
                             className="rounded-xl border border-[color:var(--panel-border)] bg-[color:var(--panel-bg)] p-4"
                           >
                             <div className="flex items-center justify-between">
-                              <Label className="text-xs font-semibold uppercase tracking-wide">Metric</Label>
-                              <Button
-                                type="button"
-                                variant="ghost"
-                                size="sm"
-                                onClick={() =>
-                                  setBuilder((current) => ({
-                                    ...current,
-                                    metrics: current.metrics.filter((item) => item.id !== metric.id),
-                                  }))
-                                }
-                              >
-                                Remove
-                              </Button>
+                              <Label className="text-xs font-semibold uppercase tracking-wide">
+                                {metric.name || `Metric ${index + 1}`}
+                              </Label>
+                              <div className="flex items-center gap-2">
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() =>
+                                    setCollapsedMetrics((current) => ({
+                                      ...current,
+                                      [metric.id]: !(current[metric.id] ?? true),
+                                    }))
+                                  }
+                                >
+                                  {(collapsedMetrics[metric.id] ?? true) ? 'Expand' : 'Collapse'}
+                                </Button>
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() =>
+                                    setBuilder((current) => ({
+                                      ...current,
+                                      metrics: current.metrics.filter((item) => item.id !== metric.id),
+                                    }))
+                                  }
+                                >
+                                  Remove
+                                </Button>
+                              </div>
                             </div>
-                            <div className="mt-3 grid gap-3 md:grid-cols-2">
+                            {(collapsedMetrics[metric.id] ?? true) ? null : (
+                              <>
+                                <div className="mt-3 grid gap-3 md:grid-cols-2">
                               <Input
                                 value={metric.name}
                                 onChange={(event) =>
@@ -2596,8 +2694,8 @@ export default function SemanticModelPage({ params }: SemanticModelPageProps): J
                                 }
                                 placeholder="Description"
                               />
-                            </div>
-                            <Textarea
+                                </div>
+                                <Textarea
                               className="mt-3"
                               rows={3}
                               value={metric.expression}
@@ -2610,7 +2708,9 @@ export default function SemanticModelPage({ params }: SemanticModelPageProps): J
                                 }))
                               }
                               placeholder="SQL expression referencing table columns"
-                            />
+                                />
+                              </>
+                            )}
                           </div>
                         ))}
                       </div>
@@ -2647,10 +2747,22 @@ export default function SemanticModelPage({ params }: SemanticModelPageProps): J
                       type="submit"
                       className="w-full"
                       isLoading={submitting}
-                      disabled={!selectedConnectorId || loadingModel}
+                      disabled={!selectedConnectorId || loadingModel || deleting}
                     >
                       {submitLabel}
                     </Button>
+                    {isUpdateMode ? (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        className="w-full border-rose-300 text-rose-700 hover:bg-rose-50"
+                        onClick={() => void handleDeleteModel()}
+                        isLoading={deleting}
+                        disabled={submitting}
+                      >
+                        Delete semantic model
+                      </Button>
+                    ) : null}
                   </div>
                 </>
               )}
@@ -2736,6 +2848,30 @@ function resolveError(error: unknown): string {
 
 function createId(prefix: string): string {
   return `${prefix}-${Math.random().toString(36).slice(2, 9)}`;
+}
+
+function syncCollapsedState(
+  current: Record<string, boolean>,
+  ids: string[],
+): Record<string, boolean> {
+  const idSet = new Set(ids);
+  let changed = false;
+  const next: Record<string, boolean> = {};
+  ids.forEach((id) => {
+    if (Object.prototype.hasOwnProperty.call(current, id)) {
+      next[id] = current[id];
+      return;
+    }
+    next[id] = true;
+    changed = true;
+  });
+  for (const existingId of Object.keys(current)) {
+    if (!idSet.has(existingId)) {
+      changed = true;
+      break;
+    }
+  }
+  return changed ? next : current;
 }
 
 function createEmptyBuilderModel(): BuilderModel {

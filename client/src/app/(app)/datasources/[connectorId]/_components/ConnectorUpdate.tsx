@@ -3,7 +3,7 @@
 import { JSX, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { ArrowLeft, Save } from 'lucide-react';
+import { ArrowLeft, Save, Trash2 } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -13,6 +13,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { useToast } from '@/components/ui/toast';
 import { ApiError } from '@/orchestration/http';
 import {
+  deleteConnector,
   fetchConnector,
   updateConnector,
   type ConnectorResponse,
@@ -84,6 +85,26 @@ export function ConnectorUpdate({ connectorId, organizationId }: ConnectorUpdate
     },
   });
 
+  const deleteMutation = useMutation({
+    mutationFn: () => deleteConnector(organizationId, connectorId),
+    onSuccess: () => {
+      queryClient.removeQueries({ queryKey: connectorQueryKey(organizationId, connectorId) });
+      queryClient.invalidateQueries({ queryKey: ['connectors', organizationId] });
+      toast({
+        title: 'Connection deleted',
+        description: 'The connection has been removed.',
+      });
+      router.push(`/datasources/${organizationId}`);
+    },
+    onError: (error: unknown) => {
+      toast({
+        title: 'Delete failed',
+        description: resolveError(error),
+        variant: 'destructive',
+      });
+    },
+  });
+
   const handleSubmit: React.FormEventHandler<HTMLFormElement> = (event) => {
     event.preventDefault();
     if (!organizationId) {
@@ -122,6 +143,17 @@ export function ConnectorUpdate({ connectorId, organizationId }: ConnectorUpdate
     }
 
     updateMutation.mutate(payload);
+  };
+
+  const handleDelete = () => {
+    if (deleteMutation.isPending) {
+      return;
+    }
+    const confirmed = window.confirm('Delete this connection? This action cannot be undone.');
+    if (!confirmed) {
+      return;
+    }
+    deleteMutation.mutate();
   };
 
   if (connectorQuery.isLoading) {
@@ -231,6 +263,18 @@ export function ConnectorUpdate({ connectorId, organizationId }: ConnectorUpdate
             }}
           >
             Reset
+          </Button>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="gap-2 border-rose-300 text-rose-700 hover:bg-rose-50"
+            onClick={handleDelete}
+            isLoading={deleteMutation.isPending}
+            disabled={updateMutation.isPending}
+          >
+            <Trash2 className="h-4 w-4" aria-hidden="true" />
+            Delete connection
           </Button>
         </div>
       </form>

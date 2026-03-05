@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import re
 import uuid
 from datetime import datetime, timezone
 from typing import Any, Callable
@@ -10,6 +11,7 @@ from sqlglot import exp
 from pydantic import ValidationError
 
 from langbridge.apps.worker.langbridge_worker.secrets import SecretProviderRegistry
+from langbridge.apps.worker.langbridge_worker.tools import FederatedQueryTool
 from langbridge.packages.common.langbridge_common.config import settings
 from langbridge.packages.common.langbridge_common.contracts.connectors import ConnectorResponse
 from langbridge.packages.common.langbridge_common.contracts.jobs.sql_job import (
@@ -45,6 +47,7 @@ from langbridge.packages.connectors.langbridge_connectors.api import (
     get_connector_config_factory,
 )
 from langbridge.packages.connectors.langbridge_connectors.api.config import ConnectorRuntimeType
+from langbridge.packages.federation.models import FederationWorkflow, VirtualDataset, VirtualTableBinding
 from langbridge.packages.messaging.langbridge_messaging.contracts.base import MessageType
 from langbridge.packages.messaging.langbridge_messaging.contracts.jobs.sql_job import (
     SqlJobRequestMessage,
@@ -62,6 +65,7 @@ class SqlJobRequestHandler(BaseMessageHandler):
         sql_job_result_artifact_repository: SqlJobResultArtifactRepository,
         connector_repository: ConnectorRepository,
         secret_provider_registry: SecretProviderRegistry | None = None,
+        federated_query_tool: FederatedQueryTool | None = None,
     ) -> None:
         self._logger = logging.getLogger(__name__)
         self._sql_job_repository = sql_job_repository
@@ -69,6 +73,7 @@ class SqlJobRequestHandler(BaseMessageHandler):
         self._connector_repository = connector_repository
         self._secret_provider_registry = secret_provider_registry or SecretProviderRegistry()
         self._sql_connector_factory = SqlConnectorFactory()
+        self._federated_query_tool = federated_query_tool
 
     async def handle(self, payload: SqlJobRequestMessage) -> None:
         request = self._parse_request(payload)
@@ -90,7 +95,7 @@ class SqlJobRequestHandler(BaseMessageHandler):
 
         try:
             if request.execution_mode == "federated":
-                await self._execute_federated_stub(job, request)
+                await self._execute_federated(job, request)
             else:
                 await self._execute_single(job, request)
         except Exception as exc:
@@ -213,25 +218,104 @@ class SqlJobRequestHandler(BaseMessageHandler):
             "query_sql": executable_sql,
         }
 
-        snapshot_artifact_id = uuid.uuid4()
-        snapshot_artifact = SqlJobResultArtifactRecord(
-            id=snapshot_artifact_id,
-            sql_job_id=job.id,
-            workspace_id=job.workspace_id,
-            created_by=job.user_id,
-            format="json_preview",
-            mime_type="application/json",
-            row_count=len(redacted_rows),
-            byte_size=None,
-            storage_backend="inline",
-            storage_reference=f"inline://{snapshot_artifact_id}",
-            payload_json={
-                "columns": columns_payload,
-                "rows": redacted_rows,
-            },
-            created_at=now,
+        self._store_preview_artifact(
+            job=job,
+            columns_payload=columns_payload,
+            rows=redacted_rows,
+            now=now,
         )
-        self._sql_job_result_artifact_repository.add(snapshot_artifact)
+        
+    async def _execute_federated(
+        self,
+        job: SqlJobRecord,
+        request: CreateSqlJobRequest,
+    ) -> None:
+        if not settings.SQL_FEDERATION_ENABLED or not request.allow_federation:
+            raise BusinessValidationError("Federated SQL execution is disabled.")
+        if self._federated_query_tool is None:
+            raise BusinessValidationError("Federated query tool is not configured on this worker.")
+
+        source_sqlglot_dialect = normalize_sql_dialect(request.query_dialect, default="tsql")
+        rendered_query = render_sql_with_params(request.query, request.params)
+        enforce_read_only_sql(
+            rendered_query,
+            allow_dml=request.allow_dml,
+            dialect=source_sqlglot_dialect,
+        )
+        enforce_table_allowlist(
+            rendered_query,
+            allowed_schemas=request.allowed_schemas,
+            allowed_tables=request.allowed_tables,
+            dialect=source_sqlglot_dialect,
+        )
+        executable_sql, _ = enforce_preview_limit(
+            rendered_query,
+            max_rows=request.enforced_limit,
+            dialect=source_sqlglot_dialect,
+        )
+        workflow = self._build_federated_workflow(
+            workspace_id=request.workspace_id,
+            query=executable_sql,
+            source_dialect=source_sqlglot_dialect,
+            federated_aliases=request.federated_aliases,
+            job=job,
+        )
+        tool_payload = {
+            "workspace_id": str(request.workspace_id),
+            "query": executable_sql,
+            "dialect": source_sqlglot_dialect,
+            "workflow": workflow.model_dump(mode="json"),
+        }
+
+        if request.explain:
+            explain = await self._federated_query_tool.explain_federated_query(tool_payload)
+            self._store_federated_explain_result(
+                job=job,
+                request=request,
+                explain_payload=explain,
+                query_sql=executable_sql,
+                source_dialect=source_sqlglot_dialect,
+                workflow=workflow,
+            )
+            return
+
+        execution = await self._federated_query_tool.execute_federated_query(tool_payload)
+        rows = self._extract_execution_rows(execution)
+        redacted_rows, redaction_applied = apply_result_redaction(
+            rows=rows,
+            redaction_rules=request.redaction_rules,
+        )
+        columns_payload = self._extract_execution_columns(execution, redacted_rows)
+        execution_meta = self._extract_execution_meta(execution)
+
+        now = datetime.now(timezone.utc)
+        job.status = "succeeded"
+        job.result_columns_json = columns_payload
+        job.result_rows_json = redacted_rows
+        job.row_count_preview = len(redacted_rows)
+        job.total_rows_estimate = None
+        job.bytes_scanned = execution_meta["bytes_scanned"]
+        job.duration_ms = execution_meta["duration_ms"]
+        job.result_cursor = "0"
+        job.redaction_applied = redaction_applied
+        job.error_json = None
+        job.finished_at = now
+        job.updated_at = now
+        job.stats_json = {
+            "rows_returned": len(redacted_rows),
+            "duration_ms": execution_meta["duration_ms"],
+            "bytes_scanned": execution_meta["bytes_scanned"],
+            "query_sql": executable_sql,
+            "federated": True,
+            "workflow_id": workflow.id,
+            "source_aliases": sorted(request.federated_aliases.keys()),
+        }
+        self._store_preview_artifact(
+            job=job,
+            columns_payload=columns_payload,
+            rows=redacted_rows,
+            now=now,
+        )
 
     async def _store_explain_result(
         self,
@@ -369,3 +453,309 @@ class SqlJobRequestHandler(BaseMessageHandler):
             rewritten = tree.transform(lambda node: rewrite_expression(node))
             return rewritten.sql(dialect=dialect)
         return tree.sql(dialect=dialect)
+
+    def _store_preview_artifact(
+        self,
+        *,
+        job: SqlJobRecord,
+        columns_payload: list[dict[str, Any]],
+        rows: list[dict[str, Any]],
+        now: datetime,
+    ) -> None:
+        snapshot_artifact_id = uuid.uuid4()
+        snapshot_artifact = SqlJobResultArtifactRecord(
+            id=snapshot_artifact_id,
+            sql_job_id=job.id,
+            workspace_id=job.workspace_id,
+            created_by=job.user_id,
+            format="json_preview",
+            mime_type="application/json",
+            row_count=len(rows),
+            byte_size=None,
+            storage_backend="inline",
+            storage_reference=f"inline://{snapshot_artifact_id}",
+            payload_json={
+                "columns": columns_payload,
+                "rows": rows,
+            },
+            created_at=now,
+        )
+        self._sql_job_result_artifact_repository.add(snapshot_artifact)
+
+    def _build_federated_workflow(
+        self,
+        *,
+        workspace_id: uuid.UUID,
+        query: str,
+        source_dialect: str,
+        federated_aliases: dict[str, str],
+        job: SqlJobRecord,
+    ) -> FederationWorkflow:
+        alias_map = self._normalize_federated_aliases(federated_aliases)
+        table_bindings = self._extract_federated_table_bindings(
+            query=query,
+            source_dialect=source_dialect,
+            alias_map=alias_map,
+        )
+        workflow_id = f"workflow_sql_{job.id.hex[:12]}"
+        dataset_id = f"dataset_sql_{job.id.hex[:12]}"
+        dataset_name = f"sql_job_{job.id.hex[:8]}"
+        return FederationWorkflow(
+            id=workflow_id,
+            workspace_id=str(workspace_id),
+            dataset=VirtualDataset(
+                id=dataset_id,
+                name=dataset_name,
+                workspace_id=str(workspace_id),
+                tables=table_bindings,
+                relationships=[],
+            ),
+            broadcast_threshold_bytes=settings.FEDERATION_BROADCAST_THRESHOLD_BYTES,
+            partition_count=settings.FEDERATION_PARTITION_COUNT,
+            max_stage_retries=settings.FEDERATION_STAGE_MAX_RETRIES,
+            stage_parallelism=settings.FEDERATION_STAGE_PARALLELISM,
+        )
+
+    @staticmethod
+    def _normalize_federated_aliases(federated_aliases: dict[str, str]) -> dict[str, tuple[str, uuid.UUID]]:
+        alias_map: dict[str, tuple[str, uuid.UUID]] = {}
+        for raw_alias, raw_connector_id in (federated_aliases or {}).items():
+            alias = str(raw_alias or "").strip()
+            if not alias:
+                continue
+            normalized_alias = alias.lower()
+            try:
+                connector_id = uuid.UUID(str(raw_connector_id))
+            except (TypeError, ValueError) as exc:
+                raise BusinessValidationError(
+                    f"Federated alias '{alias}' has an invalid connector id."
+                ) from exc
+            existing = alias_map.get(normalized_alias)
+            if existing is not None and existing[1] != connector_id:
+                raise BusinessValidationError(
+                    f"Federated alias '{alias}' maps to multiple connector ids."
+                )
+            alias_map[normalized_alias] = (alias, connector_id)
+
+        if not alias_map:
+            raise BusinessValidationError(
+                "federated_aliases must include at least one alias to connector mapping."
+            )
+        return alias_map
+
+    def _extract_federated_table_bindings(
+        self,
+        *,
+        query: str,
+        source_dialect: str,
+        alias_map: dict[str, tuple[str, uuid.UUID]],
+    ) -> dict[str, VirtualTableBinding]:
+        try:
+            expression = sqlglot.parse_one(query, read=source_dialect)
+        except sqlglot.ParseError as exc:
+            raise BusinessValidationError(f"Federated SQL parse failed: {exc}") from exc
+
+        cte_names = {
+            str(cte.alias_or_name or "").strip().lower()
+            for cte in expression.find_all(exp.CTE)
+            if str(cte.alias_or_name or "").strip()
+        }
+        single_alias_entry = next(iter(alias_map.values())) if len(alias_map) == 1 else None
+        table_bindings: dict[str, VirtualTableBinding] = {}
+
+        for table in expression.find_all(exp.Table):
+            table_name = str(table.name or "").strip()
+            if not table_name:
+                continue
+            schema_name = str(table.db or "").strip() or None
+            catalog_name = str(table.catalog or "").strip() or None
+            if not schema_name and not catalog_name and table_name.lower() in cte_names:
+                continue
+
+            source_alias = catalog_name
+            if not source_alias:
+                if single_alias_entry is None:
+                    raise BusinessValidationError(
+                        f"Table '{table.sql()}' is missing a federated source alias. "
+                        "Use '<source_alias>.<schema>.<table>' when multiple sources are configured."
+                    )
+                source_alias = single_alias_entry[0]
+
+            alias_key = source_alias.lower()
+            alias_entry = alias_map.get(alias_key)
+            if alias_entry is None:
+                raise BusinessValidationError(
+                    f"Table '{table.sql()}' references unknown federated alias '{source_alias}'."
+                )
+            canonical_alias, connector_id = alias_entry
+            source_id = self._federated_source_id(canonical_alias)
+            table_key = self._federated_table_key(
+                source_alias=canonical_alias,
+                schema_name=schema_name,
+                table_name=table_name,
+            )
+            metadata: dict[str, Any] = {"source_alias": canonical_alias}
+            if catalog_name:
+                # Catalog in federated SQL is a logical source alias, not a physical DB catalog.
+                metadata.update(
+                    {
+                        "physical_catalog": None,
+                        "physical_schema": schema_name,
+                        "physical_table": table_name,
+                        "skip_catalog_in_pushdown": True,
+                    }
+                )
+            binding = VirtualTableBinding(
+                table_key=table_key,
+                source_id=source_id,
+                connector_id=connector_id,
+                schema=schema_name,
+                table=table_name,
+                catalog=catalog_name if catalog_name else None,
+                metadata=metadata,
+            )
+            existing = table_bindings.get(table_key)
+            if existing is not None and existing.model_dump(mode="json") != binding.model_dump(mode="json"):
+                raise BusinessValidationError(
+                    f"Table '{table.sql()}' resolves to conflicting federated bindings."
+                )
+            table_bindings[table_key] = binding
+
+        if not table_bindings:
+            raise BusinessValidationError(
+                "Federated SQL query must reference at least one physical table."
+            )
+        return table_bindings
+
+    @staticmethod
+    def _federated_source_id(alias: str) -> str:
+        normalized = re.sub(r"[^a-z0-9_]", "_", alias.strip().lower())
+        normalized = re.sub(r"_+", "_", normalized).strip("_")
+        return f"source_{normalized or 'default'}"
+
+    @staticmethod
+    def _federated_table_key(*, source_alias: str, schema_name: str | None, table_name: str) -> str:
+        parts = [source_alias.strip().lower()]
+        if schema_name:
+            parts.append(schema_name)
+        parts.append(table_name)
+        return ".".join(parts)
+
+    @staticmethod
+    def _extract_execution_columns(
+        execution: dict[str, Any],
+        rows: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        raw_columns = execution.get("columns") if isinstance(execution, dict) else []
+        columns = []
+        if isinstance(raw_columns, list):
+            columns = [str(column) for column in raw_columns if str(column).strip()]
+        if not columns and rows:
+            columns = [str(column) for column in rows[0].keys()]
+        return [{"name": column, "type": None} for column in columns]
+
+    @staticmethod
+    def _extract_execution_rows(execution: dict[str, Any]) -> list[dict[str, Any]]:
+        rows_payload = execution.get("rows") if isinstance(execution, dict) else []
+        if rows_payload is None:
+            return []
+        if not isinstance(rows_payload, list):
+            raise BusinessValidationError("Federated SQL execution returned an invalid rows payload.")
+
+        columns_payload = execution.get("columns") if isinstance(execution, dict) else []
+        columns: list[str] = []
+        if isinstance(columns_payload, list):
+            columns = [str(column) for column in columns_payload if str(column).strip()]
+
+        rows: list[dict[str, Any]] = []
+        for row in rows_payload:
+            if isinstance(row, dict):
+                if columns:
+                    rows.append({column: row.get(column) for column in columns})
+                else:
+                    rows.append({str(key): value for key, value in row.items()})
+                continue
+            if isinstance(row, (list, tuple)):
+                if not columns:
+                    columns = [f"column_{index + 1}" for index in range(len(row))]
+                rows.append(
+                    {
+                        columns[index] if index < len(columns) else f"column_{index + 1}": value
+                        for index, value in enumerate(row)
+                    }
+                )
+                continue
+            if not columns:
+                columns = ["value"]
+            rows.append({columns[0]: row})
+        return rows
+
+    @staticmethod
+    def _extract_execution_meta(execution: dict[str, Any]) -> dict[str, int | None]:
+        execution_payload = execution.get("execution") if isinstance(execution, dict) else {}
+        if not isinstance(execution_payload, dict):
+            return {"duration_ms": None, "bytes_scanned": None}
+        total_runtime = execution_payload.get("total_runtime_ms")
+        duration_ms = int(total_runtime) if isinstance(total_runtime, (int, float)) else None
+        bytes_scanned = 0
+        has_bytes = False
+        for metric in execution_payload.get("stage_metrics") or []:
+            if not isinstance(metric, dict):
+                continue
+            value = metric.get("bytes_written")
+            if isinstance(value, (int, float)):
+                bytes_scanned += int(value)
+                has_bytes = True
+        return {
+            "duration_ms": duration_ms,
+            "bytes_scanned": bytes_scanned if has_bytes else None,
+        }
+
+    def _store_federated_explain_result(
+        self,
+        *,
+        job: SqlJobRecord,
+        request: CreateSqlJobRequest,
+        explain_payload: dict[str, Any],
+        query_sql: str,
+        source_dialect: str,
+        workflow: FederationWorkflow,
+    ) -> None:
+        logical_plan = explain_payload.get("logical_plan") if isinstance(explain_payload, dict) else {}
+        physical_plan = explain_payload.get("physical_plan") if isinstance(explain_payload, dict) else {}
+        logical_tables = logical_plan.get("tables") if isinstance(logical_plan, dict) else {}
+        logical_joins = logical_plan.get("joins") if isinstance(logical_plan, dict) else []
+        physical_stages = physical_plan.get("stages") if isinstance(physical_plan, dict) else []
+
+        now = datetime.now(timezone.utc)
+        job.status = "succeeded"
+        job.result_columns_json = [
+            {"name": "section", "type": "string"},
+            {"name": "value", "type": "string"},
+        ]
+        job.result_rows_json = [
+            {"section": "mode", "value": "federated"},
+            {"section": "source_dialect", "value": source_dialect},
+            {"section": "normalized_sql", "value": query_sql},
+            {"section": "source_alias_count", "value": str(len(request.federated_aliases))},
+            {"section": "table_count", "value": str(len(logical_tables) if isinstance(logical_tables, dict) else 0)},
+            {"section": "join_count", "value": str(len(logical_joins) if isinstance(logical_joins, list) else 0)},
+            {"section": "stage_count", "value": str(len(physical_stages) if isinstance(physical_stages, list) else 0)},
+        ]
+        job.row_count_preview = len(job.result_rows_json)
+        job.total_rows_estimate = None
+        job.bytes_scanned = None
+        job.duration_ms = 0
+        job.result_cursor = "0"
+        job.redaction_applied = False
+        job.error_json = None
+        job.finished_at = now
+        job.updated_at = now
+        job.stats_json = {
+            "explain": {
+                "mode": "federated",
+                "query_hash": job.query_hash,
+                "workflow": workflow.model_dump(mode="json"),
+                "plan": explain_payload,
+            }
+        }

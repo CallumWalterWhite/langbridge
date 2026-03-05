@@ -59,6 +59,7 @@ class SqlExecuteRequest(_Base):
     requested_limit: int | None = Field(default=None, ge=1)
     requested_timeout_seconds: int | None = Field(default=None, ge=1)
     explain: bool = False
+    federated_aliases: dict[str, str] = Field(default_factory=dict)
 
     @model_validator(mode="after")
     def _validate_target(self) -> "SqlExecuteRequest":

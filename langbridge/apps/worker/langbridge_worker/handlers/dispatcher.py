@@ -53,6 +53,5 @@ class WorkerMessageDispatcher:
         from .query.dataset_job_request_handler import DatasetJobRequestHandler  # noqa: F401
         from .query.semantic_query_request_handler import SemanticQueryRequestHandler  # noqa: F401
         from .query.sql_job_request_handler import SqlJobRequestHandler  # noqa: F401
-        from .test_message_handler import TestMessageHandler  # noqa: F401
         handlers: List[BaseMessageHandler] = BaseMessageHandler.__subclasses__()
         return handlers

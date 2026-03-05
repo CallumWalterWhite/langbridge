@@ -3,12 +3,12 @@ from __future__ import annotations
 import uuid
 from dataclasses import dataclass
 
+from langbridge.packages.messaging.langbridge_messaging.contracts.base import BaseMessagePayload, register_payload
 import pytest
 
 from langbridge.apps.api.langbridge_api.services.task_dispatch_service import TaskDispatchService
 from langbridge.packages.common.langbridge_common.contracts.runtime import ExecutionMode
 from langbridge.packages.common.langbridge_common.contracts.jobs.type import JobType
-from langbridge.packages.messaging.langbridge_messaging.contracts.base import TestMessagePayload
 from langbridge.packages.messaging.langbridge_messaging.contracts.jobs.semantic_query import (
     SemanticQueryRequestMessage,
 )
@@ -21,6 +21,11 @@ from langbridge.packages.messaging.langbridge_messaging.contracts.jobs.sql_job i
 from langbridge.packages.messaging.langbridge_messaging.contracts.jobs.dataset_job import (
     DatasetJobRequestMessage,
 )
+
+
+@register_payload("test")
+class TestMessagePayload(BaseMessagePayload):
+    message: str
 
 
 @pytest.fixture

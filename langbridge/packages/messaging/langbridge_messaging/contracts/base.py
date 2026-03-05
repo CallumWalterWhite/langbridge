@@ -6,7 +6,6 @@ from pydantic import BaseModel, ConfigDict
 
 class MessageType(str, Enum):
     """Message types."""
-    TEST = "test"
     AGENT_JOB_REQUEST = "agent_job_request"
     JOB_EVENT = "job_event"
     AGENT_JOB_TASK_EXECUTION = "agent_job_task_execution"
@@ -60,7 +59,3 @@ def register_payload(message_type: str) -> Callable[[type[PayloadT]], type[Paylo
 
 def get_payload_model(message_type: str) -> type[BaseMessagePayload] | None:
     return _PAYLOAD_REGISTRY.get(message_type)
-
-@register_payload("test")
-class TestMessagePayload(BaseMessagePayload):
-    message: str

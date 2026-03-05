@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import asyncio
 from enum import Enum
 import inspect
@@ -20,10 +18,6 @@ from langbridge.packages.messaging.langbridge_messaging.broker.base import (
 )
 from pydantic import ValidationError
 
-from langbridge.packages.messaging.langbridge_messaging.contracts.base import (
-    MessageType,
-    TestMessagePayload,
-)
 from langbridge.packages.messaging.langbridge_messaging.contracts.messages import (
     MessageEnvelope,
 )

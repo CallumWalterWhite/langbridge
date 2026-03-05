@@ -7,7 +7,7 @@ import uuid
 from typing import Any
 
 from langbridge.packages.common.langbridge_common.config import settings
-from langbridge.packages.common.langbridge_common.db.environment import (
+from langbridge.packages.common.langbridge_common.db.auth import (
     OrganisationEnvironmentSetting,
 )
 from langbridge.packages.common.langbridge_common.repositories.environment_repository import (

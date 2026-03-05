@@ -17,10 +17,15 @@ from langbridge.packages.common.langbridge_common.contracts.runtime import (
 )
 from langbridge.packages.common.langbridge_common.db.runtime import EdgeTaskRecord
 from langbridge.packages.messaging.langbridge_messaging.contracts.base import (
+    BaseMessagePayload,
     MessageType,
-    TestMessagePayload,
+    register_payload
 )
 from langbridge.packages.messaging.langbridge_messaging.contracts.messages import MessageEnvelope
+
+@register_payload("test")
+class TestMessagePayload(BaseMessagePayload):
+    message: str
 
 
 @pytest.fixture

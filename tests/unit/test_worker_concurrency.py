@@ -8,12 +8,18 @@ from langbridge.packages.messaging.langbridge_messaging.broker.base import (
     ReceivedMessage,
 )
 from langbridge.packages.messaging.langbridge_messaging.contracts.base import (
+    BaseMessagePayload,
     MessageType,
-    TestMessagePayload as _TestMessagePayload,
+    register_payload,
 )
 from langbridge.packages.messaging.langbridge_messaging.contracts.messages import (
     MessageEnvelope,
 )
+
+
+@register_payload("test")
+class _TestMessagePayload(BaseMessagePayload):
+    message: str
 
 
 @pytest.fixture

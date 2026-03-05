@@ -75,6 +75,19 @@ export async function updateConnector(
   });
 }
 
+export async function deleteConnector(
+  organizationId: string,
+  connectorId: string,
+): Promise<void> {
+  if (!connectorId) {
+    throw new Error('Connector id is required.');
+  }
+  await apiFetch<void>(`${basePath(organizationId)}/${encodeURIComponent(connectorId)}`, {
+    method: 'DELETE',
+    skipJsonParse: true,
+  });
+}
+
 export async function fetchConnectorCatalog(
   organizationId: string,
   connectorId: string,

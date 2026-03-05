@@ -30,6 +30,7 @@ class CreateSqlJobRequest(_Base):
     allowed_schemas: list[str] = Field(default_factory=list)
     allowed_tables: list[str] = Field(default_factory=list)
     redaction_rules: dict[str, str] = Field(default_factory=dict)
+    federated_aliases: dict[str, str] = Field(default_factory=dict)
     explain: bool = False
     correlation_id: str | None = None
 

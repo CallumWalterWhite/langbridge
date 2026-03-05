@@ -869,17 +869,13 @@ export default function SqlWorkbenchPage({ params }: SqlWorkbenchPageProps) {
           .map(([key, value]) => [key, value]),
       );
 
-      const federatedDirectives = federatedMode ? buildFederatedDirectives() : '';
-      const queryPayload = federatedDirectives && !sql.includes('langbridge:federated-source')
-        ? `${federatedDirectives}\n${sql}`
-        : sql;
 
       executeMutation.mutate({
         workspaceId: organizationId,
         projectId: selectedProjectId || null,
         connectionId: federatedMode ? null : selectedConnectionId,
         federated: federatedMode,
-        query: queryPayload,
+        query: sql,
         queryDialect,
         params: paramsPayload,
         requestedLimit: parseNumeric(requestedLimit, policyQuery.data?.maxPreviewRows || 1000),
@@ -888,6 +884,9 @@ export default function SqlWorkbenchPage({ params }: SqlWorkbenchPageProps) {
           policyQuery.data?.maxRuntimeSeconds || 30,
         ),
         explain: options?.explain ?? explainMode,
+        federatedAliases: Object.fromEntries(
+          federatedSources.map((source) => [normalizeFederatedAlias(source.alias), source.connectorId]),
+        ),
       });
     },
     [

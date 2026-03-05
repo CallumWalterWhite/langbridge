@@ -219,14 +219,15 @@ export function AppShell({ children }: { children: ReactNode }): JSX.Element {
   return (
     <div className="min-h-screen bg-[color:var(--shell-bg)] text-[color:var(--text-primary)] transition-colors">
       <div className="flex min-h-screen flex-col lg:flex-row">
-        <aside className="hidden w-64 flex-shrink-0 flex-col border-r border-[color:var(--panel-border)] bg-[color:var(--panel-bg)] px-5 py-6 text-sm text-[color:var(--text-secondary)] shadow-soft lg:flex">
+        <aside className="sticky top-0 hidden h-screen w-64 flex-shrink-0 flex-col border-r border-[color:var(--panel-border)] bg-[color:var(--panel-bg)] px-5 py-6 text-sm text-[color:var(--text-secondary)] shadow-soft lg:flex">
           <Link
             href="/dashboard"
             className="inline-flex items-center gap-2 rounded-full border border-[color:var(--border-strong)] bg-[color:var(--panel-alt)] px-4 py-2 text-sm font-semibold text-[color:var(--text-primary)] transition hover:border-[color:var(--border-strong-hover)] hover:text-[color:var(--text-primary)]"
           >
             LangBridge
           </Link>
-          <nav className="mt-8 space-y-1">
+          <div className="mt-8 flex min-h-0 flex-1 flex-col">
+            <nav className="space-y-1 overflow-y-auto pr-1">
             {navItems.map((item) => {
               const hasChildren = Boolean(item.children && item.children.length > 0);
               const isParentActive =
@@ -296,8 +297,8 @@ export function AppShell({ children }: { children: ReactNode }): JSX.Element {
                 </div>
               );
             })}
-          </nav>
-          <div className="mt-auto space-y-3 text-xs text-[color:var(--text-muted)]">
+            </nav>
+            <div className="mt-6 space-y-3 text-xs text-[color:var(--text-muted)]">
             <Link href="/docs" className="inline-flex items-center gap-2 transition hover:text-[color:var(--text-primary)]">
               Documentation
             </Link>
@@ -307,6 +308,7 @@ export function AppShell({ children }: { children: ReactNode }): JSX.Element {
             >
               Support & feedback
             </Link>
+            </div>
           </div>
         </aside>
 

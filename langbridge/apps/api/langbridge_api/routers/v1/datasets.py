@@ -33,16 +33,6 @@ from langbridge.packages.common.langbridge_common.errors.application_errors impo
 router = APIRouter(prefix="/datasets", tags=["datasets"])
 
 
-def _map_dataset_exception(exc: Exception) -> HTTPException:
-    if isinstance(exc, PermissionDeniedBusinessValidationError):
-        return HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc))
-    if isinstance(exc, ResourceNotFound):
-        return HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
-    if isinstance(exc, BusinessValidationError):
-        return HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
-    return HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Dataset request failed. Error: " + str(exc))
-
-
 @router.get("", response_model=DatasetListResponse, status_code=status.HTTP_200_OK)
 @inject
 async def list_datasets(
@@ -54,18 +44,14 @@ async def list_datasets(
     current_user: UserResponse = Depends(get_current_user),
     service: DatasetService = Depends(Provide[Container.dataset_service]),
 ) -> DatasetListResponse:
-    try:
-        return await service.list_datasets(
-            workspace_id=workspace_id,
-            project_id=project_id,
-            search=search,
-            tags=tags,
-            dataset_types=dataset_types,
-            current_user=current_user,
-        )
-    except Exception as exc:
-        raise _map_dataset_exception(exc) from exc
-
+    return await service.list_datasets(
+        workspace_id=workspace_id,
+        project_id=project_id,
+        search=search,
+        tags=tags,
+        dataset_types=dataset_types,
+        current_user=current_user,
+    )
 
 @router.post("", response_model=DatasetResponse, status_code=status.HTTP_201_CREATED)
 @inject
@@ -74,10 +60,7 @@ async def create_dataset(
     current_user: UserResponse = Depends(get_current_user),
     service: DatasetService = Depends(Provide[Container.dataset_service]),
 ) -> DatasetResponse:
-    try:
-        return await service.create_dataset(request=request, current_user=current_user)
-    except Exception as exc:
-        raise _map_dataset_exception(exc) from exc
+    return await service.create_dataset(request=request, current_user=current_user)
 
 
 @router.post("/bulk-create", response_model=DatasetBulkCreateStartResponse, status_code=status.HTTP_202_ACCEPTED)
@@ -87,10 +70,7 @@ async def bulk_create_datasets(
     current_user: UserResponse = Depends(get_current_user),
     service: DatasetService = Depends(Provide[Container.dataset_service]),
 ) -> DatasetBulkCreateStartResponse:
-    try:
-        return await service.start_bulk_create(request=request, current_user=current_user)
-    except Exception as exc:
-        raise _map_dataset_exception(exc) from exc
+    return await service.start_bulk_create(request=request, current_user=current_user)
 
 
 @router.post("/ensure", response_model=DatasetEnsureResponse, status_code=status.HTTP_200_OK)
@@ -100,10 +80,7 @@ async def ensure_dataset(
     current_user: UserResponse = Depends(get_current_user),
     service: DatasetService = Depends(Provide[Container.dataset_service]),
 ) -> DatasetEnsureResponse:
-    try:
-        return await service.ensure_dataset(request=request, current_user=current_user)
-    except Exception as exc:
-        raise _map_dataset_exception(exc) from exc
+    return await service.ensure_dataset(request=request, current_user=current_user)
 
 
 @router.get("/catalog", response_model=DatasetCatalogResponse, status_code=status.HTTP_200_OK)
@@ -114,15 +91,11 @@ async def get_dataset_catalog(
     current_user: UserResponse = Depends(get_current_user),
     service: DatasetService = Depends(Provide[Container.dataset_service]),
 ) -> DatasetCatalogResponse:
-    try:
-        return await service.get_catalog(
-            workspace_id=workspace_id,
-            project_id=project_id,
-            current_user=current_user,
-        )
-    except Exception as exc:
-        raise _map_dataset_exception(exc) from exc
-
+    return await service.get_catalog(
+        workspace_id=workspace_id,
+        project_id=project_id,
+        current_user=current_user,
+    )
 
 @router.get("/{dataset_id}", response_model=DatasetResponse, status_code=status.HTTP_200_OK)
 @inject
@@ -132,15 +105,11 @@ async def get_dataset(
     current_user: UserResponse = Depends(get_current_user),
     service: DatasetService = Depends(Provide[Container.dataset_service]),
 ) -> DatasetResponse:
-    try:
-        return await service.get_dataset(
-            dataset_id=dataset_id,
-            workspace_id=workspace_id,
-            current_user=current_user,
-        )
-    except Exception as exc:
-        raise _map_dataset_exception(exc) from exc
-
+    return await service.get_dataset(
+        dataset_id=dataset_id,
+        workspace_id=workspace_id,
+        current_user=current_user,
+    )
 
 @router.put("/{dataset_id}", response_model=DatasetResponse, status_code=status.HTTP_200_OK)
 @inject
@@ -150,15 +119,11 @@ async def update_dataset(
     current_user: UserResponse = Depends(get_current_user),
     service: DatasetService = Depends(Provide[Container.dataset_service]),
 ) -> DatasetResponse:
-    try:
-        return await service.update_dataset(
-            dataset_id=dataset_id,
-            request=request,
-            current_user=current_user,
-        )
-    except Exception as exc:
-        raise _map_dataset_exception(exc) from exc
-
+    return await service.update_dataset(
+        dataset_id=dataset_id,
+        request=request,
+        current_user=current_user,
+    )
 
 @router.delete("/{dataset_id}", status_code=status.HTTP_204_NO_CONTENT)
 @inject
@@ -168,15 +133,11 @@ async def delete_dataset(
     current_user: UserResponse = Depends(get_current_user),
     service: DatasetService = Depends(Provide[Container.dataset_service]),
 ) -> None:
-    try:
-        await service.delete_dataset(
-            dataset_id=dataset_id,
-            workspace_id=workspace_id,
-            current_user=current_user,
-        )
-    except Exception as exc:
-        raise _map_dataset_exception(exc) from exc
-    return None
+    await service.delete_dataset(
+        dataset_id=dataset_id,
+        workspace_id=workspace_id,
+        current_user=current_user,
+    )
 
 
 @router.post("/{dataset_id}/preview", response_model=DatasetPreviewResponse, status_code=status.HTTP_200_OK)
@@ -187,15 +148,11 @@ async def preview_dataset(
     current_user: UserResponse = Depends(get_current_user),
     service: DatasetService = Depends(Provide[Container.dataset_service]),
 ) -> DatasetPreviewResponse:
-    try:
-        return await service.preview_dataset(
-            dataset_id=dataset_id,
-            request=request,
-            current_user=current_user,
-        )
-    except Exception as exc:
-        raise _map_dataset_exception(exc) from exc
-
+    return await service.preview_dataset(
+        dataset_id=dataset_id,
+        request=request,
+        current_user=current_user,
+    )
 
 @router.get("/{dataset_id}/preview/jobs/{job_id}", response_model=DatasetPreviewResponse, status_code=status.HTTP_200_OK)
 @inject
@@ -206,16 +163,12 @@ async def get_preview_dataset_job(
     current_user: UserResponse = Depends(get_current_user),
     service: DatasetService = Depends(Provide[Container.dataset_service]),
 ) -> DatasetPreviewResponse:
-    try:
-        return await service.get_preview_job_result(
-            dataset_id=dataset_id,
-            job_id=job_id,
-            workspace_id=workspace_id,
-            current_user=current_user,
-        )
-    except Exception as exc:
-        raise _map_dataset_exception(exc) from exc
-
+    return await service.get_preview_job_result(
+        dataset_id=dataset_id,
+        job_id=job_id,
+        workspace_id=workspace_id,
+        current_user=current_user,
+    )
 
 @router.post("/{dataset_id}/profile", response_model=DatasetProfileResponse, status_code=status.HTTP_200_OK)
 @inject
@@ -225,15 +178,11 @@ async def profile_dataset(
     current_user: UserResponse = Depends(get_current_user),
     service: DatasetService = Depends(Provide[Container.dataset_service]),
 ) -> DatasetProfileResponse:
-    try:
-        return await service.profile_dataset(
-            dataset_id=dataset_id,
-            request=request,
-            current_user=current_user,
-        )
-    except Exception as exc:
-        raise _map_dataset_exception(exc) from exc
-
+    return await service.profile_dataset(
+        dataset_id=dataset_id,
+        request=request,
+        current_user=current_user,
+    )
 
 @router.get("/{dataset_id}/profile/jobs/{job_id}", response_model=DatasetProfileResponse, status_code=status.HTTP_200_OK)
 @inject
@@ -244,16 +193,12 @@ async def get_profile_dataset_job(
     current_user: UserResponse = Depends(get_current_user),
     service: DatasetService = Depends(Provide[Container.dataset_service]),
 ) -> DatasetProfileResponse:
-    try:
-        return await service.get_profile_job_result(
+    return await service.get_profile_job_result(
             dataset_id=dataset_id,
             job_id=job_id,
             workspace_id=workspace_id,
             current_user=current_user,
         )
-    except Exception as exc:
-        raise _map_dataset_exception(exc) from exc
-
 
 @router.get("/{dataset_id}/used-by", response_model=DatasetUsageResponse, status_code=status.HTTP_200_OK)
 @inject
@@ -263,11 +208,8 @@ async def get_dataset_usage(
     current_user: UserResponse = Depends(get_current_user),
     service: DatasetService = Depends(Provide[Container.dataset_service]),
 ) -> DatasetUsageResponse:
-    try:
-        return await service.get_usage(
-            dataset_id=dataset_id,
-            workspace_id=workspace_id,
-            current_user=current_user,
-        )
-    except Exception as exc:
-        raise _map_dataset_exception(exc) from exc
+    return await service.get_usage(
+        dataset_id=dataset_id,
+        workspace_id=workspace_id,
+        current_user=current_user,
+    )

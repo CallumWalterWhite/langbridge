@@ -256,6 +256,7 @@ class SqlService:
                     allowed_tables=list(policy.allowed_tables_json or []),
                     redaction_rules=redaction_rules,
                     explain=request.explain,
+                    federated_aliases=request.federated_aliases,
                     correlation_id=self._request_context_provider.correlation_id,
                 )
             )

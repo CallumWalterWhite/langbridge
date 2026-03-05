@@ -9,6 +9,7 @@ from typing import Any
 
 import yaml
 
+from langbridge.apps.worker.langbridge_worker.tools.federated_query_tool import FederatedQueryTool
 from langbridge.packages.common.langbridge_common.config import settings
 from langbridge.packages.common.langbridge_common.contracts.semantic import (
     UnifiedSemanticQueryResponse,
@@ -74,7 +75,7 @@ class SemanticQueryExecutionService:
         self,
         *,
         semantic_model_repository: SemanticModelRepository | None,
-        federated_query_tool: Any | None,
+        federated_query_tool: FederatedQueryTool | None,
         logger: logging.Logger,
     ) -> None:
         self._semantic_model_repository = semantic_model_repository

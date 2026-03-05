@@ -5,13 +5,13 @@ from starlette.responses import JSONResponse, Response
 from langbridge.packages.common.langbridge_common.errors.application_errors import (
     AuthenticationError,
     AuthorizationError,
+    PermissionDeniedBusinessValidationError,
     ResourceAlreadyExists, 
     ResourceNotFound, 
     InvalidRequest, 
     ApplicationError,
     BusinessValidationError
 )
-from langbridge.packages.common.langbridge_common.config import settings
 
 class ErrorMiddleware(BaseHTTPMiddleware):
     """
@@ -50,6 +50,12 @@ class ErrorMiddleware(BaseHTTPMiddleware):
             return JSONResponse(
                 status_code=400,
                 content={"error": "BusinessValidationError", "message": str(e)}
+            )
+        except PermissionDeniedBusinessValidationError as e:
+            self.logger.warning(f"Permission denied business validation error: {e}")
+            return JSONResponse(
+                status_code=403,
+                content={"error": "PermissionDeniedBusinessValidationError", "message": str(e)}
             )
         except AuthenticationError as e:
             self.logger.warning(f"Authentication error: {e}")

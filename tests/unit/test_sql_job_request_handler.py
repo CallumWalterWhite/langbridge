@@ -66,6 +66,30 @@ class _FakeSqlConnector:
         )
 
 
+class _FakeFederatedQueryTool:
+    def __init__(self) -> None:
+        self.execute_payloads: list[dict] = []
+        self.explain_payloads: list[dict] = []
+
+    async def execute_federated_query(self, payload: dict):
+        self.execute_payloads.append(payload)
+        return {
+            "columns": ["id", "secret"],
+            "rows": [{"id": 1, "secret": "sensitive"}],
+            "execution": {
+                "total_runtime_ms": 25,
+                "stage_metrics": [{"stage_id": "s1", "bytes_written": 512}],
+            },
+        }
+
+    async def explain_federated_query(self, payload: dict):
+        self.explain_payloads.append(payload)
+        return {
+            "logical_plan": {"tables": {"a": {}}, "joins": []},
+            "physical_plan": {"stages": [{"stage_id": "s1"}]},
+        }
+
+
 @pytest.mark.anyio
 async def test_sql_job_request_handler_executes_and_redacts(monkeypatch) -> None:
     workspace_id = uuid.uuid4()
@@ -152,3 +176,144 @@ async def test_sql_job_request_handler_executes_and_redacts(monkeypatch) -> None
     assert fake_connector.executed_sql is not None
     normalized_sql = fake_connector.executed_sql.upper()
     assert "LIMIT 100" in normalized_sql or "TOP 100" in normalized_sql
+
+
+@pytest.mark.anyio
+async def test_sql_job_request_handler_executes_federated_query_and_redacts() -> None:
+    workspace_id = uuid.uuid4()
+    user_id = uuid.uuid4()
+    now = datetime.now(timezone.utc)
+    job = SqlJobRecord(
+        id=uuid.uuid4(),
+        workspace_id=workspace_id,
+        project_id=None,
+        user_id=user_id,
+        connection_id=None,
+        execution_mode="federated",
+        status="queued",
+        query_text="SELECT a.id, b.secret FROM crm.public.accounts AS a JOIN billing.public.accounts AS b ON a.id = b.id",
+        query_hash="federated-hash",
+        query_params_json={},
+        requested_limit=None,
+        enforced_limit=100,
+        requested_timeout_seconds=None,
+        enforced_timeout_seconds=30,
+        is_explain=False,
+        is_federated=True,
+        correlation_id="corr-fed-1",
+        policy_snapshot_json={},
+        created_at=now,
+        updated_at=now,
+    )
+    fake_federated_tool = _FakeFederatedQueryTool()
+    artifact_repo = _FakeSqlArtifactRepository()
+    handler = SqlJobRequestHandler(
+        sql_job_repository=_FakeSqlJobRepository(job),
+        sql_job_result_artifact_repository=artifact_repo,
+        connector_repository=_FakeConnectorRepository(),
+        federated_query_tool=fake_federated_tool,
+    )
+
+    request = CreateSqlJobRequest(
+        sql_job_id=job.id,
+        workspace_id=workspace_id,
+        user_id=user_id,
+        execution_mode="federated",
+        query=(
+            "SELECT a.id, b.secret "
+            "FROM crm.public.accounts AS a "
+            "JOIN billing.public.accounts AS b ON a.id = b.id"
+        ),
+        query_dialect="tsql",
+        params={},
+        enforced_limit=100,
+        enforced_timeout_seconds=30,
+        allow_federation=True,
+        redaction_rules={"secret": "hash"},
+        federated_aliases={
+            "crm": str(uuid.uuid4()),
+            "billing": str(uuid.uuid4()),
+        },
+    )
+    message = SqlJobRequestMessage(
+        sql_job_id=job.id,
+        job_type=JobType.SQL,
+        job_request=request.model_dump(mode="json"),
+    )
+
+    await handler.handle(message)
+
+    assert job.status == "succeeded"
+    assert job.row_count_preview == 1
+    assert job.duration_ms == 25
+    assert job.bytes_scanned == 512
+    assert isinstance(job.result_rows_json, list)
+    assert job.result_rows_json[0]["secret"] != "sensitive"
+    assert len(fake_federated_tool.execute_payloads) == 1
+    payload = fake_federated_tool.execute_payloads[0]
+    workflow = payload.get("workflow") or {}
+    dataset = workflow.get("dataset") or {}
+    tables = dataset.get("tables") or {}
+    assert "crm.public.accounts" in tables
+    assert "billing.public.accounts" in tables
+    assert tables["crm.public.accounts"]["metadata"]["skip_catalog_in_pushdown"] is True
+    assert tables["crm.public.accounts"]["metadata"]["physical_catalog"] is None
+    assert len(artifact_repo.added) == 1
+
+
+@pytest.mark.anyio
+async def test_sql_job_request_handler_federated_mode_requires_tool() -> None:
+    workspace_id = uuid.uuid4()
+    user_id = uuid.uuid4()
+    now = datetime.now(timezone.utc)
+    job = SqlJobRecord(
+        id=uuid.uuid4(),
+        workspace_id=workspace_id,
+        project_id=None,
+        user_id=user_id,
+        connection_id=None,
+        execution_mode="federated",
+        status="queued",
+        query_text="SELECT * FROM crm.public.accounts",
+        query_hash="federated-no-tool",
+        query_params_json={},
+        requested_limit=None,
+        enforced_limit=100,
+        requested_timeout_seconds=None,
+        enforced_timeout_seconds=30,
+        is_explain=False,
+        is_federated=True,
+        correlation_id="corr-fed-2",
+        policy_snapshot_json={},
+        created_at=now,
+        updated_at=now,
+    )
+    handler = SqlJobRequestHandler(
+        sql_job_repository=_FakeSqlJobRepository(job),
+        sql_job_result_artifact_repository=_FakeSqlArtifactRepository(),
+        connector_repository=_FakeConnectorRepository(),
+    )
+    request = CreateSqlJobRequest(
+        sql_job_id=job.id,
+        workspace_id=workspace_id,
+        user_id=user_id,
+        execution_mode="federated",
+        query="SELECT * FROM crm.public.accounts",
+        query_dialect="tsql",
+        params={},
+        enforced_limit=100,
+        enforced_timeout_seconds=30,
+        allow_federation=True,
+        federated_aliases={"crm": str(uuid.uuid4())},
+    )
+    message = SqlJobRequestMessage(
+        sql_job_id=job.id,
+        job_type=JobType.SQL,
+        job_request=request.model_dump(mode="json"),
+    )
+
+    await handler.handle(message)
+
+    assert job.status == "failed"
+    assert isinstance(job.error_json, dict)
+    assert "Federated query tool is not configured" in str(job.error_json.get("message"))

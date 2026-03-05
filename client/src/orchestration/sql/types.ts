@@ -28,6 +28,7 @@ export interface SqlExecuteRequestPayload {
   requestedLimit?: number;
   requestedTimeoutSeconds?: number;
   explain?: boolean;
+  federatedAliases?: Record<string, string>;
 }
 
 export interface SqlExecuteResponsePayload {
