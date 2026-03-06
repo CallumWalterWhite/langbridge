@@ -4,6 +4,7 @@ import hashlib
 import json
 import uuid
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
 import yaml
@@ -24,6 +25,7 @@ from langbridge.packages.common.langbridge_common.contracts.datasets import (
     DatasetCatalogResponse,
     DatasetColumnRequest,
     DatasetColumnResponse,
+    DatasetCsvIngestResponse,
     DatasetCreateRequest,
     DatasetEnsureRequest,
     DatasetEnsureResponse,
@@ -46,6 +48,7 @@ from langbridge.packages.common.langbridge_common.contracts.datasets import (
 )
 from langbridge.packages.common.langbridge_common.contracts.jobs.dataset_job import (
     CreateDatasetBulkCreateJobRequest,
+    CreateDatasetCsvIngestJobRequest,
     CreateDatasetPreviewJobRequest,
     CreateDatasetProfileJobRequest,
 )
@@ -87,6 +90,9 @@ from langbridge.packages.common.langbridge_common.repositories.user_repository i
 from langbridge.packages.common.langbridge_common.utils.sql import (
     enforce_preview_limit,
     enforce_read_only_sql,
+)
+from langbridge.packages.common.langbridge_common.utils.storage_uri import (
+    path_to_storage_uri,
 )
 from langbridge.packages.connectors.langbridge_connectors.api.config import ConnectorRuntimeType
 
@@ -190,6 +196,7 @@ class DatasetService:
             tags_json=[tag.strip() for tag in request.tags if tag and tag.strip()],
             dataset_type=request.dataset_type.value,
             dialect=(request.dialect.strip().lower() if request.dialect else None),
+            storage_uri=(request.storage_uri.strip() if request.storage_uri else None),
             catalog_name=request.catalog_name,
             schema_name=request.schema_name,
             table_name=request.table_name,
@@ -223,6 +230,67 @@ class DatasetService:
         dataset.revision_id = revision_id
         dataset.updated_at = datetime.now(timezone.utc)
         return await self._to_dataset_response(dataset)
+
+    async def upload_csv_dataset(
+        self,
+        *,
+        workspace_id: uuid.UUID,
+        project_id: uuid.UUID | None,
+        name: str,
+        filename: str,
+        content: bytes,
+        description: str | None,
+        tags: list[str] | None,
+        current_user: UserResponse,
+    ) -> DatasetCsvIngestResponse:
+        await self._assert_workspace_access(workspace_id, current_user)
+        await self._assert_workspace_admin(workspace_id, current_user)
+        await self._validate_dataset_feature_flags(DatasetType.FILE)
+
+        safe_filename = Path(filename or "upload.csv").name or "upload.csv"
+        upload_root = Path(settings.DATASET_FILE_LOCAL_DIR) / "uploads" / str(workspace_id)
+        upload_root.mkdir(parents=True, exist_ok=True)
+        file_token = uuid.uuid4()
+        upload_path = upload_root / f"{file_token}_{safe_filename}"
+        upload_path.write_bytes(content)
+        storage_uri = path_to_storage_uri(upload_path)
+
+        dataset = await self.create_dataset(
+            request=DatasetCreateRequest(
+                workspace_id=workspace_id,
+                project_id=project_id,
+                name=name.strip() or safe_filename,
+                description=description,
+                tags=list(tags or []),
+                dataset_type=DatasetType.FILE,
+                dialect="duckdb",
+                storage_uri=storage_uri,
+                file_config={
+                    "format": "csv",
+                    "filename": safe_filename,
+                    "source_storage_uri": storage_uri,
+                },
+                status=DatasetStatus.DRAFT,
+            ),
+            current_user=current_user,
+        )
+
+        job = await self._dataset_job_request_service.create_csv_ingest_job(
+            CreateDatasetCsvIngestJobRequest(
+                dataset_id=dataset.id,
+                workspace_id=workspace_id,
+                project_id=project_id,
+                user_id=current_user.id,
+                storage_uri=storage_uri,
+                correlation_id=self._request_context_provider.correlation_id,
+            )
+        )
+        return DatasetCsvIngestResponse(
+            dataset_id=dataset.id,
+            job_id=job.id,
+            job_status=job.status.value,
+            storage_uri=storage_uri,
+        )
 
     async def ensure_dataset(
         self,
@@ -358,6 +426,8 @@ class DatasetService:
             dataset.project_id = request.project_id
         if request.dialect is not None:
             dataset.dialect = request.dialect.strip().lower() if request.dialect.strip() else None
+        if request.storage_uri is not None or "storage_uri" in request.model_fields_set:
+            dataset.storage_uri = request.storage_uri.strip() if request.storage_uri else None
         if request.catalog_name is not None:
             dataset.catalog_name = request.catalog_name
         if request.schema_name is not None:
@@ -872,6 +942,13 @@ class DatasetService:
             )
             if inferred:
                 return inferred
+        elif request.dataset_type == DatasetType.FILE:
+            inferred = await self._infer_columns_from_file(
+                storage_uri=request.storage_uri,
+                file_config=request.file_config,
+            )
+            if inferred:
+                return inferred
 
         return []
 
@@ -955,6 +1032,75 @@ class DatasetService:
                     name=str(column_name),
                     data_type="unknown",
                     nullable=True,
+                    is_allowed=True,
+                    ordinal_position=index,
+                )
+            )
+        return inferred
+
+    async def _infer_columns_from_file(
+        self,
+        *,
+        storage_uri: str | None,
+        file_config: dict[str, Any] | None,
+    ) -> list[DatasetColumnRequest]:
+        config_payload = dict(file_config or {})
+        resolved_uri = (storage_uri or "").strip()
+        if not resolved_uri:
+            resolved_uri = str(
+                config_payload.get("storage_uri")
+                or config_payload.get("uri")
+                or config_payload.get("path")
+                or ""
+            ).strip()
+        if not resolved_uri:
+            return []
+
+        normalized_uri = self._normalize_local_storage_uri(resolved_uri)
+        file_format = self._infer_file_dataset_format(normalized_uri, config_payload)
+        if file_format is None:
+            return []
+
+        scan_sql = self._build_duckdb_file_scan_sql(
+            storage_uri=normalized_uri,
+            file_format=file_format,
+            file_config=config_payload,
+        )
+        if not scan_sql:
+            return []
+
+        try:
+            import duckdb
+        except Exception:
+            return []
+
+        connection = None
+        try:
+            connection = duckdb.connect(database=":memory:")
+            rows = connection.execute(f"DESCRIBE SELECT * FROM {scan_sql}").fetchall()
+        except Exception:
+            return []
+        finally:
+            if connection is not None:
+                try:
+                    connection.close()
+                except Exception:
+                    pass
+
+        inferred: list[DatasetColumnRequest] = []
+        for index, row in enumerate(rows):
+            if not row:
+                continue
+            name = str(row[0] or "").strip()
+            if not name:
+                continue
+            data_type = str(row[1] or "string").strip() or "string"
+            nullable_flag = str(row[2] or "").strip().upper()
+            inferred.append(
+                DatasetColumnRequest(
+                    name=name,
+                    data_type=data_type.lower(),
+                    nullable=nullable_flag != "NO",
                     is_allowed=True,
                     ordinal_position=index,
                 )
@@ -1046,6 +1192,7 @@ class DatasetService:
                 "tags": list(dataset.tags_json or []),
                 "dataset_type": dataset.dataset_type,
                 "dialect": dataset.dialect,
+                "storage_uri": dataset.storage_uri,
                 "catalog_name": dataset.catalog_name,
                 "schema_name": dataset.schema_name,
                 "table_name": dataset.table_name,
@@ -1081,11 +1228,13 @@ class DatasetService:
             workspace_id=dataset.workspace_id,
             project_id=dataset.project_id,
             connection_id=dataset.connection_id,
+            owner_id=dataset.created_by,
             name=dataset.name,
             description=dataset.description,
             tags=list(dataset.tags_json or []),
             dataset_type=DatasetType(dataset.dataset_type.upper()),
             dialect=dataset.dialect,
+            storage_uri=dataset.storage_uri,
             catalog_name=dataset.catalog_name,
             schema_name=dataset.schema_name,
             table_name=dataset.table_name,
@@ -1107,6 +1256,49 @@ class DatasetService:
             created_at=dataset.created_at,
             updated_at=dataset.updated_at,
         )
+
+    @staticmethod
+    def _normalize_local_storage_uri(storage_uri: str) -> str:
+        normalized = (storage_uri or "").strip()
+        if normalized.startswith("file://"):
+            return normalized[7:]
+        return normalized
+
+    @staticmethod
+    def _infer_file_dataset_format(storage_uri: str, file_config: dict[str, Any]) -> str | None:
+        configured = str(file_config.get("format") or file_config.get("file_format") or "").strip().lower()
+        if configured in {"csv", "parquet"}:
+            return configured
+        lowered_uri = storage_uri.lower()
+        if lowered_uri.endswith(".parquet"):
+            return "parquet"
+        if lowered_uri.endswith(".csv"):
+            return "csv"
+        return None
+
+    @staticmethod
+    def _build_duckdb_file_scan_sql(
+        *,
+        storage_uri: str,
+        file_format: str,
+        file_config: dict[str, Any],
+    ) -> str | None:
+        escaped_uri = storage_uri.replace("'", "''")
+        if file_format == "parquet":
+            return f"read_parquet('{escaped_uri}')"
+        if file_format == "csv":
+            header = "true" if bool(file_config.get("header", True)) else "false"
+            delimiter = str(file_config.get("delimiter") or ",").replace("'", "''")
+            quote = str(file_config.get("quote") or '\"').replace("'", "''")
+            return (
+                "read_csv_auto("
+                f"'{escaped_uri}', "
+                f"header={header}, "
+                f"delim='{delimiter}', "
+                f"quote='{quote}'"
+                ")"
+            )
+        return None
 
     async def _get_dataset(self, *, dataset_id: uuid.UUID, workspace_id: uuid.UUID) -> DatasetRecord:
         dataset = await self._dataset_repository.get_for_workspace(

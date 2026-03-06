@@ -3,11 +3,34 @@ from __future__ import annotations
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from pathlib import Path
+import sys
+import types
 from typing import Any
 
 import pytest
 
+if "jose" not in sys.modules:
+    jose_module = types.ModuleType("jose")
+
+    class _JWTError(Exception):
+        pass
+
+    class _JwtFacade:
+        @staticmethod
+        def encode(*args, **kwargs):
+            return "token"
+
+        @staticmethod
+        def decode(*args, **kwargs):
+            return {}
+
+    jose_module.JWTError = _JWTError
+    jose_module.jwt = _JwtFacade()
+    sys.modules["jose"] = jose_module
+
 from langbridge.apps.api.langbridge_api.services.dataset_service import DatasetService
+from langbridge.packages.common.langbridge_common.config import settings
 from langbridge.packages.common.langbridge_common.contracts.auth import UserResponse
 from langbridge.packages.common.langbridge_common.contracts.datasets import (
     DatasetBulkCreateRequest,
@@ -241,6 +264,7 @@ class _FakeDatasetJobRequestService:
         self._job_repository = job_repository
         self.preview_requests: list[CreateDatasetPreviewJobRequest] = []
         self.bulk_requests: list[CreateDatasetBulkCreateJobRequest] = []
+        self.csv_ingest_requests: list[Any] = []
 
     async def create_preview_job(self, request: CreateDatasetPreviewJobRequest) -> JobRecord:
         self.preview_requests.append(request)
@@ -290,6 +314,25 @@ class _FakeDatasetJobRequestService:
             status=JobStatus.queued,
             progress=0,
             status_message="Bulk dataset creation queued.",
+            created_at=now,
+            queued_at=now,
+            updated_at=now,
+        )
+        self._job_repository.add(job)
+        return job
+
+    async def create_csv_ingest_job(self, request) -> JobRecord:
+        self.csv_ingest_requests.append(request)
+        now = datetime.now(timezone.utc)
+        job = JobRecord(
+            id=uuid.uuid4(),
+            organisation_id=str(request.workspace_id),
+            job_type=request.job_type.value,
+            payload=request.model_dump(mode="json"),
+            headers={},
+            status=JobStatus.queued,
+            progress=0,
+            status_message="CSV ingest queued.",
             created_at=now,
             queued_at=now,
             updated_at=now,
@@ -500,6 +543,75 @@ async def test_dataset_create_does_not_insert_policy_twice_when_repo_cannot_read
 
     assert created.policy.max_rows_preview == 1000
     assert dataset_policy_repository.add_count == 1
+
+
+@pytest.mark.anyio
+async def test_upload_csv_dataset_creates_file_dataset_and_ingest_job(tmp_path, monkeypatch) -> None:
+    workspace_id = uuid.uuid4()
+    user_id = uuid.uuid4()
+    current_user = UserResponse(
+        id=user_id,
+        username="dataset-user",
+        email="dataset@example.com",
+        is_active=True,
+        available_organizations=[workspace_id],
+    )
+    dataset_repository = _FakeDatasetRepository()
+    dataset_column_repository = _FakeDatasetColumnRepository()
+    dataset_policy_repository = _FakeDatasetPolicyRepository()
+    dataset_revision_repository = _FakeDatasetRevisionRepository()
+    job_repository = _FakeJobRepository()
+    dataset_job_request_service = _FakeDatasetJobRequestService(job_repository=job_repository)
+    monkeypatch.setattr(settings, "DATASET_FILE_LOCAL_DIR", str(tmp_path / "datasets"))
+
+    service = DatasetService(
+        dataset_repository=dataset_repository,
+        dataset_column_repository=dataset_column_repository,
+        dataset_policy_repository=dataset_policy_repository,
+        dataset_revision_repository=dataset_revision_repository,
+        connector_repository=_FakeConnectorRepository(
+            _FakeConnector(
+                id=uuid.uuid4(),
+                connector_type="POSTGRES",
+                organizations=[_OrgRef(id=workspace_id)],
+            )
+        ),
+        semantic_model_repository=_FakeSemanticModelRepository(),
+        sql_workspace_policy_repository=_FakeSqlWorkspacePolicyRepository(max_preview_rows=120),
+        organization_repository=_FakeOrganizationRepository(workspace_id=workspace_id),
+        user_repository=_FakeUserRepository(),
+        connector_service=_FakeConnectorService(),
+        dataset_job_request_service=dataset_job_request_service,
+        job_repository=job_repository,
+        request_context_provider=_FakeRequestContextProvider(),
+    )
+
+    response = await service.upload_csv_dataset(
+        workspace_id=workspace_id,
+        project_id=None,
+        name="marketing_upload",
+        filename="../marketing.csv",
+        content=b"campaign,spend\nspring,100\n",
+        description="Uploaded campaign spend",
+        tags=["marketing"],
+        current_user=current_user,
+    )
+
+    dataset = await dataset_repository.get_for_workspace(
+        dataset_id=response.dataset_id,
+        workspace_id=workspace_id,
+    )
+    assert dataset is not None
+    assert dataset.dataset_type == DatasetType.FILE.value
+    assert dataset.storage_uri == response.storage_uri
+    assert dataset.status == "draft"
+    assert dataset.file_config_json["format"] == "csv"
+    assert dataset.file_config_json["filename"] == "marketing.csv"
+    assert Path(settings.DATASET_FILE_LOCAL_DIR, "uploads", str(workspace_id)).exists()
+    assert len(dataset_job_request_service.csv_ingest_requests) == 1
+    assert dataset_job_request_service.csv_ingest_requests[0].dataset_id == dataset.id
+    assert dataset_job_request_service.csv_ingest_requests[0].storage_uri == response.storage_uri
+    assert response.job_status == JobStatus.queued.value
 
 
 @pytest.mark.anyio

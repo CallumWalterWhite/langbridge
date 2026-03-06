@@ -20,7 +20,6 @@ from langbridge.packages.common.langbridge_common.db import auth as _auth  # noq
 from langbridge.packages.common.langbridge_common.db import bi as _bi  # noqa: F401
 from langbridge.packages.common.langbridge_common.db import connector as _connector  # noqa: F401
 from langbridge.packages.common.langbridge_common.db import dataset as _dataset  # noqa: F401
-from langbridge.packages.common.langbridge_common.db import environment as _environment  # noqa: F401
 from langbridge.packages.common.langbridge_common.db import semantic as _semantic  # noqa: F401
 from langbridge.packages.common.langbridge_common.db import threads as _threads  # noqa: F401
 from langbridge.packages.common.langbridge_common.db import job as _job  # noqa: F401

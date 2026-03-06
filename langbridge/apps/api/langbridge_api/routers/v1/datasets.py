@@ -1,7 +1,7 @@
 from uuid import UUID
 
 from dependency_injector.wiring import Provide, inject
-from fastapi import APIRouter, Body, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Body, Depends, File, Form, HTTPException, Query, UploadFile, status
 
 from langbridge.apps.api.langbridge_api.auth.dependencies import get_current_user
 from langbridge.apps.api.langbridge_api.ioc import Container
@@ -11,6 +11,7 @@ from langbridge.packages.common.langbridge_common.contracts.datasets import (
     DatasetBulkCreateRequest,
     DatasetBulkCreateStartResponse,
     DatasetCatalogResponse,
+    DatasetCsvIngestResponse,
     DatasetCreateRequest,
     DatasetEnsureRequest,
     DatasetEnsureResponse,
@@ -61,6 +62,30 @@ async def create_dataset(
     service: DatasetService = Depends(Provide[Container.dataset_service]),
 ) -> DatasetResponse:
     return await service.create_dataset(request=request, current_user=current_user)
+
+
+@router.post("/upload-csv", response_model=DatasetCsvIngestResponse, status_code=status.HTTP_202_ACCEPTED)
+@inject
+async def upload_csv_dataset(
+    workspace_id: UUID = Form(...),
+    name: str = Form(...),
+    file: UploadFile = File(...),
+    project_id: UUID | None = Form(default=None),
+    description: str | None = Form(default=None),
+    tags: str | None = Form(default=None),
+    current_user: UserResponse = Depends(get_current_user),
+    service: DatasetService = Depends(Provide[Container.dataset_service]),
+) -> DatasetCsvIngestResponse:
+    return await service.upload_csv_dataset(
+        workspace_id=workspace_id,
+        project_id=project_id,
+        name=name,
+        filename=file.filename or "upload.csv",
+        content=await file.read(),
+        description=description,
+        tags=[item.strip() for item in (tags or "").split(",") if item.strip()],
+        current_user=current_user,
+    )
 
 
 @router.post("/bulk-create", response_model=DatasetBulkCreateStartResponse, status_code=status.HTTP_202_ACCEPTED)

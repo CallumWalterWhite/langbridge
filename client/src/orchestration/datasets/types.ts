@@ -41,11 +41,13 @@ export interface DatasetRecord {
   workspaceId: string;
   projectId?: string | null;
   connectionId?: string | null;
+  ownerId?: string | null;
   name: string;
   description?: string | null;
   tags: string[];
   datasetType: DatasetType;
   dialect?: string | null;
+  storageUri?: string | null;
   catalogName?: string | null;
   schemaName?: string | null;
   tableName?: string | null;
@@ -150,6 +152,7 @@ export interface DatasetCreatePayload {
   catalogName?: string | null;
   schemaName?: string | null;
   tableName?: string | null;
+  storageUri?: string | null;
   sqlText?: string | null;
   referencedDatasetIds?: string[];
   federatedPlan?: Record<string, unknown> | null;
@@ -204,6 +207,13 @@ export interface DatasetBulkCreatePayload {
 export interface DatasetBulkCreateStartResponse {
   jobId: string;
   jobStatus: string;
+}
+
+export interface DatasetCsvIngestResponse {
+  datasetId: string;
+  jobId: string;
+  jobStatus: string;
+  storageUri: string;
 }
 
 export interface DatasetUpdatePayload {

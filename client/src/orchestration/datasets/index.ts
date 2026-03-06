@@ -4,6 +4,7 @@ import type {
   DatasetBulkCreatePayload,
   DatasetBulkCreateStartResponse,
   DatasetCatalogResponse,
+  DatasetCsvIngestResponse,
   DatasetCreatePayload,
   DatasetEnsurePayload,
   DatasetEnsureResponse,
@@ -59,6 +60,33 @@ export async function createDataset(payload: DatasetCreatePayload): Promise<Data
   return apiFetch<DatasetRecord>(DATASET_BASE_PATH, {
     method: 'POST',
     body: JSON.stringify(payload),
+  });
+}
+
+export async function uploadCsvDataset(payload: {
+  workspaceId: string;
+  name: string;
+  file: File;
+  projectId?: string | null;
+  description?: string | null;
+  tags?: string[];
+}): Promise<DatasetCsvIngestResponse> {
+  const formData = new FormData();
+  formData.set('workspace_id', requiredWorkspaceId(payload.workspaceId));
+  formData.set('name', payload.name);
+  formData.set('file', payload.file);
+  if (payload.projectId) {
+    formData.set('project_id', payload.projectId);
+  }
+  if (payload.description) {
+    formData.set('description', payload.description);
+  }
+  if (payload.tags?.length) {
+    formData.set('tags', payload.tags.join(','));
+  }
+  return apiFetch<DatasetCsvIngestResponse>(`${DATASET_BASE_PATH}/upload-csv`, {
+    method: 'POST',
+    body: formData,
   });
 }
 
@@ -194,6 +222,7 @@ export type {
   DatasetBulkCreateStartResponse,
   DatasetCatalogItem,
   DatasetCatalogResponse,
+  DatasetCsvIngestResponse,
   DatasetColumn,
   DatasetCreatePayload,
   DatasetEnsurePayload,

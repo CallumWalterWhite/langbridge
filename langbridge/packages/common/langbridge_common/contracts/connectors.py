@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from enum import Enum
 from typing import Any, Dict, Literal, Optional, cast
 from uuid import UUID
 
@@ -41,6 +42,38 @@ class ConnectionMetadata(_Base):
     account: str | None = None
     user: str | None = None
     extra: dict[str, Any] = Field(default_factory=dict)
+
+
+class ConnectorFamily(str, Enum):
+    DATABASE = "DATABASE"
+    API = "API"
+    VECTOR_DB = "VECTOR_DB"
+
+
+class ConnectorSyncStrategy(str, Enum):
+    FULL_REFRESH = "FULL_REFRESH"
+    INCREMENTAL = "INCREMENTAL"
+    WINDOWED_INCREMENTAL = "WINDOWED_INCREMENTAL"
+    MANUAL = "MANUAL"
+
+
+class ConnectorAuthSchemaField(_Base):
+    field: str
+    label: str | None = None
+    required: bool = True
+    description: str
+    type: str
+    secret: bool = False
+    default: str | None = None
+    value_list: list[str] = Field(default_factory=list)
+
+
+class ConnectorPluginMetadata(_Base):
+    connector_type: str
+    connector_family: ConnectorFamily
+    supported_resources: list[str] = Field(default_factory=list)
+    auth_schema: list[ConnectorAuthSchemaField] = Field(default_factory=list)
+    sync_strategy: ConnectorSyncStrategy | None = None
 
 
 class ConnectorDTO(_Base):
@@ -88,12 +121,14 @@ class ConnectorResponse(_Base):
     secret_references: dict[str, SecretReference] = Field(default_factory=dict)
     connection_policy: ConnectionPolicy | None = None
     catalog_summary: "ConnectorCatalogSummary | None" = None
+    plugin_metadata: "ConnectorPluginMetadata | None" = None
 
     @staticmethod
     def from_connector(
         connector: Connector,
         organization_id: Optional[UUID] = None,
         project_id: Optional[UUID] = None,
+        plugin_metadata: "ConnectorPluginMetadata | None" = None,
     ) -> "ConnectorResponse":
         config = _parse_connector_config(connector.config_json)
 
@@ -136,6 +171,7 @@ class ConnectorResponse(_Base):
                 if isinstance(raw_policy, dict)
                 else None
             ),
+            plugin_metadata=plugin_metadata,
         )
 
 

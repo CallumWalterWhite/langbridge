@@ -59,6 +59,7 @@ class DatasetRecord(Base):
     catalog_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     schema_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     table_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    storage_uri: Mapped[str | None] = mapped_column(String(2048), nullable=True)
     sql_text: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     referenced_dataset_ids_json: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)

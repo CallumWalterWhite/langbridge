@@ -5,16 +5,23 @@ import json
 import logging
 import uuid
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
+import duckdb
 import sqlglot
 from pydantic import ValidationError
 from sqlglot import exp
 
+from langbridge.apps.worker.langbridge_worker.dataset_execution import (
+    DatasetExecutionResolver,
+    build_file_scan_sql,
+)
 from langbridge.apps.worker.langbridge_worker.tools import FederatedQueryTool
 from langbridge.packages.common.langbridge_common.config import settings
 from langbridge.packages.common.langbridge_common.contracts.jobs.dataset_job import (
     CreateDatasetBulkCreateJobRequest,
+    CreateDatasetCsvIngestJobRequest,
     CreateDatasetPreviewJobRequest,
     CreateDatasetProfileJobRequest,
 )
@@ -36,11 +43,9 @@ from langbridge.packages.common.langbridge_common.repositories.dataset_repositor
 from langbridge.packages.common.langbridge_common.repositories.job_repository import JobRepository
 from langbridge.packages.common.langbridge_common.utils.sql import (
     apply_result_redaction,
-    enforce_read_only_sql,
     render_sql_with_params,
     sanitize_sql_error_message,
 )
-from langbridge.packages.federation.models import FederationWorkflow, VirtualDataset, VirtualTableBinding
 from langbridge.packages.messaging.langbridge_messaging.contracts.base import MessageType
 from langbridge.packages.messaging.langbridge_messaging.contracts.jobs.dataset_job import (
     DatasetJobRequestMessage,
@@ -68,6 +73,9 @@ class DatasetJobRequestHandler(BaseMessageHandler):
         self._dataset_column_repository = dataset_column_repository
         self._dataset_policy_repository = dataset_policy_repository
         self._federated_query_tool = federated_query_tool
+        self._dataset_execution_resolver = DatasetExecutionResolver(
+            dataset_repository=dataset_repository,
+        )
 
     async def handle(self, payload: DatasetJobRequestMessage) -> None:
         if self._federated_query_tool is None:
@@ -95,6 +103,10 @@ class DatasetJobRequestHandler(BaseMessageHandler):
                 request = self._parse_profile_request(payload)
                 result = await self._run_profile(request)
                 summary = "Dataset profiling completed."
+            elif payload.job_type == JobType.DATASET_CSV_INGEST:
+                request = self._parse_csv_ingest_request(payload)
+                result = await self._run_csv_ingest(request)
+                summary = "CSV dataset ingestion completed."
             elif payload.job_type == JobType.DATASET_BULK_CREATE:
                 request = self._parse_bulk_create_request(payload)
                 result = await self._run_bulk_create(request, job_record)
@@ -136,6 +148,12 @@ class DatasetJobRequestHandler(BaseMessageHandler):
         except ValidationError as exc:
             raise BusinessValidationError("Invalid dataset profile request payload.") from exc
 
+    def _parse_csv_ingest_request(self, payload: DatasetJobRequestMessage) -> CreateDatasetCsvIngestJobRequest:
+        try:
+            return CreateDatasetCsvIngestJobRequest.model_validate(payload.job_request)
+        except ValidationError as exc:
+            raise BusinessValidationError("Invalid CSV ingest request payload.") from exc
+
     def _parse_bulk_create_request(self, payload: DatasetJobRequestMessage) -> CreateDatasetBulkCreateJobRequest:
         try:
             return CreateDatasetBulkCreateJobRequest.model_validate(payload.job_request)
@@ -149,7 +167,7 @@ class DatasetJobRequestHandler(BaseMessageHandler):
         )
         effective_limit = min(max(1, request.enforced_limit), max(1, policy.max_rows_preview))
 
-        workflow, table_key, dialect = self._build_workflow(dataset=dataset)
+        workflow, table_key, dialect = await self._build_workflow(dataset=dataset)
         preview_sql = self._build_preview_sql(
             table_key=table_key,
             columns=columns,
@@ -204,7 +222,7 @@ class DatasetJobRequestHandler(BaseMessageHandler):
             dataset_id=request.dataset_id,
             workspace_id=request.workspace_id,
         )
-        workflow, table_key, dialect = self._build_workflow(dataset=dataset)
+        workflow, table_key, dialect = await self._build_workflow(dataset=dataset)
 
         base_filters = self._build_row_filter_expressions(
             policy=policy,
@@ -277,6 +295,100 @@ class DatasetJobRequestHandler(BaseMessageHandler):
             "distinct_counts": distinct_counts,
             "null_rates": null_rates,
             "profiled_at": now.isoformat(),
+        }
+
+    async def _run_csv_ingest(self, request: CreateDatasetCsvIngestJobRequest) -> dict[str, Any]:
+        dataset, _, _ = await self._load_dataset_bundle(
+            dataset_id=request.dataset_id,
+            workspace_id=request.workspace_id,
+        )
+        if str(dataset.dataset_type or "").upper() != "FILE":
+            raise BusinessValidationError("CSV ingest requires a FILE dataset.")
+
+        storage_uri = (request.storage_uri or dataset.storage_uri or "").strip()
+        if not storage_uri:
+            raise BusinessValidationError("CSV ingest dataset is missing storage_uri.")
+
+        file_config = dict(dataset.file_config_json or {})
+        file_format = str(
+            file_config.get("format")
+            or file_config.get("file_format")
+            or "csv"
+        ).strip().lower()
+        if file_format != "csv":
+            raise BusinessValidationError("CSV ingest only supports csv source files.")
+
+        source_sql = build_file_scan_sql(storage_uri=storage_uri, file_config=file_config)
+        parquet_file = (
+            Path(settings.DATASET_FILE_LOCAL_DIR)
+            / "parquet"
+            / str(request.workspace_id)
+            / f"{dataset.id}.parquet"
+        )
+        parquet_file.parent.mkdir(parents=True, exist_ok=True)
+        escaped_parquet_file = str(parquet_file).replace("'", "''")
+
+        connection = duckdb.connect(database=":memory:")
+        try:
+            describe_rows = connection.execute(
+                f"DESCRIBE SELECT * FROM {source_sql}"
+            ).fetchall()
+            count_rows = connection.execute(
+                f"SELECT COUNT(*) AS row_count FROM {source_sql}"
+            ).fetchall()
+            connection.execute(
+                f"COPY (SELECT * FROM {source_sql}) TO '{escaped_parquet_file}' (FORMAT PARQUET)"
+            )
+        finally:
+            connection.close()
+
+        dataset.storage_uri = parquet_file.resolve().as_uri()
+        dataset.dialect = "duckdb"
+        dataset.file_config_json = {
+            **file_config,
+            "format": "parquet",
+            "source_format": "csv",
+            "source_storage_uri": storage_uri,
+        }
+        dataset.status = "published"
+        dataset.table_name = dataset.table_name or dataset.name
+        dataset.schema_name = dataset.schema_name or None
+        dataset.row_count_estimate = int(count_rows[0][0]) if count_rows else None
+        dataset.updated_at = datetime.now(timezone.utc)
+
+        existing_columns = await self._dataset_column_repository.list_for_dataset(dataset_id=dataset.id)
+        delete_for_dataset = getattr(self._dataset_column_repository, "delete_for_dataset", None)
+        if callable(delete_for_dataset):
+            await delete_for_dataset(dataset_id=dataset.id)
+        elif existing_columns:
+            # Repository test doubles may not expose delete support; clear by dataset when possible.
+            self._logger.debug("Dataset column repository does not support bulk delete; appending inferred columns.")
+        for index, row in enumerate(describe_rows):
+            if len(row) < 2:
+                continue
+            column = DatasetColumnRecord(
+                id=uuid.uuid4(),
+                dataset_id=dataset.id,
+                workspace_id=dataset.workspace_id,
+                name=str(row[0]),
+                data_type=str(row[1]),
+                nullable=True,
+                ordinal_position=index,
+                description=None,
+                is_allowed=True,
+                is_computed=False,
+                expression=None,
+                created_at=datetime.now(timezone.utc),
+                updated_at=datetime.now(timezone.utc),
+            )
+            self._dataset_column_repository.add(column)
+
+        return {
+            "dataset_id": str(dataset.id),
+            "storage_uri": dataset.storage_uri,
+            "row_count_estimate": dataset.row_count_estimate,
+            "column_count": len(describe_rows),
+            "format": "parquet",
         }
 
     async def _run_bulk_create(
@@ -597,65 +709,8 @@ class DatasetJobRequestHandler(BaseMessageHandler):
             self._dataset_policy_repository.add(policy)
         return dataset, columns, policy
 
-    def _build_workflow(self, *, dataset: DatasetRecord) -> tuple[FederationWorkflow, str, str]:
-        dataset_type = str(dataset.dataset_type or "").upper()
-        if dataset_type not in {"TABLE", "SQL"}:
-            raise BusinessValidationError(
-                f"Dataset type '{dataset.dataset_type}' is not executable in this runtime yet."
-            )
-        if dataset.connection_id is None:
-            raise BusinessValidationError("Executable datasets require a connection_id.")
-
-        dialect = (dataset.dialect or "tsql").strip().lower() or "tsql"
-        table_key = f"{dataset.schema_name}.{dataset.table_name}"
-        metadata: dict[str, Any] = {
-            "physical_catalog": dataset.catalog_name,
-            "physical_schema": dataset.schema_name,
-            "physical_table": dataset.table_name,
-        }
-        binding_table_name = dataset.table_name or table_key
-        schema_name = dataset.schema_name
-        catalog_name = dataset.catalog_name
-
-        if dataset_type == "SQL":
-            sql_text = (dataset.sql_text or "").strip()
-            if not sql_text:
-                raise BusinessValidationError("SQL dataset is missing sql_text.")
-            enforce_read_only_sql(sql_text, allow_dml=False, dialect=dialect)
-            metadata = {
-                "physical_sql": sql_text,
-                "sql_dialect": dialect,
-            }
-            binding_table_name = "dataset_sql"
-            schema_name = None
-            catalog_name = None
-
-        workflow = FederationWorkflow(
-            id=f"workflow_dataset_{dataset.id.hex[:12]}",
-            workspace_id=str(dataset.workspace_id),
-            dataset=VirtualDataset(
-                id=f"dataset_{dataset.id.hex[:12]}",
-                name=dataset.name,
-                workspace_id=str(dataset.workspace_id),
-                tables={
-                    table_key: VirtualTableBinding(
-                        table_key=table_key,
-                        source_id=f"source_{dataset.connection_id.hex[:12]}",
-                        connector_id=dataset.connection_id,
-                        schema=schema_name,
-                        table=binding_table_name,
-                        catalog=catalog_name,
-                        metadata=metadata,
-                    )
-                },
-                relationships=[],
-            ),
-            broadcast_threshold_bytes=settings.FEDERATION_BROADCAST_THRESHOLD_BYTES,
-            partition_count=settings.FEDERATION_PARTITION_COUNT,
-            max_stage_retries=settings.FEDERATION_STAGE_MAX_RETRIES,
-            stage_parallelism=settings.FEDERATION_STAGE_PARALLELISM,
-        )
-        return workflow, table_key, dialect
+    async def _build_workflow(self, *, dataset: DatasetRecord):
+        return await self._dataset_execution_resolver.build_workflow_for_dataset(dataset=dataset)
 
     def _build_preview_sql(
         self,

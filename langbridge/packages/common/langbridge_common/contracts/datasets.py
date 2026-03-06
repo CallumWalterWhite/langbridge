@@ -92,6 +92,7 @@ class DatasetCreateRequest(_Base):
     catalog_name: str | None = Field(default=None, max_length=255)
     schema_name: str | None = Field(default=None, max_length=255)
     table_name: str | None = Field(default=None, max_length=255)
+    storage_uri: str | None = Field(default=None, max_length=2048)
     sql_text: str | None = None
     referenced_dataset_ids: list[UUID] = Field(default_factory=list)
     federated_plan: dict[str, Any] | None = None
@@ -113,6 +114,9 @@ class DatasetCreateRequest(_Base):
         if self.dataset_type == DatasetType.FEDERATED:
             if not self.referenced_dataset_ids and not self.federated_plan:
                 raise ValueError("FEDERATED datasets require referenced_dataset_ids or federated_plan.")
+        if self.dataset_type == DatasetType.FILE:
+            if not ((self.storage_uri or "").strip() or self.file_config):
+                raise ValueError("FILE datasets require storage_uri or file_config.")
         return self
 
 
@@ -195,6 +199,7 @@ class DatasetUpdateRequest(_Base):
     catalog_name: str | None = Field(default=None, max_length=255)
     schema_name: str | None = Field(default=None, max_length=255)
     table_name: str | None = Field(default=None, max_length=255)
+    storage_uri: str | None = Field(default=None, max_length=2048)
     sql_text: str | None = None
     referenced_dataset_ids: list[UUID] | None = None
     federated_plan: dict[str, Any] | None = None
@@ -209,6 +214,7 @@ class DatasetResponse(_Base):
     workspace_id: UUID
     project_id: UUID | None = None
     connection_id: UUID | None = None
+    owner_id: UUID | None = None
     name: str
     description: str | None = None
     tags: list[str] = Field(default_factory=list)
@@ -217,6 +223,7 @@ class DatasetResponse(_Base):
     catalog_name: str | None = None
     schema_name: str | None = None
     table_name: str | None = None
+    storage_uri: str | None = None
     sql_text: str | None = None
     referenced_dataset_ids: list[UUID] = Field(default_factory=list)
     federated_plan: dict[str, Any] | None = None
@@ -284,6 +291,13 @@ class DatasetProfileResponse(_Base):
     null_rates: dict[str, float] = Field(default_factory=dict)
     profiled_at: datetime | None = None
     error: str | None = None
+
+
+class DatasetCsvIngestResponse(_Base):
+    dataset_id: UUID
+    job_id: UUID
+    job_status: str
+    storage_uri: str
 
 
 class DatasetCatalogItem(_Base):
