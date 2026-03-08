@@ -23,12 +23,14 @@ import {
   Wand2,
 } from 'lucide-react';
 
+import { ErrorPanel } from '@/components/ErrorPanel';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Select } from '@/components/ui/select';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useToast } from '@/components/ui/toast';
 import { useWorkspaceScope } from '@/context/workspaceScope';
+import { toDisplayError, type DisplayError } from '@/lib/errors';
 import { fetchConnectors } from '@/orchestration/connectors';
 import type { ConnectorResponse } from '@/orchestration/connectors/types';
 import { ensureDataset, fetchDatasetCatalog } from '@/orchestration/datasets';
@@ -339,12 +341,15 @@ export default function SqlWorkbenchPage({ params }: SqlWorkbenchPageProps) {
   const [assistantSuggestion, setAssistantSuggestion] = useState('');
   const [cancellingJobId, setCancellingJobId] = useState<string | null>(null);
   const [sortState, setSortState] = useState<SortState>(null);
+  const [executionError, setExecutionError] = useState<DisplayError | null>(null);
+  const [schemaBrowserError, setSchemaBrowserError] = useState<DisplayError | null>(null);
   const completionItemsRef = useRef<string[]>([]);
   const editorRef = useRef<{ getValue: () => string; setValue: (value: string) => void; focus: () => void } | null>(null);
   const queryTextRef = useRef(DEFAULT_QUERY);
   const querySyncTimerRef = useRef<number | null>(null);
   const lastJobStatusRef = useRef<string | null>(null);
   const loadedSavedQueryIdRef = useRef<string | null>(null);
+  const loadedHistoryJobIdRef = useRef<string | null>(null);
 
   const syncQueryText = useCallback((nextValue: string, delayMs: number) => {
     if (querySyncTimerRef.current != null) {
@@ -512,6 +517,7 @@ export default function SqlWorkbenchPage({ params }: SqlWorkbenchPageProps) {
   const executeMutation = useMutation({
     mutationFn: executeSql,
     onSuccess: (payload) => {
+      setExecutionError(null);
       setJobId(payload.sqlJobId);
       setJobState(null);
       setJobResults(null);
@@ -530,13 +536,15 @@ export default function SqlWorkbenchPage({ params }: SqlWorkbenchPageProps) {
     },
     onError: (error: Error) => {
       appendLog('error', error.message);
-      toast({ title: 'Unable to queue SQL job', description: error.message, variant: 'destructive' });
+      setExecutionError(toDisplayError(error, 'sql.execution'));
+      setActiveTab('results');
     },
   });
 
   const cancelMutation = useMutation({
     mutationFn: cancelSqlJob,
     onSuccess: (payload, variables) => {
+      setExecutionError(null);
       appendLog('warn', `SQL job ${variables.sqlJobId} cancelled (${payload.status}).`);
       setJobState((current) =>
         current && current.id === variables.sqlJobId
@@ -646,6 +654,7 @@ export default function SqlWorkbenchPage({ params }: SqlWorkbenchPageProps) {
     if (!organizationId || !selectedConnectionId || federatedMode) {
       setSchemaMap({});
       setColumnsMap({});
+      setSchemaBrowserError(null);
       return;
     }
     try {
@@ -660,13 +669,14 @@ export default function SqlWorkbenchPage({ params }: SqlWorkbenchPageProps) {
         };
       });
       setSchemaMap(nextMap);
+      setSchemaBrowserError(null);
       appendLog('info', `Loaded ${payload.schemas.length} schemas for ${selectedConnector?.name || selectedConnectionId}.`);
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unable to load schemas.';
       appendLog('error', message);
-      toast({ title: 'Schema browser error', description: message, variant: 'destructive' });
+      setSchemaBrowserError(toDisplayError(error, 'schema.browser'));
     }
-  }, [organizationId, selectedConnectionId, federatedMode, selectedConnector?.name, appendLog, toast]);
+  }, [organizationId, selectedConnectionId, federatedMode, selectedConnector?.name, appendLog]);
 
   useEffect(() => {
     void fetchSchemas();
@@ -696,6 +706,7 @@ export default function SqlWorkbenchPage({ params }: SqlWorkbenchPageProps) {
             error: null,
           },
         }));
+        setSchemaBrowserError(null);
       } catch (error) {
         const message = error instanceof Error ? error.message : 'Unable to load tables.';
         setSchemaMap((current) => ({
@@ -706,10 +717,10 @@ export default function SqlWorkbenchPage({ params }: SqlWorkbenchPageProps) {
             error: message,
           },
         }));
-        toast({ title: 'Table browser error', description: message, variant: 'destructive' });
+        setSchemaBrowserError(toDisplayError(error, 'schema.browser'));
       }
     },
-    [organizationId, selectedConnectionId, federatedMode, toast],
+    [organizationId, selectedConnectionId, federatedMode],
   );
 
   const loadTableColumns = useCallback(
@@ -728,12 +739,12 @@ export default function SqlWorkbenchPage({ params }: SqlWorkbenchPageProps) {
           type: column.type,
         }));
         setColumnsMap((current) => ({ ...current, [key]: columns }));
+        setSchemaBrowserError(null);
       } catch (error) {
-        const message = error instanceof Error ? error.message : 'Unable to load columns.';
-        toast({ title: 'Column browser error', description: message, variant: 'destructive' });
+        setSchemaBrowserError(toDisplayError(error, 'schema.browser'));
       }
     },
-    [columnsMap, organizationId, selectedConnectionId, federatedMode, toast],
+    [columnsMap, organizationId, selectedConnectionId, federatedMode],
   );
 
   const ensureDatasetForPhysicalTable = useCallback(
@@ -968,6 +979,11 @@ export default function SqlWorkbenchPage({ params }: SqlWorkbenchPageProps) {
         fetchSqlJobResults(organizationId, jobId, null, 250),
       ]);
       setJobState(job);
+      if (job.status === 'failed' && job.error?.message) {
+        setExecutionError(toDisplayError(new Error(String(job.error.message)), 'sql.execution'));
+      } else if (job.status !== 'failed') {
+        setExecutionError(null);
+      }
       setJobResults(results);
       setResultCursor(results.nextCursor || null);
 
@@ -991,6 +1007,7 @@ export default function SqlWorkbenchPage({ params }: SqlWorkbenchPageProps) {
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Failed to poll SQL job status.';
       appendLog('error', message);
+      setExecutionError(toDisplayError(error, 'sql.execution'));
     }
   }, [jobId, organizationId, appendLog, queryClient]);
 
@@ -1177,6 +1194,7 @@ export default function SqlWorkbenchPage({ params }: SqlWorkbenchPageProps) {
   }, [appendLog, applyQueryText]);
 
   const sharedSavedQueryId = searchParams.get('savedQueryId');
+  const sharedHistoryJobId = searchParams.get('jobId');
 
   useEffect(() => {
     if (!sharedSavedQueryId) {
@@ -1195,26 +1213,44 @@ export default function SqlWorkbenchPage({ params }: SqlWorkbenchPageProps) {
     loadedSavedQueryIdRef.current = sharedSavedQueryId;
   }, [sharedSavedQueryId, savedQueriesQuery.data?.items, loadSavedQuery]);
 
-  const viewHistoryJob = useCallback(async (historyItem: SqlJobRecord) => {
+  const loadHistoryJobById = useCallback(async (historyJobId: string) => {
     if (!organizationId) {
       return;
     }
     try {
       const [job, results] = await Promise.all([
-        fetchSqlJob(organizationId, historyItem.id),
-        fetchSqlJobResults(organizationId, historyItem.id, null, 250),
+        fetchSqlJob(organizationId, historyJobId),
+        fetchSqlJobResults(organizationId, historyJobId, null, 250),
       ]);
+      setJobId(job.id);
       setJobState(job);
       setJobResults(results);
       setResultCursor(results.nextCursor || null);
       setSortState(null);
       setActiveTab('results');
-      appendLog('info', `Loaded history job ${historyItem.id}.`);
+      appendLog('info', `Loaded history job ${historyJobId}.`);
+      setExecutionError(null);
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Unable to load job from history.';
-      toast({ title: 'History load failed', description: message, variant: 'destructive' });
+      setExecutionError(toDisplayError(error, 'sql.execution'));
+      setActiveTab('results');
     }
-  }, [organizationId, appendLog, toast]);
+  }, [organizationId, appendLog]);
+
+  useEffect(() => {
+    if (!sharedHistoryJobId) {
+      loadedHistoryJobIdRef.current = null;
+      return;
+    }
+    if (loadedHistoryJobIdRef.current === sharedHistoryJobId) {
+      return;
+    }
+    loadedHistoryJobIdRef.current = sharedHistoryJobId;
+    void loadHistoryJobById(sharedHistoryJobId);
+  }, [loadHistoryJobById, sharedHistoryJobId]);
+
+  const viewHistoryJob = useCallback(async (historyItem: SqlJobRecord) => {
+    await loadHistoryJobById(historyItem.id);
+  }, [loadHistoryJobById]);
 
   const saveCurrentQuery = useCallback(() => {
     if (!organizationId) {
@@ -1619,6 +1655,7 @@ ORDER BY [${column}] ASC;`;
             </div>
           ) : (
             <div className="max-h-[55vh] space-y-2 overflow-auto pr-1 text-sm">
+              {schemaBrowserError ? <ErrorPanel {...schemaBrowserError} /> : null}
               {Object.values(schemaMap).length === 0 ? (
                 <p className="text-xs text-[color:var(--text-muted)]">No schemas loaded.</p>
               ) : null}
@@ -1637,7 +1674,6 @@ ORDER BY [${column}] ASC;`;
                   {selectedSchema === schemaNode.schema ? (
                     <div className="mt-2 space-y-1 text-xs text-[color:var(--text-secondary)]">
                       {schemaNode.loading ? <p>Loading tables...</p> : null}
-                      {schemaNode.error ? <p className="text-rose-500">{schemaNode.error}</p> : null}
                       {schemaNode.tables.map((table) => {
                         const key = `${schemaNode.schema}.${table}`;
                         return (
@@ -1659,11 +1695,7 @@ ORDER BY [${column}] ASC;`;
                                 variant="ghost"
                                 onClick={() => {
                                   void ensureDatasetForPhysicalTable(schemaNode.schema, table).catch((error) => {
-                                    toast({
-                                      title: 'Dataset creation failed',
-                                      description: error instanceof Error ? error.message : 'Unable to ensure dataset.',
-                                      variant: 'destructive',
-                                    });
+                                    setSchemaBrowserError(toDisplayError(error, 'dataset.form'));
                                   });
                                 }}
                               >
@@ -1844,13 +1876,20 @@ ORDER BY [${column}] ASC;`;
             </TabsList>
 
             <TabsContent value="results" className="space-y-3">
-              {jobState?.error?.message ? (
-                <div className="rounded-xl border border-rose-400/50 bg-rose-100/40 p-3 text-sm text-rose-900 dark:bg-rose-900/20 dark:text-rose-100">
-                  <p className="font-semibold">Execution error</p>
-                  <p className="mt-1">{String(jobState.error.message)}</p>
-                  <p className="mt-2 text-xs">Job: {jobState.id}</p>
-                  {jobState.correlationId ? <p className="text-xs">Correlation: {jobState.correlationId}</p> : null}
-                </div>
+              {executionError ? <ErrorPanel {...executionError} /> : null}
+              {!executionError && jobState?.status !== 'cancelled' && jobState?.error?.message ? (
+                <ErrorPanel
+                  {...toDisplayError(new Error(String(jobState.error.message)), 'sql.execution')}
+                  technicalDetails={
+                    [
+                      `Job: ${jobState.id}`,
+                      jobState.correlationId ? `Correlation: ${jobState.correlationId}` : null,
+                      String(jobState.error.message),
+                    ]
+                      .filter(Boolean)
+                      .join('\n')
+                  }
+                />
               ) : null}
               <div className="flex flex-wrap items-center gap-2 text-xs text-[color:var(--text-secondary)]">
                 <span className="rounded-full bg-[color:var(--chip-bg)] px-3 py-1">Rows: {jobResults?.rowCountPreview ?? 0}</span>

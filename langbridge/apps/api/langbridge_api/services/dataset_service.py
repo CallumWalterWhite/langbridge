@@ -1444,22 +1444,7 @@ class DatasetService:
         dataset: DatasetRecord,
         policy: DatasetPolicyRequest | None,
     ) -> DatasetPolicyRecord:
-        existing = await self._dataset_policy_repository.get_for_dataset(dataset_id=dataset.id)
-        if existing is None:
-            existing = DatasetPolicyRecord(
-                id=uuid.uuid4(),
-                dataset_id=dataset.id,
-                workspace_id=dataset.workspace_id,
-                max_rows_preview=settings.SQL_DEFAULT_MAX_PREVIEW_ROWS,
-                max_export_rows=settings.SQL_DEFAULT_MAX_EXPORT_ROWS,
-                redaction_rules_json={},
-                row_filters_json=[],
-                allow_dml=False,
-                created_at=datetime.now(timezone.utc),
-                updated_at=datetime.now(timezone.utc),
-            )
-            self._dataset_policy_repository.add(existing)
-        self._set_cached_policy(dataset, existing)
+        existing = await self._get_or_create_policy(dataset)
 
         if policy is not None:
             if policy.max_rows_preview is not None:
