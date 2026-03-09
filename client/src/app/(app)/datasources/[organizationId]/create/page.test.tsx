@@ -164,4 +164,50 @@ describe('DataConnectionsPage dataset bootstrap flow', () => {
       expect(screen.getByText(/Naming template/i)).toBeInTheDocument();
     });
   });
+
+  it('filters connector types from the search input', async () => {
+    mockFetchConnectorTypes.mockResolvedValue(['POSTGRES', 'SNOWFLAKE']);
+    mockFetchConnectorSchema.mockImplementation(async (_organizationId: string, type: string) => ({
+      name: `${type} connector`,
+      description: `Connect to ${type}.`,
+      version: '1',
+      label: type,
+      icon: 'database',
+      connectorType: type,
+      config: [],
+    }));
+
+    render(<DataConnectionsPage params={{ organizationId: 'org-1' }} />);
+    const user = userEvent.setup();
+
+    expect(await screen.findByRole('button', { name: /postgres/i })).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: /snowflake/i })).toBeInTheDocument();
+
+    await user.type(screen.getByPlaceholderText(/search connector types/i), 'snow');
+
+    await waitFor(() => {
+      expect(screen.queryByRole('button', { name: /postgres/i })).not.toBeInTheDocument();
+    });
+    expect(screen.getByRole('button', { name: /snowflake/i })).toBeInTheDocument();
+  });
+
+  it('submits managed connector flag when selected', async () => {
+    render(<DataConnectionsPage params={{ organizationId: 'org-1' }} />);
+    const user = userEvent.setup();
+
+    const connectorCard = await screen.findByRole('button', { name: /postgres/i });
+    await user.click(connectorCard);
+
+    await user.click(screen.getByLabelText(/Managed connector/i));
+    await user.click(screen.getByRole('button', { name: /Create connector/i }));
+
+    await waitFor(() => {
+      expect(mockCreateConnector).toHaveBeenCalledWith(
+        'org-1',
+        expect.objectContaining({
+          isManaged: true,
+        }),
+      );
+    });
+  });
 });

@@ -27,6 +27,19 @@ const baseSetting: SettingViewModel = {
   lastUpdatedAt: null,
 };
 
+const selectSetting: SettingViewModel = {
+  ...baseSetting,
+  settingKey: 'staging_db_connection',
+  displayName: 'Staging database',
+  description: 'Managed connector used for staging writes.',
+  settingValue: 'conn-1',
+  optionItems: [
+    { label: 'Warehouse A (POSTGRES)', value: 'conn-1' },
+    { label: 'Warehouse B (SNOWFLAKE)', value: 'conn-2' },
+  ],
+  options: ['conn-1', 'conn-2'],
+};
+
 describe('EditSettingDrawer', () => {
   it('shows dirty state and saves edited values', async () => {
     const user = userEvent.setup();
@@ -57,6 +70,31 @@ describe('EditSettingDrawer', () => {
     await waitFor(() => {
       expect(onSave).toHaveBeenCalledWith(baseSetting, 'support@new.example');
       expect(onOpenChange).toHaveBeenCalledWith(false);
+    });
+  });
+
+  it('renders labeled option items for managed connector settings', async () => {
+    const user = userEvent.setup();
+    const onOpenChange = vi.fn();
+    const onSave = vi.fn().mockResolvedValue(undefined);
+    const onDuplicate = vi.fn();
+
+    render(
+      <EditSettingDrawer
+        open
+        setting={selectSetting}
+        onOpenChange={onOpenChange}
+        onSave={onSave}
+        onDuplicate={onDuplicate}
+      />,
+    );
+
+    await screen.findByText('Staging database');
+    await user.selectOptions(screen.getByRole('combobox'), 'conn-2');
+    await user.click(screen.getByRole('button', { name: 'Save changes' }));
+
+    await waitFor(() => {
+      expect(onSave).toHaveBeenCalledWith(selectSetting, 'conn-2');
     });
   });
 });

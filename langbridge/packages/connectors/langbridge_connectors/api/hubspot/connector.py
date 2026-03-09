@@ -85,7 +85,7 @@ class HubSpotApiConnector(HttpApiConnector):
 
     def _default_headers(self) -> dict[str, str]:
         return {
-            "Authorization": f"Bearer {self.config.access_token}",
+            "Authorization": f"Bearer {self.config.service_key}",
         }
 
     async def test_connection(self) -> None:

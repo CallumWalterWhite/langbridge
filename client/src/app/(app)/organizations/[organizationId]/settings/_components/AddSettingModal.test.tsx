@@ -27,6 +27,30 @@ const catalog: SettingViewModel[] = [
     lastUpdatedBy: null,
     lastUpdatedAt: null,
   },
+  {
+    settingKey: 'staging_db_connection',
+    displayName: 'Staging database',
+    description: 'Managed connector used for staging writes.',
+    category: 'Connectors',
+    scope: 'organization',
+    dataType: 'string',
+    options: ['conn-1', 'conn-2'],
+    optionItems: [
+      { label: 'Warehouse A (POSTGRES)', value: 'conn-1' },
+      { label: 'Warehouse B (SNOWFLAKE)', value: 'conn-2' },
+    ],
+    placeholder: null,
+    multiline: false,
+    defaultValue: null,
+    helperText: null,
+    isAdvanced: false,
+    isLocked: false,
+    isInherited: false,
+    isConfigured: false,
+    settingValue: '',
+    lastUpdatedBy: null,
+    lastUpdatedAt: null,
+  },
 ];
 
 describe('AddSettingModal', () => {
@@ -59,6 +83,37 @@ describe('AddSettingModal', () => {
     await waitFor(() => {
       expect(onCreate).toHaveBeenCalledWith(catalog[0], '45');
       expect(onOpenChange).toHaveBeenCalledWith(false);
+    });
+  });
+
+  it('shows managed connector labels while saving connector ids', async () => {
+    const user = userEvent.setup();
+    const onOpenChange = vi.fn();
+    const onCreate = vi.fn().mockResolvedValue(undefined);
+
+    render(
+      <AddSettingModal
+        open
+        onOpenChange={onOpenChange}
+        settingsCatalog={catalog}
+        onCreate={onCreate}
+      />,
+    );
+
+    await screen.findByTestId('add-setting-step-1');
+    await user.click(screen.getByRole('button', { name: /Staging database/i }));
+    await user.click(screen.getByRole('button', { name: 'Continue' }));
+
+    await screen.findByTestId('add-setting-step-2');
+    await user.selectOptions(screen.getByRole('combobox'), 'conn-2');
+    await user.click(screen.getByRole('button', { name: 'Review' }));
+
+    await screen.findByTestId('add-setting-step-3');
+    expect(screen.getByText('Warehouse B (SNOWFLAKE)')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Create setting' }));
+
+    await waitFor(() => {
+      expect(onCreate).toHaveBeenCalledWith(catalog[1], 'conn-2');
     });
   });
 });

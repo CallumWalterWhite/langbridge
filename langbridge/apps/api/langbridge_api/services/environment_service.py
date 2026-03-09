@@ -110,14 +110,11 @@ SETTINGS_CATALOG: tuple[EnvironmentSettingCatalogItem, ...] = (
     ),
     EnvironmentSettingCatalogItem(
         setting_key="staging_db_connection",
-        display_name="Staging DB connection",
-        description="Connection string for staging data workflows.",
+        display_name="Staging database",
+        description="Managed SQL connector used for write-enabled staging and DML workflows.",
         category="Connectors",
         data_type="string",
-        placeholder="postgres://user:password@host:5432/dbname",
-        multiline=True,
-        helper_text="Store secrets here instead of plaintext configuration files.",
-        is_advanced=True,
+        helper_text="Select a managed SQL connector from this organization.",
     ),
     EnvironmentSettingCatalogItem(
         setting_key="default_semantic_vector_connector",

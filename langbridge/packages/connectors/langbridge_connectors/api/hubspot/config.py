@@ -1,3 +1,5 @@
+from pydantic import AliasChoices, Field
+
 from langbridge.packages.connectors.langbridge_connectors.api.config import (
     BaseConnectorConfig,
     BaseConnectorConfigFactory,
@@ -14,9 +16,9 @@ from langbridge.packages.connectors.langbridge_connectors.api.config import (
 HUBSPOT_SUPPORTED_RESOURCES = ("contacts", "companies", "deals", "tickets")
 HUBSPOT_AUTH_SCHEMA = (
     ConnectorAuthFieldSchema(
-        field="access_token",
-        label="Private App Token",
-        description="HubSpot private app access token.",
+        field="service_key",
+        label="Service Key",
+        description="HubSpot account service key.",
         type="password",
         required=True,
         secret=True,
@@ -24,7 +26,7 @@ HUBSPOT_AUTH_SCHEMA = (
     ConnectorAuthFieldSchema(
         field="portal_id",
         label="Portal ID",
-        description="Optional HubSpot portal identifier.",
+        description="Optional HubSpot account or portal identifier.",
         type="string",
         required=False,
     ),
@@ -33,9 +35,13 @@ HUBSPOT_SYNC_STRATEGY = ConnectorSyncStrategy.INCREMENTAL
 
 
 class HubSpotConnectorConfig(BaseConnectorConfig):
-    access_token: str
+    service_key: str = Field(validation_alias=AliasChoices("service_key", "access_token"))
     portal_id: str | None = None
     api_base_url: str = "https://api.hubapi.com"
+
+    @property
+    def access_token(self) -> str:
+        return self.service_key
 
 
 class HubSpotConnectorConfigFactory(BaseConnectorConfigFactory):
@@ -60,16 +66,16 @@ class HubSpotConnectorConfigSchemaFactory(BaseConnectorConfigSchemaFactory):
             connector_type="api",
             config=[
                 ConnectorConfigEntrySchema(
-                    field="access_token",
-                    label="Private App Token",
-                    description="HubSpot private app access token.",
+                    field="service_key",
+                    label="Service Key",
+                    description="HubSpot account service key.",
                     type="password",
                     required=True,
                 ),
                 ConnectorConfigEntrySchema(
                     field="portal_id",
                     label="Portal ID",
-                    description="Optional HubSpot portal identifier.",
+                    description="Optional HubSpot account or portal identifier.",
                     type="string",
                     required=False,
                 ),

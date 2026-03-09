@@ -17,6 +17,7 @@ import {
 } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
+import { ConnectorConfigFields } from '@/components/connectors/ConnectorConfigFields';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -27,12 +28,14 @@ import { ApiError } from '@/orchestration/http';
 import {
   deleteConnector,
   fetchConnector,
+  fetchConnectorSchema,
   fetchConnectorResources,
   fetchConnectorSyncHistory,
   fetchConnectorSyncState,
   syncConnector,
   testConnector,
   updateConnector,
+  type ConnectorConfigSchema,
   type ConnectorResource,
   type ConnectorSyncMode,
   type ConnectorSyncState,
@@ -95,7 +98,8 @@ export function ConnectorUpdate({ connectorId, organizationId }: ConnectorUpdate
 
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
-  const [configText, setConfigText] = useState('');
+  const [isManaged, setIsManaged] = useState(false);
+  const [configValues, setConfigValues] = useState<Record<string, string>>({});
   const [localError, setLocalError] = useState<string | null>(null);
   const [selectedResources, setSelectedResources] = useState<string[]>([]);
   const [syncMode, setSyncMode] = useState<ConnectorSyncMode>('INCREMENTAL');
@@ -107,6 +111,13 @@ export function ConnectorUpdate({ connectorId, organizationId }: ConnectorUpdate
     queryKey: connectorQueryKey(organizationId, connectorId),
     queryFn: () => fetchConnector(organizationId, connectorId),
     enabled: Boolean(organizationId && connectorId),
+  });
+  const connector = connectorQuery.data;
+
+  const connectorSchemaQuery = useQuery<ConnectorConfigSchema>({
+    queryKey: ['connector-schema', organizationId, connector?.connectorType],
+    queryFn: () => fetchConnectorSchema(organizationId, connector?.connectorType ?? ''),
+    enabled: Boolean(organizationId && connector?.connectorType),
   });
 
   const resourcesQuery = useQuery({
@@ -137,11 +148,19 @@ export function ConnectorUpdate({ connectorId, organizationId }: ConnectorUpdate
     },
   });
 
-  const connector = connectorQuery.data;
   const resources = useMemo(
     () => resourcesQuery.data?.items || [],
     [resourcesQuery.data?.items],
   );
+  const connectorConfigPayload = useMemo(
+    () => normalizeConnectorConfigPayload(connector?.config),
+    [connector?.config],
+  );
+  const connectorConfigValues = useMemo(
+    () => extractConnectorConfigValues(connectorConfigPayload),
+    [connectorConfigPayload],
+  );
+  const schemaConfigEntries = connectorSchemaQuery.data?.config ?? [];
   const stateByResource = useMemo(
     () => buildStateMap(syncStateQuery.data?.items),
     [syncStateQuery.data?.items],
@@ -153,8 +172,26 @@ export function ConnectorUpdate({ connectorId, organizationId }: ConnectorUpdate
     }
     setName(connector.name);
     setDescription(connector.description ?? '');
-    setConfigText(JSON.stringify(connector.config ?? {}, null, 2));
+    setIsManaged(Boolean(connector.isManaged));
   }, [connector]);
+
+  useEffect(() => {
+    if (!connectorSchemaQuery.data) {
+      return;
+    }
+    const defaults: Record<string, string> = {};
+    connectorSchemaQuery.data.config.forEach((entry) => {
+      const rawValue = readConnectorConfigValue(
+        connectorConfigValues,
+        entry.field,
+        connector?.connectorType,
+      );
+      const fallback = rawValue ?? entry.default ?? entry.value ?? '';
+      defaults[entry.field] =
+        fallback === null || fallback === undefined ? '' : String(fallback);
+    });
+    setConfigValues(defaults);
+  }, [connector?.connectorType, connectorConfigValues, connectorSchemaQuery.data]);
 
   useEffect(() => {
     if (!resources.length) {
@@ -204,7 +241,7 @@ export function ConnectorUpdate({ connectorId, organizationId }: ConnectorUpdate
     } else if (job.status === 'cancelled') {
       toast({
         title: 'Sync cancelled',
-        description: job.error?.message || 'Connector sync was cancelled.',
+        description: (job.error?.message as string) || 'Connector sync was cancelled.',
       });
     } else {
       toast({
@@ -356,17 +393,6 @@ export function ConnectorUpdate({ connectorId, organizationId }: ConnectorUpdate
     }
     setLocalError(null);
 
-    let parsedConfig: Record<string, unknown> | undefined;
-    const trimmed = configText.trim();
-    if (trimmed) {
-      try {
-        parsedConfig = JSON.parse(trimmed) as Record<string, unknown>;
-      } catch {
-        setLocalError('Connector configuration must be valid JSON.');
-        return;
-      }
-    }
-
     const payload: UpdateConnectorPayload = {
       organizationId,
     };
@@ -381,11 +407,32 @@ export function ConnectorUpdate({ connectorId, organizationId }: ConnectorUpdate
     if (connector?.projectId) {
       payload.projectId = connector.projectId;
     }
-    if (parsedConfig) {
-      payload.config = { config: parsedConfig };
+    if (isManaged !== Boolean(connector?.isManaged)) {
+      payload.isManaged = isManaged;
+    }
+    if (connectorSchemaQuery.data) {
+      const mergedConfig = { ...connectorConfigValues };
+      connectorSchemaQuery.data.config.forEach((entry) => {
+        const rawValue = configValues[entry.field] ?? '';
+        const trimmedValue = rawValue.trim();
+        clearConnectorConfigAliases(mergedConfig, entry.field, connector?.connectorType);
+        if (trimmedValue) {
+          mergedConfig[entry.field] = trimmedValue;
+        } else {
+          delete mergedConfig[entry.field];
+        }
+      });
+      payload.config = buildConnectorConfigPayload(connectorConfigPayload, mergedConfig);
     }
 
     updateMutation.mutate(payload);
+  };
+
+  const handleConfigChange = (field: string, value: string) => {
+    setConfigValues((current) => ({
+      ...current,
+      [field]: value,
+    }));
   };
 
   const handleDelete = () => {
@@ -677,20 +724,57 @@ export function ConnectorUpdate({ connectorId, organizationId }: ConnectorUpdate
                 rows={3}
               />
             </div>
+
+            <label className="md:col-span-2 flex items-start gap-3 rounded-2xl border border-[color:var(--panel-border)] bg-[color:var(--panel-alt)] px-4 py-3 text-sm">
+              <input
+                type="checkbox"
+                checked={isManaged}
+                onChange={(event) => setIsManaged(event.target.checked)}
+                className="mt-1"
+              />
+              <span>
+                <span className="block font-medium text-[color:var(--text-primary)]">Managed connector</span>
+                <span className="block text-[color:var(--text-muted)]">
+                  Managed SQL connectors can be selected as the organization staging database for write-enabled workflows.
+                </span>
+              </span>
+            </label>
           </div>
 
-          <div className="space-y-2">
-            <Label htmlFor="connector-config">Configuration (JSON)</Label>
-            <Textarea
-              id="connector-config"
-              value={configText}
-              onChange={(event) => setConfigText(event.target.value)}
-              rows={12}
-              className="font-mono text-xs"
-            />
-            <p className="text-xs text-[color:var(--text-muted)]">
-              Update credentials or connection details. These values map directly to the connector runtime configuration.
-            </p>
+          <div className="space-y-3">
+            <Label>Configuration</Label>
+            {connectorSchemaQuery.isLoading ? (
+              <div className="space-y-3">
+                <Skeleton className="h-10 w-full" />
+                <Skeleton className="h-10 w-full" />
+                <Skeleton className="h-24 w-full" />
+              </div>
+            ) : connectorSchemaQuery.isError ? (
+              <div className="space-y-3 rounded-2xl border border-[color:var(--panel-border)] bg-[color:var(--panel-alt)] p-4 text-sm">
+                <p className="text-[color:var(--text-muted)]">
+                  We couldn&apos;t load the connector schema, so the configuration fields are temporarily unavailable.
+                </p>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => void connectorSchemaQuery.refetch()}
+                >
+                  Try again
+                </Button>
+              </div>
+            ) : (
+              <>
+                <ConnectorConfigFields
+                  entries={schemaConfigEntries}
+                  values={configValues}
+                  onChange={handleConfigChange}
+                />
+                <p className="text-xs text-[color:var(--text-muted)]">
+                  Update credentials or connection details using the same schema-driven fields as connector creation.
+                </p>
+              </>
+            )}
           </div>
 
           {localError ? <p className="text-sm text-rose-600">{localError}</p> : null}
@@ -713,7 +797,19 @@ export function ConnectorUpdate({ connectorId, organizationId }: ConnectorUpdate
               onClick={() => {
                 setName(connector.name);
                 setDescription(connector.description ?? '');
-                setConfigText(JSON.stringify(connector.config ?? {}, null, 2));
+                setIsManaged(Boolean(connector.isManaged));
+                const defaults: Record<string, string> = {};
+                schemaConfigEntries.forEach((entry) => {
+                  const rawValue = readConnectorConfigValue(
+                    connectorConfigValues,
+                    entry.field,
+                    connector?.connectorType,
+                  );
+                  const fallback = rawValue ?? entry.default ?? entry.value ?? '';
+                  defaults[entry.field] =
+                    fallback === null || fallback === undefined ? '' : String(fallback);
+                });
+                setConfigValues(defaults);
                 setLocalError(null);
               }}
             >
@@ -785,6 +881,87 @@ export function ConnectorUpdate({ connectorId, organizationId }: ConnectorUpdate
       </section>
     </div>
   );
+}
+
+function normalizeConnectorConfigPayload(
+  config: Record<string, unknown> | null | undefined,
+): Record<string, unknown> {
+  return config && typeof config === 'object' ? config : {};
+}
+
+function extractConnectorConfigValues(
+  configPayload: Record<string, unknown>,
+): Record<string, string> {
+  const nestedConfig = configPayload.config;
+  const source =
+    nestedConfig && typeof nestedConfig === 'object' && !Array.isArray(nestedConfig)
+      ? (nestedConfig as Record<string, unknown>)
+      : configPayload;
+
+  return Object.fromEntries(
+    Object.entries(source)
+      .filter(([, value]) => value !== null && value !== undefined)
+      .map(([key, value]) => [key, String(value)]),
+  );
+}
+
+const CONNECTOR_CONFIG_ALIASES: Record<string, Record<string, string[]>> = {
+  HUBSPOT: {
+    service_key: ["access_token"],
+  },
+};
+
+function readConnectorConfigValue(
+  configValues: Record<string, string>,
+  field: string,
+  connectorType: string | null | undefined,
+): string | undefined {
+  const directValue = configValues[field];
+  if (directValue !== undefined) {
+    return directValue;
+  }
+
+  const aliases = getConnectorConfigAliases(field, connectorType);
+  for (const alias of aliases) {
+    const aliasedValue = configValues[alias];
+    if (aliasedValue !== undefined) {
+      return aliasedValue;
+    }
+  }
+
+  return undefined;
+}
+
+function clearConnectorConfigAliases(
+  configValues: Record<string, string>,
+  field: string,
+  connectorType: string | null | undefined,
+): void {
+  const aliases = getConnectorConfigAliases(field, connectorType);
+  aliases.forEach((alias) => {
+    delete configValues[alias];
+  });
+}
+
+function getConnectorConfigAliases(
+  field: string,
+  connectorType: string | null | undefined,
+): string[] {
+  if (!connectorType) {
+    return [];
+  }
+
+  return CONNECTOR_CONFIG_ALIASES[connectorType.toUpperCase()]?.[field] ?? [];
+}
+
+function buildConnectorConfigPayload(
+  existingPayload: Record<string, unknown>,
+  nextConfig: Record<string, unknown>,
+): { config: Record<string, unknown>; [key: string]: unknown } {
+  return {
+    ...existingPayload,
+    config: nextConfig,
+  };
 }
 
 function StatusCard({

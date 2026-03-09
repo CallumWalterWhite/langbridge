@@ -27,6 +27,9 @@ from langbridge.packages.common.langbridge_common.contracts.organizations import
     OrganizationEnvironmentSetting,
     OrganizationEnvironmentSettingCatalogEntry,
 )
+from langbridge.packages.common.langbridge_common.repositories.connector_repository import (
+    ConnectorRepository,
+)
 from langbridge.packages.common.langbridge_common.repositories.organization_repository import (
     OrganizationInviteRepository,
     OrganizationRepository,
@@ -34,6 +37,10 @@ from langbridge.packages.common.langbridge_common.repositories.organization_repo
     ProjectRepository,
 )
 from langbridge.packages.common.langbridge_common.repositories.user_repository import UserRepository
+from langbridge.packages.connectors.langbridge_connectors.api import (
+    ConnectorRuntimeType,
+    ConnectorRuntimeTypeSqlDialectMap,
+)
 
 
 class OrganizationService:
@@ -46,7 +53,8 @@ class OrganizationService:
         organization_invite_repository: OrganizationInviteRepository,
         project_invite_repository: ProjectInviteRepository,
         user_repository: UserRepository,
-        environment_service:EnvironmentService
+        environment_service: EnvironmentService,
+        connector_repository: ConnectorRepository,
     ) -> None:
         self._organization_repository = organization_repository
         self._project_repository = project_repository
@@ -54,6 +62,7 @@ class OrganizationService:
         self._project_invite_repository = project_invite_repository
         self._user_repository = user_repository
         self._environment_service = environment_service
+        self._connector_repository = connector_repository
 
     async def list_user_organizations(self, user: UserResponse) -> list[OrganizationResponse]:
         db_user = await self._resolve_user(user)
@@ -339,6 +348,11 @@ class OrganizationService:
         *,
         updated_by: str | None = None,
     ) -> OrganizationEnvironmentSetting:
+        await self._validate_organization_environment_setting(
+            organization_id=organization_id,
+            setting_key=setting_key,
+            setting_value=setting_value,
+        )
         await self._environment_service.set_setting(
             organization_id,
             setting_key,
@@ -384,6 +398,57 @@ class OrganizationService:
         if not resolved:
             raise BusinessValidationError("User not found")
         return resolved
+
+    async def _validate_organization_environment_setting(
+        self,
+        *,
+        organization_id: uuid.UUID,
+        setting_key: str,
+        setting_value: Any,
+    ) -> None:
+        if setting_key != "staging_db_connection":
+            return
+
+        normalized_value = str(setting_value or "").strip()
+        if not normalized_value:
+            return
+
+        try:
+            connector_id = uuid.UUID(normalized_value)
+        except (TypeError, ValueError) as exc:
+            raise BusinessValidationError(
+                "Staging database must reference a connector id."
+            ) from exc
+
+        connector = await self._connector_repository.get_by_id(connector_id)
+        if connector is None:
+            raise BusinessValidationError("Selected staging database connector was not found.")
+
+        belongs_to_organization = any(
+            org.id == organization_id for org in (connector.organizations or [])
+        )
+        if not belongs_to_organization:
+            raise BusinessValidationError(
+                "Selected staging database connector does not belong to this organization."
+            )
+
+        if not connector.is_managed:
+            raise BusinessValidationError(
+                "Selected staging database connector must be marked as managed."
+            )
+
+        connector_type = getattr(connector, "connector_type", None)
+        try:
+            runtime_type = ConnectorRuntimeType(str(connector_type).upper())
+        except (TypeError, ValueError) as exc:
+            raise BusinessValidationError(
+                "Selected staging database connector must be a managed SQL connector."
+            ) from exc
+
+        if runtime_type not in ConnectorRuntimeTypeSqlDialectMap:
+            raise BusinessValidationError(
+                "Selected staging database connector must be a managed SQL connector."
+            )
 
     def _serialize_project(self, project: Project) -> ProjectResponse:
         return ProjectResponse.model_validate(project)

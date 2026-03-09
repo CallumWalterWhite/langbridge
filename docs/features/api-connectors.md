@@ -24,7 +24,7 @@ Key implementation points:
 
 - Shopify: recommended first-class v1 connector, cursor-based incremental via `updated_at`.
 - Stripe: recommended first-class v1 connector, cursor-based incremental via `created`.
-- HubSpot: acceptable v1 connector with checkpointed incremental filtering.
+- HubSpot: acceptable v1 connector with service-key bearer auth and checkpointed incremental filtering.
 - Salesforce: scaffolded extension point; works but is a heavier operational surface.
 - Google Analytics: scaffolded/report-style connector; currently best treated as full refresh.
 

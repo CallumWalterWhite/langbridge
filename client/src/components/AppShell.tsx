@@ -132,9 +132,6 @@ export function AppShell({ children }: { children: ReactNode }): JSX.Element {
   const { selectedOrganization, selectedProject, selectedOrganizationId } = useWorkspaceScope();
 
   const [openParent, setOpenParent] = useState<string | null>(null);
-  const isChatRoute = pathname.startsWith('/chat');
-  const isBIRoute = pathname.startsWith('/bi');
-  const isSqlRoute = pathname.startsWith('/sql');
 
   const navItems = useMemo(() => {
     const agentsBase = selectedOrganizationId ? `/agents/${selectedOrganizationId}` : '/agents';
@@ -356,12 +353,7 @@ export function AppShell({ children }: { children: ReactNode }): JSX.Element {
           </header>
 
           <div className="flex-1 overflow-y-auto">
-            <main
-              className={cn(
-                'w-full px-6 py-8 page-enter',
-                isChatRoute ? 'max-w-none' : 
-                isBIRoute || isSqlRoute ? 'max-w-none': 'mx-auto max-w-[1200px]',
-              )}
+            <main className="w-full px-6 py-8 page-enter max-w-none"
             >
               {children}
             </main>

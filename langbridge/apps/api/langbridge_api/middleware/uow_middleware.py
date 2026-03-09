@@ -48,5 +48,8 @@ class UnitOfWorkMiddleware(BaseHTTPMiddleware):
             
         finally:
             reset_session(token)
+            if session.in_transaction():
+                self.logger.warning("UnitOfWork: session still in transaction during cleanup, rolling back")
+                await session.rollback()
             await session.close()
             self.logger.debug("UnitOfWork: session closed")

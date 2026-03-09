@@ -60,6 +60,7 @@ export type ThreadChatResponse = {
   result?: ThreadTabularResult | null;
   visualization?: ThreadVisualizationSpec | null;
   summary?: string | null;
+  diagnostics?: Record<string, unknown> | null;
 };
 
 export type ThreadMessage = {

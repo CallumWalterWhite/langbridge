@@ -1,13 +1,11 @@
 """
 Logging utilities with OpenTelemetry defaults for logs and traces.
 """
-
-from __future__ import annotations
-
 import logging
 import os
 from logging.handlers import RotatingFileHandler
 from typing import Optional
+from langbridge.packages.common.langbridge_common.config import settings
 
 try:
     from opentelemetry import _logs, trace
@@ -104,7 +102,7 @@ def _bool_env(name: str) -> bool:
 
 
 def _otel_disabled() -> bool:
-    return _bool_env("OTEL_SDK_DISABLED") or not OTEL_AVAILABLE
+    return settings.OTEL_SDK_DISABLED or not OTEL_AVAILABLE
 
 
 def _exporter_enabled(env_key: str, default: str = "otlp") -> bool:

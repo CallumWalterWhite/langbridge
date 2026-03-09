@@ -31,6 +31,7 @@ export interface ConnectorResponse {
   organizationId?: string | null;
   projectId?: string | null;
   config?: Record<string, unknown> | null;
+  isManaged?: boolean | null;
   catalogSummary?: {
     schemaCount: number;
     tableCount: number;
@@ -53,6 +54,7 @@ export interface CreateConnectorPayload {
   organizationId?: string;
   projectId?: string;
   config: ConnectorConfigPayload;
+  isManaged?: boolean;
 }
 
 export interface UpdateConnectorPayload {
@@ -65,6 +67,7 @@ export interface UpdateConnectorPayload {
   organizationId: string;
   projectId?: string;
   config?: ConnectorConfigPayload;
+  isManaged?: boolean;
 }
 
 export interface ConnectorCatalogColumn {
@@ -120,6 +123,7 @@ export interface ConnectorResource {
   datasetIds: string[];
   datasetNames: string[];
   recordsSynced?: number | null;
+  isManaged?: boolean | null;
 }
 
 export interface ConnectorResourceListResponse {

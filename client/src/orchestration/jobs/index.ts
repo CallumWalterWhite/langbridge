@@ -29,6 +29,7 @@ export type AgentJobFinalResponse = {
   result?: unknown;
   visualization?: unknown;
   summary?: string | null;
+  diagnostics?: Record<string, unknown> | null;
 };
 
 export type AgentJobState = {

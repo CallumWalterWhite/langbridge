@@ -17,6 +17,7 @@ import {
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { ConnectorConfigFields } from '@/components/connectors/ConnectorConfigFields';
 import {
   Dialog,
   DialogContent,
@@ -43,7 +44,6 @@ import {
   fetchConnectorSchema,
   fetchConnectorTypes,
   type ConnectorCatalogSchema,
-  type ConnectorConfigEntry,
   type ConnectorConfigSchema,
   type ConnectorResponse,
   type CreateConnectorPayload,
@@ -65,6 +65,7 @@ interface FormFields {
   icon: string;
   organizationId: string;
   projectId: string;
+  isManaged: boolean;
 }
 
 interface FeedbackState {
@@ -148,6 +149,7 @@ export default function DataConnectionsPage({ params }: DataConnectionsPageProps
     icon: '',
     organizationId: '',
     projectId: '',
+    isManaged: false,
   });
   const [submitting, setSubmitting] = useState(false);
   const [feedback, setFeedback] = useState<FeedbackState | null>(null);
@@ -390,6 +392,24 @@ export default function DataConnectionsPage({ params }: DataConnectionsPageProps
   const sortedConnectorTypes = useMemo(() => {
     return [...connectorTypes].sort((a, b) => a.localeCompare(b));
   }, [connectorTypes]);
+  const filteredConnectorTypes = useMemo(() => {
+    const token = searchTerm.trim().toLowerCase();
+    if (!token) {
+      return sortedConnectorTypes;
+    }
+    return sortedConnectorTypes.filter((type) => {
+      const schema = schemasByType[type];
+      const haystack = [
+        type,
+        schema?.label ?? '',
+        schema?.name ?? '',
+        schema?.description ?? '',
+      ]
+        .join(' ')
+        .toLowerCase();
+      return haystack.includes(token);
+    });
+  }, [schemasByType, searchTerm, sortedConnectorTypes]);
 
   const configEntries = useMemo(
     () => selectedSchema?.config ?? [],
@@ -915,6 +935,7 @@ export default function DataConnectionsPage({ params }: DataConnectionsPageProps
       name: formFields.name.trim(),
       connectorType: selectedType,
       config: { config: cleanedConfig },
+      isManaged: formFields.isManaged,
     };
 
     const description = formFields.description.trim();
@@ -967,82 +988,6 @@ export default function DataConnectionsPage({ params }: DataConnectionsPageProps
     } finally {
       setSubmitting(false);
     }
-  }
-
-  function renderConfigInput(entry: ConnectorConfigEntry): JSX.Element {
-    const value = configValues[entry.field] ?? '';
-
-    if (entry.valueList && entry.valueList.length > 0) {
-      return (
-        <Select
-          id={`config-${entry.field}`}
-          placeholder={`Select ${entry.label ?? entry.field}`}
-          value={value}
-          onChange={(event) => handleConfigChange(entry.field, event.target.value)}
-        >
-          {entry.valueList.map((option) => (
-            <option key={option} value={option}>
-              {option}
-            </option>
-          ))}
-        </Select>
-      );
-    }
-
-    if (entry.type === 'password') {
-      return (
-        <Input
-          id={`config-${entry.field}`}
-          type="password"
-          autoComplete="off"
-          value={value}
-          onChange={(event) => handleConfigChange(entry.field, event.target.value)}
-        />
-      );
-    }
-
-    if (entry.type === 'number') {
-      return (
-        <Input
-          id={`config-${entry.field}`}
-          type="number"
-          value={value}
-          onChange={(event) => handleConfigChange(entry.field, event.target.value)}
-        />
-      );
-    }
-
-    if (entry.type === 'boolean') {
-      return (
-        <Select
-          id={`config-${entry.field}`}
-          placeholder={`Select ${entry.label ?? entry.field}`}
-          value={value || ''}
-          onChange={(event) => handleConfigChange(entry.field, event.target.value)}
-        >
-          <option value="true">True</option>
-          <option value="false">False</option>
-        </Select>
-      );
-    }
-
-    if (entry.type === 'textarea') {
-      return (
-        <Textarea
-          id={`config-${entry.field}`}
-          value={value}
-          onChange={(event) => handleConfigChange(entry.field, event.target.value)}
-        />
-      );
-    }
-
-    return (
-      <Input
-        id={`config-${entry.field}`}
-        value={value}
-        onChange={(event) => handleConfigChange(entry.field, event.target.value)}
-      />
-    );
   }
 
   function renderSchemaDetails(currentSchema: ConnectorConfigSchema): JSX.Element | null {
@@ -1100,9 +1045,9 @@ export default function DataConnectionsPage({ params }: DataConnectionsPageProps
           onChange={(event) => setSearchTerm(event.target.value)}
         />
 
-        {sortedConnectorTypes.length > 0 ? (
+        {filteredConnectorTypes.length > 0 ? (
           <div className="mt-5 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-            {sortedConnectorTypes.map((type) => (
+            {filteredConnectorTypes.map((type) => (
               <ConnectorTypeCard
                 key={type}
                 type={type}
@@ -1113,10 +1058,14 @@ export default function DataConnectionsPage({ params }: DataConnectionsPageProps
               />
             ))}
           </div>
-        ) : (
+        ) : typesLoading ? (
           <div className="mt-5 flex items-center gap-2 rounded-lg border border-dashed border-[color:var(--panel-border)] bg-[color:var(--panel-alt)] px-4 py-6 text-sm">
             <Spinner className="h-4 w-4 text-[color:var(--text-secondary)]" />
             Fetching connector types...
+          </div>
+        ) : (
+          <div className="mt-5 rounded-lg border border-dashed border-[color:var(--panel-border)] bg-[color:var(--panel-alt)] px-4 py-6 text-sm">
+            No connector types match &quot;{searchTerm.trim()}&quot;.
           </div>
         )}
 
@@ -1172,6 +1121,21 @@ export default function DataConnectionsPage({ params }: DataConnectionsPageProps
                     placeholder={selectedSchema.description}
                   />
                 </div>
+
+                <label className="flex items-start gap-3 rounded-2xl border border-[color:var(--panel-border)] bg-[color:var(--panel-alt)] px-4 py-3 text-sm">
+                  <input
+                    type="checkbox"
+                    checked={formFields.isManaged}
+                    onChange={(event) => handleFieldChange('isManaged', event.target.checked)}
+                    className="mt-1"
+                  />
+                  <span>
+                    <span className="block font-medium text-[color:var(--text-primary)]">Managed connector</span>
+                    <span className="block text-[color:var(--text-muted)]">
+                      Enable this for write-capable connectors that can be used as the organization staging database.
+                    </span>
+                  </span>
+                </label>
               </div>
 
               <div className="space-y-4">
@@ -1240,27 +1204,11 @@ export default function DataConnectionsPage({ params }: DataConnectionsPageProps
                   <p className="text-sm">Fill in the required connection fields. We will validate the schema before saving.</p>
                 </div>
 
-                <div className="grid gap-4 sm:grid-cols-2">
-                  {configEntries.map((entry) => (
-                    <div key={entry.field} className="space-y-2">
-                      <Label
-                        htmlFor={`config-${entry.field}`}
-                        className="flex items-center gap-2 text-[color:var(--text-secondary)]"
-                      >
-                        <span>{entry.label ?? entry.field}</span>
-                        {entry.required ? (
-                          <span className="rounded-full bg-rose-100 px-2 py-0.5 text-xs font-medium text-rose-700">
-                            Required
-                          </span>
-                        ) : null}
-                      </Label>
-                      {renderConfigInput(entry)}
-                      {entry.description ? (
-                        <p className="text-xs text-[color:var(--text-muted)]">{entry.description}</p>
-                      ) : null}
-                    </div>
-                  ))}
-                </div>
+                <ConnectorConfigFields
+                  entries={configEntries}
+                  values={configValues}
+                  onChange={handleConfigChange}
+                />
               </div>
 
               <div className="flex items-center justify-between gap-3 border-t border-[color:var(--panel-border)] pt-4 text-xs">
@@ -1301,6 +1249,10 @@ export default function DataConnectionsPage({ params }: DataConnectionsPageProps
               <dd className="mt-1 font-mono text-xs uppercase">
                 {createdConnector.connectorType ?? selectedType}
               </dd>
+            </div>
+            <div>
+              <dt className="font-medium text-[color:var(--text-primary)]">Managed</dt>
+              <dd className="mt-1 font-mono text-xs">{createdConnector.isManaged ? 'Yes' : 'No'}</dd>
             </div>
             <div>
               <dt className="font-medium text-[color:var(--text-primary)]">Organization</dt>

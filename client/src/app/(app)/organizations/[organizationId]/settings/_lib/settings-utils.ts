@@ -32,6 +32,10 @@ const SENSITIVE_KEYWORDS = [
 ];
 
 export type SettingViewModel = {
+  optionItems?: Array<{
+    label: string;
+    value: string;
+  }>;
   settingKey: string;
   displayName: string;
   description: string;
@@ -153,11 +157,18 @@ export function buildSettingsViewModel(
   });
 }
 
-export function summarizeSettingValue(record: Pick<SettingViewModel, 'settingKey' | 'settingValue' | 'dataType'>): string {
+export function summarizeSettingValue(
+  record: Pick<SettingViewModel, 'settingKey' | 'settingValue' | 'dataType' | 'optionItems'>,
+): string {
   const raw = (record.settingValue || '').trim();
   const dataType = normalizeDataType(record.dataType);
   if (!raw) {
     return 'Not set';
+  }
+  const optionItems = Array.isArray(record.optionItems) ? record.optionItems : undefined;
+  const selectedOption = optionItems?.find((item) => item.value === raw);
+  if (selectedOption) {
+    return selectedOption.label;
   }
   if (isSensitiveSetting(record.settingKey)) {
     return 'Configured';
@@ -196,7 +207,7 @@ export function summarizeSettingValue(record: Pick<SettingViewModel, 'settingKey
 }
 
 export function validateSettingValue(
-  record: Pick<SettingViewModel, 'dataType' | 'options'>,
+  record: Pick<SettingViewModel, 'dataType' | 'options' | 'optionItems'>,
   value: string,
 ): string | null {
   const trimmed = value.trim();
@@ -205,7 +216,7 @@ export function validateSettingValue(
     return null;
   }
 
-  const options = record.options ?? [];
+  const options = record.optionItems?.map((item) => item.value) ?? record.options ?? [];
   if (options.length > 0 && !options.includes(trimmed)) {
     return `Choose one of: ${options.join(', ')}`;
   }

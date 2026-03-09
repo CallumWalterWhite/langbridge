@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import ssl
 from typing import Any
 from urllib.parse import parse_qs
 
@@ -16,6 +17,7 @@ from langbridge.packages.connectors.langbridge_connectors.api.google_analytics.c
 from langbridge.packages.connectors.langbridge_connectors.api.google_analytics.connector import (
     GoogleAnalyticsApiConnector,
 )
+from langbridge.packages.connectors.langbridge_connectors.api import _http_api_connector as http_api_connector_module
 from langbridge.packages.connectors.langbridge_connectors.api.hubspot.config import (
     HubSpotConnectorConfig,
 )
@@ -187,7 +189,7 @@ async def test_hubspot_connector_handles_bearer_auth_and_after_cursor() -> None:
         raise AssertionError(f"Unexpected HubSpot request: {request.method} {request.url}")
 
     connector = HubSpotApiConnector(
-        HubSpotConnectorConfig(access_token="hubspot-token"),
+        HubSpotConnectorConfig(service_key="hubspot-token"),
         transport=httpx.MockTransport(handler),
     )
 
@@ -198,6 +200,59 @@ async def test_hubspot_connector_handles_bearer_auth_and_after_cursor() -> None:
     assert result.records[0]["properties__firstname"] == "Ada"
     assert result.child_records["contacts__associations__companies__results"][0]["id"] == "2"
     assert result.next_cursor == "cursor-3"
+
+
+@pytest.mark.anyio
+async def test_hubspot_connector_accepts_legacy_access_token_config() -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        assert request.headers["Authorization"] == "Bearer legacy-hubspot-token"
+        return httpx.Response(200, json={"results": []})
+
+    connector = HubSpotApiConnector(
+        HubSpotConnectorConfig(access_token="legacy-hubspot-token"),
+        transport=httpx.MockTransport(handler),
+    )
+
+    await connector.test_connection()
+
+    assert len(requests) == 1
+
+
+def test_http_api_connector_supports_custom_ca_bundle(monkeypatch: pytest.MonkeyPatch) -> None:
+    loaded_paths: list[str] = []
+
+    class FakeSslContext:
+        def load_verify_locations(
+            self,
+            cafile: str | None = None,
+            capath: str | None = None,
+            cadata: str | bytes | None = None,
+        ) -> None:
+            if cafile:
+                loaded_paths.append(cafile)
+
+    fake_context = FakeSslContext()
+
+    monkeypatch.setattr(settings, "API_HTTP_SKIP_TLS_VERIFY", False)
+    monkeypatch.setattr(settings, "API_HTTP_CA_BUNDLE", "/tmp/company-root.pem")
+    monkeypatch.setattr(http_api_connector_module.ssl, "create_default_context", lambda: fake_context)
+
+    verify = http_api_connector_module._build_http_verify()
+
+    assert verify is fake_context
+    assert loaded_paths == ["/tmp/company-root.pem"]
+
+
+def test_http_api_connector_can_disable_tls_verification(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(settings, "API_HTTP_SKIP_TLS_VERIFY", True)
+    monkeypatch.setattr(settings, "API_HTTP_CA_BUNDLE", "")
+
+    verify = http_api_connector_module._build_http_verify()
+
+    assert verify is False
 
 
 @pytest.mark.anyio

@@ -105,6 +105,7 @@ class ConnectorStore(IConnectorStore):
                 if isinstance(getattr(connector, "access_policy_json", None), dict)
                 else None
             ),
+            is_managed=connector.is_managed,
         )
 
     async def get_by_name(self, name: str) -> ConnectorDTO | None:

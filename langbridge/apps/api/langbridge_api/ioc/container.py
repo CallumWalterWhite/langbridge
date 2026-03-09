@@ -257,6 +257,7 @@ class Container(containers.DeclarativeContainer):
         project_invite_repository=project_invite_repository,
         user_repository=user_repository,
         environment_service=environment_service,
+        connector_repository=connector_repository,
     )
 
     auth_service = providers.Factory(

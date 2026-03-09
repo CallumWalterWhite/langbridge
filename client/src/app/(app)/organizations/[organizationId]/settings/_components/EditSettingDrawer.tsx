@@ -70,6 +70,8 @@ export function EditSettingDrawer({
     );
   }
 
+  const optionItems = setting.optionItems ?? setting.options.map((option) => ({ label: option, value: option }));
+
   const handleSave = async () => {
     if (!canSave) {
       return;
@@ -115,12 +117,12 @@ export function EditSettingDrawer({
             </div>
           ) : null}
 
-          {setting.options.length > 0 ? (
+          {setting.optionItems !== undefined || setting.options.length > 0 ? (
             <Select value={draftValue} onChange={(event) => setDraftValue(event.target.value)} disabled={setting.isLocked}>
               <option value="">Not set</option>
-              {setting.options.map((option) => (
-                <option key={option} value={option}>
-                  {option}
+              {optionItems.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
                 </option>
               ))}
             </Select>

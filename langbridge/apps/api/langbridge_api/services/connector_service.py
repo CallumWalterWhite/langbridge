@@ -293,6 +293,7 @@ class ConnectorService:
             connector_type=connector_type.value,
             config_json=config_json,
             description=create_request.description,
+            is_managed=create_request.is_managed,
             connection_metadata_json=(
                 create_request.connection_metadata.model_dump(mode="json")
                 if create_request.connection_metadata
@@ -383,6 +384,8 @@ class ConnectorService:
             connector_entity.connection_metadata_json = update_request.connection_metadata.model_dump(
                 mode="json"
             )
+        if update_request.is_managed is not None:
+            connector_entity.is_managed = update_request.is_managed
         if update_request.secret_references is not None:
             connector_entity.secret_references_json = {
                 key: value.model_dump(mode="json")

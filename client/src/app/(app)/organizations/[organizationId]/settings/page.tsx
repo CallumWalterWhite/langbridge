@@ -11,6 +11,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
 import { ApiError } from '@/orchestration/http';
+import { fetchConnectors, type ConnectorResponse } from '@/orchestration/connectors';
 import {
   createProject,
   createRuntimeRegistrationToken,
@@ -48,6 +49,8 @@ const environmentSettingsQueryKey = (organizationId: string | null | undefined) 
 const environmentCatalogQueryKey = ['organization-env-catalog'] as const;
 const runtimeInstancesQueryKey = (organizationId: string | null | undefined) =>
   ['organization-runtime-instances', organizationId] as const;
+const connectorsQueryKey = (organizationId: string | null | undefined) =>
+  ['connectors', organizationId] as const;
 
 function resolveErrorMessage(error: unknown): string {
   if (error instanceof ApiError) {
@@ -90,6 +93,38 @@ function downloadAsFile(filename: string, content: string, mimeType: string): vo
   link.click();
   document.body.removeChild(link);
   URL.revokeObjectURL(url);
+}
+
+function isSqlConnector(connector: ConnectorResponse): boolean {
+  const connectorFamily = connector.pluginMetadata && typeof connector.pluginMetadata === 'object'
+    ? (connector.pluginMetadata as { connectorFamily?: string | null }).connectorFamily
+    : null;
+  return connectorFamily === 'DATABASE';
+}
+
+function buildManagedConnectorOptionItems(
+  connectors: ConnectorResponse[],
+  currentValue: string,
+): Array<{ label: string; value: string }> {
+  const items = connectors
+    .filter((connector): connector is ConnectorResponse & { id: string } =>
+      Boolean(connector.id) && Boolean(connector.isManaged) && isSqlConnector(connector),
+    )
+    .sort((left, right) => left.name.localeCompare(right.name))
+    .map((connector) => ({
+      value: connector.id,
+      label: `${connector.name} (${connector.connectorType ?? 'SQL'})`,
+    }));
+
+  const normalizedCurrentValue = currentValue.trim();
+  if (normalizedCurrentValue && !items.some((item) => item.value === normalizedCurrentValue)) {
+    items.unshift({
+      value: normalizedCurrentValue,
+      label: `Unavailable connector (${normalizedCurrentValue})`,
+    });
+  }
+
+  return items;
 }
 
 export default function OrganizationSettingsPage({ params }: OrganizationSettingsPageProps): JSX.Element {
@@ -148,6 +183,12 @@ export default function OrganizationSettingsPage({ params }: OrganizationSetting
     enabled: Boolean(params.organizationId),
     refetchOnWindowFocus: false,
   });
+  const connectorsQuery = useQuery<ConnectorResponse[]>({
+    queryKey: connectorsQueryKey(params.organizationId),
+    queryFn: () => fetchConnectors(params.organizationId),
+    enabled: Boolean(params.organizationId),
+    refetchOnWindowFocus: false,
+  });
 
   const saveSettingMutation = useMutation({
     mutationFn: async ({
@@ -180,8 +221,28 @@ export default function OrganizationSettingsPage({ params }: OrganizationSetting
     return buildSettingsViewModel(
       environmentCatalogQuery.data ?? [],
       environmentSettingsQuery.data ?? [],
-    );
-  }, [environmentCatalogQuery.data, environmentSettingsQuery.data]);
+    ).map((record) => {
+      if (record.settingKey !== 'staging_db_connection') {
+        return record;
+      }
+
+      const optionItems = buildManagedConnectorOptionItems(
+        connectorsQuery.data ?? [],
+        record.settingValue,
+      );
+
+      return {
+        ...record,
+        optionItems,
+        options: optionItems.map((item) => item.value),
+        helperText: optionItems.length > 0
+          ? 'Choose a managed SQL connector for staging and DML workflows.'
+          : 'Create a managed SQL connector to make a staging database available here.',
+        multiline: false,
+        placeholder: null,
+      };
+    });
+  }, [connectorsQuery.data, environmentCatalogQuery.data, environmentSettingsQuery.data]);
 
   const filteredSettings = useMemo(() => {
     return filterSettings(settingsRecords, searchValue, selectedCategory);

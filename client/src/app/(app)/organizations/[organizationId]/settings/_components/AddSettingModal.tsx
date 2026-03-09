@@ -26,7 +26,6 @@ import { Input } from '@/components/ui/input';
 import { Select } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
 import {
-  isSensitiveSetting,
   normalizeSettingValueForSave,
   summarizeSettingValue,
   validateSettingValue,
@@ -115,6 +114,10 @@ export function AddSettingModal({
     () => selectableSettings.find((item) => item.settingKey === selectedKey) ?? null,
     [selectableSettings, selectedKey],
   );
+  const selectedOptionItems = selectedSetting?.optionItems ?? selectedSetting?.options.map((option) => ({
+    label: option,
+    value: option,
+  })) ?? [];
 
   useEffect(() => {
     if (!selectedSetting) {
@@ -186,13 +189,13 @@ export function AddSettingModal({
     if (!selectedSetting) {
       return null;
     }
-    if (selectedSetting.options.length > 0) {
+    if (selectedSetting.optionItems !== undefined || selectedSetting.options.length > 0) {
       return (
         <Select value={draftValue} onChange={(event) => setDraftValue(event.target.value)}>
           <option value="">Not set</option>
-          {selectedSetting.options.map((option) => (
-            <option key={option} value={option}>
-              {option}
+          {selectedOptionItems.map((option) => (
+            <option key={option.value} value={option.value}>
+              {option.label}
             </option>
           ))}
         </Select>
@@ -326,15 +329,12 @@ export function AddSettingModal({
               <p className="mt-1 text-xs text-[color:var(--text-muted)]">{selectedSetting.description}</p>
               <p className="mt-3 text-xs text-[color:var(--text-muted)]">Value summary</p>
               <p className="text-sm text-[color:var(--text-primary)]">
-                {isSensitiveSetting(selectedSetting.settingKey)
-                  ? draftValue.trim()
-                    ? 'Configured'
-                    : 'Not set'
-                  : summarizeSettingValue({
-                      settingKey: selectedSetting.settingKey,
-                      settingValue: draftValue,
-                      dataType: selectedSetting.dataType,
-                    })}
+                {summarizeSettingValue({
+                  settingKey: selectedSetting.settingKey,
+                  settingValue: draftValue,
+                  dataType: selectedSetting.dataType,
+                  optionItems: selectedSetting.optionItems,
+                })}
               </p>
             </div>
           </div>

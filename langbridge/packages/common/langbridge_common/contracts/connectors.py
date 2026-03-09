@@ -104,6 +104,7 @@ class ConnectorDTO(_Base):
     connection_metadata: ConnectionMetadata | None = None
     secret_references: dict[str, SecretReference] = Field(default_factory=dict)
     connection_policy: ConnectionPolicy | None = None
+    is_managed: bool = False
 
 
 def _parse_connector_config(raw_config: Any) -> Optional[Dict[str, Any]]:
@@ -136,6 +137,7 @@ class ConnectorResponse(_Base):
     connection_policy: ConnectionPolicy | None = None
     catalog_summary: "ConnectorCatalogSummary | None" = None
     plugin_metadata: "ConnectorPluginMetadata | None" = None
+    is_managed: bool = False
 
     @staticmethod
     def from_connector(
@@ -168,6 +170,7 @@ class ConnectorResponse(_Base):
             organization_id=resolved_org_id,
             project_id=project_id,
             config=config,
+            is_managed=connector.is_managed,
             connection_metadata=(
                 ConnectionMetadata.model_validate(raw_metadata)
                 if isinstance(raw_metadata, dict)
@@ -201,6 +204,7 @@ class CreateConnectorRequest(_Base):
     connection_metadata: ConnectionMetadata | None = None
     secret_references: dict[str, SecretReference] = Field(default_factory=dict)
     connection_policy: ConnectionPolicy | None = None
+    is_managed: bool = False
 
 
 class UpdateConnectorRequest(_Base):
@@ -216,6 +220,7 @@ class UpdateConnectorRequest(_Base):
     connection_metadata: ConnectionMetadata | None = None
     secret_references: dict[str, SecretReference] | None = None
     connection_policy: ConnectionPolicy | None = None
+    is_managed: Optional[bool] = None
 
 
 class ConnectorListResponse(_Base):
