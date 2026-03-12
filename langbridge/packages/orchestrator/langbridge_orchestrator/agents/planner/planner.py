@@ -90,7 +90,7 @@ def _summarize_plan(decision: RouteDecision, steps: List[PlanStep], request: Pla
     question = request.question
     if decision.route == RouteName.SIMPLE_ANALYST:
         return (
-            "I'll query the most relevant semantic model to answer your question, "
+            "I'll query the most relevant analytical asset through federated execution, "
             "then return the result table with the exact SQL that was executed."
         )
     if decision.route == RouteName.ANALYST_THEN_VISUAL:
@@ -299,17 +299,17 @@ class PlanningAgent:
         constraints_payload = request.constraints.model_dump()
         context_payload = request.context or {}
         available_agents = context_payload.get("available_agents")
-        semantic_models = context_payload.get("semantic_models")
-        semantic_models_count = context_payload.get("semantic_models_count")
+        analytical_assets = context_payload.get("analytical_assets")
+        analytical_assets_count = context_payload.get("analytical_assets_count")
         context_core = {
             key: value
             for key, value in context_payload.items()
             if key
             not in (
                 "available_agents",
-                "semantic_models",
-                "semantic_models_count",
-                "semantic_models_truncated",
+                "analytical_assets",
+                "analytical_assets_count",
+                "analytical_assets_truncated",
             )
         }
         prompt_sections = [
@@ -329,15 +329,15 @@ class PlanningAgent:
             prompt_sections.append(
                 f"Available agents (JSON): {json.dumps(available_agents, default=str, ensure_ascii=True)}"
             )
-        if "semantic_models" in context_payload:
+        if "analytical_assets" in context_payload:
             prompt_sections.append(
-                f"Available semantic models (JSON): {json.dumps(semantic_models, default=str, ensure_ascii=True)}"
+                f"Available analytical assets (JSON): {json.dumps(analytical_assets, default=str, ensure_ascii=True)}"
             )
-        if semantic_models_count is not None:
-            prompt_sections.append(f"Semantic model count: {semantic_models_count}")
-            if context_payload.get("semantic_models_truncated"):
+        if analytical_assets_count is not None:
+            prompt_sections.append(f"Analytical asset count: {analytical_assets_count}")
+            if context_payload.get("analytical_assets_truncated"):
                 prompt_sections.append(
-                    "Note: semantic_models list truncated; choose the best match or ask for a specific model if needed."
+                    "Note: analytical_assets list truncated; choose the best match or ask for a specific asset if needed."
                 )
         prompt_sections.append(f"Policy risks: {policy_notes.risks or []}")
         return "\n".join(prompt_sections)

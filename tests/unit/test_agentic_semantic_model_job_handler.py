@@ -15,82 +15,115 @@ def _build_handler() -> AgenticSemanticModelJobRequestHandler:
     return AgenticSemanticModelJobRequestHandler(
         job_repository=SimpleNamespace(),
         semantic_model_repository=SimpleNamespace(),
-        connector_repository=SimpleNamespace(),
+        dataset_repository=SimpleNamespace(),
         llm_repository=SimpleNamespace(),
         message_broker=SimpleNamespace(),
     )
 
 
-def _table_blueprints():
+def _dataset_blueprints():
     return [
         {
-            "entity_name": "sales_orders",
-            "schema": "sales",
-            "table_name": "orders",
-            "table_reference": "sales.orders",
+            "dataset": SimpleNamespace(id="orders-id", name="Orders", description="Orders dataset", connection_id=None),
+            "dataset_id": "orders-id",
+            "dataset_key": "orders",
+            "dataset_name": "Orders",
             "columns": [
-                SimpleNamespace(name="order_id", data_type="integer", is_primary_key=True),
-                SimpleNamespace(name="customer_id", data_type="integer", is_primary_key=False),
-                SimpleNamespace(name="amount", data_type="decimal", is_primary_key=False),
+                SimpleNamespace(name="id", data_type="integer"),
+                SimpleNamespace(name="customer_id", data_type="integer"),
+                SimpleNamespace(name="amount", data_type="decimal"),
             ],
-            "foreign_keys": [
-                SimpleNamespace(
-                    schema="sales",
-                    table="customers",
-                    column="customer_id",
-                    foreign_key="customer_id",
-                )
-            ],
+            "field_names": {"id", "customer_id", "amount"},
         },
         {
-            "entity_name": "sales_customers",
-            "schema": "sales",
-            "table_name": "customers",
-            "table_reference": "sales.customers",
+            "dataset": SimpleNamespace(
+                id="customers-id",
+                name="Customers",
+                description="Customers dataset",
+                connection_id=None,
+            ),
+            "dataset_id": "customers-id",
+            "dataset_key": "customers",
+            "dataset_name": "Customers",
             "columns": [
-                SimpleNamespace(name="customer_id", data_type="integer", is_primary_key=True),
-                SimpleNamespace(name="region", data_type="string", is_primary_key=False),
+                SimpleNamespace(name="id", data_type="integer"),
+                SimpleNamespace(name="region", data_type="string"),
             ],
-            "foreign_keys": [],
+            "field_names": {"id", "region"},
         },
     ]
 
 
-def test_agentic_handler_builds_valid_yaml_from_selection_blueprints() -> None:
+def test_agentic_handler_builds_valid_yaml_from_dataset_blueprints() -> None:
     handler = _build_handler()
-    blueprints = _table_blueprints()
+    blueprints = _dataset_blueprints()
 
-    payload, warnings = handler._build_payload_from_table_blueprints(
-        connector_name="sales-db",
-        table_blueprints=blueprints,
+    payload, warnings = handler._build_payload_from_dataset_blueprints(
+        dataset_blueprints=blueprints,
         question_prompts=["revenue by region", "top customers", "monthly trend"],
     )
     yaml_text = handler._render_and_validate_yaml(payload, blueprints)
     parsed = load_semantic_model(yaml_text)
 
-    assert "sales_orders" in parsed.tables
-    assert "sales_customers" in parsed.tables
+    assert "orders" in parsed.datasets
+    assert "customers" in parsed.datasets
     assert parsed.relationships is not None
     assert len(parsed.relationships) == 1
-    assert parsed.relationships[0].from_ == "sales_orders"
-    assert parsed.relationships[0].to == "sales_customers"
+    assert parsed.relationships[0].source_dataset == "orders"
+    assert parsed.relationships[0].target_dataset == "customers"
     assert isinstance(warnings, list)
 
 
 def test_agentic_handler_rejects_mismatched_column_mapping() -> None:
     handler = _build_handler()
-    blueprints = _table_blueprints()
-    payload, _ = handler._build_payload_from_table_blueprints(
-        connector_name="sales-db",
-        table_blueprints=blueprints,
+    blueprints = _dataset_blueprints()
+    payload, _ = handler._build_payload_from_dataset_blueprints(
+        dataset_blueprints=blueprints,
         question_prompts=["revenue by region", "top customers", "monthly trend"],
     )
 
     # Drop one selected column from generated payload to force validation failure.
-    dimensions = payload["tables"]["sales_orders"]["dimensions"]
-    payload["tables"]["sales_orders"]["dimensions"] = [
+    dimensions = payload["datasets"]["orders"]["dimensions"]
+    payload["datasets"]["orders"]["dimensions"] = [
         dimension for dimension in dimensions if dimension["name"] != "customer_id"
     ]
 
     with pytest.raises(BusinessValidationError):
         handler._render_and_validate_yaml(payload, blueprints)
+
+
+def test_agentic_handler_normalizes_duplicate_relationship_names() -> None:
+    handler = _build_handler()
+    blueprints = _dataset_blueprints()
+    payload, _ = handler._build_payload_from_dataset_blueprints(
+        dataset_blueprints=blueprints,
+        question_prompts=["revenue by region", "top customers", "monthly trend"],
+    )
+
+    payload["relationships"] = [
+        {
+            "name": "orders_to_customers",
+            "source_dataset": "orders",
+            "source_field": "customer_id",
+            "target_dataset": "customers",
+            "target_field": "id",
+            "operator": "=",
+            "type": "many_to_one",
+        },
+        {
+            "name": "orders_to_customers",
+            "source_dataset": "orders",
+            "source_field": "id",
+            "target_dataset": "customers",
+            "target_field": "id",
+            "operator": "=",
+            "type": "many_to_one",
+        },
+    ]
+
+    yaml_text = handler._render_and_validate_yaml(payload, blueprints)
+    parsed = load_semantic_model(yaml_text)
+
+    relationship_names = [relationship.name for relationship in parsed.relationships or []]
+    assert len(relationship_names) == len(set(relationship_names))
+    assert relationship_names == ["orders_to_customers", "orders_to_customers_2"]

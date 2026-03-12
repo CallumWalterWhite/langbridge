@@ -1,6 +1,6 @@
 'use client';
 
-import { JSX, useEffect } from 'react';
+import { JSX, use, useEffect } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useQuery } from '@tanstack/react-query';
@@ -15,14 +15,14 @@ import { fetchLLMConnections } from '@/orchestration/agents';
 import type { LLMConnection } from '@/orchestration/agents';
 
 type LLMConnectionsPageProps = {
-  params: { organizationId: string };
+  params: Promise<{ organizationId: string }>;
 };
 
 export default function LLMConnectionsIndex({ params }: LLMConnectionsPageProps): JSX.Element {
+  const { organizationId } = use(params);
   const router = useRouter();
   const { toast } = useToast();
   const { selectedOrganizationId, setSelectedOrganizationId } = useWorkspaceScope();
-  const organizationId = params.organizationId;
 
   useEffect(() => {
     if (organizationId && organizationId !== selectedOrganizationId) {

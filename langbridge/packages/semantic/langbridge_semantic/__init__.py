@@ -1,8 +1,10 @@
 from .model import (
     SemanticModel,
+    Dataset,
     Table,
     Dimension,
     Measure,
+    DatasetFilter,
     TableFilter,
     Relationship,
     Metric,
@@ -16,9 +18,11 @@ from .unified_query import (
 
 __all__ = [
     "SemanticModel",
+    "Dataset",
     "Table",
     "Dimension",
     "Measure",
+    "DatasetFilter",
     "TableFilter",
     "Relationship",
     "Metric",

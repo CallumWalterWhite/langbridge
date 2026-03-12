@@ -1923,16 +1923,29 @@ function parseUnifiedJoins(value: unknown): UnifiedSemanticJoinPayload[] {
     if (!isRecord(entry)) {
       return;
     }
-    const from = readString(entry.from_) ?? readString(entry.from);
-    const to = readString(entry.to);
-    const on = readString(entry.join_on) ?? readString(entry.on);
-    if (!from || !to || !on) {
+    const sourceDataset = readString(entry.source_dataset) ?? readString(entry.sourceDataset) ?? readString(entry.from_) ?? readString(entry.from);
+    const targetDataset = readString(entry.target_dataset) ?? readString(entry.targetDataset) ?? readString(entry.to);
+    const sourceField = readString(entry.source_field) ?? readString(entry.sourceField);
+    const targetField = readString(entry.target_field) ?? readString(entry.targetField);
+    const operator = readString(entry.operator) ?? '=';
+    const on =
+      readString(entry.join_on) ??
+      readString(entry.on) ??
+      (sourceDataset && sourceField && targetDataset && targetField
+        ? `${sourceDataset}.${sourceField} ${operator} ${targetDataset}.${targetField}`
+        : null);
+    if (!sourceDataset || !targetDataset || !on) {
       return;
     }
     joins.push({
       name: readString(entry.name),
-      from,
-      to,
+      sourceDataset,
+      sourceField,
+      targetDataset,
+      targetField,
+      operator,
+      from: sourceDataset,
+      to: targetDataset,
       type: readString(entry.type) ?? 'inner',
       on,
     });
@@ -2051,12 +2064,13 @@ function applyDashboardSnapshotToWidgets(
 }
 
 function buildTableGroups(semanticModel?: SemanticModelPayload): TableGroup[] {
-  if (!semanticModel || !semanticModel.tables) {
+  const sources = semanticModel?.datasets ?? semanticModel?.tables;
+  if (!semanticModel || !sources) {
     return [];
   }
 
-  const groups: TableGroup[] = Object.entries(semanticModel.tables).map(([tableKey, table]) => {
-    const dimensions: FieldOption[] = (table.dimensions ?? []).map((dimension) => ({
+  const groups: TableGroup[] = Object.entries(sources).map(([tableKey, dataset]) => {
+    const dimensions: FieldOption[] = (dataset.dimensions ?? []).map((dimension) => ({
       id: dimension.full_path || `${tableKey}.${dimension.name}`,
       label: dimension.alias || dimension.name,
       kind: 'dimension',
@@ -2065,7 +2079,7 @@ function buildTableGroups(semanticModel?: SemanticModelPayload): TableGroup[] {
       tableKey,
     }));
 
-    const measures: FieldOption[] = (table.measures ?? []).map((measure) => ({
+    const measures: FieldOption[] = (dataset.measures ?? []).map((measure) => ({
       id: measure.full_path || `${tableKey}.${measure.name}`,
       label: measure.name,
       kind: 'measure',
@@ -2075,8 +2089,8 @@ function buildTableGroups(semanticModel?: SemanticModelPayload): TableGroup[] {
       tableKey,
     }));
 
-    const segments: FieldOption[] = table.filters
-      ? Object.entries(table.filters).map(([filterName, filter]) => ({
+    const segments: FieldOption[] = dataset.filters
+      ? Object.entries(dataset.filters).map(([filterName, filter]) => ({
           id: `${tableKey}.${filterName}`,
           label: filterName,
           kind: 'segment',
@@ -2087,9 +2101,9 @@ function buildTableGroups(semanticModel?: SemanticModelPayload): TableGroup[] {
 
     return {
       tableKey,
-      schema: table.schema,
-      name: table.name,
-      description: table.description,
+      schema: dataset.schema_name || dataset.schema || 'dataset',
+      name: dataset.relation_name || dataset.name || tableKey,
+      description: dataset.description,
       dimensions,
       measures,
       segments,

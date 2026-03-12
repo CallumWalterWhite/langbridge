@@ -3,6 +3,11 @@ Tooling entry points for the orchestrator package.
 """
 
 from .sql_analyst import (
+    AnalyticalColumn,
+    AnalyticalContext,
+    AnalyticalDatasetBinding,
+    AnalyticalField,
+    AnalyticalMetric,
     AnalystQueryRequest,
     AnalystQueryResponse,
     QueryResult,
@@ -18,6 +23,11 @@ from .semantic_query_builder import (
 )
 
 __all__ = [
+    "AnalyticalColumn",
+    "AnalyticalContext",
+    "AnalyticalDatasetBinding",
+    "AnalyticalField",
+    "AnalyticalMetric",
     "AnalystQueryRequest",
     "AnalystQueryResponse",
     "QueryResult",

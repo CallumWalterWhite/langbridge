@@ -313,7 +313,7 @@ class OrchestratorService:
             raise BusinessValidationError("No semantic models or connectors available for SQL analysis.")
 
         analyst_agent: AnalystAgent | None = (
-            AnalystAgent(llm_provider, sql_tools=tools, search_tools=semantic_search_tools)
+            AnalystAgent(llm_provider, tools=tools)
             if tools
             else None
         )

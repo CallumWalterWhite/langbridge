@@ -5,6 +5,7 @@ from typing import Iterable
 
 from sqlalchemy import String, and_, desc, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from langbridge.packages.common.langbridge_common.db.dataset import (
     DatasetColumnRecord,
@@ -20,6 +21,16 @@ class DatasetRepository(AsyncBaseRepository[DatasetRecord]):
     def __init__(self, session: AsyncSession):
         super().__init__(session, DatasetRecord)
 
+    @staticmethod
+    def _with_relationships():
+        return [
+            selectinload(DatasetRecord.columns),
+            selectinload(DatasetRecord.policy),
+        ]
+
+    def _select_with_relationships(self):
+        return select(DatasetRecord).options(*self._with_relationships())
+
     async def list_for_workspace(
         self,
         *,
@@ -31,7 +42,7 @@ class DatasetRepository(AsyncBaseRepository[DatasetRecord]):
         limit: int = 200,
         offset: int = 0,
     ) -> list[DatasetRecord]:
-        query = select(DatasetRecord).where(DatasetRecord.workspace_id == workspace_id)
+        query = self._select_with_relationships().where(DatasetRecord.workspace_id == workspace_id)
         if project_id is not None:
             query = query.where(
                 or_(DatasetRecord.project_id == project_id, DatasetRecord.project_id.is_(None))
@@ -70,7 +81,7 @@ class DatasetRepository(AsyncBaseRepository[DatasetRecord]):
         workspace_id: uuid.UUID,
     ) -> DatasetRecord | None:
         result = await self._session.scalars(
-            select(DatasetRecord).where(
+            self._select_with_relationships().where(
                 DatasetRecord.id == dataset_id,
                 DatasetRecord.workspace_id == workspace_id,
             )
@@ -87,7 +98,7 @@ class DatasetRepository(AsyncBaseRepository[DatasetRecord]):
         if not normalized_alias:
             return None
         result = await self._session.scalars(
-            select(DatasetRecord).where(
+            self._select_with_relationships().where(
                 DatasetRecord.workspace_id == workspace_id,
                 func.lower(DatasetRecord.sql_alias) == normalized_alias,
             )
@@ -106,6 +117,18 @@ class DatasetRepository(AsyncBaseRepository[DatasetRecord]):
         )
         return int(count or 0)
 
+    async def get_by_ids(
+        self,
+        dataset_ids: Iterable[uuid.UUID],
+    ) -> list[DatasetRecord]:
+        normalized_ids = [dataset_id for dataset_id in dataset_ids if dataset_id is not None]
+        if not normalized_ids:
+            return []
+        result = await self._session.scalars(
+            self._select_with_relationships().where(DatasetRecord.id.in_(normalized_ids))
+        )
+        return list(result.all())
+
     async def get_by_ids_for_workspace(
         self,
         *,
@@ -116,7 +139,7 @@ class DatasetRepository(AsyncBaseRepository[DatasetRecord]):
         if not normalized_ids:
             return []
         result = await self._session.scalars(
-            select(DatasetRecord).where(
+            self._select_with_relationships().where(
                 DatasetRecord.workspace_id == workspace_id,
                 DatasetRecord.id.in_(normalized_ids),
             )
@@ -131,7 +154,7 @@ class DatasetRepository(AsyncBaseRepository[DatasetRecord]):
         table_name: str,
     ) -> DatasetRecord | None:
         result = await self._session.scalars(
-            select(DatasetRecord).where(
+            self._select_with_relationships().where(
                 DatasetRecord.workspace_id == workspace_id,
                 DatasetRecord.connection_id == connection_id,
                 DatasetRecord.dataset_type == "FILE",
@@ -148,7 +171,7 @@ class DatasetRepository(AsyncBaseRepository[DatasetRecord]):
         dataset_types: Iterable[str] | None = None,
         limit: int = 500,
     ) -> list[DatasetRecord]:
-        query = select(DatasetRecord).where(
+        query = self._select_with_relationships().where(
             DatasetRecord.workspace_id == workspace_id,
             DatasetRecord.connection_id == connection_id,
         )

@@ -30,25 +30,6 @@ from langbridge.apps.api.langbridge_api.services.semantic import SemanticModelSe
 router = APIRouter(prefix="/semantic-model/{organization_id}", tags=["semantic-model"])
 
 
-@router.get("/generate/yaml")
-@inject
-async def preview_semantic_model_yaml(
-    organization_id: UUID,
-    connector_id: UUID,
-    current_user: UserResponse = Depends(get_current_user),
-    _org = Depends(get_organization),
-    service: SemanticModelService = Depends(Provide[Container.semantic_model_service]),
-) -> PlainTextResponse:
-    try:
-        yaml_text = await service.generate_model_yaml(connector_id)
-        return PlainTextResponse(yaml_text, media_type="text/yaml")
-    except Exception as exc:  # pragma: no cover - defensive
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(exc),
-        ) from exc
-
-
 @router.post(
     "/generate/yaml",
     response_model=SemanticModelSelectionGenerateResponse,
@@ -64,10 +45,9 @@ async def generate_semantic_model_yaml_from_selection(
 ) -> SemanticModelSelectionGenerateResponse:
     try:
         return await service.generate_model_yaml_from_selection(
-            connector_id=request.connector_id,
-            selected_tables=request.selected_tables,
-            selected_columns=request.selected_columns,
-            include_sample_values=request.include_sample_values,
+            organization_id=organization_id,
+            selected_dataset_ids=request.dataset_ids,
+            selected_fields=request.selected_fields,
             description=request.description,
         )
     except BusinessValidationError as exc:
@@ -85,13 +65,16 @@ async def generate_semantic_model_yaml_from_selection(
 @inject
 async def get_semantic_model_catalog(
     organization_id: UUID,
-    connector_id: UUID,
+    project_id: UUID | None = None,
     current_user: UserResponse = Depends(get_current_user),
     _org=Depends(get_organization),
     service: SemanticModelService = Depends(Provide[Container.semantic_model_service]),
 ) -> SemanticModelCatalogResponse:
     try:
-        return await service.get_connector_catalog(connector_id=connector_id)
+        return await service.get_connector_catalog(
+            organization_id=organization_id,
+            project_id=project_id,
+        )
     except BusinessValidationError as exc:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -123,21 +106,21 @@ async def create_agentic_semantic_model_job(
 
     try:
         generated = await service.generate_model_yaml_from_selection(
-            connector_id=request.connector_id,
-            selected_tables=request.selected_tables,
-            selected_columns=request.selected_columns,
-            include_sample_values=request.include_sample_values,
+            organization_id=organization_id,
+            selected_dataset_ids=request.dataset_ids,
+            selected_fields={},
             description=request.description,
         )
         draft_model = await service.create_model(
             SemanticModelCreateRequest(
-                connector_id=request.connector_id,
+                connector_id=None,
                 organization_id=organization_id,
                 project_id=request.project_id,
                 name=request.name,
                 description=request.description,
                 model_yaml=generated.yaml_text,
                 auto_generate=False,
+                source_dataset_ids=request.dataset_ids,
             )
         )
         job = await job_service.create_agentic_semantic_model_job_request(
@@ -146,9 +129,7 @@ async def create_agentic_semantic_model_job(
                 project_id=request.project_id,
                 user_id=current_user.id,
                 semantic_model_id=draft_model.id,
-                connector_id=request.connector_id,
-                selected_tables=request.selected_tables,
-                selected_columns=request.selected_columns,
+                dataset_ids=request.dataset_ids,
                 question_prompts=request.question_prompts,
                 include_sample_values=request.include_sample_values,
             )

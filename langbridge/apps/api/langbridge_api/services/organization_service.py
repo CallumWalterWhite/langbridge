@@ -211,6 +211,7 @@ class OrganizationService:
             return OrganizationInviteResponse.model_validate(existing)
 
         invite = OrganizationInvite(
+            id=uuid.uuid4(),
             organization=organization,
             inviter=db_inviter,
             invitee_username=normalized_username,
@@ -272,6 +273,7 @@ class OrganizationService:
             return ProjectInviteResponse.model_validate(existing)
 
         invite = ProjectInvite(
+            id=uuid.uuid4(),
             project=project,
             inviter=db_inviter,
             invitee=invitee,

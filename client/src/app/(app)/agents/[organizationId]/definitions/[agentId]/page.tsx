@@ -1,6 +1,6 @@
 'use client';
 
-import { JSX, useEffect } from 'react';
+import { JSX, use, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { useQuery } from '@tanstack/react-query';
 
@@ -11,13 +11,13 @@ import type { AgentDefinition } from '@/orchestration/agents';
 import { useWorkspaceScope } from '@/context/workspaceScope';
 
 interface PageProps {
-  params: { organizationId: string; agentId: string };
+  params: Promise<{ organizationId: string; agentId: string }>;
 }
 
 export default function EditAgentDefinitionPage({ params }: PageProps): JSX.Element {
+  const { agentId, organizationId } = use(params);
   const router = useRouter();
   const { selectedOrganizationId, setSelectedOrganizationId } = useWorkspaceScope();
-  const { agentId, organizationId } = params;
 
   useEffect(() => {
     if (organizationId && organizationId !== selectedOrganizationId) {

@@ -300,7 +300,7 @@ class LineageService:
                     )
                 )
         else:
-            for dataset_id, table_keys in self._extract_standard_model_dataset_usage(payload).items():
+            for dataset_id, dataset_keys in self._extract_standard_model_dataset_usage(payload).items():
                 edges.append(
                     _LineageEdgeInput(
                         source_type=LineageNodeType.DATASET,
@@ -308,7 +308,7 @@ class LineageService:
                         target_type=target_type,
                         target_id=target_id,
                         edge_type=LineageEdgeType.FEEDS,
-                        metadata={"table_keys": sorted(table_keys)},
+                        metadata={"dataset_keys": sorted(dataset_keys)},
                     )
                 )
 
@@ -750,20 +750,22 @@ class LineageService:
     @staticmethod
     def _extract_standard_model_dataset_usage(payload: dict[str, Any]) -> dict[uuid.UUID, set[str]]:
         results: dict[uuid.UUID, set[str]] = {}
-        tables = payload.get("tables")
-        if not isinstance(tables, dict):
+        datasets = payload.get("datasets")
+        if not isinstance(datasets, dict):
+            datasets = payload.get("tables")
+        if not isinstance(datasets, dict):
             return results
-        for table_key, table_payload in tables.items():
-            if not isinstance(table_payload, dict):
+        for dataset_key, dataset_payload in datasets.items():
+            if not isinstance(dataset_payload, dict):
                 continue
-            raw_id = table_payload.get("dataset_id") or table_payload.get("datasetId")
+            raw_id = dataset_payload.get("dataset_id") or dataset_payload.get("datasetId")
             if raw_id is None:
                 continue
             try:
                 dataset_id = uuid.UUID(str(raw_id))
             except (TypeError, ValueError):
                 continue
-            results.setdefault(dataset_id, set()).add(str(table_key))
+            results.setdefault(dataset_id, set()).add(str(dataset_key))
         return results
 
     async def _walk_graph(

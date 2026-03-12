@@ -6,7 +6,6 @@ import type {
   SemanticModelAgenticJobCreateResponse,
   SemanticModelCatalogResponse,
   SemanticModelKind,
-  SemanticModel,
   SemanticModelRecord,
   SemanticModelSelectionGeneratePayload,
   SemanticModelSelectionGenerateResponse,
@@ -24,20 +23,6 @@ function requireOrganizationId(organizationId: string): string {
 
 function basePath(organizationId: string): string {
   return `${BASE_PATH}/${requireOrganizationId(organizationId)}`;
-}
-
-export async function previewSemanticModel(
-  organizationId: string,
-  projectId?: string,
-): Promise<SemanticModel> {
-  const params = new URLSearchParams();
-  if (projectId) {
-    params.set('project_id', projectId);
-  }
-  const suffix = params.toString();
-  return apiFetch<SemanticModel>(
-    `${basePath(organizationId)}/preview${suffix ? `?${suffix}` : ''}`,
-  );
 }
 
 export async function listSemanticModels(
@@ -111,47 +96,24 @@ export async function fetchSemanticModels(
   return apiFetch<SemanticModelRecord[]>(basePath(organizationId));
 }
 
-export async function previewSemanticModelYaml(
-  organizationId: string,
-  projectId?: string,
-): Promise<string> {
-  const params = new URLSearchParams();
-  if (projectId) {
-    params.set('project_id', projectId);
-  }
-  const suffix = params.toString();
-  return await apiFetch<string>(
-    `${basePath(organizationId)}/preview/yaml${suffix ? `?${suffix}` : ''}`,
-  );
-}
-
 export async function fetchSemanticModelYaml(
   modelId: string,
   organizationId: string,
 ): Promise<string> {
-  return await apiFetch<string>(`${basePath(organizationId)}/${modelId}/yaml`);
-}
-
-export async function generateSemanticModelYaml(
-  organizationId: string,
-  connectorId: string,
-): Promise<string> {
-  if (!connectorId) {
-    throw new Error('Connector id is required to generate a semantic model.');
-  }
-  const params = new URLSearchParams({ connector_id: connectorId });
-  return apiFetch<string>(`${basePath(organizationId)}/generate/yaml?${params.toString()}`);
+  return apiFetch<string>(`${basePath(organizationId)}/${modelId}/yaml`);
 }
 
 export async function fetchSemanticModelCatalog(
   organizationId: string,
-  connectorId: string,
+  projectId?: string | null,
 ): Promise<SemanticModelCatalogResponse> {
-  if (!connectorId) {
-    throw new Error('Connector id is required to load semantic model catalog.');
+  const params = new URLSearchParams();
+  if (projectId) {
+    params.set('project_id', projectId);
   }
-  const params = new URLSearchParams({ connector_id: connectorId });
-  return apiFetch<SemanticModelCatalogResponse>(`${basePath(organizationId)}/catalog?${params.toString()}`);
+  return apiFetch<SemanticModelCatalogResponse>(
+    `${basePath(organizationId)}/catalog${params.toString() ? `?${params.toString()}` : ''}`,
+  );
 }
 
 export async function generateSemanticModelYamlFromSelection(

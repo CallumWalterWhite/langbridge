@@ -1,11 +1,13 @@
 """
-Public API for the refactored SQL analyst tool package.
-
-Legacy exports from the previous LangChain-oriented implementation remain available
-for backwards compatibility but are not part of the new orchestrator pathway.
+Public API for dataset-first federated analytical tooling.
 """
 
 from .interfaces import (
+    AnalyticalColumn,
+    AnalyticalContext,
+    AnalyticalDatasetBinding,
+    AnalyticalField,
+    AnalyticalMetric,
     AnalystQueryRequest,
     AnalystQueryResponse,
     QueryResult,
@@ -15,6 +17,11 @@ from .semantic_loader import SemanticModelError, load_semantic_model
 from .tool import SqlAnalystTool
 
 __all__ = [
+    "AnalyticalColumn",
+    "AnalyticalContext",
+    "AnalyticalDatasetBinding",
+    "AnalyticalField",
+    "AnalyticalMetric",
     "AnalystQueryRequest",
     "AnalystQueryResponse",
     "QueryResult",

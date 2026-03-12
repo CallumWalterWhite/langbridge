@@ -1,3146 +1,745 @@
 'use client';
 
+import { Bot, ChevronDown, Search, Sparkles } from 'lucide-react';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { JSX, useCallback, useEffect, useMemo, useState } from 'react';
+import { JSX, useEffect, useMemo, useState } from 'react';
 import yaml from 'js-yaml';
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Select } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
 import { useWorkspaceScope } from '@/context/workspaceScope';
-import { fetchLLMConnections } from '@/orchestration/agents';
-import { fetchConnectors } from '@/orchestration/connectors';
-import type { ConnectorResponse } from '@/orchestration/connectors/types';
-import {
-  bulkCreateDatasets,
-  fetchDatasetCatalog,
-  type DatasetCatalogItem,
-} from '@/orchestration/datasets';
-import {
-  createSemanticModel,
-  deleteSemanticModel,
-  fetchSemanticModel,
-  fetchSemanticModelCatalog,
-  generateSemanticModelYaml,
-  generateSemanticModelYamlFromSelection,
-  startAgenticSemanticModelJob,
-  updateSemanticModel,
-} from '@/orchestration/semanticModels';
-import { fetchAgentJobState } from '@/orchestration/jobs';
-import type {
-  SemanticDimension,
-  SemanticMeasure,
-  SemanticMetric,
-  SemanticModelCatalogColumn,
-  SemanticModelCatalogResponse,
-  SemanticModelRecord,
-  SemanticRelationship,
-  SemanticTable,
-} from '@/orchestration/semanticModels/types';
+import { fetchDatasetCatalog, type DatasetCatalogItem } from '@/orchestration/datasets';
 import { ApiError } from '@/orchestration/http';
-import { cn } from '@/lib/utils';
+import { fetchAgentJobState } from '@/orchestration/jobs';
+import { createSemanticModel, deleteSemanticModel, fetchSemanticModel, generateSemanticModelYamlFromSelection, startAgenticSemanticModelJob, updateSemanticModel } from '@/orchestration/semanticModels';
+import type { SemanticDimension, SemanticMeasure, SemanticRelationship } from '@/orchestration/semanticModels/types';
 
-interface FormState {
-  name: string;
-  description: string;
-  filename: string;
-}
+type Props = { params: { organizationId: string } };
+type Dim = SemanticDimension & { id: string };
+type Mea = SemanticMeasure & { id: string };
+type Ds = { id: string; datasetId: string; datasetName: string; key: string; description: string; dimensions: Dim[]; measures: Mea[] };
+type Rel = SemanticRelationship & { id: string };
+type CreateMode = 'select' | 'auto' | 'manual' | 'agentic';
 
-interface BuilderDimension extends SemanticDimension {
-  id: string;
-}
+const FIELD_TYPES = ['string', 'integer', 'decimal', 'float', 'boolean', 'date'];
+const REL_TYPES = ['many_to_one', 'one_to_many', 'one_to_one', 'many_to_many', 'inner', 'left'];
 
-interface BuilderMeasure extends SemanticMeasure {
-  id: string;
-}
-
-type RelationshipType = 'one_to_many' | 'many_to_one' | 'one_to_one' | 'many_to_many';
-
-interface BuilderTable extends Omit<SemanticTable, 'dimensions' | 'measures'> {
-  id: string;
-  entityName: string;
-  dimensions: BuilderDimension[];
-  measures: BuilderMeasure[];
-}
-
-interface BuilderRelationship extends Omit<SemanticRelationship, 'type'> {
-  id: string;
-  type: RelationshipType;
-}
-
-interface BuilderMetric extends SemanticMetric {
-  id: string;
-  name: string;
-}
-
-interface BuilderModel {
-  version: string;
-  description?: string;
-  tables: BuilderTable[];
-  relationships: BuilderRelationship[];
-  metrics: BuilderMetric[];
-}
-
-type CreationMode = 'manual' | 'auto' | 'agentic';
-type BuilderStage = 'modal' | 'wizard' | 'builder';
-type SelectionTab = 'all' | 'selected';
-
-interface CatalogTableNode {
-  schemaName: string;
-  tableName: string;
-  tableRef: string;
-  columns: SemanticModelCatalogColumn[];
-}
-
-const RELATIONSHIP_TYPES: RelationshipType[] = ['one_to_many', 'many_to_one', 'one_to_one', 'many_to_many'];
-const COLUMN_TYPE_OPTIONS = [
-  'string',
-  'integer',
-  'decimal',
-  'float',
-  'number',
-  'boolean',
-  'date',
-  'datetime',
-  'timestamp',
-  'time',
-] as const;
-const DEFAULT_MODEL_VERSION = '1.0';
-const SUGGESTED_QUESTION_PROMPTS = [
-  'revenue by region',
-  'top customers',
-  'monthly trend',
-  'gross margin by segment',
-  'churn by cohort',
-];
-
-function sleep(milliseconds: number): Promise<void> {
-  return new Promise((resolve) => {
-    setTimeout(resolve, milliseconds);
-  });
-}
-
-type SemanticModelPageProps = {
-  params: { organizationId: string };
-};
-
-export default function SemanticModelPage({ params }: SemanticModelPageProps): JSX.Element {
+export default function SemanticModelCreatePage({ params }: Props): JSX.Element {
   const router = useRouter();
-  const {
-    selectedOrganizationId,
-    selectedProjectId,
-    organizations,
-    loading: scopeLoading,
-    setSelectedOrganizationId,
-  } = useWorkspaceScope();
   const searchParams = useSearchParams();
+  const { selectedProjectId, setSelectedOrganizationId } = useWorkspaceScope();
   const organizationId = params.organizationId;
-  const editingModelId = searchParams.get('modelId') ?? '';
-  const isEditMode = Boolean(editingModelId);
-  const normalizedProjectId = selectedProjectId && selectedProjectId.length > 0 ? selectedProjectId : null;
+  const modelId = searchParams.get('modelId') ?? '';
+  const isEdit = modelId.length > 0;
+  const requestedMode = searchParams.get('mode') ?? '';
+  const createMode: CreateMode = isEdit
+    ? 'manual'
+    : requestedMode === 'auto' || requestedMode === 'manual' || requestedMode === 'agentic'
+      ? requestedMode
+      : 'select';
+  const autoMode = createMode === 'auto';
+  const projectId = selectedProjectId || undefined;
 
-  useEffect(() => {
-    if (organizationId && organizationId !== selectedOrganizationId) {
-      setSelectedOrganizationId(organizationId);
-    }
-  }, [organizationId, selectedOrganizationId, setSelectedOrganizationId]);
-
-  const [formState, setFormState] = useState<FormState>({
-    name: '',
-    description: '',
-    filename: 'semantic_model.yml',
-  });
-  const [stage, setStage] = useState<BuilderStage>(isEditMode ? 'builder' : 'modal');
-  const [creationMode, setCreationMode] = useState<CreationMode>('manual');
-  const [wizardStepIndex, setWizardStepIndex] = useState(0);
-  const [connectors, setConnectors] = useState<ConnectorResponse[]>([]);
-  const [connectorsLoading, setConnectorsLoading] = useState(false);
-  const [selectedConnectorId, setSelectedConnectorId] = useState('');
-  const [llmConnectionAvailable, setLlmConnectionAvailable] = useState(false);
-  const [checkingLlmConnections, setCheckingLlmConnections] = useState(false);
-  const [catalog, setCatalog] = useState<SemanticModelCatalogResponse | null>(null);
-  const [catalogLoading, setCatalogLoading] = useState(false);
-  const [catalogConnectorId, setCatalogConnectorId] = useState<string | null>(null);
-  const [datasetCatalog, setDatasetCatalog] = useState<DatasetCatalogItem[]>([]);
-  const [tableTab, setTableTab] = useState<SelectionTab>('all');
-  const [columnTab, setColumnTab] = useState<SelectionTab>('all');
-  const [columnSearch, setColumnSearch] = useState('');
-  const [selectedTables, setSelectedTables] = useState<string[]>([]);
-  const [selectedColumns, setSelectedColumns] = useState<Record<string, string[]>>({});
+  const [name, setName] = useState('');
+  const [description, setDescription] = useState('');
+  const [agenticPromptText, setAgenticPromptText] = useState('revenue by segment\nmonthly trend\ncustomer retention');
   const [includeSampleValues, setIncludeSampleValues] = useState(false);
-  const [autoCreateDatasetsFromSelection, setAutoCreateDatasetsFromSelection] = useState(true);
-  const [questionPrompts, setQuestionPrompts] = useState<string[]>([]);
-  const [promptInput, setPromptInput] = useState('');
-  const [builder, setBuilder] = useState<BuilderModel>(() => createEmptyBuilderModel());
-  const [yamlDraft, setYamlDraft] = useState('');
-  const [yamlDirty, setYamlDirty] = useState(false);
-  const [yamlError, setYamlError] = useState<string | null>(null);
-  const [editingModel, setEditingModel] = useState<SemanticModelRecord | null>(null);
-  const [workingModelId, setWorkingModelId] = useState<string | null>(null);
-  const [loadingModel, setLoadingModel] = useState(false);
-  const [autoGenerating, setAutoGenerating] = useState(false);
-  const [wizardSubmitting, setWizardSubmitting] = useState(false);
-  const [submitting, setSubmitting] = useState(false);
+  const [catalog, setCatalog] = useState<DatasetCatalogItem[]>([]);
+  const [datasetSearch, setDatasetSearch] = useState('');
+  const [datasets, setDatasets] = useState<Ds[]>([]);
+  const [expandedDatasetIds, setExpandedDatasetIds] = useState<string[]>([]);
+  const [relationships, setRelationships] = useState<Rel[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [generating, setGenerating] = useState(false);
   const [deleting, setDeleting] = useState(false);
-  const [collapsedTables, setCollapsedTables] = useState<Record<string, boolean>>({});
-  const [collapsedRelationships, setCollapsedRelationships] = useState<Record<string, boolean>>({});
-  const [collapsedMetrics, setCollapsedMetrics] = useState<Record<string, boolean>>({});
+  const [agenticSubmitting, setAgenticSubmitting] = useState(false);
+  const [agenticJobId, setAgenticJobId] = useState<string | null>(null);
+  const [agenticJobStatus, setAgenticJobStatus] = useState<string | null>(null);
+  const [agenticProgress, setAgenticProgress] = useState(0);
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  const closeCreationModal = useCallback(() => {
-    if (organizationId) {
-      router.push(`/semantic-model/${organizationId}`);
-      return;
-    }
-    router.push('/semantic-model');
-  }, [organizationId, router]);
-
-  const handleCreationModalOpenChange = useCallback(
-    (open: boolean) => {
-      if (!open) {
-        closeCreationModal();
-      }
-    },
-    [closeCreationModal],
-  );
-
-  const organizationAvailable = Boolean(organizationId);
-  const activeModelId = editingModelId || workingModelId || '';
-  const isUpdateMode = Boolean(activeModelId);
-  const headerTitle = isUpdateMode ? 'Edit semantic model' : 'Semantic model builder';
-  const headerDescription = isUpdateMode
-    ? 'Update the semantic layer for a connector and save changes to the existing model.'
-    : 'Describe the semantic layer for a connector and LangBridge will persist the YAML definition for your agents.';
-  const submitLabel = isUpdateMode ? 'Update semantic model' : 'Save semantic model';
-  const wizardSteps = useMemo(
-    () =>
-      creationMode === 'agentic'
-        ? ['Getting started', 'Select tables', 'Select columns', 'Questions', 'Review']
-        : ['Getting started', 'Select tables', 'Select columns', 'Review'],
-    [creationMode],
-  );
-
-  const currentOrganizationName = useMemo(() => {
-    if (!organizationId) {
-      return 'Select an organization';
-    }
-    return organizations.find((org) => org.id === organizationId)?.name ?? 'Unknown organization';
-  }, [organizations, organizationId]);
-
-  const selectedConnector = useMemo(
-    () => connectors.find((connector) => connector.id === selectedConnectorId),
-    [connectors, selectedConnectorId],
-  );
-  const selectedTableSet = useMemo(() => new Set(selectedTables), [selectedTables]);
-  const catalogTables = useMemo<CatalogTableNode[]>(() => {
-    if (!catalog) {
-      return [];
-    }
-    const tables: CatalogTableNode[] = [];
-    catalog.schemas.forEach((schemaEntry) => {
-      schemaEntry.tables.forEach((table) => {
-        tables.push({
-          schemaName: schemaEntry.name,
-          tableName: table.name,
-          tableRef: table.fullyQualifiedName,
-          columns: table.columns,
-        });
-      });
-    });
-    return tables;
-  }, [catalog]);
-  const selectedColumnCount = useMemo(
-    () => Object.values(selectedColumns).reduce((total, columns) => total + columns.length, 0),
-    [selectedColumns],
-  );
-  const filteredColumnTables = useMemo(() => {
-    const search = columnSearch.trim().toLowerCase();
-    return catalogTables
-      .filter((table) => selectedTableSet.has(table.tableRef))
-      .map((table) => {
-        const selectedColumnSet = new Set(selectedColumns[table.tableRef] ?? []);
-        const availableColumns =
-          columnTab === 'selected'
-            ? table.columns.filter((column) => selectedColumnSet.has(column.name))
-            : table.columns;
-        const visibleColumns =
-          search.length === 0
-            ? availableColumns
-            : availableColumns.filter((column) => column.name.toLowerCase().includes(search));
-        return { ...table, visibleColumns, selectedColumnSet };
-      });
-  }, [catalogTables, columnSearch, columnTab, selectedColumns, selectedTableSet]);
-  const outline = useMemo(() => {
-    const tables = builder.tables.filter(tableHasContent);
-    const dimensions = tables.flatMap((table) => table.dimensions ?? []);
-    const measures = tables.flatMap((table) => table.measures ?? []);
-    const relationships = builder.relationships.filter(
-      (relationship) => relationship.from && relationship.to && relationship.joinOn,
-    );
-    return {
-      tables,
-      dimensions,
-      measures,
-      relationships,
-    };
-  }, [builder]);
+  useEffect(() => {
+    if (organizationId) setSelectedOrganizationId(organizationId);
+  }, [organizationId, setSelectedOrganizationId]);
 
   useEffect(() => {
-    setCollapsedTables((current) => syncCollapsedState(current, builder.tables.map((table) => table.id)));
-  }, [builder.tables]);
-
-  useEffect(() => {
-    setCollapsedRelationships((current) =>
-      syncCollapsedState(current, builder.relationships.map((relationship) => relationship.id)),
-    );
-  }, [builder.relationships]);
-
-  useEffect(() => {
-    setCollapsedMetrics((current) => syncCollapsedState(current, builder.metrics.map((metric) => metric.id)));
-  }, [builder.metrics]);
-
-  const loadConnectors = useCallback(async () => {
-    if (!organizationId) {
-      return;
-    }
-    setConnectorsLoading(true);
-    try {
-      const data = await fetchConnectors(organizationId);
-      setConnectors(data);
-      setSelectedConnectorId((current) => {
-        if (current) {
-          return current;
-        }
-        const firstUsable = data.find((connector) => connector.id);
-        return firstUsable?.id ?? '';
-      });
-    } catch (err) {
-      setError(resolveError(err));
-    } finally {
-      setConnectorsLoading(false);
-    }
-  }, [organizationId]);
-
-  const loadLlmConnections = useCallback(async () => {
-    if (!organizationId) {
-      setLlmConnectionAvailable(false);
-      return;
-    }
-    setCheckingLlmConnections(true);
-    try {
-      const connections = await fetchLLMConnections(organizationId);
-      setLlmConnectionAvailable(connections.some((connection) => connection.isActive));
-    } catch {
-      setLlmConnectionAvailable(false);
-    } finally {
-      setCheckingLlmConnections(false);
-    }
-  }, [organizationId]);
-
-  const loadDatasetCatalog = useCallback(async () => {
-    if (!organizationId) {
-      setDatasetCatalog([]);
-      return;
-    }
-    try {
-      const response = await fetchDatasetCatalog(
-        organizationId,
-        normalizedProjectId || undefined,
-      );
-      setDatasetCatalog(response.items || []);
-    } catch {
-      setDatasetCatalog([]);
-    }
-  }, [normalizedProjectId, organizationId]);
-
-  const applyBuilderFromYaml = useCallback(
-    (yamlText: string) => {
-      const nextBuilder = parseYamlToBuilderModel(yamlText);
-      validateBuilderModel(nextBuilder);
-      setBuilder(nextBuilder);
-      setYamlDraft(yamlText);
-      setYamlDirty(false);
-      setYamlError(null);
-    },
-    [],
-  );
-
-  const initializeCatalogSelection = useCallback((nextCatalog: SemanticModelCatalogResponse) => {
-    const nextTables: string[] = [];
-    const nextColumns: Record<string, string[]> = {};
-    nextCatalog.schemas.forEach((schemaEntry) => {
-      schemaEntry.tables.forEach((table) => {
-        nextTables.push(table.fullyQualifiedName);
-        nextColumns[table.fullyQualifiedName] = table.columns.map((column) => column.name);
-      });
-    });
-    setSelectedTables(nextTables);
-    setSelectedColumns(nextColumns);
-  }, []);
-
-  const loadCatalog = useCallback(async () => {
-    if (!organizationId) {
-      throw new Error('Select an organization before loading table metadata.');
-    }
-    if (!selectedConnectorId) {
-      throw new Error('Select a connector before loading table metadata.');
-    }
-    setCatalogLoading(true);
-    try {
-      const response = await fetchSemanticModelCatalog(organizationId, selectedConnectorId);
-      setCatalog(response);
-      setCatalogConnectorId(selectedConnectorId);
-      initializeCatalogSelection(response);
-      return response;
-    } finally {
-      setCatalogLoading(false);
-    }
-  }, [initializeCatalogSelection, organizationId, selectedConnectorId]);
-
-  const ensureCatalogLoaded = useCallback(async () => {
-    if (catalog && catalogConnectorId === selectedConnectorId) {
-      return catalog;
-    }
-    return await loadCatalog();
-  }, [catalog, catalogConnectorId, loadCatalog, selectedConnectorId]);
-
-  useEffect(() => {
-    if (!organizationId) {
-      setConnectors([]);
-      setSelectedConnectorId('');
-      setLlmConnectionAvailable(false);
-      return;
-    }
-    setSelectedConnectorId('');
-    void loadConnectors();
-    void loadLlmConnections();
-    void loadDatasetCatalog();
-  }, [organizationId, loadConnectors, loadDatasetCatalog, loadLlmConnections]);
-
-  useEffect(() => {
-    if (isEditMode) {
-      setStage('builder');
-      return;
-    }
-    setStage('modal');
-  }, [isEditMode]);
-
-  useEffect(() => {
-    if (!isEditMode) {
-      setEditingModel(null);
-      return;
-    }
-    if (!organizationId || !editingModelId) {
-      return;
-    }
     let cancelled = false;
-    const loadModel = async () => {
-      setLoadingModel(true);
-      setError(null);
+    async function load(): Promise<void> {
+      setLoading(true);
       try {
-        const model = await fetchSemanticModel(editingModelId, organizationId);
-        if (cancelled) {
-          return;
-        }
-        const parsedBuilder = parseYamlToBuilderModel(model.contentYaml);
-        setEditingModel(model);
-        setFormState({
-          name: model.name ?? '',
-          description: model.description ?? '',
-          filename: `${(model.name ?? 'semantic_model').replace(/\s+/g, '_').toLowerCase()}.yml`,
-        });
-        setSelectedConnectorId(model.connectorId ?? '');
-        setBuilder(parsedBuilder);
-        setYamlDraft(model.contentYaml);
-        setYamlDirty(false);
-        setYamlError(null);
-      } catch (err) {
-        if (!cancelled) {
-          setError(resolveError(err));
-        }
+        const cat = await fetchDatasetCatalog(organizationId, projectId);
+        if (cancelled) return;
+        setCatalog(cat.items || []);
+        if (!isEdit) return;
+        const model = await fetchSemanticModel(modelId, organizationId);
+        if (cancelled) return;
+        setName(model.name || '');
+        setDescription(model.description || '');
+        const parsed = parseYaml(model.contentYaml, cat.items || []);
+        setDatasets(parsed.datasets);
+        setExpandedDatasetIds(parsed.datasets.map((dataset) => dataset.id));
+        setRelationships(parsed.relationships);
+      } catch (cause) {
+        if (!cancelled) setError(msg(cause, 'Unable to load semantic model builder.'));
       } finally {
-        if (!cancelled) {
-          setLoadingModel(false);
-        }
+        if (!cancelled) setLoading(false);
       }
-    };
-    void loadModel();
+    }
+    void load();
     return () => {
       cancelled = true;
     };
-  }, [editingModelId, isEditMode, organizationId]);
+  }, [isEdit, modelId, organizationId, projectId]);
 
   useEffect(() => {
-    if (!selectedConnectorId) {
-      setBuilder(createEmptyBuilderModel());
-      setYamlDraft('');
-      setYamlDirty(false);
-      setYamlError(null);
-      return;
-    }
-    if (!isEditMode) {
-      setBuilder(createEmptyBuilderModel());
-      setYamlDraft('');
-      setYamlDirty(false);
-      setYamlError(null);
-    }
-  }, [isEditMode, selectedConnectorId]);
-
-  useEffect(() => {
-    if (yamlDirty) {
-      return;
-    }
-    try {
-      const nextYaml = serializeBuilderModel(builder, selectedConnector?.name);
-      setYamlDraft(nextYaml);
-      setYamlError(null);
-    } catch (err) {
-      setYamlError(resolveError(err));
-    }
-  }, [builder, selectedConnector?.name, yamlDirty]);
-
-  async function handleSave(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (!organizationId) {
-      setError('Select an organization before saving a semantic model.');
-      return;
-    }
-    if (!selectedConnectorId) {
-      setError('Select a connector before saving a semantic model.');
-      return;
-    }
-    if (!formState.name.trim()) {
-      setError('Provide a name for the semantic model.');
-      return;
-    }
-
-    let parsedBuilder: BuilderModel;
-    try {
-      parsedBuilder = parseYamlToBuilderModel(yamlDraft);
-      validateBuilderModel(parsedBuilder);
-      setBuilder(parsedBuilder);
-      setYamlError(null);
-      setYamlDirty(false);
-    } catch (validationError) {
-      setYamlError(resolveError(validationError));
-      setError('Semantic YAML is invalid. Fix errors in YAML editor and apply before saving.');
-      return;
-    }
-
-    const trimmedName = formState.name.trim();
-    const trimmedDescription = formState.description.trim();
-
-    setSubmitting(true);
     setError(null);
-    try {
-      const yamlPayload = yamlDraft;
-      if (isUpdateMode) {
-        if (!activeModelId) {
-          setError('Choose a semantic model to update.');
-          return;
-        }
-        const updated = await updateSemanticModel(activeModelId, organizationId, {
-          projectId: normalizedProjectId,
-          connectorId: selectedConnectorId,
-          name: trimmedName,
-          description: trimmedDescription,
-          modelYaml: yamlPayload,
-          autoGenerate: false,
-        });
-        setEditingModel(updated);
-        setWorkingModelId(updated.id);
-        setNotice('Semantic model updated.');
-      } else {
-        const created = await createSemanticModel(organizationId, {
-          organizationId,
-          projectId: normalizedProjectId,
-          connectorId: selectedConnectorId,
-          name: trimmedName,
-          description: trimmedDescription || undefined,
-          modelYaml: yamlPayload,
-          autoGenerate: false,
-        });
-        setEditingModel(created);
-        setWorkingModelId(created.id);
-        setNotice('Semantic model saved.');
-      }
-    } catch (err) {
-      setError(resolveError(err));
-    } finally {
-      setSubmitting(false);
+    setNotice(null);
+    if (createMode !== 'agentic') {
+      setAgenticJobId(null);
+      setAgenticJobStatus(null);
+      setAgenticProgress(0);
     }
-  }
+  }, [createMode]);
 
-  const handleDeleteModel = useCallback(async () => {
-    if (!organizationId || !activeModelId) {
-      setError('Choose a semantic model to delete.');
+  const selectedIds = useMemo(() => new Set(datasets.map((d) => d.datasetId)), [datasets]);
+  const expandedIds = useMemo(() => new Set(expandedDatasetIds), [expandedDatasetIds]);
+  const promptCount = useMemo(() => splitPrompts(agenticPromptText).length, [agenticPromptText]);
+  const filteredCatalog = useMemo(() => {
+    const search = datasetSearch.trim().toLowerCase();
+    const visible = !search
+      ? catalog
+      : catalog.filter((item) => {
+          const fields = (item.columns || []).map((column) => column.name.toLowerCase());
+          return (
+            item.name.toLowerCase().includes(search) ||
+            item.sqlAlias.toLowerCase().includes(search) ||
+            fields.some((field) => field.includes(search))
+          );
+        });
+    return [...visible].sort((left, right) => {
+      const selectedDelta = Number(selectedIds.has(right.id)) - Number(selectedIds.has(left.id));
+      if (selectedDelta !== 0) return selectedDelta;
+      return left.name.localeCompare(right.name);
+    });
+  }, [catalog, datasetSearch, selectedIds]);
+  const yamlPreview = useMemo(() => yaml.dump(toModel(name, description, datasets, relationships), { noRefs: true, sortKeys: false }), [name, description, datasets, relationships]);
+
+  const toggleDataset = (item: DatasetCatalogItem): void => {
+    setError(null);
+    setNotice(null);
+    if (selectedIds.has(item.id)) {
+      const next = datasets.filter((d) => d.datasetId !== item.id);
+      const keys = new Set(next.map((d) => d.key));
+      setDatasets(next);
+      setExpandedDatasetIds((current) => current.filter((id) => next.some((dataset) => dataset.id === id)));
+      setRelationships((current) => current.filter((r) => keys.has(r.sourceDataset) && keys.has(r.targetDataset)));
       return;
     }
-    const confirmed = window.confirm('Delete this semantic model? This action cannot be undone.');
-    if (!confirmed) {
-      return;
+    const nextDataset = fromCatalog(item, datasets.map((d) => d.key));
+    setDatasets((current) => [...current, nextDataset]);
+    setExpandedDatasetIds((current) => [...current, nextDataset.id]);
+  };
+
+  const patchDataset = (id: string, fn: (d: Ds) => Ds): void => {
+    const current = datasets.find((d) => d.id === id);
+    if (!current) return;
+    const next = fn(current);
+    setDatasets((all) => all.map((d) => (d.id === id ? next : d)));
+    if (current.key !== next.key) {
+      setRelationships((all) => all.map((r) => ({
+        ...r,
+        sourceDataset: r.sourceDataset === current.key ? next.key : r.sourceDataset,
+        targetDataset: r.targetDataset === current.key ? next.key : r.targetDataset,
+      })));
     }
-    setDeleting(true);
+  };
+  const toggleDatasetExpanded = (id: string): void => {
+    setExpandedDatasetIds((current) => (current.includes(id) ? current.filter((value) => value !== id) : [...current, id]));
+  };
+
+  const addRelationship = (): void => {
+    if (datasets.length < 2) return setError('Select at least two datasets before adding a relationship.');
+    const [left, right] = datasets;
+    setRelationships((current) => [...current, { id: crypto.randomUUID(), name: `${left.key}_to_${right.key}`, sourceDataset: left.key, sourceField: left.dimensions[0]?.name || '', targetDataset: right.key, targetField: right.dimensions[0]?.name || '', type: 'many_to_one' }]);
+  };
+
+  const refreshDraft = async (): Promise<void> => {
+    if (datasets.length === 0) return setError('Select at least one dataset before generating.');
+    setGenerating(true);
     setError(null);
     setNotice(null);
     try {
-      await deleteSemanticModel(activeModelId, organizationId);
+      const resp = await generateSemanticModelYamlFromSelection(organizationId, {
+        datasetIds: datasets.map((d) => d.datasetId),
+        selectedFields: Object.fromEntries(datasets.map((d) => [d.datasetId, [...d.dimensions.map((f) => f.name), ...d.measures.map((f) => f.name)]])),
+        description: description || undefined,
+      });
+      const parsed = parseYaml(resp.yamlText, catalog);
+      setDatasets(parsed.datasets);
+      setExpandedDatasetIds(parsed.datasets.map((dataset) => dataset.id));
+      setRelationships(parsed.relationships);
+      if (resp.warnings.length) setNotice(resp.warnings.join(' '));
+    } catch (cause) {
+      setError(msg(cause, 'Unable to generate semantic model draft.'));
+    } finally {
+      setGenerating(false);
+    }
+  };
+
+  const save = async (): Promise<void> => {
+    if (!name.trim()) return setError('Semantic model name is required.');
+    if (datasets.length === 0) return setError('Select at least one dataset before saving.');
+    setSaving(true);
+    setError(null);
+    try {
+      const payload = {
+        projectId,
+        connectorId: undefined,
+        name: name.trim(),
+        description: description.trim() || undefined,
+        modelYaml: yamlPreview,
+        autoGenerate: false,
+        sourceDatasetIds: datasets.map((d) => d.datasetId),
+      };
+      if (isEdit) await updateSemanticModel(modelId, organizationId, payload);
+      else await createSemanticModel(organizationId, { organizationId, ...payload });
       router.push(`/semantic-model/${organizationId}`);
-    } catch (err) {
-      setError(resolveError(err));
+    } catch (cause) {
+      setError(msg(cause, 'Unable to save semantic model.'));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const remove = async (): Promise<void> => {
+    if (!isEdit) return;
+    setDeleting(true);
+    try {
+      await deleteSemanticModel(modelId, organizationId);
+      router.push(`/semantic-model/${organizationId}`);
+    } catch (cause) {
+      setError(msg(cause, 'Unable to delete semantic model.'));
     } finally {
       setDeleting(false);
     }
-  }, [activeModelId, organizationId, router]);
+  };
 
-  const handleAutoGenerate = useCallback(async () => {
-    if (!organizationId) {
-      setError('Select an organization before generating a semantic model.');
-      return;
-    }
-    if (!selectedConnectorId) {
-      setError('Select a connector before generating a semantic model.');
-      return;
-    }
-    setAutoGenerating(true);
+  const startAgentic = async (): Promise<void> => {
+    const prompts = splitPrompts(agenticPromptText);
+    if (!name.trim()) return setError('Semantic model name is required.');
+    if (datasets.length === 0) return setError('Select at least one dataset before starting the agentic builder.');
+    if (prompts.length < 3 || prompts.length > 10) return setError('Provide between 3 and 10 prompts for the agentic builder.');
+
+    setAgenticSubmitting(true);
     setError(null);
+    setNotice('Agentic semantic model generation queued. You will be redirected into the editor when it completes.');
     try {
-      const yamlText = await generateSemanticModelYaml(organizationId, selectedConnectorId);
-      const generatedModel = parseYamlToBuilderModel(yamlText);
-      setBuilder(generatedModel);
-      setYamlDraft(yamlText);
-      setYamlDirty(false);
-      setYamlError(null);
-    } catch (err) {
-      setError(resolveError(err));
-    } finally {
-      setAutoGenerating(false);
-    }
-  }, [organizationId, selectedConnectorId]);
-
-  const handleApplyYaml = useCallback(() => {
-    try {
-      applyBuilderFromYaml(yamlDraft);
-      setNotice('YAML applied to the visual builder.');
-      setError(null);
-    } catch (err) {
-      setYamlError(resolveError(err));
-      setError('YAML parsing failed. Fix errors and apply again.');
-    }
-  }, [applyBuilderFromYaml, yamlDraft]);
-
-  const handleResetYamlFromBuilder = useCallback(() => {
-    try {
-      const nextYaml = serializeBuilderModel(builder, selectedConnector?.name);
-      setYamlDraft(nextYaml);
-      setYamlDirty(false);
-      setYamlError(null);
-      setNotice('YAML reset from visual builder.');
-    } catch (err) {
-      setYamlError(resolveError(err));
-    }
-  }, [builder, selectedConnector?.name]);
-
-  const handleModalContinue = useCallback(async () => {
-    if (!selectedConnectorId) {
-      setError('Select a connector before continuing.');
-      return;
-    }
-    if (!formState.name.trim()) {
-      setError('Model name is required.');
-      return;
-    }
-    setError(null);
-    setNotice(null);
-    if (creationMode === 'manual') {
-      setStage('builder');
-      return;
-    }
-    try {
-      await ensureCatalogLoaded();
-      setWizardStepIndex(0);
-      setStage('wizard');
-    } catch (err) {
-      setError(resolveError(err));
-    }
-  }, [creationMode, ensureCatalogLoaded, formState.name, selectedConnectorId]);
-
-  const handleSelectAllTables = useCallback(
-    (checked: boolean) => {
-      if (!checked) {
-        setSelectedTables([]);
-        setSelectedColumns({});
-        return;
-      }
-      const allTables = catalogTables.map((table) => table.tableRef);
-      const allColumns: Record<string, string[]> = {};
-      catalogTables.forEach((table) => {
-        allColumns[table.tableRef] = table.columns.map((column) => column.name);
+      const start = await startAgenticSemanticModelJob(organizationId, {
+        projectId,
+        name: name.trim(),
+        description: description.trim() || undefined,
+        datasetIds: datasets.map((dataset) => dataset.datasetId),
+        questionPrompts: prompts,
+        includeSampleValues,
       });
-      setSelectedTables(allTables);
-      setSelectedColumns(allColumns);
-    },
-    [catalogTables],
-  );
+      setAgenticJobId(start.jobId);
+      setAgenticJobStatus(start.jobStatus);
 
-  const handleToggleTable = useCallback(
-    (tableRef: string, checked: boolean) => {
-      setSelectedTables((current) => {
-        const set = new Set(current);
-        if (checked) {
-          set.add(tableRef);
-        } else {
-          set.delete(tableRef);
-        }
-        return Array.from(set);
-      });
-      if (!checked) {
-        setSelectedColumns((current) => {
-          const next = { ...current };
-          delete next[tableRef];
-          return next;
-        });
-        return;
-      }
-      const table = catalogTables.find((entry) => entry.tableRef === tableRef);
-      if (!table) {
-        return;
-      }
-      setSelectedColumns((current) => ({
-        ...current,
-        [tableRef]: current[tableRef] ?? table.columns.map((column) => column.name),
-      }));
-    },
-    [catalogTables],
-  );
-
-  const handleToggleColumn = useCallback(
-    (tableRef: string, columnName: string, checked: boolean) => {
-      if (!selectedTableSet.has(tableRef)) {
-        return;
-      }
-      setSelectedColumns((current) => {
-        const columnSet = new Set(current[tableRef] ?? []);
-        if (checked) {
-          columnSet.add(columnName);
-        } else {
-          columnSet.delete(columnName);
-        }
-        return {
-          ...current,
-          [tableRef]: Array.from(columnSet),
-        };
-      });
-    },
-    [selectedTableSet],
-  );
-
-  const handleSelectAllColumns = useCallback(
-    (checked: boolean) => {
-      if (!checked) {
-        setSelectedColumns(() => {
-          const next: Record<string, string[]> = {};
-          selectedTables.forEach((tableRef) => {
-            next[tableRef] = [];
-          });
-          return next;
-        });
-        return;
-      }
-      const next: Record<string, string[]> = {};
-      selectedTables.forEach((tableRef) => {
-        const table = catalogTables.find((entry) => entry.tableRef === tableRef);
-        next[tableRef] = table ? table.columns.map((column) => column.name) : [];
-      });
-      setSelectedColumns(next);
-    },
-    [catalogTables, selectedTables],
-  );
-
-  const handleSelectAllColumnsForTable = useCallback(
-    (tableRef: string, checked: boolean) => {
-      const table = catalogTables.find((entry) => entry.tableRef === tableRef);
-      if (!table) {
-        return;
-      }
-      setSelectedColumns((current) => ({
-        ...current,
-        [tableRef]: checked ? table.columns.map((column) => column.name) : [],
-      }));
-    },
-    [catalogTables],
-  );
-
-  const handlePromptAdd = useCallback((value: string) => {
-    const prompt = value.trim();
-    if (!prompt) {
-      return;
-    }
-    setQuestionPrompts((current) => {
-      if (current.includes(prompt) || current.length >= 10) {
-        return current;
-      }
-      return [...current, prompt];
-    });
-  }, []);
-
-  const handlePromptParseInput = useCallback(() => {
-    const prompts = promptInput
-      .split('\n')
-      .map((entry) => entry.trim())
-      .filter((entry) => entry.length > 0);
-    if (prompts.length === 0) {
-      return;
-    }
-    setQuestionPrompts((current) => {
-      const next = [...current];
-      prompts.forEach((entry) => {
-        if (!next.includes(entry) && next.length < 10) {
-          next.push(entry);
-        }
-      });
-      return next;
-    });
-    setPromptInput('');
-  }, [promptInput]);
-
-  const runWizardGeneration = useCallback(async () => {
-    if (!organizationId) {
-      throw new Error('Select an organization before generating a semantic model.');
-    }
-    if (!selectedConnectorId) {
-      throw new Error('Select a connector before generating a semantic model.');
-    }
-    const selectedColumnsPayload: Record<string, string[]> = {};
-    selectedTables.forEach((tableRef) => {
-      selectedColumnsPayload[tableRef] = selectedColumns[tableRef] ?? [];
-    });
-    const datasetBindings: Record<string, string> = {};
-    if (autoCreateDatasetsFromSelection) {
-      const selections = selectedTables.map((tableRef) => {
-        const table = catalogTables.find((entry) => entry.tableRef === tableRef);
-        const selectedNameSet = new Set(selectedColumnsPayload[tableRef] ?? []);
-        const [schema, ...tableParts] = tableRef.split('.');
-        const tableName = tableParts.join('.');
-        return {
-          schema,
-          table: tableName,
-          columns: (table?.columns || [])
-            .filter((column) => selectedNameSet.has(column.name))
-            .map((column) => ({
-              name: column.name,
-              dataType: column.type || 'unknown',
-              nullable: column.nullable ?? true,
-            })),
-        };
-      });
-      const ensureColumns = selections.every((selection) => selection.columns.length > 0);
-      if (!ensureColumns) {
-        throw new Error('Automatic dataset creation requires at least one column per selected table.');
-      }
-      const bulkCreate = await bulkCreateDatasets({
-        workspaceId: organizationId,
-        projectId: normalizedProjectId || undefined,
-        connectionId: selectedConnectorId,
-        selections,
-        namingTemplate: '{schema}.{table}',
-        policyDefaults: {
-          maxPreviewRows: 1000,
-          maxExportRows: 100000,
-          allowDml: false,
-          redactionRules: {},
-        },
-        tags: ['auto-generated', 'semantic-builder'],
-        profileAfterCreate: includeSampleValues,
-      });
-      let bulkTerminalState: Awaited<ReturnType<typeof fetchAgentJobState>> | null = null;
-      for (let attempt = 0; attempt < 120; attempt += 1) {
-        const state = await fetchAgentJobState(organizationId, bulkCreate.jobId);
-        if (state.status === 'succeeded' || state.status === 'failed' || state.status === 'cancelled') {
-          bulkTerminalState = state;
+      let terminalStatus: string | null = start.jobStatus;
+      for (let attempt = 0; attempt < 180; attempt += 1) {
+        const state = await fetchAgentJobState(organizationId, start.jobId);
+        setAgenticProgress(state.progress || 0);
+        setAgenticJobStatus(state.status || null);
+        if (isTerminalJobStatus(state.status)) {
+          terminalStatus = state.status;
           break;
         }
         await sleep(2000);
       }
-      if (!bulkTerminalState || bulkTerminalState.status !== 'succeeded') {
-        throw new Error('Automatic dataset creation job did not complete successfully.');
-      }
-      const bulkResult =
-        bulkTerminalState.finalResponse && typeof bulkTerminalState.finalResponse.result === 'object'
-          ? (bulkTerminalState.finalResponse.result as Record<string, unknown>)
-          : null;
-      const resultItems = Array.isArray(bulkResult?.items) ? bulkResult.items : [];
-      resultItems.forEach((item) => {
-        if (!item || typeof item !== 'object') {
-          return;
-        }
-        const schema = typeof item.schema === 'string' ? item.schema : '';
-        const table = typeof item.table === 'string' ? item.table : '';
-        const datasetId = typeof item.dataset_id === 'string' ? item.dataset_id : '';
-        if (schema && table && datasetId) {
-          datasetBindings[`${schema}.${table}`] = datasetId;
-        }
-      });
-    }
 
-    const applyDatasetBindings = (model: BuilderModel): BuilderModel => ({
-      ...model,
-      tables: model.tables.map((table) => {
-        if (table.datasetId) {
-          return table;
-        }
-        if (!table.schema || !table.name) {
-          return table;
-        }
-        const matched = datasetBindings[`${table.schema}.${table.name}`];
-        if (!matched) {
-          return table;
-        }
-        return {
-          ...table,
-          datasetId: matched,
-        };
-      }),
-    });
-
-    if (creationMode === 'auto') {
-      const response = await generateSemanticModelYamlFromSelection(organizationId, {
-        connectorId: selectedConnectorId,
-        selectedTables,
-        selectedColumns: selectedColumnsPayload,
-        includeSampleValues,
-        description: formState.description.trim() || undefined,
-      });
-      const parsedModel = parseYamlToBuilderModel(response.yamlText);
-      const boundModel = applyDatasetBindings(parsedModel);
-      const finalYaml = serializeBuilderModel(boundModel, selectedConnector?.name);
-      setBuilder(boundModel);
-      setYamlDraft(finalYaml);
-      setYamlDirty(false);
-      setYamlError(null);
-      setStage('builder');
-      setNotice(
-        response.warnings.length > 0
-          ? `Auto-generation completed with ${response.warnings.length} warning(s).`
-          : 'Auto-generated YAML loaded into the editor.',
-      );
-      return;
-    }
-
-    const job = await startAgenticSemanticModelJob(organizationId, {
-      connectorId: selectedConnectorId,
-      projectId: normalizedProjectId,
-      name: formState.name.trim(),
-      description: formState.description.trim() || undefined,
-      filename: formState.filename.trim() || undefined,
-      selectedTables,
-      selectedColumns: selectedColumnsPayload,
-      questionPrompts,
-      includeSampleValues,
-    });
-    setWorkingModelId(job.semanticModelId);
-
-    let terminalState: Awaited<ReturnType<typeof fetchAgentJobState>> | null = null;
-    for (let attempt = 0; attempt < 120; attempt += 1) {
-      const state = await fetchAgentJobState(organizationId, job.jobId);
-      if (state.status === 'succeeded' || state.status === 'failed' || state.status === 'cancelled') {
-        terminalState = state;
-        break;
+      if (terminalStatus !== 'succeeded') {
+        throw new Error('Agentic semantic model generation did not finish successfully.');
       }
-      await sleep(2500);
-    }
-    if (!terminalState) {
-      throw new Error('Agentic generation timed out.');
-    }
-    if (terminalState.status !== 'succeeded') {
-      throw new Error('Agentic generation did not complete successfully.');
-    }
-
-    const terminalResult =
-      terminalState.finalResponse && typeof terminalState.finalResponse.result === 'object'
-        ? (terminalState.finalResponse.result as Record<string, unknown>)
-        : null;
-    const yamlFromJob =
-      typeof terminalResult?.yaml_text === 'string'
-        ? terminalResult.yaml_text
-        : typeof terminalResult?.yamlText === 'string'
-          ? terminalResult.yamlText
-          : null;
-
-    const model = await fetchSemanticModel(job.semanticModelId, organizationId);
-    setEditingModel(model);
-    const parsedModel = parseYamlToBuilderModel(yamlFromJob ?? model.contentYaml);
-    const boundModel = applyDatasetBindings(parsedModel);
-    const finalYaml = serializeBuilderModel(boundModel, selectedConnector?.name);
-    setBuilder(boundModel);
-    setYamlDraft(finalYaml);
-    setYamlDirty(false);
-    setYamlError(null);
-    setStage('builder');
-    setNotice('Agentic draft generated and loaded as a draft model.');
-  }, [
-    autoCreateDatasetsFromSelection,
-    catalogTables,
-    creationMode,
-    formState.description,
-    formState.filename,
-    formState.name,
-    includeSampleValues,
-    organizationId,
-    questionPrompts,
-    selectedColumns,
-    selectedConnector?.name,
-    selectedConnectorId,
-    normalizedProjectId,
-    setBuilder,
-    selectedTables,
-    setYamlDraft,
-    setYamlDirty,
-    setYamlError,
-  ]);
-
-  const handleWizardNext = useCallback(async () => {
-    const currentStep = wizardSteps[wizardStepIndex];
-    if (currentStep === 'Getting started') {
-      if (!selectedConnectorId) {
-        setError('Select a connector before continuing.');
-        return;
-      }
-      if (!formState.name.trim()) {
-        setError('Model name is required.');
-        return;
-      }
-      try {
-        await ensureCatalogLoaded();
-      } catch (err) {
-        setError(resolveError(err));
-        return;
-      }
-      setError(null);
-      setWizardStepIndex((current) => current + 1);
-      return;
-    }
-    if (currentStep === 'Select tables') {
-      if (selectedTables.length === 0) {
-        setError('Select at least one table.');
-        return;
-      }
-      setError(null);
-      setWizardStepIndex((current) => current + 1);
-      return;
-    }
-    if (currentStep === 'Select columns') {
-      const invalidTable = selectedTables.find((tableRef) => (selectedColumns[tableRef] ?? []).length === 0);
-      if (invalidTable) {
-        setError(`Select at least one column for ${invalidTable}.`);
-        return;
-      }
-      setError(null);
-      setWizardStepIndex((current) => current + 1);
-      return;
-    }
-    if (currentStep === 'Questions') {
-      if (questionPrompts.length < 3 || questionPrompts.length > 10) {
-        setError('Provide 3 to 10 question prompts for agentic generation.');
-        return;
-      }
-      setError(null);
-      setWizardStepIndex((current) => current + 1);
-      return;
-    }
-
-    setWizardSubmitting(true);
-    setError(null);
-    try {
-      await runWizardGeneration();
-    } catch (err) {
-      setError(resolveError(err));
+      router.push(`/semantic-model/${organizationId}/create?modelId=${start.semanticModelId}`);
+    } catch (cause) {
+      setNotice(null);
+      setError(msg(cause, 'Unable to start agentic semantic model generation.'));
     } finally {
-      setWizardSubmitting(false);
+      setAgenticSubmitting(false);
     }
-  }, [
-    ensureCatalogLoaded,
-    formState.name,
-    questionPrompts.length,
-    runWizardGeneration,
-    selectedColumns,
-    selectedConnectorId,
-    selectedTables,
-    wizardStepIndex,
-    wizardSteps,
-  ]);
+  };
 
-  const handleWizardBack = useCallback(() => {
-    if (wizardStepIndex === 0) {
-      setStage('modal');
-      return;
-    }
-    setWizardStepIndex((current) => Math.max(0, current - 1));
-  }, [wizardStepIndex]);
+  const builderTitle = isEdit
+    ? 'Edit semantic model'
+    : autoMode
+      ? 'Create autogenerated semantic model'
+      : 'Create semantic model';
+  const builderSubtitle = autoMode
+    ? 'Select governed datasets, generate the first draft automatically, then refine fields and relationships before saving.'
+    : 'Build the model from governed datasets, then define guided relationships with source and target field dropdowns.';
 
-  return (
-    <div className="space-y-6 text-[color:var(--text-secondary)]">
-      <header className="flex flex-col gap-2">
-        <h1 className="text-2xl font-semibold text-[color:var(--text-primary)]">{headerTitle}</h1>
-        <p className="max-w-3xl text-sm">
-          {headerDescription}
-          {isUpdateMode
-            ? ' Review the YAML output before saving.'
-            : ' Choose a connector, tune dimensions and measures, then review the YAML output before saving.'}
-        </p>
-        {isUpdateMode && editingModel ? (
-          <div className="text-xs text-[color:var(--text-muted)]">
-            Editing:{' '}
-            <span className="font-medium text-[color:var(--text-primary)]">
-              {formState.name.trim() || editingModel.name}
-            </span>
-          </div>
-        ) : null}
-        <div className="text-xs text-[color:var(--text-muted)]">
-          Scope: <span className="font-medium text-[color:var(--text-primary)]">{currentOrganizationName}</span>
-          {selectedProjectId ? ' - project scoped' : ' - organization scoped'}
-        </div>
-      </header>
+  if (loading) return <main className="p-8 text-sm text-[color:var(--text-muted)]">Loading semantic model builder...</main>;
 
-      {error ? (
-        <div className="rounded-lg border border-rose-300 bg-rose-100/40 px-4 py-3 text-sm text-rose-700">{error}</div>
-      ) : null}
-      {notice ? (
-        <div className="rounded-lg border border-emerald-300 bg-emerald-100/40 px-4 py-3 text-sm text-emerald-800">
-          {notice}
-        </div>
-      ) : null}
-      {isEditMode && loadingModel ? (
-        <div className="rounded-lg border border-[color:var(--panel-border)] bg-[color:var(--panel-bg)] px-4 py-3 text-sm">
-          Loading semantic model details...
-        </div>
-      ) : null}
-
-      <Dialog open={stage === 'modal'} onOpenChange={handleCreationModalOpenChange}>
-        <DialogContent className="max-w-3xl">
-          <DialogHeader>
-            <DialogTitle>Create Semantic Model</DialogTitle>
-            <DialogDescription>
-              Choose a build mode, then provide connector, name, and description before continuing.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-5">
-            <div className="grid gap-3 md:grid-cols-3">
-              {(
-                [
-                  {
-                    mode: 'manual' as CreationMode,
-                    title: 'Manual',
-                    description: 'Start directly in the builder and define semantic entities manually.',
-                    disabled: false,
-                    disabledReason: '',
-                  },
-                  {
-                    mode: 'auto' as CreationMode,
-                    title: 'Auto-generate',
-                    description: 'Select tables and columns, then auto-generate YAML.',
-                    disabled: false,
-                    disabledReason: '',
-                  },
-                  {
-                    mode: 'agentic' as CreationMode,
-                    title: 'Agentic',
-                    description: 'Generate a draft from selected data and question themes.',
-                    disabled: !llmConnectionAvailable,
-                    disabledReason: checkingLlmConnections
-                      ? 'Checking LLM availability...'
-                      : 'Enable an active LLM connection to use agentic generation.',
-                  },
-                ]
-              ).map((option) => {
-                const selected = creationMode === option.mode;
-                return (
-                  <button
-                    key={option.mode}
-                    type="button"
-                    className={cn(
-                      'rounded-2xl border p-4 text-left transition',
-                      selected
-                        ? 'border-[color:var(--accent)] bg-[color:var(--panel-alt)]'
-                        : 'border-[color:var(--panel-border)] bg-[color:var(--panel-bg)] hover:border-[color:var(--border-strong)]',
-                      option.disabled ? 'cursor-not-allowed opacity-60' : '',
-                    )}
-                    onClick={() => {
-                      if (!option.disabled) {
-                        setCreationMode(option.mode);
-                      }
-                    }}
-                    disabled={option.disabled}
-                    title={option.disabled ? option.disabledReason : undefined}
-                  >
-                    <div className="flex items-center justify-between gap-2">
-                      <p className="text-sm font-semibold text-[color:var(--text-primary)]">{option.title}</p>
-                      {selected ? <Badge variant="secondary">Selected</Badge> : null}
-                    </div>
-                    <p className="mt-2 text-xs text-[color:var(--text-muted)]">{option.description}</p>
-                    {option.disabled && option.disabledReason ? (
-                      <p className="mt-2 text-xs text-amber-700">{option.disabledReason}</p>
-                    ) : null}
-                  </button>
-                );
-              })}
-            </div>
-            <div className="grid gap-4 md:grid-cols-2">
-              <div className="space-y-1">
-                <Label htmlFor="create-modal-connector">Connection</Label>
-                <Select
-                  id="create-modal-connector"
-                  value={selectedConnectorId}
-                  onChange={(event) => setSelectedConnectorId(event.target.value)}
-                  disabled={connectorsLoading}
-                >
-                  <option value="">Select connection</option>
-                  {connectors.map((connector) => (
-                    <option key={connector.id ?? connector.name} value={connector.id}>
-                      {connector.name}
-                    </option>
-                  ))}
-                </Select>
-              </div>
-              <div className="space-y-1">
-                <Label htmlFor="create-modal-name">Model name</Label>
-                <Input
-                  id="create-modal-name"
-                  value={formState.name}
-                  onChange={(event) =>
-                    setFormState((current) => ({ ...current, name: event.target.value }))
-                  }
-                  placeholder="e.g. Revenue semantic layer"
-                />
-              </div>
-            </div>
-            <div className="grid gap-4 md:grid-cols-2">
-              <div className="space-y-1">
-                <Label htmlFor="create-modal-description">Description</Label>
-                <Input
-                  id="create-modal-description"
-                  value={formState.description}
-                  onChange={(event) =>
-                    setFormState((current) => ({ ...current, description: event.target.value }))
-                  }
-                  placeholder="Optional description"
-                />
-              </div>
-              <div className="space-y-1">
-                <Label htmlFor="create-modal-filename">Filename</Label>
-                <Input
-                  id="create-modal-filename"
-                  value={formState.filename}
-                  onChange={(event) =>
-                    setFormState((current) => ({ ...current, filename: event.target.value }))
-                  }
-                  placeholder="semantic_model.yml"
-                />
-              </div>
-            </div>
-          </div>
-          <DialogFooter>
-            <Button type="button" variant="outline" onClick={closeCreationModal}>
-              Cancel
-            </Button>
-            <Button type="button" onClick={() => void handleModalContinue()}>
-              Continue
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {stage === 'wizard' ? (
-        <section className="grid gap-5 rounded-3xl border border-[color:var(--panel-border)] bg-[color:var(--panel-bg)] p-6 shadow-soft lg:grid-cols-[250px_1fr]">
-          <aside className="rounded-2xl border border-[color:var(--panel-border)] bg-[color:var(--panel-alt)] p-4">
-            <p className="mb-4 text-xs font-semibold uppercase tracking-[0.2em] text-[color:var(--text-muted)]">
-              Create model
+  if (!isEdit && createMode === 'select') {
+    return (
+      <PageFrame>
+        <section className="rounded-3xl border border-[color:var(--panel-border)] bg-[color:var(--panel-bg)] p-6 shadow-soft backdrop-blur">
+          <div className="space-y-3">
+            <Badge variant="secondary">Semantic model creation</Badge>
+            <h1 className="text-3xl font-semibold">Choose how to start</h1>
+            <p className="max-w-3xl text-sm text-[color:var(--text-muted)]">
+              Keep the dataset-first architecture, but choose whether to begin from a generated draft, build manually, or let the agentic flow expand the model from example questions.
             </p>
-            <ol className="space-y-3">
-              {wizardSteps.map((step, index) => {
-                const active = index === wizardStepIndex;
-                const complete = index < wizardStepIndex;
-                return (
-                  <li key={step} className="flex items-center gap-3">
-                    <span
-                      className={cn(
-                        'inline-flex h-7 w-7 items-center justify-center rounded-full border text-xs font-semibold',
-                        active
-                          ? 'border-[color:var(--accent)] bg-[color:var(--chip-bg)] text-[color:var(--text-primary)]'
-                          : complete
-                            ? 'border-emerald-600 bg-emerald-100 text-emerald-700'
-                            : 'border-[color:var(--panel-border)] text-[color:var(--text-muted)]',
-                      )}
-                    >
-                      {index + 1}
-                    </span>
-                    <span className={cn('text-sm', active ? 'font-semibold text-[color:var(--text-primary)]' : 'text-[color:var(--text-muted)]')}>
-                      {step}
-                    </span>
-                  </li>
-                );
-              })}
-            </ol>
-          </aside>
-
-          <div className="space-y-5">
-            <div>
-              <h2 className="text-lg font-semibold text-[color:var(--text-primary)]">{wizardSteps[wizardStepIndex]}</h2>
-              <p className="text-sm text-[color:var(--text-muted)]">
-                {wizardSteps[wizardStepIndex] === 'Getting started'
-                  ? 'Confirm location, connection, and model metadata.'
-                  : wizardSteps[wizardStepIndex] === 'Select tables'
-                    ? 'Choose the tables to include.'
-                    : wizardSteps[wizardStepIndex] === 'Select columns'
-                      ? 'Choose the columns to include from selected tables.'
-                      : wizardSteps[wizardStepIndex] === 'Questions'
-                        ? 'Provide question themes for the agentic generator.'
-                        : 'Review your selection and generate the semantic YAML.'}
-              </p>
-            </div>
-
-            {wizardSteps[wizardStepIndex] === 'Getting started' ? (
-              <div className="space-y-4">
-                <div className="grid gap-4 md:grid-cols-2">
-                  <div className="space-y-1">
-                    <Label htmlFor="wizard-connector">Connection</Label>
-                    <Select
-                      id="wizard-connector"
-                      value={selectedConnectorId}
-                      onChange={(event) => setSelectedConnectorId(event.target.value)}
-                    >
-                      <option value="">Select connection</option>
-                      {connectors.map((connector) => (
-                        <option key={connector.id ?? connector.name} value={connector.id}>
-                          {connector.name}
-                        </option>
-                      ))}
-                    </Select>
-                  </div>
-                  <div className="space-y-1">
-                    <Label htmlFor="wizard-file">Filename</Label>
-                    <Input
-                      id="wizard-file"
-                      value={formState.filename}
-                      onChange={(event) =>
-                        setFormState((current) => ({ ...current, filename: event.target.value }))
-                      }
-                    />
-                  </div>
-                </div>
-                <div className="grid gap-4 md:grid-cols-2">
-                  <div className="space-y-1">
-                    <Label htmlFor="wizard-name">Model name</Label>
-                    <Input
-                      id="wizard-name"
-                      value={formState.name}
-                      onChange={(event) =>
-                        setFormState((current) => ({ ...current, name: event.target.value }))
-                      }
-                    />
-                  </div>
-                  <div className="space-y-1">
-                    <Label htmlFor="wizard-description">Description</Label>
-                    <Input
-                      id="wizard-description"
-                      value={formState.description}
-                      onChange={(event) =>
-                        setFormState((current) => ({ ...current, description: event.target.value }))
-                      }
-                    />
-                  </div>
-                </div>
-              </div>
-            ) : null}
-
-            {wizardSteps[wizardStepIndex] === 'Select tables' ? (
-              <div className="space-y-4">
-                <div className="flex flex-wrap items-center justify-between gap-2 text-sm text-[color:var(--text-muted)]">
-                  <span>{selectedTables.length} tables selected</span>
-                  <div className="flex gap-2">
-                    <Button type="button" size="sm" variant="outline" onClick={() => handleSelectAllTables(true)}>
-                      Select all
-                    </Button>
-                    <Button type="button" size="sm" variant="outline" onClick={() => handleSelectAllTables(false)}>
-                      Clear
-                    </Button>
-                  </div>
-                </div>
-                <div className="inline-flex rounded-full border border-[color:var(--panel-border)] bg-[color:var(--panel-bg)] p-1">
-                  <button
-                    type="button"
-                    className={cn(
-                      'rounded-full px-3 py-1 text-sm',
-                      tableTab === 'all'
-                        ? 'bg-[color:var(--panel-alt)] text-[color:var(--text-primary)]'
-                        : 'text-[color:var(--text-muted)]',
-                    )}
-                    onClick={() => setTableTab('all')}
-                  >
-                    All
-                  </button>
-                  <button
-                    type="button"
-                    className={cn(
-                      'rounded-full px-3 py-1 text-sm',
-                      tableTab === 'selected'
-                        ? 'bg-[color:var(--panel-alt)] text-[color:var(--text-primary)]'
-                        : 'text-[color:var(--text-muted)]',
-                    )}
-                    onClick={() => setTableTab('selected')}
-                  >
-                    Selected
-                  </button>
-                </div>
-                <div className="max-h-[420px] space-y-3 overflow-y-auto rounded-xl border border-[color:var(--panel-border)] bg-[color:var(--panel-alt)] p-4">
-                  {catalogLoading ? (
-                    <p className="text-sm">Loading table metadata...</p>
-                  ) : (
-                    catalogTables
-                      .filter((table) => (tableTab === 'selected' ? selectedTableSet.has(table.tableRef) : true))
-                      .map((table) => {
-                        const checked = selectedTableSet.has(table.tableRef);
-                        return (
-                          <label
-                            key={table.tableRef}
-                            className={cn(
-                              'flex cursor-pointer items-start gap-3 rounded-lg border px-3 py-2',
-                              checked
-                                ? 'border-[color:var(--accent)] bg-[color:var(--panel-bg)]'
-                                : 'border-[color:var(--panel-border)] bg-[color:var(--panel-bg)]',
-                            )}
-                          >
-                            <input
-                              type="checkbox"
-                              checked={checked}
-                              onChange={(event) => handleToggleTable(table.tableRef, event.target.checked)}
-                              className="mt-1 h-4 w-4"
-                            />
-                            <div>
-                              <p className="text-sm font-medium text-[color:var(--text-primary)]">{table.tableName}</p>
-                              <p className="text-xs text-[color:var(--text-muted)]">{table.tableRef}</p>
-                            </div>
-                          </label>
-                        );
-                      })
-                  )}
-                </div>
-              </div>
-            ) : null}
-
-            {wizardSteps[wizardStepIndex] === 'Select columns' ? (
-              <div className="space-y-4">
-                <div className="grid gap-3 md:grid-cols-[1fr_auto]">
-                  <Input
-                    value={columnSearch}
-                    onChange={(event) => setColumnSearch(event.target.value)}
-                    placeholder="Search columns"
-                  />
-                  <div className="flex gap-2">
-                    <Button type="button" size="sm" variant="outline" onClick={() => handleSelectAllColumns(true)}>
-                      Select all columns
-                    </Button>
-                    <Button type="button" size="sm" variant="outline" onClick={() => handleSelectAllColumns(false)}>
-                      Clear
-                    </Button>
-                  </div>
-                </div>
-                <div className="flex items-center justify-between text-sm text-[color:var(--text-muted)]">
-                  <span>{selectedColumnCount} columns selected</span>
-                  <div className="flex flex-wrap items-center gap-4">
-                    <label className="inline-flex items-center gap-2">
-                      <input
-                        type="checkbox"
-                        checked={autoCreateDatasetsFromSelection}
-                        onChange={(event) => setAutoCreateDatasetsFromSelection(event.target.checked)}
-                        className="h-4 w-4"
-                      />
-                      Create datasets automatically
-                    </label>
-                    <label className="inline-flex items-center gap-2">
-                      <input
-                        type="checkbox"
-                        checked={includeSampleValues}
-                        onChange={(event) => setIncludeSampleValues(event.target.checked)}
-                        className="h-4 w-4"
-                      />
-                      Include example data
-                    </label>
-                  </div>
-                </div>
-                <div className="inline-flex rounded-full border border-[color:var(--panel-border)] bg-[color:var(--panel-bg)] p-1">
-                  <button
-                    type="button"
-                    className={cn(
-                      'rounded-full px-3 py-1 text-sm',
-                      columnTab === 'all'
-                        ? 'bg-[color:var(--panel-alt)] text-[color:var(--text-primary)]'
-                        : 'text-[color:var(--text-muted)]',
-                    )}
-                    onClick={() => setColumnTab('all')}
-                  >
-                    All
-                  </button>
-                  <button
-                    type="button"
-                    className={cn(
-                      'rounded-full px-3 py-1 text-sm',
-                      columnTab === 'selected'
-                        ? 'bg-[color:var(--panel-alt)] text-[color:var(--text-primary)]'
-                        : 'text-[color:var(--text-muted)]',
-                    )}
-                    onClick={() => setColumnTab('selected')}
-                  >
-                    Selected
-                  </button>
-                </div>
-                <div className="max-h-[420px] space-y-3 overflow-y-auto rounded-xl border border-[color:var(--panel-border)] bg-[color:var(--panel-alt)] p-4">
-                  {filteredColumnTables.map((table) => {
-                    const tableSelectedColumns = new Set(selectedColumns[table.tableRef] ?? []);
-                    const allChecked =
-                      table.columns.length > 0 &&
-                      table.columns.every((column) => tableSelectedColumns.has(column.name));
-                    return (
-                      <div key={table.tableRef} className="space-y-2 rounded-lg border border-[color:var(--panel-border)] bg-[color:var(--panel-bg)] p-3">
-                        <div className="flex items-center justify-between gap-2">
-                          <div>
-                            <p className="text-sm font-semibold text-[color:var(--text-primary)]">{table.tableName}</p>
-                            <p className="text-xs text-[color:var(--text-muted)]">{table.tableRef}</p>
-                          </div>
-                          <label className="inline-flex items-center gap-2 text-xs">
-                            <input
-                              type="checkbox"
-                              checked={allChecked}
-                              onChange={(event) =>
-                                handleSelectAllColumnsForTable(table.tableRef, event.target.checked)
-                              }
-                              className="h-4 w-4"
-                            />
-                            Select all for table
-                          </label>
-                        </div>
-                        <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-                          {table.visibleColumns.map((column) => {
-                            const checked = tableSelectedColumns.has(column.name);
-                            return (
-                              <label
-                                key={`${table.tableRef}.${column.name}`}
-                                className={cn(
-                                  'flex cursor-pointer items-center gap-2 rounded-md border px-2 py-1 text-xs',
-                                  checked
-                                    ? 'border-[color:var(--accent)] bg-[color:var(--chip-bg)]'
-                                    : 'border-[color:var(--panel-border)]',
-                                )}
-                              >
-                                <input
-                                  type="checkbox"
-                                  checked={checked}
-                                  onChange={(event) =>
-                                    handleToggleColumn(table.tableRef, column.name, event.target.checked)
-                                  }
-                                  className="h-3.5 w-3.5"
-                                />
-                                <span className="truncate">{column.name}</span>
-                              </label>
-                            );
-                          })}
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            ) : null}
-
-            {wizardSteps[wizardStepIndex] === 'Questions' ? (
-              <div className="space-y-4">
-                <div className="space-y-1">
-                  <Label htmlFor="wizard-prompts">Questions this model should answer</Label>
-                  <Textarea
-                    id="wizard-prompts"
-                    rows={4}
-                    value={promptInput}
-                    onChange={(event) => setPromptInput(event.target.value)}
-                    placeholder={'One prompt per line, for example:\nrevenue by region\ntop customers'}
-                  />
-                </div>
-                <div className="flex items-center gap-2">
-                  <Button type="button" size="sm" variant="outline" onClick={handlePromptParseInput}>
-                    Add prompts
-                  </Button>
-                  <span className="text-xs text-[color:var(--text-muted)]">{questionPrompts.length} / 10</span>
-                </div>
-                <div className="space-y-2">
-                  <p className="text-xs font-semibold uppercase tracking-wide text-[color:var(--text-muted)]">Suggestions</p>
-                  <div className="flex flex-wrap gap-2">
-                    {SUGGESTED_QUESTION_PROMPTS.map((prompt) => (
-                      <button
-                        key={prompt}
-                        type="button"
-                        className="rounded-full border border-[color:var(--panel-border)] px-3 py-1 text-xs"
-                        onClick={() => handlePromptAdd(prompt)}
-                      >
-                        {prompt}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-                <div className="space-y-2">
-                  {questionPrompts.map((prompt) => (
-                    <div key={prompt} className="flex items-center justify-between rounded-lg border border-[color:var(--panel-border)] bg-[color:var(--panel-bg)] px-3 py-2 text-sm">
-                      <span>{prompt}</span>
-                      <Button
-                        type="button"
-                        size="sm"
-                        variant="ghost"
-                        onClick={() =>
-                          setQuestionPrompts((current) => current.filter((entry) => entry !== prompt))
-                        }
-                      >
-                        Remove
-                      </Button>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            ) : null}
-
-            {wizardSteps[wizardStepIndex] === 'Review' ? (
-              <div className="space-y-3">
-                <div className="grid gap-3 md:grid-cols-3">
-                  <div className="rounded-lg border border-[color:var(--panel-border)] bg-[color:var(--panel-alt)] p-3">
-                    <p className="text-xs uppercase tracking-wide text-[color:var(--text-muted)]">Tables</p>
-                    <p className="mt-1 text-xl font-semibold text-[color:var(--text-primary)]">{selectedTables.length}</p>
-                  </div>
-                  <div className="rounded-lg border border-[color:var(--panel-border)] bg-[color:var(--panel-alt)] p-3">
-                    <p className="text-xs uppercase tracking-wide text-[color:var(--text-muted)]">Columns</p>
-                    <p className="mt-1 text-xl font-semibold text-[color:var(--text-primary)]">{selectedColumnCount}</p>
-                  </div>
-                  <div className="rounded-lg border border-[color:var(--panel-border)] bg-[color:var(--panel-alt)] p-3">
-                    <p className="text-xs uppercase tracking-wide text-[color:var(--text-muted)]">Mode</p>
-                    <p className="mt-1 text-xl font-semibold text-[color:var(--text-primary)]">
-                      {creationMode === 'auto' ? 'Auto' : 'Agentic'}
-                    </p>
-                  </div>
-                </div>
-                {creationMode === 'agentic' ? (
-                  <div className="rounded-lg border border-[color:var(--panel-border)] bg-[color:var(--panel-alt)] p-3">
-                    <p className="text-xs uppercase tracking-wide text-[color:var(--text-muted)]">Prompts</p>
-                    <ul className="mt-2 space-y-1 text-sm">
-                      {questionPrompts.map((prompt) => (
-                        <li key={prompt}>{prompt}</li>
-                      ))}
-                    </ul>
-                  </div>
-                ) : null}
-              </div>
-            ) : null}
-
-            <div className="flex items-center justify-between">
-              <Button type="button" variant="outline" onClick={() => handleWizardBack()} disabled={wizardSubmitting}>
-                {wizardStepIndex === 0 ? 'Back to modal' : 'Back'}
-              </Button>
-              <Button type="button" onClick={() => void handleWizardNext()} isLoading={wizardSubmitting}>
-                {wizardStepIndex >= wizardSteps.length - 1
-                  ? creationMode === 'agentic'
-                    ? 'Generate with agent'
-                    : 'Generate draft'
-                  : 'Next'}
-              </Button>
-            </div>
           </div>
         </section>
-      ) : null}
 
-      {!organizationAvailable && !scopeLoading ? (
-        <div className="rounded-xl border border-dashed border-[color:var(--panel-border)] bg-[color:var(--panel-bg)] p-6 text-center text-sm">
-          Choose an organization from the scope selector to begin modeling.
-        </div>
-      ) : stage === 'builder' ? (
-        <div className="grid gap-6 xl:grid-cols-[1.6fr_1fr]">
-          <section className="space-y-6 rounded-3xl border border-[color:var(--panel-border)] bg-[color:var(--panel-bg)] p-6 shadow-soft">
-            <form className="space-y-6" onSubmit={(event) => void handleSave(event)}>
-              <div className="space-y-3">
-                <div className="flex items-center justify-between">
-                  <h2 className="text-lg font-semibold text-[color:var(--text-primary)]">1. Select a connector</h2>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    onClick={() => void loadConnectors()}
-                    isLoading={connectorsLoading}
-                  >
-                    Refresh list
-                  </Button>
-                </div>
-                <p className="text-sm">
-                  Each semantic model is tied to one connector. Pick a connector to unlock the builder and optional
-                  auto-generation.
-                </p>
-                {connectors.length === 0 ? (
-                  <div className="rounded-xl border border-dashed border-[color:var(--panel-border)] bg-[color:var(--panel-alt)] p-6 text-sm">
-                    No connectors available in this scope. Create a connector first, then return to build a semantic
-                    model.
-                  </div>
-                ) : (
-                  <div className="grid gap-3 md:grid-cols-2">
-                    {connectors.map((connector) => {
-                      const connectorId = connector.id ?? '';
-                      const isSelected = connectorId !== '' && connectorId === selectedConnectorId;
-                      return (
-                        <button
-                          key={connector.id ?? connector.name}
-                          type="button"
-                          className={cn(
-                            'rounded-2xl border bg-[color:var(--panel-alt)] p-4 text-left transition hover:border-[color:var(--border-strong)]',
-                            isSelected ? 'border-[color:var(--accent)] shadow-soft' : 'border-[color:var(--panel-border)]',
-                          )}
-                          onClick={() => setSelectedConnectorId(connectorId)}
-                          disabled={!connectorId}
-                        >
-                          <div className="flex items-start justify-between gap-3">
-                            <div>
-                              <p className="text-sm font-semibold text-[color:var(--text-primary)]">
-                                {connector.name}
-                              </p>
-                              <p className="text-xs text-[color:var(--text-muted)]">
-                                {connector.description ?? 'No description provided.'}
-                              </p>
-                            </div>
-                            {isSelected ? <Badge variant="secondary">Selected</Badge> : null}
-                          </div>
-                          <div className="mt-3 text-xs text-[color:var(--text-muted)]">
-                            Type: <span className="text-[color:var(--text-primary)]">{connector.connectorType ?? 'Custom'}</span>
-                          </div>
-                        </button>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
-              {!selectedConnectorId ? (
-                <div className="rounded-xl border border-dashed border-[color:var(--panel-border)] bg-[color:var(--panel-alt)] p-6 text-sm">
-                  Select a connector to start configuring the semantic model.
-                </div>
-              ) : (
-                <>
-                  <div className="space-y-4 rounded-2xl border border-[color:var(--panel-border)] bg-[color:var(--panel-alt)] p-4">
-                    <div className="flex flex-wrap items-center justify-between gap-3">
-                      <div>
-                        <h3 className="text-base font-semibold text-[color:var(--text-primary)]">2. Model metadata</h3>
-                        <p className="text-xs text-[color:var(--text-muted)]">
-                          Name and describe the saved record plus the semantic layer version.
-                        </p>
-                      </div>
-                      <Button
-                        type="button"
-                        size="sm"
-                        variant="outline"
-                        onClick={() => void handleAutoGenerate()}
-                        isLoading={autoGenerating}
-                      >
-                        Auto-generate YAML
-                      </Button>
-                    </div>
-                    <div className="grid gap-4 md:grid-cols-2">
-                      <div className="space-y-1">
-                        <Label htmlFor="model-name">Model name</Label>
-                        <Input
-                          id="model-name"
-                          value={formState.name}
-                          onChange={(event) =>
-                            setFormState((current) => ({ ...current, name: event.target.value }))
-                          }
-                          placeholder="e.g. Sales semantic layer"
-                        />
-                      </div>
-                      <div className="space-y-1">
-                        <Label htmlFor="model-description">Record description</Label>
-                        <Input
-                          id="model-description"
-                          value={formState.description}
-                          onChange={(event) =>
-                            setFormState((current) => ({ ...current, description: event.target.value }))
-                          }
-                          placeholder="This text appears when browsing saved models."
-                        />
-                      </div>
-                    </div>
-                    <div className="grid gap-4 md:grid-cols-2">
-                      <div className="space-y-1">
-                        <Label htmlFor="semantic-version">Semantic version</Label>
-                        <Input
-                          id="semantic-version"
-                          value={builder.version}
-                          onChange={(event) =>
-                            setBuilder((current) => ({ ...current, version: event.target.value || DEFAULT_MODEL_VERSION }))
-                          }
-                        />
-                      </div>
-                      <div className="space-y-1">
-                        <Label htmlFor="semantic-description">Semantic description</Label>
-                        <Textarea
-                          id="semantic-description"
-                          rows={3}
-                          value={builder.description ?? ''}
-                          onChange={(event) =>
-                            setBuilder((current) => ({ ...current, description: event.target.value }))
-                          }
-                          placeholder="Optional context for how agents should interpret this model."
-                        />
-                      </div>
-                    </div>
-                  </div>
+        <section className="grid gap-6 lg:grid-cols-3">
+          <CreateModeCard
+            badge="Autogenerated"
+            title="Seed a draft from datasets"
+            description="Pick governed datasets first, then start from an automatically generated semantic draft that you can refine."
+            action="Start autogenerated flow"
+            icon={<Sparkles className="h-5 w-5 text-[color:var(--accent)]" />}
+            onClick={() => router.push(`/semantic-model/${organizationId}/create?mode=auto`)}
+          />
+          <CreateModeCard
+            badge="Manual"
+            title="Open the manual builder"
+            description="Select datasets and define dimensions, measures, calculated fields, and relationships directly."
+            action="Start manual flow"
+            onClick={() => router.push(`/semantic-model/${organizationId}/create?mode=manual`)}
+          />
+          <CreateModeCard
+            badge="Agentic"
+            title="Use the agentic builder"
+            description="Create a dataset-backed draft, then let Langbridge enrich it using example analytical prompts."
+            action="Start agentic flow"
+            icon={<Bot className="h-5 w-5 text-[color:var(--accent)]" />}
+            onClick={() => router.push(`/semantic-model/${organizationId}/create?mode=agentic`)}
+          />
+        </section>
+      </PageFrame>
+    );
+  }
 
-                  <div className="space-y-4">
-                    <div className="flex items-center justify-between">
-                      <h3 className="text-base font-semibold text-[color:var(--text-primary)]">3. Tables</h3>
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        onClick={() =>
-                          setBuilder((current) => ({
-                            ...current,
-                            tables: [...current.tables, createEmptyTable(current.tables.length + 1)],
-                          }))
-                        }
-                      >
-                        Add table
-                      </Button>
-                    </div>
-                    {builder.tables.length === 0 ? (
-                      <div className="rounded-xl border border-dashed border-[color:var(--panel-border)] bg-[color:var(--panel-alt)] p-6 text-sm">
-                        No tables yet. Add an entity to start defining dimensions and measures.
-                      </div>
-                    ) : (
-                      builder.tables.map((table, index) => (
-                        <article
-                          key={table.id}
-                          className="space-y-4 rounded-2xl border border-[color:var(--panel-border)] bg-[color:var(--panel-alt)] p-5 shadow-soft"
-                        >
-                          <header className="flex flex-wrap items-center justify-between gap-3">
-                            <div>
-                              <p className="text-sm font-semibold text-[color:var(--text-primary)]">
-                                {table.entityName || `Table ${index + 1}`}
-                              </p>
-                              <p className="text-xs text-[color:var(--text-muted)]">
-                                {table.datasetId
-                                  ? `Dataset reference: ${table.datasetId}`
-                                  : table.schema && table.name
-                                    ? `${table.schema}.${table.name}`
-                                    : 'Define schema and table name'}
-                              </p>
-                            </div>
-                            <div className="flex items-center gap-2">
-                              <Button
-                                type="button"
-                                variant="ghost"
-                                size="sm"
-                                onClick={() =>
-                                  setCollapsedTables((current) => ({
-                                    ...current,
-                                    [table.id]: !(current[table.id] ?? true),
-                                  }))
-                                }
-                              >
-                                {(collapsedTables[table.id] ?? true) ? 'Expand' : 'Collapse'}
-                              </Button>
-                              <Button
-                                type="button"
-                                variant="ghost"
-                                size="sm"
-                                onClick={() =>
-                                  setBuilder((current) => ({
-                                    ...current,
-                                    tables: current.tables.filter((entry) => entry.id !== table.id),
-                                  }))
-                                }
-                              >
-                                Remove
-                              </Button>
-                            </div>
-                          </header>
-
-                          {(collapsedTables[table.id] ?? true) ? null : (
-                            <>
-                              <div className="grid gap-4 md:grid-cols-2">
-                            <div className="space-y-1">
-                              <Label htmlFor={`entity-${table.id}`}>Entity name</Label>
-                              <Input
-                                id={`entity-${table.id}`}
-                                value={table.entityName}
-                                onChange={(event) =>
-                                  setBuilder((current) => ({
-                                    ...current,
-                                    tables: current.tables.map((entry) =>
-                                      entry.id === table.id ? { ...entry, entityName: event.target.value } : entry,
-                                    ),
-                                  }))
-                                }
-                                placeholder="Alias used inside YAML"
-                              />
-                            </div>
-                            <div className="space-y-1">
-                              <Label htmlFor={`dataset-${table.id}`}>Dataset source (optional)</Label>
-                              <Select
-                                value={table.datasetId ?? ''}
-                                onChange={(event) => {
-                                  const datasetId = event.target.value || null;
-                                  const selectedDataset = datasetCatalog.find((item) => item.id === datasetId);
-                                  setBuilder((current) => ({
-                                    ...current,
-                                    tables: current.tables.map((entry) => {
-                                      if (entry.id !== table.id) {
-                                        return entry;
-                                      }
-                                      if (!selectedDataset) {
-                                        return { ...entry, datasetId: null };
-                                      }
-                                      const inferredMeasures = selectedDataset.columns
-                                        .filter((column) =>
-                                          ['integer', 'decimal', 'float', 'number', 'bigint'].some((token) =>
-                                            (column.dataType || '').toLowerCase().includes(token),
-                                          ),
-                                        )
-                                        .slice(0, 6)
-                                        .map((column) => ({
-                                          id: createId('measure'),
-                                          name: column.name,
-                                          expression: column.name,
-                                          type: normalizeSemanticType(column.dataType || 'number'),
-                                          description: undefined,
-                                          aggregation: 'sum',
-                                        }));
-                                      const inferredDimensions = selectedDataset.columns
-                                        .filter(
-                                          (column) =>
-                                            !inferredMeasures.some((measure) => measure.name === column.name),
-                                        )
-                                        .slice(0, 12)
-                                        .map((column) => ({
-                                          id: createId('dimension'),
-                                          name: column.name,
-                                          expression: column.name,
-                                          type: normalizeSemanticType(column.dataType || 'string'),
-                                          description: undefined,
-                                          primaryKey: false,
-                                          vectorized: false,
-                                        }));
-                                      return {
-                                        ...entry,
-                                        datasetId,
-                                        schema: entry.schema || selectedDataset.name.toLowerCase().replace(/[^a-z0-9_]/g, '_'),
-                                        name: entry.name || selectedDataset.name.toLowerCase().replace(/[^a-z0-9_]/g, '_'),
-                                        dimensions: entry.dimensions.length > 0 ? entry.dimensions : inferredDimensions,
-                                        measures: entry.measures.length > 0 ? entry.measures : inferredMeasures,
-                                      };
-                                    }),
-                                  }));
-                                }}
-                              >
-                                <option value="">Use physical table</option>
-                                {datasetCatalog.map((dataset) => (
-                                  <option key={dataset.id} value={dataset.id}>
-                                    {dataset.name}
-                                  </option>
-                                ))}
-                              </Select>
-                            </div>
-                            <div className="space-y-1">
-                              <Label htmlFor={`schema-${table.id}`}>Schema</Label>
-                              <Input
-                                id={`schema-${table.id}`}
-                                value={table.schema}
-                                onChange={(event) =>
-                                  setBuilder((current) => ({
-                                    ...current,
-                                    tables: current.tables.map((entry) =>
-                                      entry.id === table.id ? { ...entry, schema: event.target.value } : entry,
-                                    ),
-                                  }))
-                                }
-                                placeholder="e.g. analytics"
-                              />
-                            </div>
-                            <div className="space-y-1">
-                              <Label htmlFor={`table-${table.id}`}>Table name</Label>
-                              <Input
-                                id={`table-${table.id}`}
-                                value={table.name}
-                                onChange={(event) =>
-                                  setBuilder((current) => ({
-                                    ...current,
-                                    tables: current.tables.map((entry) =>
-                                      entry.id === table.id ? { ...entry, name: event.target.value } : entry,
-                                    ),
-                                  }))
-                                }
-                                placeholder="e.g. orders"
-                              />
-                            </div>
-                            <div className="space-y-1">
-                              <Label htmlFor={`table-description-${table.id}`}>Description</Label>
-                              <Textarea
-                                id={`table-description-${table.id}`}
-                                rows={3}
-                                value={table.description ?? ''}
-                                onChange={(event) =>
-                                  setBuilder((current) => ({
-                                    ...current,
-                                    tables: current.tables.map((entry) =>
-                                      entry.id === table.id ? { ...entry, description: event.target.value } : entry,
-                                    ),
-                                  }))
-                                }
-                              />
-                            </div>
-                              </div>
-
-                              <div className="grid gap-4 lg:grid-cols-2">
-                            <div className="rounded-xl border border-[color:var(--panel-border)] bg-[color:var(--surface-muted)] p-4">
-                              <div className="mb-3 flex items-center justify-between">
-                                <h4 className="text-sm font-semibold text-[color:var(--text-primary)]">
-                                  Dimensions ({table.dimensions.length})
-                                </h4>
-                                <Button
-                                  type="button"
-                                  variant="outline"
-                                  size="sm"
-                                  onClick={() =>
-                                    setBuilder((current) => ({
-                                      ...current,
-                                      tables: current.tables.map((entry) =>
-                                        entry.id === table.id
-                                          ? {
-                                              ...entry,
-                                              dimensions: [
-                                                ...entry.dimensions,
-                                                {
-                                                  id: createId('dimension'),
-                                                  name: '',
-                                                  type: '',
-                                                  primaryKey: false,
-                                                  vectorized: false,
-                                                },
-                                              ],
-                                            }
-                                          : entry,
-                                      ),
-                                    }))
-                                  }
-                                >
-                                  Add dimension
-                                </Button>
-                              </div>
-                              {table.dimensions.length === 0 ? (
-                                <p className="text-xs text-[color:var(--text-muted)]">No dimensions yet.</p>
-                              ) : (
-                                <div className="space-y-3">
-                                  {table.dimensions.map((dimension) => (
-                                    <div
-                                      key={dimension.id}
-                                      className="rounded-lg border border-[color:var(--panel-border)] bg-[color:var(--panel-bg)] p-3"
-                                    >
-                                      <div className="flex items-center justify-between gap-3">
-                                        <Label className="text-xs font-semibold uppercase tracking-wide">
-                                          Dimension
-                                        </Label>
-                                        <Button
-                                          type="button"
-                                          variant="ghost"
-                                          size="sm"
-                                          onClick={() =>
-                                            setBuilder((current) => ({
-                                              ...current,
-                                              tables: current.tables.map((entry) =>
-                                                entry.id === table.id
-                                                  ? {
-                                                      ...entry,
-                                                      dimensions: entry.dimensions.filter(
-                                                        (item) => item.id !== dimension.id,
-                                                      ),
-                                                    }
-                                                  : entry,
-                                              ),
-                                            }))
-                                          }
-                                        >
-                                          Remove
-                                        </Button>
-                                      </div>
-                                      <div className="mt-3 grid gap-3 md:grid-cols-2">
-                                        <Input
-                                          value={dimension.name}
-                                          onChange={(event) =>
-                                            setBuilder((current) => ({
-                                              ...current,
-                                              tables: current.tables.map((entry) => {
-                                                if (entry.id !== table.id) {
-                                                  return entry;
-                                                }
-                                                return {
-                                                  ...entry,
-                                                  dimensions: entry.dimensions.map((item) =>
-                                                    item.id === dimension.id ? { ...item, name: event.target.value } : item,
-                                                  ),
-                                                };
-                                              }),
-                                            }))
-                                          }
-                                          placeholder="Name"
-                                        />
-                                        <Input
-                                          value={dimension.expression ?? ''}
-                                          onChange={(event) =>
-                                            setBuilder((current) => ({
-                                              ...current,
-                                              tables: current.tables.map((entry) => {
-                                                if (entry.id !== table.id) {
-                                                  return entry;
-                                                }
-                                                return {
-                                                  ...entry,
-                                                  dimensions: entry.dimensions.map((item) =>
-                                                    item.id === dimension.id ? { ...item, expression: event.target.value } : item,
-                                                  ),
-                                                };
-                                              }),
-                                            }))
-                                          }
-                                          placeholder="Optional SQL expression if different from column name"
-                                        />
-                                        <Select
-                                          value={dimension.type}
-                                          onChange={(event) =>
-                                            setBuilder((current) => ({
-                                              ...current,
-                                              tables: current.tables.map((entry) => {
-                                                if (entry.id !== table.id) {
-                                                  return entry;
-                                                }
-                                                return {
-                                                  ...entry,
-                                                  dimensions: entry.dimensions.map((item) =>
-                                                    item.id === dimension.id ? { ...item, type: event.target.value } : item,
-                                                  ),
-                                                };
-                                              }),
-                                            }))
-                                          }
-                                          placeholder="Select type"
-                                        >
-                                          {COLUMN_TYPE_OPTIONS.map((typeOption) => (
-                                            <option key={typeOption} value={typeOption}>
-                                              {typeOption}
-                                            </option>
-                                          ))}
-                                        </Select>
-                                      </div>
-                                      <Textarea
-                                        className="mt-3"
-                                        rows={2}
-                                        value={dimension.description ?? ''}
-                                        onChange={(event) =>
-                                          setBuilder((current) => ({
-                                            ...current,
-                                            tables: current.tables.map((entry) => {
-                                              if (entry.id !== table.id) {
-                                                return entry;
-                                              }
-                                              return {
-                                                ...entry,
-                                                dimensions: entry.dimensions.map((item) =>
-                                                  item.id === dimension.id
-                                                    ? { ...item, description: event.target.value }
-                                                    : item,
-                                                ),
-                                              };
-                                            }),
-                                          }))
-                                        }
-                                        placeholder="Description"
-                                      />
-                                      <label className="mt-3 flex items-center gap-2 text-xs font-medium text-[color:var(--text-primary)]">
-                                        <input
-                                          type="checkbox"
-                                          checked={Boolean(dimension.primaryKey)}
-                                          onChange={(event) =>
-                                            setBuilder((current) => ({
-                                              ...current,
-                                              tables: current.tables.map((entry) => {
-                                                if (entry.id !== table.id) {
-                                                  return entry;
-                                                }
-                                                return {
-                                                  ...entry,
-                                                  dimensions: entry.dimensions.map((item) =>
-                                                    item.id === dimension.id
-                                                      ? { ...item, primaryKey: event.target.checked }
-                                                      : item,
-                                                  ),
-                                                };
-                                              }),
-                                            }))
-                                          }
-                                        />
-                                        Primary key
-                                      </label>
-                                      <label className="mt-2 flex items-center gap-2 text-xs font-medium text-[color:var(--text-primary)]">
-                                        <input
-                                          type="checkbox"
-                                          checked={Boolean(dimension.vectorized)}
-                                          onChange={(event) =>
-                                            setBuilder((current) => ({
-                                              ...current,
-                                              tables: current.tables.map((entry) => {
-                                                if (entry.id !== table.id) {
-                                                  return entry;
-                                                }
-                                                return {
-                                                  ...entry,
-                                                  dimensions: entry.dimensions.map((item) =>
-                                                    item.id === dimension.id
-                                                      ? { ...item, vectorized: event.target.checked }
-                                                      : item,
-                                                  ),
-                                                };
-                                              }),
-                                            }))
-                                          }
-                                        />
-                                        Vectorize values for semantic search
-                                      </label>
-                                    </div>
-                                  ))}
-                                </div>
-                              )}
-                            </div>
-                            <div className="rounded-xl border border-[color:var(--panel-border)] bg-[color:var(--surface-muted)] p-4">
-                              <div className="mb-3 flex items-center justify-between">
-                                <h4 className="text-sm font-semibold text-[color:var(--text-primary)]">
-                                  Measures ({table.measures.length})
-                                </h4>
-                                <Button
-                                  type="button"
-                                  variant="outline"
-                                  size="sm"
-                                  onClick={() =>
-                                    setBuilder((current) => ({
-                                      ...current,
-                                      tables: current.tables.map((entry) =>
-                                        entry.id === table.id
-                                          ? {
-                                              ...entry,
-                                              measures: [
-                                                ...entry.measures,
-                                                {
-                                                  id: createId('measure'),
-                                                  expression: '',
-                                                  name: '',
-                                                  type: '',
-                                                  aggregation: '',
-                                                },
-                                              ],
-                                            }
-                                          : entry,
-                                      ),
-                                    }))
-                                  }
-                                >
-                                  Add measure
-                                </Button>
-                              </div>
-                              {table.measures.length === 0 ? (
-                                <p className="text-xs text-[color:var(--text-muted)]">No measures yet.</p>
-                              ) : (
-                                <div className="space-y-3">
-                                  {table.measures.map((measure) => (
-                                    <div
-                                      key={measure.id}
-                                      className="rounded-lg border border-[color:var(--panel-border)] bg-[color:var(--panel-bg)] p-3"
-                                    >
-                                      <div className="flex items-center justify-between gap-3">
-                                        <Label className="text-xs font-semibold uppercase tracking-wide">Measure</Label>
-                                        <Button
-                                          type="button"
-                                          variant="ghost"
-                                          size="sm"
-                                          onClick={() =>
-                                            setBuilder((current) => ({
-                                              ...current,
-                                              tables: current.tables.map((entry) =>
-                                                entry.id === table.id
-                                                  ? {
-                                                      ...entry,
-                                                      measures: entry.measures.filter((item) => item.id !== measure.id),
-                                                    }
-                                                  : entry,
-                                              ),
-                                            }))
-                                          }
-                                        >
-                                          Remove
-                                        </Button>
-                                      </div>
-                                      <div className="mt-3 grid gap-3 md:grid-cols-3">
-                                        <Input
-                                          value={measure.name}
-                                          onChange={(event) =>
-                                            setBuilder((current) => ({
-                                              ...current,
-                                              tables: current.tables.map((entry) => {
-                                                if (entry.id !== table.id) {
-                                                  return entry;
-                                                }
-                                                return {
-                                                  ...entry,
-                                                  measures: entry.measures.map((item) =>
-                                                    item.id === measure.id ? { ...item, name: event.target.value } : item,
-                                                  ),
-                                                };
-                                              }),
-                                            }))
-                                          }
-                                          placeholder="Name"
-                                        />
-                                        
-                                        <Input
-                                          value={measure.expression ?? ''}
-                                          onChange={(event) =>
-                                            setBuilder((current) => ({
-                                              ...current,
-                                              tables: current.tables.map((entry) => {
-                                                if (entry.id !== table.id) {
-                                                  return entry;
-                                                }
-                                                return {
-                                                  ...entry,
-                                                  measures: entry.measures.map((item) =>
-                                                    item.id === measure.id ? { ...item, expression: event.target.value } : item,
-                                                  ),
-                                                };
-                                              }),
-                                            }))
-                                          }
-                                          placeholder="Name"
-                                        />
-                                        <Select
-                                          value={measure.type}
-                                          onChange={(event) =>
-                                            setBuilder((current) => ({
-                                              ...current,
-                                              tables: current.tables.map((entry) => {
-                                                if (entry.id !== table.id) {
-                                                  return entry;
-                                                }
-                                                return {
-                                                  ...entry,
-                                                  measures: entry.measures.map((item) =>
-                                                    item.id === measure.id ? { ...item, type: event.target.value } : item,
-                                                  ),
-                                                };
-                                              }),
-                                            }))
-                                          }
-                                          placeholder="Select type"
-                                        >
-                                          {COLUMN_TYPE_OPTIONS.map((typeOption) => (
-                                            <option key={typeOption} value={typeOption}>
-                                              {typeOption}
-                                            </option>
-                                          ))}
-                                        </Select>
-                                        <Input
-                                          value={measure.aggregation ?? ''}
-                                          onChange={(event) =>
-                                            setBuilder((current) => ({
-                                              ...current,
-                                              tables: current.tables.map((entry) => {
-                                                if (entry.id !== table.id) {
-                                                  return entry;
-                                                }
-                                                return {
-                                                  ...entry,
-                                                  measures: entry.measures.map((item) =>
-                                                    item.id === measure.id
-                                                      ? { ...item, aggregation: event.target.value }
-                                                      : item,
-                                                  ),
-                                                };
-                                              }),
-                                            }))
-                                          }
-                                          placeholder="Aggregation e.g. sum"
-                                        />
-                                      </div>
-                                      <Textarea
-                                        className="mt-3"
-                                        rows={2}
-                                        value={measure.description ?? ''}
-                                        onChange={(event) =>
-                                          setBuilder((current) => ({
-                                            ...current,
-                                            tables: current.tables.map((entry) => {
-                                              if (entry.id !== table.id) {
-                                                return entry;
-                                              }
-                                              return {
-                                                ...entry,
-                                                measures: entry.measures.map((item) =>
-                                                  item.id === measure.id
-                                                    ? { ...item, description: event.target.value }
-                                                    : item,
-                                                ),
-                                              };
-                                            }),
-                                          }))
-                                        }
-                                        placeholder="Description"
-                                      />
-                                    </div>
-                                  ))}
-                                </div>
-                              )}
-                            </div>
-                              </div>
-                            </>
-                          )}
-                        </article>
-                      ))
-                    )}
-                  </div>
-                  <div className="space-y-4 rounded-2xl border border-[color:var(--panel-border)] bg-[color:var(--panel-alt)] p-4">
-                    <div className="flex flex-wrap items-center justify-between gap-3">
-                      <div>
-                        <h3 className="text-base font-semibold text-[color:var(--text-primary)]">4. Joins</h3>
-                        <p className="text-xs text-[color:var(--text-muted)]">
-                          Map how these entities relate so downstream tools can combine tables safely.
-                        </p>
-                      </div>
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        disabled={builder.tables.length === 0}
-                        onClick={() =>
-                          setBuilder((current) => ({
-                            ...current,
-                            relationships: [
-                              ...current.relationships,
-                              createEmptyRelationship(current.relationships.length + 1),
-                            ],
-                          }))
-                        }
-                      >
-                        Add join
-                      </Button>
-                    </div>
-                    {builder.relationships.length === 0 ? (
-                      <div className="rounded-xl border border-dashed border-[color:var(--panel-border)] bg-[color:var(--surface-muted)] p-4 text-sm">
-                        No joins configured yet. Add at least one join to describe how tables connect.
-                      </div>
-                    ) : (
-                      <div className="space-y-4">
-                        {builder.relationships.map((relationship, index) => (
-                          <div
-                            key={relationship.id}
-                            className="space-y-3 rounded-xl border border-[color:var(--panel-border)] bg-[color:var(--panel-bg)] p-4"
-                          >
-                            <div className="flex flex-wrap items-center justify-between gap-3">
-                              <div>
-                                <p className="text-sm font-semibold text-[color:var(--text-primary)]">
-                                  {relationship.name || `Join ${index + 1}`}
-                                </p>
-                                <p className="text-xs text-[color:var(--text-muted)]">
-                                  {relationship.from && relationship.to
-                                    ? `${relationship.from} ? ${relationship.to}`
-                                    : 'Define the source and target entities'}
-                                </p>
-                              </div>
-                              <div className="flex items-center gap-2">
-                                <Button
-                                  type="button"
-                                  variant="ghost"
-                                  size="sm"
-                                  onClick={() =>
-                                    setCollapsedRelationships((current) => ({
-                                      ...current,
-                                      [relationship.id]: !(current[relationship.id] ?? true),
-                                    }))
-                                  }
-                                >
-                                  {(collapsedRelationships[relationship.id] ?? true) ? 'Expand' : 'Collapse'}
-                                </Button>
-                                <Button
-                                  type="button"
-                                  variant="ghost"
-                                  size="sm"
-                                  onClick={() =>
-                                    setBuilder((current) => ({
-                                      ...current,
-                                      relationships: current.relationships.filter((entry) => entry.id !== relationship.id),
-                                    }))
-                                  }
-                                >
-                                  Remove
-                                </Button>
-                              </div>
-                            </div>
-                            {(collapsedRelationships[relationship.id] ?? true) ? null : (
-                              <>
-                                <div className="grid gap-3 md:grid-cols-2">
-                              <div className="space-y-1">
-                                <Label htmlFor={`join-name-${relationship.id}`}>Join name</Label>
-                                <Input
-                                  id={`join-name-${relationship.id}`}
-                                  value={relationship.name}
-                                  onChange={(event) =>
-                                    setBuilder((current) => ({
-                                      ...current,
-                                      relationships: current.relationships.map((entry) =>
-                                        entry.id === relationship.id ? { ...entry, name: event.target.value } : entry,
-                                      ),
-                                    }))
-                                  }
-                                  placeholder="sales_to_customers"
-                                />
-                              </div>
-                              <div className="space-y-1">
-                                <Label htmlFor={`join-type-${relationship.id}`}>Cardinality</Label>
-                                <Select
-                                  id={`join-type-${relationship.id}`}
-                                  placeholder="Select cardinality"
-                                  value={relationship.type}
-                                  onChange={(event) =>
-                                    setBuilder((current) => ({
-                                      ...current,
-                                      relationships: current.relationships.map((entry) =>
-                                        entry.id === relationship.id
-                                          ? { ...entry, type: event.target.value as RelationshipType }
-                                          : entry,
-                                      ),
-                                    }))
-                                  }
-                                >
-                                  {RELATIONSHIP_TYPES.map((type) => (
-                                    <option key={type} value={type}>
-                                      {type.replace(/_/g, ' ')}
-                                    </option>
-                                  ))}
-                                </Select>
-                              </div>
-                                </div>
-                                <div className="grid gap-3 md:grid-cols-2">
-                              <div className="space-y-1">
-                                <Label htmlFor={`join-from-${relationship.id}`}>From entity</Label>
-                                <Input
-                                  id={`join-from-${relationship.id}`}
-                                  value={relationship.from}
-                                  onChange={(event) =>
-                                    setBuilder((current) => ({
-                                      ...current,
-                                      relationships: current.relationships.map((entry) =>
-                                        entry.id === relationship.id ? { ...entry, from: event.target.value } : entry,
-                                      ),
-                                    }))
-                                  }
-                                  placeholder="_main_sales"
-                                />
-                              </div>
-                              <div className="space-y-1">
-                                <Label htmlFor={`join-to-${relationship.id}`}>To entity</Label>
-                                <Input
-                                  id={`join-to-${relationship.id}`}
-                                  value={relationship.to}
-                                  onChange={(event) =>
-                                    setBuilder((current) => ({
-                                      ...current,
-                                      relationships: current.relationships.map((entry) =>
-                                        entry.id === relationship.id ? { ...entry, to: event.target.value } : entry,
-                                      ),
-                                    }))
-                                  }
-                                  placeholder="_main_customers"
-                                />
-                              </div>
-                                </div>
-                                <div className="space-y-1">
-                              <Label htmlFor={`join-condition-${relationship.id}`}>Join condition</Label>
-                              <Textarea
-                                id={`join-condition-${relationship.id}`}
-                                rows={2}
-                                value={relationship.joinOn}
-                                onChange={(event) =>
-                                  setBuilder((current) => ({
-                                    ...current,
-                                    relationships: current.relationships.map((entry) =>
-                                      entry.id === relationship.id ? { ...entry, joinOn: event.target.value } : entry,
-                                    ),
-                                  }))
-                                }
-                                placeholder="_main_sales.customer_id = _main_customers.customer_id"
-                              />
-                                </div>
-                              </>
-                            )}
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                  <div className="space-y-4 rounded-2xl border border-[color:var(--panel-border)] bg-[color:var(--panel-alt)] p-4">
-                    <div className="flex items-center justify-between">
-                      <h3 className="text-base font-semibold text-[color:var(--text-primary)]">5. Metrics</h3>
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        onClick={() =>
-                          setBuilder((current) => ({
-                            ...current,
-                            metrics: [
-                              ...current.metrics,
-                              {
-                                id: createId('metric'),
-                                name: '',
-                                expression: '',
-                              },
-                            ],
-                          }))
-                        }
-                      >
-                        Add metric
-                      </Button>
-                    </div>
-                    {builder.metrics.length === 0 ? (
-                      <p className="text-sm text-[color:var(--text-muted)]">No derived metrics defined.</p>
-                    ) : (
-                      <div className="space-y-3">
-                        {builder.metrics.map((metric, index) => (
-                          <div
-                            key={metric.id}
-                            className="rounded-xl border border-[color:var(--panel-border)] bg-[color:var(--panel-bg)] p-4"
-                          >
-                            <div className="flex items-center justify-between">
-                              <Label className="text-xs font-semibold uppercase tracking-wide">
-                                {metric.name || `Metric ${index + 1}`}
-                              </Label>
-                              <div className="flex items-center gap-2">
-                                <Button
-                                  type="button"
-                                  variant="ghost"
-                                  size="sm"
-                                  onClick={() =>
-                                    setCollapsedMetrics((current) => ({
-                                      ...current,
-                                      [metric.id]: !(current[metric.id] ?? true),
-                                    }))
-                                  }
-                                >
-                                  {(collapsedMetrics[metric.id] ?? true) ? 'Expand' : 'Collapse'}
-                                </Button>
-                                <Button
-                                  type="button"
-                                  variant="ghost"
-                                  size="sm"
-                                  onClick={() =>
-                                    setBuilder((current) => ({
-                                      ...current,
-                                      metrics: current.metrics.filter((item) => item.id !== metric.id),
-                                    }))
-                                  }
-                                >
-                                  Remove
-                                </Button>
-                              </div>
-                            </div>
-                            {(collapsedMetrics[metric.id] ?? true) ? null : (
-                              <>
-                                <div className="mt-3 grid gap-3 md:grid-cols-2">
-                              <Input
-                                value={metric.name}
-                                onChange={(event) =>
-                                  setBuilder((current) => ({
-                                    ...current,
-                                    metrics: current.metrics.map((item) =>
-                                      item.id === metric.id ? { ...item, name: event.target.value } : item,
-                                    ),
-                                  }))
-                                }
-                                placeholder="Metric name"
-                              />
-                              <Input
-                                value={metric.description ?? ''}
-                                onChange={(event) =>
-                                  setBuilder((current) => ({
-                                    ...current,
-                                    metrics: current.metrics.map((item) =>
-                                      item.id === metric.id ? { ...item, description: event.target.value } : item,
-                                    ),
-                                  }))
-                                }
-                                placeholder="Description"
-                              />
-                                </div>
-                                <Textarea
-                              className="mt-3"
-                              rows={3}
-                              value={metric.expression}
-                              onChange={(event) =>
-                                setBuilder((current) => ({
-                                  ...current,
-                                  metrics: current.metrics.map((item) =>
-                                    item.id === metric.id ? { ...item, expression: event.target.value } : item,
-                                  ),
-                                }))
-                              }
-                              placeholder="SQL expression referencing table columns"
-                                />
-                              </>
-                            )}
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-
-                  <div className="space-y-3 rounded-2xl border border-[color:var(--panel-border)] bg-[color:var(--panel-alt)] p-4">
-                    <div className="flex items-center justify-between">
-                      <h3 className="text-base font-semibold text-[color:var(--text-primary)]">6. YAML editor</h3>
-                      <span className="text-xs text-[color:var(--text-muted)]">YAML is source of truth for save</span>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      {yamlDirty ? <Badge variant="secondary">Unsynced changes</Badge> : null}
-                      <Button type="button" variant="outline" size="sm" onClick={() => handleApplyYaml()}>
-                        Apply YAML
-                      </Button>
-                      <Button type="button" variant="outline" size="sm" onClick={() => handleResetYamlFromBuilder()}>
-                        Reset
-                      </Button>
-                    </div>
-                    {yamlError ? (
-                      <p className="text-xs text-rose-600">{yamlError}</p>
-                    ) : null}
-                    <Textarea
-                      rows={12}
-                      value={yamlDraft}
-                      onChange={(event) => {
-                        setYamlDraft(event.target.value);
-                        setYamlDirty(true);
-                      }}
-                      className="font-mono text-xs"
-                    />
-                    <Button
-                      type="submit"
-                      className="w-full"
-                      isLoading={submitting}
-                      disabled={!selectedConnectorId || loadingModel || deleting}
-                    >
-                      {submitLabel}
-                    </Button>
-                    {isUpdateMode ? (
-                      <Button
-                        type="button"
-                        variant="outline"
-                        className="w-full border-rose-300 text-rose-700 hover:bg-rose-50"
-                        onClick={() => void handleDeleteModel()}
-                        isLoading={deleting}
-                        disabled={submitting}
-                      >
-                        Delete semantic model
-                      </Button>
-                    ) : null}
-                  </div>
-                </>
-              )}
-            </form>
-          </section>
-          <aside className="space-y-4 rounded-3xl border border-[color:var(--panel-border)] bg-[color:var(--panel-bg)] p-6 shadow-soft">
+  if (!isEdit && createMode === 'agentic') {
+    return (
+      <PageFrame>
+        <section className="rounded-3xl border border-[color:var(--panel-border)] bg-[color:var(--panel-bg)] p-6 shadow-soft backdrop-blur">
+          <div className="flex flex-wrap items-end justify-between gap-4">
             <div className="space-y-2">
-              <div className="flex items-center justify-between">
-                <h2 className="text-lg font-semibold text-[color:var(--text-primary)]">Outline</h2>
-                <Badge variant="secondary">{outline.tables.length} tables</Badge>
+              <div className="flex flex-wrap items-center gap-2">
+                <Badge variant="secondary">Dataset-first semantic model</Badge>
+                <Badge variant="secondary">Agentic</Badge>
               </div>
-              <p className="text-xs text-[color:var(--text-muted)]">
-                Logical tables, dimensions, facts, and relationships in the current model.
+              <h1 className="text-3xl font-semibold">Create semantic model with agentics</h1>
+              <p className="max-w-3xl text-sm text-[color:var(--text-muted)]">
+                Start from governed datasets, then let the agentic flow refine the semantic model from the analytical prompts you provide.
               </p>
             </div>
-            <div className="grid gap-2 rounded-xl border border-[color:var(--panel-border)] bg-[color:var(--panel-alt)] p-4 text-sm">
-              <div className="flex items-center justify-between">
-                <span>Dimensions</span>
-                <Badge variant="secondary">{outline.dimensions.length}</Badge>
-              </div>
-              <div className="flex items-center justify-between">
-                <span>Facts</span>
-                <Badge variant="secondary">{outline.measures.length}</Badge>
-              </div>
-              <div className="flex items-center justify-between">
-                <span>Relationships</span>
-                <Badge variant="secondary">{outline.relationships.length}</Badge>
-              </div>
+            <div className="flex flex-wrap gap-2">
+              <Button variant="outline" onClick={() => router.push(`/semantic-model/${organizationId}/create`)}>Modes</Button>
+              <Button variant="outline" onClick={() => router.push(`/semantic-model/${organizationId}/create?mode=manual`)}>Manual builder</Button>
+              <Button onClick={() => void startAgentic()} disabled={agenticSubmitting}>{agenticSubmitting ? 'Running agentic flow...' : 'Start agentic builder'}</Button>
             </div>
-            {outline.tables.length === 0 ? (
-              <p className="text-sm text-[color:var(--text-muted)]">No logical tables defined yet.</p>
-            ) : (
-              <ul className="space-y-2">
-                {outline.tables.map((table) => (
-                  <li
-                    key={table.id}
-                    className="rounded-xl border border-[color:var(--panel-border)] bg-[color:var(--panel-alt)] px-3 py-2 text-sm"
-                  >
-                    <p className="font-medium text-[color:var(--text-primary)]">{table.entityName || table.name}</p>
-                    <p className="text-xs text-[color:var(--text-muted)]">
-                      {table.schema ? `${table.schema}.` : ''}
-                      {table.name || 'missing table name'}
-                    </p>
-                    <p className="text-xs text-[color:var(--text-muted)]">
-                      {table.dimensions.length} dims / {table.measures.length} facts
-                    </p>
-                  </li>
-                ))}
-              </ul>
-            )}
-            {outline.relationships.length > 0 ? (
-              <div className="space-y-2">
-                <p className="text-xs font-semibold uppercase tracking-wide text-[color:var(--text-muted)]">
-                  Relationships
-                </p>
-                <ul className="space-y-1 text-xs text-[color:var(--text-secondary)]">
-                  {outline.relationships.map((relationship) => (
-                    <li
-                      key={relationship.id}
-                      className="rounded-lg border border-[color:var(--panel-border)] bg-[color:var(--panel-alt)] px-2 py-1.5"
-                    >
-                      {relationship.name || `${relationship.from} -> ${relationship.to}`}
-                    </li>
-                  ))}
-                </ul>
+          </div>
+          <div className="mt-5 grid gap-4 md:grid-cols-2">
+            <div className="space-y-2"><Label>Name</Label><Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Executive revenue model" /></div>
+            <div className="space-y-2"><Label>Description</Label><Input value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Dataset-backed semantic layer for revenue and customers" /></div>
+          </div>
+          {notice ? <p className="mt-4 rounded-2xl border border-emerald-500/20 bg-[color:var(--success-soft)] px-4 py-3 text-sm text-[color:var(--text-secondary)]">{notice}</p> : null}
+          {error ? <p className="mt-4 rounded-2xl border border-rose-500/20 bg-[color:var(--danger-soft)] px-4 py-3 text-sm text-[color:var(--text-secondary)]">{error}</p> : null}
+        </section>
+
+        <section className="grid gap-6 lg:grid-cols-[1.04fr_0.96fr]">
+          <div className="space-y-6">
+            <Card title="Agentic prompts" subtitle="Provide 3 to 10 example questions so the agent knows what this semantic model must answer well.">
+              <div className="space-y-4">
+                <div className="flex items-center justify-between gap-3 text-xs text-[color:var(--text-muted)]">
+                  <span>One prompt per line</span>
+                  <span>{promptCount} prompts</span>
+                </div>
+                <Textarea value={agenticPromptText} onChange={(event) => setAgenticPromptText(event.target.value)} placeholder={'revenue by segment\nmonthly trend\ncustomer retention'} className="min-h-[220px] bg-[color:var(--surface-muted)]" />
+                <label className="flex items-center gap-3 rounded-2xl border border-[color:var(--panel-border)] bg-[color:var(--panel-alt)] px-4 py-3 text-sm text-[color:var(--text-secondary)]">
+                  <input type="checkbox" checked={includeSampleValues} onChange={(event) => setIncludeSampleValues(event.target.checked)} className="h-4 w-4 rounded border-[color:var(--border-strong)]" />
+                  Include sample values when the agent drafts semantic fields
+                </label>
               </div>
+            </Card>
+
+            <DatasetSelectionCard
+              title="Source datasets"
+              subtitle="Choose the governed datasets that should anchor the agentic semantic model draft."
+              catalog={catalog}
+              datasetSearch={datasetSearch}
+              onDatasetSearchChange={setDatasetSearch}
+              filteredCatalog={filteredCatalog}
+              selectedIds={selectedIds}
+              onToggleDataset={toggleDataset}
+            />
+          </div>
+
+          <div className="space-y-6">
+            <Card title="Selected datasets" subtitle="The agentic builder will start from these dataset bindings before refining the model.">
+              <div className="space-y-3">{datasets.length ? datasets.map((d) => <div key={d.id} className="rounded-2xl border border-[color:var(--panel-border)] bg-[color:var(--panel-alt)] p-4"><div className="flex items-center justify-between"><div><p className="text-sm font-semibold">{d.key}</p><p className="text-xs text-[color:var(--text-muted)]">{d.datasetName}</p></div><div className="text-xs text-[color:var(--text-muted)]">{d.dimensions.length} dimensions / {d.measures.length} measures</div></div></div>) : <Empty text="Select one or more datasets to start the agentic draft." />}</div>
+            </Card>
+            <Card title="Guidance" subtitle="Keep prompts concrete so the agent can infer dimensions, measures, and naming cleanly.">
+              <div className="space-y-3 text-sm text-[color:var(--text-secondary)]">
+                <p>Use prompts that reflect the analyses people actually want to run, not generic descriptions.</p>
+                <p>Include a mix of metric, trend, and breakdown questions so the agent sees the shape of the model you want.</p>
+                <p>When the job completes, the generated model opens in the standard editor for review and cleanup.</p>
+              </div>
+            </Card>
+            {agenticJobStatus ? (
+              <Card title="Job status" subtitle="The agentic worker updates progress here while the draft is being refined.">
+                <div className="space-y-3">
+                  <div className="rounded-2xl border border-[color:var(--panel-border)] bg-[color:var(--panel-alt)] px-4 py-3">
+                    <div className="flex items-center justify-between gap-3 text-sm">
+                      <span className="font-medium capitalize">{agenticJobStatus}</span>
+                      <span className="text-[color:var(--text-muted)]">{agenticProgress}%</span>
+                    </div>
+                    <div className="mt-3 h-2 overflow-hidden rounded-full bg-[color:var(--surface-muted)]">
+                      <div className="h-full rounded-full bg-[color:var(--accent)] transition-[width]" style={{ width: `${Math.max(4, agenticProgress)}%` }} />
+                    </div>
+                    {agenticJobId ? <p className="mt-3 text-xs text-[color:var(--text-muted)]">Job ID: {agenticJobId}</p> : null}
+                  </div>
+                </div>
+              </Card>
             ) : null}
-          </aside>
+          </div>
+        </section>
+      </PageFrame>
+    );
+  }
+
+  return (
+    <PageFrame>
+        <section className="rounded-3xl border border-[color:var(--panel-border)] bg-[color:var(--panel-bg)] p-6 shadow-soft backdrop-blur">
+          <div className="flex flex-wrap items-end justify-between gap-4">
+            <div className="space-y-2">
+              <div className="flex flex-wrap items-center gap-2">
+                <Badge variant="secondary">Dataset-first semantic model</Badge>
+                {!isEdit && autoMode ? <Badge variant="secondary">Autogenerated</Badge> : null}
+                {!isEdit && !autoMode ? <Badge variant="secondary">Manual</Badge> : null}
+              </div>
+              <h1 className="text-3xl font-semibold">{builderTitle}</h1>
+              <p className="max-w-3xl text-sm text-[color:var(--text-muted)]">{builderSubtitle}</p>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              {!isEdit ? <Button variant="outline" onClick={() => router.push(`/semantic-model/${organizationId}/create`)}>Modes</Button> : null}
+              <Button variant="outline" onClick={() => router.push(`/semantic-model/${organizationId}`)}>Back</Button>
+              <Button variant="outline" onClick={() => void refreshDraft()} disabled={generating || datasets.length === 0}>{generating ? 'Refreshing...' : autoMode ? 'Generate draft from datasets' : 'Auto-populate from datasets'}</Button>
+              <Button onClick={() => void save()} disabled={saving}>{saving ? 'Saving...' : isEdit ? 'Update model' : 'Save model'}</Button>
+            </div>
+          </div>
+          <div className="mt-5 grid gap-4 md:grid-cols-2">
+            <div className="space-y-2"><Label>Name</Label><Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Executive revenue model" /></div>
+            <div className="space-y-2"><Label>Description</Label><Input value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Dataset-backed semantic layer for revenue and customers" /></div>
+          </div>
+          {!isEdit && autoMode ? <p className="mt-4 rounded-2xl border border-[color:var(--accent)] bg-[color:var(--accent-soft)] px-4 py-3 text-sm text-[color:var(--text-secondary)]">Select governed datasets first, then use the generated draft as your starting point for semantic cleanup.</p> : null}
+          {notice ? <p className="mt-4 rounded-2xl border border-emerald-500/20 bg-[color:var(--success-soft)] px-4 py-3 text-sm text-[color:var(--text-secondary)]">{notice}</p> : null}
+          {error ? <p className="mt-4 rounded-2xl border border-rose-500/20 bg-[color:var(--danger-soft)] px-4 py-3 text-sm text-[color:var(--text-secondary)]">{error}</p> : null}
+        </section>
+
+        <section className="grid gap-6 lg:grid-cols-[1.08fr_0.92fr]">
+          <div className="space-y-6">
+            <DatasetSelectionCard
+              title="Source datasets"
+              subtitle="Choose the governed datasets that feed this semantic model."
+              catalog={catalog}
+              datasetSearch={datasetSearch}
+              onDatasetSearchChange={setDatasetSearch}
+              filteredCatalog={filteredCatalog}
+              selectedIds={selectedIds}
+              onToggleDataset={toggleDataset}
+            />
+
+            <Card title="Semantic datasets" subtitle="Define dimensions, measures, and calculated fields on top of the selected datasets.">
+              <div className="space-y-5">
+                {datasets.map((d) => (
+                  <div key={d.id} className="rounded-2xl border border-[color:var(--panel-border)] bg-[color:var(--panel-alt)] p-4">
+                    <button type="button" onClick={() => toggleDatasetExpanded(d.id)} className="flex w-full items-center justify-between gap-3 text-left">
+                      <div className="flex min-w-0 items-center gap-3">
+                        <ChevronDown className={`h-4 w-4 shrink-0 text-[color:var(--text-muted)] transition-transform ${expandedIds.has(d.id) ? 'rotate-0' : '-rotate-90'}`} />
+                        <div className="min-w-0">
+                          <p className="truncate text-sm font-semibold">{d.key}</p>
+                          <p className="truncate text-xs text-[color:var(--text-muted)]">{d.datasetName}</p>
+                        </div>
+                      </div>
+                      <div className="shrink-0 text-right text-xs text-[color:var(--text-muted)]">{d.dimensions.length} dimensions / {d.measures.length} measures</div>
+                    </button>
+                    {expandedIds.has(d.id) ? (
+                      <div className="mt-4 border-t border-[color:var(--panel-border)] pt-4">
+                        <div className="grid gap-3 md:grid-cols-2">
+                          <div className="space-y-2"><Label>Semantic key</Label><Input value={d.key} onChange={(e) => patchDataset(d.id, (current) => ({ ...current, key: sanitize(e.target.value) || current.key }))} /></div>
+                          <div className="space-y-2"><Label>Source dataset</Label><Input value={d.datasetName} disabled /></div>
+                        </div>
+                        <div className="mt-3 space-y-2"><Label>Description</Label><Input value={d.description} onChange={(e) => patchDataset(d.id, (current) => ({ ...current, description: e.target.value }))} /></div>
+                        <FieldSection title="Dimensions" action="Add dimension" onAdd={() => patchDataset(d.id, (c) => ({ ...c, dimensions: [...c.dimensions, { id: crypto.randomUUID(), name: '', expression: '', type: 'string', primaryKey: false }] }))}>
+                          {d.dimensions.map((f) => (
+                            <FieldRow key={f.id} name={f.name} type={f.type} expression={f.expression || ''} onType={(value) => patchDataset(d.id, (c) => ({ ...c, dimensions: c.dimensions.map((x) => x.id === f.id ? { ...x, type: value } : x) }))} onName={(value) => patchDataset(d.id, (c) => ({ ...c, dimensions: c.dimensions.map((x) => x.id === f.id ? { ...x, name: value } : x) }))} onExpression={(value) => patchDataset(d.id, (c) => ({ ...c, dimensions: c.dimensions.map((x) => x.id === f.id ? { ...x, expression: value } : x) }))} onRemove={() => patchDataset(d.id, (c) => ({ ...c, dimensions: c.dimensions.filter((x) => x.id !== f.id) }))} />
+                          ))}
+                        </FieldSection>
+                        <FieldSection title="Measures" action="Add measure" onAdd={() => patchDataset(d.id, (c) => ({ ...c, measures: [...c.measures, { id: crypto.randomUUID(), name: '', expression: '', type: 'decimal', aggregation: 'sum' }] }))}>
+                          {d.measures.map((f) => (
+                            <FieldRow key={f.id} name={f.name} type={f.type} expression={f.expression || ''} onType={(value) => patchDataset(d.id, (c) => ({ ...c, measures: c.measures.map((x) => x.id === f.id ? { ...x, type: value } : x) }))} onName={(value) => patchDataset(d.id, (c) => ({ ...c, measures: c.measures.map((x) => x.id === f.id ? { ...x, name: value } : x) }))} onExpression={(value) => patchDataset(d.id, (c) => ({ ...c, measures: c.measures.map((x) => x.id === f.id ? { ...x, expression: value } : x) }))} onRemove={() => patchDataset(d.id, (c) => ({ ...c, measures: c.measures.filter((x) => x.id !== f.id) }))} />
+                          ))}
+                        </FieldSection>
+                      </div>
+                    ) : null}
+                  </div>
+                ))}
+                {datasets.length === 0 ? <Empty text="Select one or more datasets to start defining semantic fields." /> : null}
+              </div>
+            </Card>
+
+            <Card title="Relationships" subtitle="Create joins with guided dataset and field dropdowns.">
+              <div className="mb-4 flex justify-end"><Button variant="outline" onClick={addRelationship} disabled={datasets.length < 2}>Add relationship</Button></div>
+              <div className="space-y-4">
+                {relationships.map((r) => {
+                  const left = datasets.find((d) => d.key === r.sourceDataset);
+                  const right = datasets.find((d) => d.key === r.targetDataset);
+                  return (
+                    <div key={r.id} className="rounded-2xl border border-[color:var(--panel-border)] bg-[color:var(--panel-alt)] p-4">
+                      <div className="grid gap-3 xl:grid-cols-5">
+                        <Input value={r.name} onChange={(e) => setRelationships((all) => all.map((x) => x.id === r.id ? { ...x, name: e.target.value } : x))} placeholder="orders_to_customers" />
+                        <SelectBox value={r.sourceDataset} onChange={(value) => setRelationships((all) => all.map((x) => x.id === r.id ? { ...x, sourceDataset: value, sourceField: '' } : x))} placeholder="Source dataset" options={datasets.map((d) => d.key)} />
+                        <SelectBox value={r.sourceField} onChange={(value) => setRelationships((all) => all.map((x) => x.id === r.id ? { ...x, sourceField: value } : x))} placeholder="Source field" options={(left?.dimensions || []).map((f) => f.name).filter(Boolean)} />
+                        <SelectBox value={r.targetDataset} onChange={(value) => setRelationships((all) => all.map((x) => x.id === r.id ? { ...x, targetDataset: value, targetField: '' } : x))} placeholder="Target dataset" options={datasets.map((d) => d.key)} />
+                        <SelectBox value={r.targetField} onChange={(value) => setRelationships((all) => all.map((x) => x.id === r.id ? { ...x, targetField: value } : x))} placeholder="Target field" options={(right?.dimensions || []).map((f) => f.name).filter(Boolean)} />
+                      </div>
+                      <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
+                        <SelectBox value={r.type} onChange={(value) => setRelationships((all) => all.map((x) => x.id === r.id ? { ...x, type: value } : x))} placeholder="Relationship type" options={REL_TYPES} />
+                        <p className="text-sm text-[color:var(--text-muted)]">{r.sourceDataset && r.sourceField && r.targetDataset && r.targetField ? `${r.sourceDataset}.${r.sourceField} = ${r.targetDataset}.${r.targetField}` : 'Select both datasets and fields to generate the relationship expression.'}</p>
+                        <Button variant="ghost" onClick={() => setRelationships((all) => all.filter((x) => x.id !== r.id))}>Remove</Button>
+                      </div>
+                    </div>
+                  );
+                })}
+                {relationships.length === 0 ? <Empty text="No relationships yet. Add one to guide multi-dataset analysis." /> : null}
+              </div>
+            </Card>
+          </div>
+
+          <div className="space-y-6">
+            <Card title="Outline" subtitle="The datasets and relationships included in this semantic model.">
+              <div className="space-y-3">{datasets.length ? datasets.map((d) => <div key={d.id} className="rounded-2xl border border-[color:var(--panel-border)] bg-[color:var(--panel-alt)] p-4"><div className="flex items-center justify-between"><div><p className="text-sm font-semibold">{d.key}</p><p className="text-xs text-[color:var(--text-muted)]">{d.datasetName}</p></div><div className="text-xs text-[color:var(--text-muted)]">{d.dimensions.length} dimensions / {d.measures.length} measures</div></div></div>) : <Empty text="No datasets selected yet." />}</div>
+            </Card>
+            <Card title="Generated YAML" subtitle="Saved directly from the dataset-backed builder state.">
+              <Textarea value={yamlPreview} readOnly className="min-h-[720px] bg-[color:var(--surface-muted)] font-mono text-xs" />
+            </Card>
+            {isEdit ? <Card title="Delete semantic model" subtitle="Remove this semantic model and its lineage registration."><Button variant="destructive" onClick={() => void remove()} disabled={deleting}>{deleting ? 'Deleting...' : 'Delete model'}</Button></Card> : null}
+          </div>
+        </section>
+    </PageFrame>
+  );
+}
+
+function PageFrame({ children }: { children: JSX.Element | JSX.Element[] }): JSX.Element {
+  return (
+    <main className="relative min-h-screen overflow-hidden bg-[color:var(--shell-bg)] px-4 py-8 text-[color:var(--text-primary)] transition-colors">
+      <div className="pointer-events-none absolute inset-0 -z-20 bg-[radial-gradient(circle_at_top_left,_var(--accent-soft),_transparent_36%),radial-gradient(circle_at_top_right,_rgba(59,130,246,0.14),_transparent_32%)]" />
+      <div className="mx-auto flex max-w-6xl flex-col gap-6">{children}</div>
+    </main>
+  );
+}
+
+function CreateModeCard({
+  badge,
+  title,
+  description,
+  action,
+  onClick,
+  icon,
+}: {
+  badge: string;
+  title: string;
+  description: string;
+  action: string;
+  onClick: () => void;
+  icon?: JSX.Element;
+}): JSX.Element {
+  return (
+    <section className="rounded-3xl border border-[color:var(--panel-border)] bg-[color:var(--panel-bg)] p-6 shadow-soft">
+      <div className="flex items-start justify-between gap-3">
+        <Badge variant="secondary">{badge}</Badge>
+        {icon}
+      </div>
+      <h2 className="mt-5 text-xl font-semibold">{title}</h2>
+      <p className="mt-2 text-sm text-[color:var(--text-muted)]">{description}</p>
+      <Button className="mt-6" onClick={onClick}>{action}</Button>
+    </section>
+  );
+}
+
+function Card({ title, subtitle, children }: { title: string; subtitle: string; children: JSX.Element | JSX.Element[] }): JSX.Element {
+  return <section className="rounded-3xl border border-[color:var(--panel-border)] bg-[color:var(--panel-bg)] p-6 shadow-soft"><h2 className="text-xl font-semibold">{title}</h2><p className="mt-1 text-sm text-[color:var(--text-muted)]">{subtitle}</p><div className="mt-5">{children}</div></section>;
+}
+
+function Empty({ text }: { text: string }): JSX.Element {
+  return <p className="rounded-2xl border border-dashed border-[color:var(--panel-border)] bg-[color:var(--panel-alt)] px-4 py-6 text-sm text-[color:var(--text-muted)]">{text}</p>;
+}
+
+function DatasetSelectionCard({
+  title,
+  subtitle,
+  catalog,
+  datasetSearch,
+  onDatasetSearchChange,
+  filteredCatalog,
+  selectedIds,
+  onToggleDataset,
+}: {
+  title: string;
+  subtitle: string;
+  catalog: DatasetCatalogItem[];
+  datasetSearch: string;
+  onDatasetSearchChange: (value: string) => void;
+  filteredCatalog: DatasetCatalogItem[];
+  selectedIds: Set<string>;
+  onToggleDataset: (item: DatasetCatalogItem) => void;
+}): JSX.Element {
+  return (
+    <Card title={title} subtitle={subtitle}>
+      <div className="space-y-3">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="relative min-w-[240px] flex-1">
+            <Search className="pointer-events-none absolute left-3 top-3 h-4 w-4 text-[color:var(--text-muted)]" />
+            <Input value={datasetSearch} onChange={(event) => onDatasetSearchChange(event.target.value)} placeholder="Search datasets by name, alias, or field" className="pl-9" />
+          </div>
+          <p className="text-xs text-[color:var(--text-muted)]">{filteredCatalog.length} of {catalog.length} datasets</p>
         </div>
-      ) : null}
-    </div>
-  );
-}
-function resolveError(error: unknown): string {
-  if (error instanceof ApiError) {
-    return error.message;
-  }
-  if (error instanceof Error) {
-    return error.message;
-  }
-  return 'Something went wrong while processing your request.';
-}
-
-function createId(prefix: string): string {
-  return `${prefix}-${Math.random().toString(36).slice(2, 9)}`;
-}
-
-function syncCollapsedState(
-  current: Record<string, boolean>,
-  ids: string[],
-): Record<string, boolean> {
-  const idSet = new Set(ids);
-  let changed = false;
-  const next: Record<string, boolean> = {};
-  ids.forEach((id) => {
-    if (Object.prototype.hasOwnProperty.call(current, id)) {
-      next[id] = current[id];
-      return;
-    }
-    next[id] = true;
-    changed = true;
-  });
-  for (const existingId of Object.keys(current)) {
-    if (!idSet.has(existingId)) {
-      changed = true;
-      break;
-    }
-  }
-  return changed ? next : current;
-}
-
-function createEmptyBuilderModel(): BuilderModel {
-  return {
-    version: DEFAULT_MODEL_VERSION,
-    description: '',
-    tables: [],
-    relationships: [],
-    metrics: [],
-  };
-}
-
-function createEmptyRelationship(position: number): BuilderRelationship {
-  return {
-    id: createId('relationship'),
-    name: `join_${position}`,
-    from: '',
-    to: '',
-    type: 'many_to_one',
-    joinOn: '',
-  };
-}
-
-function createEmptyTable(position: number): BuilderTable {
-  return {
-    id: createId('table'),
-    entityName: `entity_${position}`,
-    datasetId: null,
-    schema: '',
-    name: '',
-    description: '',
-    synonyms: null,
-    filters: null,
-    dimensions: [],
-    measures: [],
-  };
-}
-
-function tableHasContent(table: BuilderTable): boolean {
-  return Boolean(
-    (table.datasetId && table.datasetId.trim()) ||
-    table.entityName.trim() ||
-      table.schema.trim() ||
-      table.name.trim() ||
-      table.dimensions.length > 0 ||
-      table.measures.length > 0,
+        <div className="max-h-[420px] space-y-3 overflow-y-auto pr-1">
+          {filteredCatalog.map((item) => (
+            <button key={item.id} type="button" onClick={() => onToggleDataset(item)} className={`w-full rounded-2xl border px-4 py-4 text-left shadow-sm transition-colors ${selectedIds.has(item.id) ? 'border-[color:var(--accent)] bg-[color:var(--accent-soft)] text-[color:var(--text-primary)]' : 'border-[color:var(--panel-border)] bg-[color:var(--panel-alt)] text-[color:var(--text-primary)] hover:border-[color:var(--border-strong)] hover:bg-[color:var(--panel-bg)]'}`}>
+              <div className="flex items-center justify-between gap-3"><div><p className="text-sm font-semibold">{item.name}</p><p className={`text-xs ${selectedIds.has(item.id) ? 'text-[color:var(--text-secondary)]' : 'text-[color:var(--text-muted)]'}`}>{item.sqlAlias}</p></div><span className={`text-xs ${selectedIds.has(item.id) ? 'text-[color:var(--text-secondary)]' : 'text-[color:var(--text-muted)]'}`}>{item.columns.length} fields</span></div>
+            </button>
+          ))}
+          {catalog.length === 0 ? <Empty text="No datasets are available in this workspace yet." /> : null}
+          {catalog.length > 0 && filteredCatalog.length === 0 ? <Empty text={`No datasets match "${datasetSearch.trim()}".`} /> : null}
+        </div>
+      </div>
+    </Card>
   );
 }
 
-function validateBuilderModel(builder: BuilderModel): void {
-  const populatedTables = builder.tables.filter(tableHasContent);
-  if (populatedTables.length === 0) {
-    throw new Error('Add at least one table with dimensions or measures.');
+function SelectBox({ value, onChange, placeholder, options }: { value: string; onChange: (value: string) => void; placeholder: string; options: string[] }): JSX.Element {
+  return <select value={value} onChange={(e) => onChange(e.target.value)} className="h-10 rounded-xl border border-[color:var(--panel-border)] bg-[color:var(--panel-bg)] px-3 text-sm text-[color:var(--text-primary)] shadow-sm transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--accent)] focus-visible:ring-offset-2 focus-visible:ring-offset-[color:var(--app-bg)]"><option value="">{placeholder}</option>{options.map((o) => <option key={o} value={o}>{o}</option>)}</select>;
+}
+
+function FieldSection({ title, action, onAdd, children }: { title: string; action: string; onAdd: () => void; children: JSX.Element[] }): JSX.Element {
+  return <div className="mt-5"><div className="mb-3 flex items-center justify-between"><h3 className="text-sm font-semibold uppercase tracking-[0.16em] text-[color:var(--text-muted)]">{title}</h3><Button variant="outline" size="sm" onClick={onAdd}>{action}</Button></div><div className="space-y-3">{children.length ? children : [<Empty key="empty" text={`No ${title.toLowerCase()} yet.`} />]}</div></div>;
+}
+
+function FieldRow({ name, type, expression, onName, onType, onExpression, onRemove }: { name: string; type: string; expression: string; onName: (value: string) => void; onType: (value: string) => void; onExpression: (value: string) => void; onRemove: () => void }): JSX.Element {
+  return <div className="rounded-2xl border border-[color:var(--panel-border)] bg-[color:var(--panel-bg)] p-3 shadow-sm"><div className="grid gap-3 md:grid-cols-[1.1fr_1fr_140px_auto]"><Input value={name} onChange={(e) => onName(e.target.value)} placeholder="field_name" /><Input value={expression} onChange={(e) => onExpression(e.target.value)} placeholder="expression" /><SelectBox value={type} onChange={onType} placeholder="Type" options={FIELD_TYPES} /><Button variant="ghost" onClick={onRemove}>Remove</Button></div></div>;
+}
+
+function fromCatalog(item: DatasetCatalogItem, keys: string[]): Ds {
+  const dims: Dim[] = [];
+  const meas: Mea[] = [];
+  for (const col of item.columns || []) {
+    const type = normalize(col.dataType);
+    const pk = Boolean(col.primaryKey || isPk(col.name, item.name));
+    const idish = col.name === 'id' || col.name.endsWith('_id');
+    if (['integer', 'decimal', 'float'].includes(type) && !pk && !idish) meas.push({ id: crypto.randomUUID(), name: col.name, expression: col.name, type, aggregation: 'sum' });
+    else dims.push({ id: crypto.randomUUID(), name: col.name, expression: col.name, type, primaryKey: pk });
   }
-  populatedTables.forEach((table) => {
-    if (!table.entityName.trim()) {
-      throw new Error('Each table must include an entity name.');
-    }
-    const hasDatasetBinding = Boolean(table.datasetId && table.datasetId.trim());
-    if (!table.name.trim()) {
-      throw new Error('Each table must include a table name.');
-    }
-    if (!hasDatasetBinding && !table.schema.trim()) {
-      throw new Error('Each physical table must include a schema.');
-    }
-    if (table.dimensions.length === 0 && table.measures.length === 0) {
-      throw new Error(`Table "${table.entityName}" must include at least one dimension or measure.`);
-    }
+  return { id: crypto.randomUUID(), datasetId: item.id, datasetName: item.name, key: uniqueKey(item.sqlAlias || item.name || 'dataset', keys), description: '', dimensions: dims, measures: meas };
+}
+
+function parseYaml(text: string, catalog: DatasetCatalogItem[]): { datasets: Ds[]; relationships: Rel[] } {
+  const raw = yaml.load(text);
+  if (!record(raw)) return { datasets: [], relationships: [] };
+  const dsPayload = record(raw.datasets) ? raw.datasets : record(raw.tables) ? raw.tables : {};
+  const datasets = Object.entries(dsPayload).map(([key, value]) => {
+    const item = record(value) ? value : {};
+    const datasetId = str(item.dataset_id) || str(item.datasetId) || '';
+    const match = catalog.find((entry) => entry.id === datasetId);
+    return { id: crypto.randomUUID(), datasetId, datasetName: match?.name || str(item.relation_name) || key, key, description: str(item.description) || '', dimensions: parseDims(item.dimensions), measures: parseMeas(item.measures) };
   });
+  const rels = Array.isArray(raw.relationships) ? raw.relationships.map(parseRel).filter(Boolean) as Rel[] : [];
+  return { datasets, relationships: rels };
 }
 
-function serializeBuilderModel(builder: BuilderModel, connectorName?: string): string {
-  const payload = buildSemanticModelPayload(builder, connectorName);
-  return yaml.dump(payload, { noRefs: true, sortKeys: false });
+function parseDims(value: unknown): Dim[] { return Array.isArray(value) ? value.map((x) => record(x) ? { id: crypto.randomUUID(), name: str(x.name) || '', expression: str(x.expression) || '', type: str(x.type) || 'string', primaryKey: Boolean(x.primary_key ?? x.primaryKey) } : null).filter(Boolean) as Dim[] : []; }
+function parseMeas(value: unknown): Mea[] { return Array.isArray(value) ? value.map((x) => record(x) ? { id: crypto.randomUUID(), name: str(x.name) || '', expression: str(x.expression) || '', type: str(x.type) || 'decimal', aggregation: str(x.aggregation) || 'sum' } : null).filter(Boolean) as Mea[] : []; }
+
+function parseRel(value: unknown): Rel | null {
+  if (!record(value)) return null;
+  const join = str(value.join_on) || str(value.on) || '';
+  let sourceDataset = str(value.source_dataset) || str(value.from_) || str(value.from) || '';
+  let targetDataset = str(value.target_dataset) || str(value.to) || '';
+  let sourceField = str(value.source_field) || '';
+  let targetField = str(value.target_field) || '';
+  if ((!sourceField || !targetField) && join.includes('=')) {
+    const [left, right] = join.split('=').map((p) => p.trim());
+    const [ld, lf] = left.split('.');
+    const [rd, rf] = right.split('.');
+    sourceDataset ||= ld || '';
+    targetDataset ||= rd || '';
+    sourceField ||= lf || '';
+    targetField ||= rf || '';
+  }
+  return { id: crypto.randomUUID(), name: str(value.name) || `${sourceDataset}_to_${targetDataset}`, sourceDataset, sourceField, targetDataset, targetField, type: str(value.type) || 'many_to_one' };
 }
 
-function buildSemanticModelPayload(builder: BuilderModel, connectorName?: string) {
-  const tables = builder.tables
-    .filter(tableHasContent)
-    .reduce<Record<string, unknown>>((acc, table) => {
-      const hasDatasetBinding = Boolean(table.datasetId && table.datasetId.trim());
-      const schemaName = table.schema.trim() || (hasDatasetBinding ? 'dataset' : '');
-      const tableName = table.name.trim() || table.entityName.trim();
-      if (!table.entityName.trim() || !tableName || (!hasDatasetBinding && !schemaName)) {
-        return acc;
-      }
-      acc[table.entityName] = {
-        dataset_id: hasDatasetBinding ? table.datasetId : undefined,
-        schema: schemaName,
-        name: tableName,
-        description: table.description || undefined,
-        dimensions:
-          table.dimensions.length > 0
-            ? table.dimensions
-                .filter((dimension) => dimension.name && dimension.type)
-                .map((dimension) => ({
-                  name: dimension.name,
-                  expression: dimension.expression || undefined,
-                  type: dimension.type,
-                  description: dimension.description || undefined,
-                  primary_key: dimension.primaryKey || undefined,
-                  synonyms: dimension.synonyms && dimension.synonyms.length > 0 ? dimension.synonyms : undefined,
-                  vectorized: dimension.vectorized ? true : undefined,
-                }))
-            : undefined,
-        measures:
-          table.measures.length > 0
-            ? table.measures
-                .filter((measure) => measure.name && measure.type)
-                .map((measure) => ({
-                  name: measure.name,
-                  expression: measure.expression || undefined,
-                  type: measure.type,
-                  aggregation: measure.aggregation || undefined,
-                  description: measure.description || undefined,
-                  synonyms: measure.synonyms && measure.synonyms.length > 0 ? measure.synonyms : undefined,
-                }))
-            : undefined,
-      };
-      return acc;
-    }, {});
-
-  const relationships = builder.relationships
-    .filter((relationship) => relationship.name && relationship.from && relationship.to && relationship.joinOn)
-    .map((relationship) => ({
-      name: relationship.name,
-      from_: relationship.from,
-      to: relationship.to,
-      type: relationship.type,
-      join_on: relationship.joinOn,
-    }));
-
-  const metrics = builder.metrics.reduce<Record<string, { expression: string; description?: string }>>(
-    (acc, metric) => {
-      if (!metric.name || !metric.expression) {
-        return acc;
-      }
-      acc[metric.name] = {
-        expression: metric.expression,
-        description: metric.description || undefined,
-      };
-      return acc;
-    },
-    {},
-  );
-
+function toModel(name: string, description: string, datasets: Ds[], relationships: Rel[]): Record<string, unknown> {
   return {
-    version: builder.version || DEFAULT_MODEL_VERSION,
-    connector: connectorName,
-    description: builder.description || undefined,
-    tables,
-    relationships: relationships.length > 0 ? relationships : undefined,
-    metrics: Object.keys(metrics).length > 0 ? metrics : undefined,
+    version: '1.0',
+    name: name.trim() || undefined,
+    description: description.trim() || undefined,
+    datasets: Object.fromEntries(
+      datasets.map((d) => [
+        d.key,
+        {
+          dataset_id: d.datasetId,
+          relation_name: d.key,
+          description: d.description || undefined,
+          dimensions: d.dimensions
+            .filter((f) => f.name.trim())
+            .map((f) => ({
+              name: f.name.trim(),
+              expression: f.expression?.trim() || f.name.trim(),
+              type: f.type,
+              primary_key: Boolean(f.primaryKey),
+            })),
+          measures: d.measures
+            .filter((f) => f.name.trim())
+            .map((f) => ({
+              name: f.name.trim(),
+              expression: f.expression?.trim() || f.name.trim(),
+              type: f.type,
+              aggregation: f.aggregation || 'sum',
+            })),
+        },
+      ]),
+    ),
+    relationships: relationships
+      .filter((r) => r.name.trim() && r.sourceDataset && r.sourceField && r.targetDataset && r.targetField)
+      .map((r) => ({
+        name: r.name.trim(),
+        source_dataset: r.sourceDataset,
+        source_field: r.sourceField,
+        target_dataset: r.targetDataset,
+        target_field: r.targetField,
+        type: r.type,
+      })),
   };
 }
 
-function toRecord(value: unknown): Record<string, unknown> {
-  return value && typeof value === 'object' ? (value as Record<string, unknown>) : {};
-}
-
-function toArray(value: unknown): unknown[] {
-  return Array.isArray(value) ? value : [];
-}
-
-function toStringValue(value: unknown, fallback = ''): string {
-  return typeof value === 'string' ? value : fallback;
-}
-
-function parseYamlToBuilderModel(yamlText: string): BuilderModel {
-  const parsed = yaml.load(yamlText);
-  if (!parsed || typeof parsed !== 'object') {
-    throw new Error('Generated YAML was empty.');
-  }
-
-  const candidate = toRecord(parsed);
-  const tablesEntries = Object.entries(toRecord(candidate.tables));
-  const tables: BuilderTable[] = tablesEntries.map(([entityName, rawTable]) => {
-    const table = toRecord(rawTable);
-    const dimensions = toArray(table.dimensions);
-    const measures = toArray(table.measures);
-    return {
-      id: createId('table'),
-      entityName,
-      datasetId: toStringValue(table.dataset_id ?? table.datasetId) || null,
-      schema: toStringValue(table.schema),
-      name: toStringValue(table.name),
-      description: toStringValue(table.description),
-      synonyms: (table.synonyms as SemanticTable['synonyms']) ?? null,
-      filters: (table.filters as SemanticTable['filters']) ?? null,
-      dimensions: dimensions.map((dimension) => {
-        const mappedDimension = toRecord(dimension);
-        return {
-          id: createId('dimension'),
-          expression: toStringValue(mappedDimension.expression),
-          name: toStringValue(mappedDimension.name),
-          type: toStringValue(mappedDimension.type),
-          description: toStringValue(mappedDimension.description),
-          primaryKey: Boolean(mappedDimension.primary_key ?? mappedDimension.primaryKey),
-          vectorized: Boolean(mappedDimension.vectorized),
-        };
-      }),
-      measures: measures.map((measure) => {
-        const mappedMeasure = toRecord(measure);
-        return {
-          id: createId('measure'),
-          name: toStringValue(mappedMeasure.name),
-          expression: toStringValue(mappedMeasure.expression),
-          type: toStringValue(mappedMeasure.type),
-          description: toStringValue(mappedMeasure.description),
-          aggregation: toStringValue(mappedMeasure.aggregation),
-        };
-      }),
-    };
-  });
-
-  const relationshipSource = candidate.relationships ?? candidate.joins;
-  const relationships: BuilderRelationship[] = toArray(relationshipSource).map((relationship) => {
-    const mappedRelationship = toRecord(relationship);
-    const rawType = mappedRelationship.type ?? mappedRelationship.cardinality;
-    const candidateType = typeof rawType === 'string' ? (rawType as RelationshipType) : undefined;
-    const resolvedType = candidateType && RELATIONSHIP_TYPES.includes(candidateType) ? candidateType : 'many_to_one';
-    return {
-      id: createId('relationship'),
-      name: toStringValue(mappedRelationship.name),
-      from: toStringValue(mappedRelationship.from_ ?? mappedRelationship.from ?? mappedRelationship.left),
-      to: toStringValue(mappedRelationship.to ?? mappedRelationship.right),
-      type: resolvedType,
-      joinOn: toStringValue(mappedRelationship.join_on ?? mappedRelationship.joinOn ?? mappedRelationship.on),
-    };
-  });
-
-  const metricsEntries = Object.entries(toRecord(candidate.metrics));
-  const metrics: BuilderMetric[] = metricsEntries.map(([metricName, metric]) => {
-    const mappedMetric = toRecord(metric);
-    return {
-      id: createId('metric'),
-      name: metricName,
-      expression: toStringValue(mappedMetric.expression),
-      description: toStringValue(mappedMetric.description),
-    };
-  });
-
-  return {
-    version: typeof candidate.version === 'string' ? candidate.version : DEFAULT_MODEL_VERSION,
-    description: toStringValue(candidate.description),
-    tables,
-    relationships,
-    metrics,
-  };
-}
-
-function normalizeSemanticType(dataType: string): string {
-  const normalized = (dataType || '').toLowerCase();
-  if (
-    normalized.includes('int') ||
-    normalized.includes('decimal') ||
-    normalized.includes('numeric') ||
-    normalized.includes('float') ||
-    normalized.includes('double') ||
-    normalized.includes('real') ||
-    normalized.includes('number')
-  ) {
-    return normalized.includes('int') ? 'integer' : 'number';
-  }
-  if (normalized.includes('bool')) {
-    return 'boolean';
-  }
-  if (normalized.includes('date') || normalized.includes('time')) {
-    return 'date';
-  }
-  return 'string';
-}
+function splitPrompts(value: string): string[] { return value.split(/\r?\n/).map((entry) => entry.trim()).filter(Boolean); }
+function isTerminalJobStatus(status: string | null | undefined): boolean { return status === 'succeeded' || status === 'failed' || status === 'cancelled'; }
+async function sleep(ms: number): Promise<void> { await new Promise((resolve) => window.setTimeout(resolve, ms)); }
+function uniqueKey(value: string, existing: string[]): string { const root = sanitize(value) || 'dataset'; let next = root; let i = 2; while (existing.includes(next)) { next = `${root}_${i}`; i += 1; } return next; }
+function sanitize(value: string): string { return value.trim().toLowerCase().replace(/[^a-z0-9_]+/g, '_').replace(/^_+|_+$/g, ''); }
+function normalize(value: string): string { const raw = value.toLowerCase(); if (raw.includes('int') && !raw.includes('point')) return 'integer'; if (raw.includes('float') || raw.includes('double') || raw.includes('real')) return 'float'; if (raw.includes('decimal') || raw.includes('numeric') || raw.includes('number') || raw.includes('bigint')) return 'decimal'; if (raw.includes('bool')) return 'boolean'; if (raw.includes('date') || raw.includes('time')) return 'date'; return 'string'; }
+function isPk(column: string, dataset: string): boolean { const d = dataset.toLowerCase().replace(/[^a-z0-9]/g, ''); const c = column.toLowerCase(); return c === 'id' || c === `${d}id` || c === `${d}_id`; }
+function str(value: unknown): string | null { return typeof value === 'string' && value.trim() ? value.trim() : null; }
+function record(value: unknown): value is Record<string, unknown> { return Boolean(value) && typeof value === 'object' && !Array.isArray(value); }
+function msg(cause: unknown, fallback: string): string { if (cause instanceof ApiError) return cause.message || fallback; if (cause instanceof Error && cause.message) return cause.message; return fallback; }

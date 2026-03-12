@@ -51,8 +51,8 @@ class SemanticQueryEngine:
     @staticmethod
     def build_annotations(semantic_model: SemanticModel) -> List[dict[str, str]]:
         annotations: List[dict[str, str]] = []
-        for table in semantic_model.tables.values():
-            for column, name in table.get_annotations().items():
+        for dataset_key, dataset in semantic_model.datasets.items():
+            for column, name in dataset.get_annotations(dataset_key).items():
                 annotations.append({"column": column, "name": name})
         return annotations
 
@@ -66,22 +66,22 @@ class SemanticQueryEngine:
 
         for member in semantic_query.dimensions:
             ref = resolver.resolve_dimension(member)
-            alias = self._alias_for_member(f"{ref.table}.{ref.column}")
+            alias = self._alias_for_member(f"{ref.dataset}.{ref.column}")
             label = ref.alias or ref.column
             metadata.append(
-                {"column": alias, "name": label, "source": f"{ref.table}.{ref.column}"}
+                {"column": alias, "name": label, "source": f"{ref.dataset}.{ref.column}"}
             )
 
         for time_dimension in semantic_query.time_dimensions:
             ref = resolver.resolve_dimension(time_dimension.dimension)
             alias = self._alias_for_time_dimension(
-                ref.table, ref.column, time_dimension.granularity
+                ref.dataset, ref.column, time_dimension.granularity
             )
             label = ref.alias or ref.column
             if time_dimension.granularity:
                 label = f"{label} ({time_dimension.granularity})"
             metadata.append(
-                {"column": alias, "name": label, "source": f"{ref.table}.{ref.column}"}
+                {"column": alias, "name": label, "source": f"{ref.dataset}.{ref.column}"}
             )
 
         for member in semantic_query.measures:
@@ -90,12 +90,12 @@ class SemanticQueryEngine:
                 alias = self._alias_for_member(resolved.key)
                 metadata.append({"column": alias, "name": resolved.key, "source": resolved.key})
                 continue
-            alias = self._alias_for_member(f"{resolved.table}.{resolved.column}")
+            alias = self._alias_for_member(f"{resolved.dataset}.{resolved.column}")
             metadata.append(
                 {
                     "column": alias,
                     "name": resolved.column,
-                    "source": f"{resolved.table}.{resolved.column}",
+                    "source": f"{resolved.dataset}.{resolved.column}",
                 }
             )
 
@@ -127,11 +127,11 @@ class SemanticQueryEngine:
 
     def _alias_for_time_dimension(
         self,
-        table: str,
+        dataset: str,
         column: str,
         granularity: str | None,
     ) -> str:
-        base = self._alias_for_member(f"{table}.{column}")
+        base = self._alias_for_member(f"{dataset}.{column}")
         if not granularity:
             return base
         return f"{base}_{granularity}"

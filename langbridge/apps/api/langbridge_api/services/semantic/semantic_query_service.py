@@ -63,6 +63,16 @@ class SemanticQueryService:
         self,
         semantic_query_request: SemanticQueryRequest,
     ) -> SemanticQueryResponse:
+        if self._semantic_query_execution_service is not None:
+            semantic_query = self._load_query_payload(semantic_query_request.query)
+            execution = await self._semantic_query_execution_service.execute_standard_query(
+                organization_id=semantic_query_request.organization_id,
+                project_id=semantic_query_request.project_id,
+                semantic_model_id=semantic_query_request.semantic_model_id,
+                semantic_query=semantic_query,
+            )
+            return execution.response
+
         semantic_model_record = await self._semantic_model_service.get_model(
             model_id=semantic_query_request.semantic_model_id,
             organization_id=semantic_query_request.organization_id,
@@ -70,6 +80,10 @@ class SemanticQueryService:
         semantic_model = self._load_model_payload(semantic_model_record.content_yaml)
         semantic_query = self._load_query_payload(semantic_query_request.query)
 
+        if semantic_model_record.connector_id is None:
+            raise BusinessValidationError(
+                "This semantic model is dataset-backed and requires the federated execution runtime."
+            )
         connector_response = await self._connector_service.get_connector(
             semantic_model_record.connector_id
         )
@@ -306,23 +320,25 @@ class SemanticQueryService:
 
     @staticmethod
     def _attach_full_column_paths(payload: dict[str, Any]) -> None:
-        tables = payload.get("tables")
-        if not isinstance(tables, dict):
+        datasets = payload.get("datasets")
+        if not isinstance(datasets, dict):
+            datasets = payload.get("tables")
+        if not isinstance(datasets, dict):
             return
-        for table in tables.values():
-            if not isinstance(table, dict):
+        for dataset in datasets.values():
+            if not isinstance(dataset, dict):
                 continue
-            catalog = str(table.get("catalog") or "").strip()
-            schema = str(table.get("schema") or "").strip()
-            table_name = str(table.get("name") or "").strip()
-            if not table_name:
+            catalog = str(dataset.get("catalog_name") or dataset.get("catalog") or "").strip()
+            schema = str(dataset.get("schema_name") or dataset.get("schema") or "").strip()
+            relation_name = str(dataset.get("relation_name") or dataset.get("name") or "").strip()
+            if not relation_name:
                 continue
-            base_parts = [part for part in [catalog, schema, table_name] if part]
+            base_parts = [part for part in [catalog, schema, relation_name] if part]
             if not base_parts:
                 continue
             base = ".".join(base_parts)
             for collection_key in ("dimensions", "measures"):
-                items = table.get(collection_key)
+                items = dataset.get(collection_key)
                 if not isinstance(items, list):
                     continue
                 for item in items:

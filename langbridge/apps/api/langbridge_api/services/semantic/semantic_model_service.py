@@ -1,51 +1,40 @@
+from __future__ import annotations
+
+import inspect
 import json
 import re
 import uuid
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Literal, Optional, Tuple, Type
+from typing import Any, Dict, Iterable, Literal, Mapping
 from uuid import UUID
 
 import yaml
+from sqlalchemy.exc import IntegrityError
 
-from langbridge.packages.connectors.langbridge_connectors.api import (
-    ConnectorRuntimeType, 
-    VectorDBConnectorFactory, 
-    VectorDBType, 
-    ManagedVectorDB
+from langbridge.packages.common.langbridge_common.contracts.semantic import (
+    SemanticModelCatalogDatasetResponse,
+    SemanticModelCatalogFieldResponse,
+    SemanticModelCatalogResponse,
+    SemanticModelCreateRequest,
+    SemanticModelRecordResponse,
+    SemanticModelSelectionGenerateResponse,
+    SemanticModelUpdateRequest,
 )
-from langbridge.packages.common.langbridge_common.db.auth import Project
+from langbridge.packages.common.langbridge_common.db.agent import LLMConnection  # noqa: F401
+from langbridge.packages.common.langbridge_common.db.dataset import DatasetRecord
 from langbridge.packages.common.langbridge_common.db.semantic import SemanticModelEntry
 from langbridge.packages.common.langbridge_common.errors.application_errors import BusinessValidationError
-from langbridge.packages.common.langbridge_common.errors.connector_errors import ConnectorError
-from langbridge.packages.common.langbridge_common.contracts.connectors import ConnectorResponse
-from langbridge.apps.api.langbridge_api.services.environment_service import EnvironmentService, EnvironmentSettingKey
-from .semantic_search_sercice import SemanticSearchService
+from langbridge.packages.common.langbridge_common.repositories.dataset_repository import DatasetRepository
 from langbridge.packages.common.langbridge_common.repositories.organization_repository import (
     OrganizationRepository,
     ProjectRepository,
 )
 from langbridge.packages.common.langbridge_common.repositories.semantic_model_repository import SemanticModelRepository
 from langbridge.packages.common.langbridge_common.utils.lineage import LineageNodeType
-from langbridge.packages.common.langbridge_common.contracts.semantic import (
-    SemanticModelCatalogColumnResponse,
-    SemanticModelCatalogResponse,
-    SemanticModelCatalogSchemaResponse,
-    SemanticModelCatalogTableResponse,
-    SemanticModelRecordResponse,
-    SemanticModelCreateRequest,
-    SemanticModelSelectionGenerateResponse,
-    SemanticModelUpdateRequest,
-)
-from langbridge.packages.semantic.langbridge_semantic.loader import SemanticModelError, load_semantic_model
-from langbridge.packages.semantic.langbridge_semantic.model import SemanticModel
-from langbridge.packages.semantic.langbridge_semantic.semantic_model_builder import SemanticModelBuilder
-from langbridge.apps.api.langbridge_api.services.agent_service import AgentService
-from langbridge.apps.api.langbridge_api.services.connector_service import ConnectorService
-from langbridge.apps.api.langbridge_api.services.lineage_service import LineageService
-from langbridge.packages.common.langbridge_common.utils.embedding_provider import EmbeddingProvider, EmbeddingProviderError
+from langbridge.packages.semantic.langbridge_semantic.errors import SemanticModelError
+from langbridge.packages.semantic.langbridge_semantic.loader import load_semantic_model
 
-VALUE_MAX_LENGTH = 256
-TYPE_NUMERIC = {"number", "decimal", "numeric", "int", "integer", "float", "double", "real"}
+TYPE_NUMERIC = {"number", "decimal", "numeric", "int", "integer", "float", "double", "real", "bigint"}
 TYPE_BOOLEAN = {"boolean", "bool"}
 TYPE_DATE = {"date", "datetime", "timestamp", "time"}
 
@@ -54,14 +43,16 @@ class SemanticModelService:
     def __init__(
         self,
         repository: SemanticModelRepository,
-        builder: SemanticModelBuilder,
-        organization_repository: OrganizationRepository,
-        project_repository: ProjectRepository,
-        connector_service: ConnectorService,
-        agent_service: AgentService,
-        semantic_search_service: SemanticSearchService,
-        emvironment_service: EnvironmentService,
-        lineage_service: LineageService | None = None,
+        builder: Any = None,
+        organization_repository: OrganizationRepository | None = None,
+        project_repository: ProjectRepository | None = None,
+        connector_service: Any = None,
+        agent_service: Any = None,
+        semantic_search_service: Any = None,
+        emvironment_service: Any = None,
+        lineage_service: Any | None = None,
+        dataset_repository: DatasetRepository | None = None,
+        dataset_column_repository: Any | None = None,
     ) -> None:
         self._repository = repository
         self._builder = builder
@@ -72,84 +63,57 @@ class SemanticModelService:
         self._semantic_search_service = semantic_search_service
         self._emvironment_service = emvironment_service
         self._lineage_service = lineage_service
-        
-        self._vector_factory = VectorDBConnectorFactory()
+        self._dataset_repository = dataset_repository
+        self._dataset_column_repository = dataset_column_repository
 
     async def generate_model_yaml(self, connector_id: UUID) -> str:
-        return await self._builder.build_yaml_for_scope(connector_id)
-
-    async def get_connector_catalog(self, connector_id: UUID) -> SemanticModelCatalogResponse:
-        connector, sql_connector = await self._load_sql_connector(connector_id)
-        schemas = await sql_connector.fetch_schemas()
-
-        schema_responses: List[SemanticModelCatalogSchemaResponse] = []
-        table_count = 0
-        column_count = 0
-        for schema_name in sorted(schemas):
-            table_names = await sql_connector.fetch_tables(schema_name)
-            table_responses: List[SemanticModelCatalogTableResponse] = []
-            for table_name in sorted(table_names):
-                raw_columns = await sql_connector.fetch_columns(schema_name, table_name)
-                columns = [
-                    SemanticModelCatalogColumnResponse(
-                        name=column.name,
-                        type=column.data_type,
-                        nullable=getattr(column, "is_nullable", None),
-                        primary_key=bool(getattr(column, "is_primary_key", False)),
-                    )
-                    for column in raw_columns
-                ]
-                table_reference = self._table_reference(schema_name, table_name)
-                table_responses.append(
-                    SemanticModelCatalogTableResponse(
-                        schema=schema_name,
-                        name=table_name,
-                        fully_qualified_name=table_reference,
-                        columns=columns,
-                    )
-                )
-                table_count += 1
-                column_count += len(columns)
-            schema_responses.append(
-                SemanticModelCatalogSchemaResponse(
-                    name=schema_name,
-                    tables=table_responses,
-                )
-            )
-
-        return SemanticModelCatalogResponse(
-            connector_id=connector_id,
-            schemas=schema_responses,
-            table_count=table_count,
-            column_count=column_count,
+        _ = connector_id
+        raise BusinessValidationError(
+            "Connector-scoped semantic model generation has been removed. Build semantic models from datasets instead."
         )
+
+    async def get_connector_catalog(
+        self,
+        *,
+        organization_id: UUID,
+        project_id: UUID | None = None,
+    ) -> SemanticModelCatalogResponse:
+        dataset_repository = self._require_dataset_repository()
+        datasets = await self._maybe_await(
+            dataset_repository.list_for_workspace(
+                workspace_id=organization_id,
+                project_id=project_id,
+            )
+        )
+        items = [self._to_catalog_item(dataset) for dataset in datasets]
+        return SemanticModelCatalogResponse(workspace_id=organization_id, items=items)
 
     async def generate_model_yaml_from_selection(
         self,
         *,
-        connector_id: UUID,
-        selected_tables: List[str],
-        selected_columns: Dict[str, List[str]],
+        organization_id: UUID,
+        selected_dataset_ids: list[UUID],
+        selected_fields: Dict[str, list[str]] | None = None,
         include_sample_values: bool = False,
         description: str | None = None,
     ) -> SemanticModelSelectionGenerateResponse:
-        connector, sql_connector = await self._load_sql_connector(connector_id)
-        catalog = await self.get_connector_catalog(connector_id)
-        table_blueprints = await self._build_selected_table_blueprints(
-            sql_connector=sql_connector,
-            catalog=catalog,
-            selected_tables=selected_tables,
-            selected_columns=selected_columns,
+        normalized_selected_fields = dict(selected_fields or {})
+        datasets = await self._load_selected_datasets(
+            organization_id=organization_id,
+            selected_dataset_ids=selected_dataset_ids,
         )
-        payload, warnings = self._build_payload_from_table_blueprints(
-            connector_name=connector.name,
-            table_blueprints=table_blueprints,
+        payload, warnings = self._build_payload_from_datasets(
+            datasets=datasets,
+            selected_fields=normalized_selected_fields,
             description=description,
         )
         if include_sample_values:
             warnings.append("include_sample_values is not currently supported for semantic model generation.")
-        self._validate_generated_payload(payload=payload, table_blueprints=table_blueprints)
-
+        self._validate_generated_payload(
+            payload=payload,
+            datasets=datasets,
+            selected_fields=normalized_selected_fields,
+        )
         return SemanticModelSelectionGenerateResponse(
             yaml_text=yaml.safe_dump(payload, sort_keys=False),
             warnings=warnings,
@@ -161,20 +125,18 @@ class SemanticModelService:
         project_id: UUID | None = None,
         model_kind: Literal["all", "standard", "unified"] = "all",
     ) -> list[SemanticModelRecordResponse]:
-        models = await self._repository.list_for_scope(
-            organization_id=organization_id,
-            project_id=project_id,
+        models = await self._maybe_await(
+            self._repository.list_for_scope(
+                organization_id=organization_id,
+                project_id=project_id,
+            )
         )
         if model_kind != "all":
-            models = [
-                model
-                for model in models
-                if self._resolve_model_kind(model) == model_kind
-            ]
+            models = [model for model in models if self._resolve_model_kind(model) == model_kind]
         return [self._normalize_record(model) for model in models]
 
     async def list_all_models(self) -> list[SemanticModelRecordResponse]:
-        models = await self._repository.get_all()
+        models = await self._maybe_await(self._repository.get_all())
         return [self._normalize_record(model) for model in models]
 
     async def get_model(
@@ -188,92 +150,49 @@ class SemanticModelService:
     async def delete_model(self, model_id: UUID, organization_id: UUID) -> None:
         model = await self._get_model_entity(model_id=model_id, organization_id=organization_id)
         if self._lineage_service is not None:
-            await self._lineage_service.delete_node_lineage(
-                workspace_id=organization_id,
-                node_type=(
-                    self._semantic_model_node_type(model)
-                ),
-                node_id=str(model.id),
-            )
-        await self._repository.delete(model)
-
-    async def create_model(
-        self,
-        request: SemanticModelCreateRequest,
-    ) -> SemanticModelRecordResponse:
-        organization = await self._organization_repository.get_by_id(
-            request.organization_id
-        )
-        if not organization:
-            raise BusinessValidationError("Organization not found")
-
-        project: Project | None = None
-        if request.project_id:
-            project: Project | None = await self._project_repository.get_by_id(request.project_id)
-            if not project:
-                raise BusinessValidationError("Project not found")
-            if project.organization_id != organization.id:
-                raise BusinessValidationError(
-                    "Project does not belong to the specified organization"
+            await self._maybe_await(
+                self._lineage_service.delete_node_lineage(
+                    workspace_id=organization_id,
+                    node_type=self._semantic_model_node_type(model),
+                    node_id=str(model.id),
                 )
-
-        raw_model_payload: Dict[str, Any] | None = None
-        if request.auto_generate or not request.model_yaml:
-            semantic_model: SemanticModel = await self._builder.build_for_scope(
-                connector_id=request.connector_id
             )
-        else:
-            raw_model_payload = self._parse_yaml_payload(request.model_yaml)
-            try:
-                semantic_model = load_semantic_model(request.model_yaml)
-            except SemanticModelError as exc:
-                raise BusinessValidationError(
-                    f"Semantic model failed validation: {exc}"
-                ) from exc
-        is_unified_model = self._is_unified_payload(raw_model_payload)
+        await self._maybe_await(self._repository.delete(model))
 
-        connector = await self._connector_service.get_connector(request.connector_id)
-        if connector and not semantic_model.connector and not is_unified_model:
-            semantic_model.connector = connector.name if isinstance(connector.name, str) else connector.name.value
-
-        if request.name and not semantic_model.name:
-            semantic_model.name = request.name
-        if request.description:
-            semantic_model.description = request.description
-
-        semantic_id: UUID = uuid.uuid4()
-
-        if not is_unified_model:
-            await self._populate_vector_indexes(semantic_model, request.connector_id, semantic_id)
-
-        if is_unified_model and raw_model_payload is not None:
-            payload = raw_model_payload
-            if request.name and not payload.get("name"):
-                payload["name"] = request.name
-            if request.description and not payload.get("description"):
-                payload["description"] = request.description
-        else:
-            payload = semantic_model.model_dump(by_alias=True, exclude_none=True)
-        model_yaml = yaml.safe_dump(payload, sort_keys=False)
-        content_json = json.dumps(payload)
-
-        entry = SemanticModelEntry(
-            id=semantic_id,
-            connector_id=request.connector_id,
+    async def create_model(self, request: SemanticModelCreateRequest) -> SemanticModelRecordResponse:
+        await self._assert_organization_scope(
             organization_id=request.organization_id,
             project_id=request.project_id,
-            name=request.name,
-            description=request.description,
-            content_yaml=model_yaml,
-            content_json=content_json,
+        )
+        payload, connector_id = await self._resolve_payload_for_create(
+            organization_id=request.organization_id,
+            request=request,
+        )
+        entry = SemanticModelEntry(
+            id=uuid.uuid4(),
+            connector_id=connector_id,
+            organization_id=request.organization_id,
+            project_id=request.project_id,
+            name=request.name.strip(),
+            description=(request.description.strip() if request.description else None),
+            content_yaml=yaml.safe_dump(payload, sort_keys=False),
+            content_json=json.dumps(payload),
             created_at=datetime.now(timezone.utc),
             updated_at=datetime.now(timezone.utc),
         )
-
         self._repository.add(entry)
+        try:
+            await self._flush_repository()
+        except IntegrityError as exc:
+            if connector_id is None and self._is_connector_null_integrity_error(exc):
+                raise BusinessValidationError(
+                    "semantic_models.connector_id is still enforced as NOT NULL in the running database. "
+                    "Apply the latest migration with 'alembic upgrade head' and retry."
+                ) from exc
+            raise
         if self._lineage_service is not None:
-            await self._lineage_service.register_semantic_model_lineage(model=entry)
-        return SemanticModelRecordResponse.model_validate(entry)
+            await self._maybe_await(self._lineage_service.register_semantic_model_lineage(model=entry))
+        return self._normalize_record(entry)
 
     async def update_model(
         self,
@@ -282,237 +201,224 @@ class SemanticModelService:
         request: SemanticModelUpdateRequest,
     ) -> SemanticModelRecordResponse:
         model = await self._get_model_entity(model_id=model_id, organization_id=organization_id)
-        organization = await self._organization_repository.get_by_id(organization_id)
-        if not organization:
-            raise BusinessValidationError("Organization not found")
-
-        project_id = model.project_id
-        if "project_id" in request.model_fields_set:
-            project_id = request.project_id
-        if project_id:
-            project = await self._project_repository.get_by_id(project_id)
-            if not project:
-                raise BusinessValidationError("Project not found")
-            if project.organization_id != organization.id:
-                raise BusinessValidationError(
-                    "Project does not belong to the specified organization"
-                )
-
-        connector_id = request.connector_id or model.connector_id
-
-        if request.name is not None and not request.name.strip():
-            raise BusinessValidationError("Semantic model name is required")
-
-        existing_payload = self._parse_model_payload(model)
-        raw_model_payload = self._parse_yaml_payload(request.model_yaml) if request.model_yaml is not None else None
-        rebuild_content = bool(request.auto_generate or request.model_yaml is not None)
-        is_unified_model = (
-            self._is_unified_payload(raw_model_payload)
-            if request.model_yaml is not None
-            else self._is_unified_payload(existing_payload)
-        )
-        if rebuild_content:
-            if request.auto_generate or not request.model_yaml:
-                semantic_model = await self._builder.build_for_scope(
-                    connector_id=connector_id
-                )
-            else:
-                try:
-                    semantic_model = load_semantic_model(request.model_yaml)
-                except SemanticModelError as exc:
-                    raise BusinessValidationError(
-                        f"Semantic model failed validation: {exc}"
-                    ) from exc
-        else:
-            try:
-                semantic_model = load_semantic_model(model.content_yaml)
-            except SemanticModelError as exc:
-                raise BusinessValidationError(
-                    f"Semantic model failed validation: {exc}"
-                ) from exc
-
-        connector = await self._connector_service.get_connector(connector_id)
-        if (
-            connector
-            and (request.connector_id is not None or not semantic_model.connector)
-            and not is_unified_model
-        ):
-            semantic_model.connector = connector.name if isinstance(connector.name, str) else connector.name.value
+        project_id = request.project_id if "project_id" in request.model_fields_set else model.project_id
+        await self._assert_organization_scope(organization_id=organization_id, project_id=project_id)
 
         if request.name is not None:
-            model.name = request.name.strip()
-            if model.name and not semantic_model.name:
-                semantic_model.name = model.name
+            stripped_name = request.name.strip()
+            if not stripped_name:
+                raise BusinessValidationError("Semantic model name is required")
+            model.name = stripped_name
         if request.description is not None:
             model.description = request.description.strip() or None
-            if model.description and not semantic_model.description:
-                semantic_model.description = model.description
-
-        model.connector_id = connector_id
         model.project_id = project_id
 
-        if rebuild_content and not is_unified_model:
-            await self._populate_vector_indexes(
-                semantic_model,
-                connector_id,
-                model.id,
-                reset_index=True,
+        if request.auto_generate or request.model_yaml is not None or request.source_dataset_ids is not None:
+            payload, connector_id = await self._resolve_payload_for_update(
+                organization_id=organization_id,
+                existing_model=model,
+                request=request,
             )
+            model.content_yaml = yaml.safe_dump(payload, sort_keys=False)
+            model.content_json = json.dumps(payload)
+            model.connector_id = connector_id
 
-        if is_unified_model:
-            if rebuild_content and raw_model_payload is not None:
-                payload = raw_model_payload
-            else:
-                payload = existing_payload or semantic_model.model_dump(by_alias=True, exclude_none=True)
-            if model.name and not payload.get("name"):
-                payload["name"] = model.name
-            if model.description and not payload.get("description"):
-                payload["description"] = model.description
-        else:
-            payload = semantic_model.model_dump(by_alias=True, exclude_none=True)
-        model.content_yaml = yaml.safe_dump(payload, sort_keys=False)
-        model.content_json = json.dumps(payload)
         model.updated_at = datetime.now(timezone.utc)
         if self._lineage_service is not None:
-            await self._lineage_service.register_semantic_model_lineage(model=model)
+            await self._maybe_await(self._lineage_service.register_semantic_model_lineage(model=model))
+        return self._normalize_record(model)
 
-        return SemanticModelRecordResponse.model_validate(model)
-
-    async def _load_sql_connector(self, connector_id: UUID):
-        connector = await self._connector_service.get_connector(connector_id)
-        if not connector.connector_type:
-            raise BusinessValidationError("Connector type is required to build semantic models.")
-        runtime_type = ConnectorRuntimeType(connector.connector_type.upper())
-        sql_connector = await self._connector_service.async_create_sql_connector(
-            runtime_type,
-            connector.config or {},
-        )
-        return connector, sql_connector
-
-    async def _build_selected_table_blueprints(
+    async def _resolve_payload_for_create(
         self,
         *,
-        sql_connector,
-        catalog: SemanticModelCatalogResponse,
-        selected_tables: List[str],
-        selected_columns: Dict[str, List[str]],
-    ) -> List[Dict[str, Any]]:
-        if not selected_tables:
-            raise BusinessValidationError("At least one table must be selected.")
-
-        table_lookup: Dict[str, SemanticModelCatalogTableResponse] = {}
-        table_name_lookup: Dict[str, List[SemanticModelCatalogTableResponse]] = {}
-        for schema_entry in catalog.schemas:
-            for table in schema_entry.tables:
-                normalized_ref = table.fully_qualified_name.strip().lower()
-                table_lookup[normalized_ref] = table
-                bare_name = table.name.strip().lower()
-                table_name_lookup.setdefault(bare_name, []).append(table)
-
-        normalized_selected_columns: Dict[str, List[str]] = {}
-        for table_key, columns in selected_columns.items():
-            normalized_key = str(table_key).strip().lower()
-            if not normalized_key:
-                continue
-            normalized_selected_columns[normalized_key] = [str(column).strip() for column in columns if str(column).strip()]
-
-        entity_name_registry: set[str] = set()
-        table_blueprints: List[Dict[str, Any]] = []
-        for selected_table in selected_tables:
-            table_reference = str(selected_table).strip()
-            if not table_reference:
-                continue
-            normalized_reference = table_reference.lower()
-            table = table_lookup.get(normalized_reference)
-            if table is None:
-                bare_name = normalized_reference.split(".")[-1]
-                candidates = table_name_lookup.get(bare_name, [])
-                if len(candidates) == 1:
-                    table = candidates[0]
-                else:
-                    raise BusinessValidationError(
-                        f"Selected table '{selected_table}' is unknown or ambiguous for this connector."
-                    )
-
-            column_lookup = {column.name.lower(): column for column in table.columns}
-            selected_column_names = (
-                normalized_selected_columns.get(normalized_reference)
-                or normalized_selected_columns.get(table.fully_qualified_name.lower())
-                or normalized_selected_columns.get(table.name.lower())
+        organization_id: UUID,
+        request: SemanticModelCreateRequest,
+    ) -> tuple[dict[str, Any], UUID | None]:
+        if request.auto_generate:
+            if not request.source_dataset_ids:
+                raise BusinessValidationError("source_dataset_ids are required when auto_generate is true.")
+            generation = await self.generate_model_yaml_from_selection(
+                organization_id=organization_id,
+                selected_dataset_ids=request.source_dataset_ids,
+                selected_fields={},
+                include_sample_values=False,
+                description=request.description,
             )
-            if not selected_column_names:
-                selected_column_names = [column.name for column in table.columns]
+            payload = self._parse_yaml_payload(generation.yaml_text) or {}
+        else:
+            if not request.model_yaml:
+                raise BusinessValidationError("model_yaml is required when auto_generate is false.")
+            payload = self._parse_yaml_payload(request.model_yaml)
+            if payload is None:
+                raise BusinessValidationError("Semantic model YAML could not be parsed.")
+            try:
+                load_semantic_model(payload)
+            except SemanticModelError as exc:
+                raise BusinessValidationError(f"Semantic model failed validation: {exc}") from exc
 
-            resolved_columns: List[SemanticModelCatalogColumnResponse] = []
-            for column_name in selected_column_names:
-                column = column_lookup.get(column_name.lower())
+        if request.name and not payload.get("name"):
+            payload["name"] = request.name.strip()
+        if request.description and not payload.get("description"):
+            payload["description"] = request.description.strip()
+
+        source_dataset_ids = (
+            list(request.source_dataset_ids)
+            if request.source_dataset_ids is not None
+            else self._extract_source_dataset_ids_from_payload(payload)
+        )
+        connector_id = await self._resolve_connector_id(
+            organization_id=organization_id,
+            source_dataset_ids=source_dataset_ids,
+            fallback=request.connector_id,
+        )
+        return payload, connector_id
+
+    async def _resolve_payload_for_update(
+        self,
+        *,
+        organization_id: UUID,
+        existing_model: SemanticModelEntry,
+        request: SemanticModelUpdateRequest,
+    ) -> tuple[dict[str, Any], UUID | None]:
+        if request.auto_generate:
+            selected_dataset_ids = request.source_dataset_ids or self._extract_source_dataset_ids_from_payload(
+                self._parse_model_payload(existing_model) or {}
+            )
+            if not selected_dataset_ids:
+                raise BusinessValidationError("source_dataset_ids are required to auto-generate a semantic model.")
+            generation = await self.generate_model_yaml_from_selection(
+                organization_id=organization_id,
+                selected_dataset_ids=selected_dataset_ids,
+                selected_fields={},
+                include_sample_values=False,
+                description=request.description or existing_model.description,
+            )
+            payload = self._parse_yaml_payload(generation.yaml_text) or {}
+        elif request.model_yaml is not None:
+            payload = self._parse_yaml_payload(request.model_yaml)
+            if payload is None:
+                raise BusinessValidationError("Semantic model YAML could not be parsed.")
+            try:
+                load_semantic_model(payload)
+            except SemanticModelError as exc:
+                raise BusinessValidationError(f"Semantic model failed validation: {exc}") from exc
+        else:
+            payload = self._parse_model_payload(existing_model) or {}
+
+        if existing_model.name and not payload.get("name"):
+            payload["name"] = existing_model.name
+        if existing_model.description and not payload.get("description"):
+            payload["description"] = existing_model.description
+        if request.name is not None:
+            payload["name"] = request.name.strip()
+        if request.description is not None:
+            payload["description"] = request.description.strip() or None
+
+        source_dataset_ids = (
+            list(request.source_dataset_ids)
+            if request.source_dataset_ids is not None
+            else self._extract_source_dataset_ids_from_payload(payload)
+        )
+        connector_id = await self._resolve_connector_id(
+            organization_id=organization_id,
+            source_dataset_ids=source_dataset_ids,
+            fallback=request.connector_id if request.connector_id is not None else existing_model.connector_id,
+        )
+        return payload, connector_id
+
+    async def _assert_organization_scope(self, *, organization_id: UUID, project_id: UUID | None) -> None:
+        if self._organization_repository is not None:
+            organization = await self._maybe_await(self._organization_repository.get_by_id(organization_id))
+            if not organization:
+                raise BusinessValidationError("Organization not found")
+        if project_id and self._project_repository is not None:
+            project = await self._maybe_await(self._project_repository.get_by_id(project_id))
+            if not project:
+                raise BusinessValidationError("Project not found")
+            if getattr(project, "organization_id", None) != organization_id:
+                raise BusinessValidationError("Project does not belong to the specified organization")
+
+    async def _load_selected_datasets(
+        self,
+        *,
+        organization_id: UUID,
+        selected_dataset_ids: Iterable[UUID],
+    ) -> list[DatasetRecord]:
+        dataset_repository = self._require_dataset_repository()
+        dataset_ids = list(dict.fromkeys(selected_dataset_ids))
+        if not dataset_ids:
+            raise BusinessValidationError("At least one dataset must be selected.")
+        datasets = await self._maybe_await(
+            dataset_repository.get_by_ids_for_workspace(
+                workspace_id=organization_id,
+                dataset_ids=dataset_ids,
+            )
+        )
+        if len(datasets) != len(dataset_ids):
+            found = {dataset.id for dataset in datasets}
+            missing = [str(dataset_id) for dataset_id in dataset_ids if dataset_id not in found]
+            raise BusinessValidationError(
+                f"Selected datasets were not found in this workspace: {', '.join(missing)}"
+            )
+        datasets_by_id = {dataset.id: dataset for dataset in datasets}
+        return [datasets_by_id[dataset_id] for dataset_id in dataset_ids]
+
+    def _build_payload_from_datasets(
+        self,
+        *,
+        datasets: list[DatasetRecord],
+        selected_fields: Mapping[str, list[str]],
+        description: str | None,
+    ) -> tuple[dict[str, Any], list[str]]:
+        warnings: list[str] = []
+        datasets_payload: Dict[str, Any] = {}
+        dataset_key_lookup: dict[UUID, str] = {}
+        registry: set[str] = set()
+
+        for dataset in datasets:
+            dataset_key = self._build_dataset_key(dataset=dataset, registry=registry)
+            dataset_key_lookup[dataset.id] = dataset_key
+            field_lookup = {
+                column.name.lower(): column
+                for column in list(getattr(dataset, "columns", []) or [])
+                if getattr(column, "is_allowed", True)
+            }
+            selected_names = [field.strip() for field in selected_fields.get(str(dataset.id), []) if field and field.strip()]
+            if not selected_names:
+                selected_names = [column.name for column in field_lookup.values()]
+            selected_columns = []
+            for field_name in selected_names:
+                column = field_lookup.get(field_name.lower())
                 if column is None:
                     raise BusinessValidationError(
-                        f"Column '{column_name}' is not available on table '{table.fully_qualified_name}'."
+                        f"Field '{field_name}' is not available on dataset '{dataset.name}'."
                     )
-                resolved_columns.append(column)
+                selected_columns.append(column)
 
-            foreign_keys = await sql_connector.fetch_foreign_keys(table.schema, table.name)
-            entity_name = self._build_entity_name(
-                schema=table.schema,
-                table_name=table.name,
-                registry=entity_name_registry,
-            )
-            table_blueprints.append(
-                {
-                    "entity_name": entity_name,
-                    "schema": table.schema,
-                    "table_name": table.name,
-                    "table_reference": table.fully_qualified_name,
-                    "selected_columns": resolved_columns,
-                    "foreign_keys": foreign_keys,
-                }
-            )
-
-        if not table_blueprints:
-            raise BusinessValidationError("No valid table selections were provided.")
-        return table_blueprints
-
-    def _build_payload_from_table_blueprints(
-        self,
-        *,
-        connector_name: str,
-        table_blueprints: List[Dict[str, Any]],
-        description: str | None = None,
-    ) -> Tuple[Dict[str, Any], List[str]]:
-        warnings: List[str] = []
-        tables_payload: Dict[str, Any] = {}
-        entity_lookup = {
-            self._table_reference(blueprint["schema"], blueprint["table_name"]).lower(): blueprint["entity_name"]
-            for blueprint in table_blueprints
-        }
-        relationship_payload: List[Dict[str, Any]] = []
-        relationship_names: set[str] = set()
-
-        for blueprint in table_blueprints:
-            dimensions: List[Dict[str, Any]] = []
-            measures: List[Dict[str, Any]] = []
-            for column in blueprint["selected_columns"]:
-                mapped_type = self._map_column_type(column.type)
+            dimensions: list[dict[str, Any]] = []
+            measures: list[dict[str, Any]] = []
+            for column in selected_columns:
+                mapped_type = self._map_column_type(getattr(column, "data_type", "string"))
+                is_primary_key = self._is_probable_primary_key(column.name, dataset_key)
                 is_identifier = column.name.lower() == "id" or column.name.lower().endswith("_id")
-                if mapped_type in {"integer", "decimal", "float"} and not is_identifier and not column.primary_key:
+                if mapped_type in {"integer", "decimal", "float", "number"} and not is_identifier and not is_primary_key:
                     measures.append(
                         {
                             "name": column.name,
-                            "expression": column.name,
+                            "expression": column.expression or column.name,
                             "type": mapped_type,
                             "aggregation": "sum",
-                            "description": f"Aggregate {column.name} from {blueprint['table_name']}",
+                            "description": f"Aggregate {column.name} from {dataset.name}",
                         }
                     )
                 else:
                     dimensions.append(
                         {
                             "name": column.name,
-                            "expression": column.name,
+                            "expression": column.expression or column.name,
                             "type": mapped_type,
-                            "primary_key": bool(column.primary_key),
-                            "description": f"Column {column.name} from {blueprint['table_name']}",
+                            "primary_key": is_primary_key,
+                            "description": f"Field {column.name} from {dataset.name}",
                         }
                     )
 
@@ -528,55 +434,88 @@ class SemanticModelService:
                     }
                 )
                 warnings.append(
-                    f"Table '{blueprint['table_reference']}' had only numeric columns; converted one column to a dimension."
+                    f"Dataset '{dataset.name}' had only numeric fields; converted one field to a dimension."
                 )
 
-            tables_payload[blueprint["entity_name"]] = {
-                "schema": blueprint["schema"],
-                "name": blueprint["table_name"],
-                "description": f"Table {blueprint['table_name']} from connector {connector_name}",
+            datasets_payload[dataset_key] = {
+                "dataset_id": str(dataset.id),
+                "relation_name": dataset_key,
+                "description": dataset.description or f"Dataset {dataset.name}",
                 "dimensions": dimensions or None,
                 "measures": measures or None,
             }
 
-        for blueprint in table_blueprints:
-            source_entity = blueprint["entity_name"]
-            for foreign_key in blueprint["foreign_keys"]:
-                target_reference = self._table_reference(foreign_key.schema, foreign_key.table).lower()
-                target_entity = entity_lookup.get(target_reference)
-                if not target_entity:
-                    continue
-                relationship_name = f"{source_entity}_to_{target_entity}"
-                if relationship_name in relationship_names:
-                    continue
-                relationship_names.add(relationship_name)
-                relationship_payload.append(
-                    {
-                        "name": relationship_name,
-                        "from_": source_entity,
-                        "to": target_entity,
-                        "type": "many_to_one",
-                        "join_on": f"{source_entity}.{foreign_key.column} = {target_entity}.{foreign_key.foreign_key}",
-                    }
-                )
-
-        if not relationship_payload:
-            warnings.append("No relationships were inferred from selected tables.")
+        relationships = self._infer_dataset_relationships(datasets=datasets, dataset_key_lookup=dataset_key_lookup)
+        if not relationships:
+            warnings.append("No relationships were inferred from selected datasets.")
 
         payload = {
             "version": "1.0",
-            "connector": connector_name,
-            "description": description or f"Semantic Model generated from {connector_name}",
-            "tables": tables_payload,
-            "relationships": relationship_payload or None,
+            "description": description or "Semantic model generated from selected datasets",
+            "datasets": datasets_payload,
+            "relationships": relationships or None,
         }
         return payload, warnings
+
+    def _infer_dataset_relationships(
+        self,
+        *,
+        datasets: list[DatasetRecord],
+        dataset_key_lookup: Mapping[UUID, str],
+    ) -> list[dict[str, Any]]:
+        relationships: list[dict[str, Any]] = []
+        signatures: set[tuple[str, str, str, str]] = set()
+        primary_keys: dict[UUID, list[str]] = {}
+        all_columns: dict[UUID, set[str]] = {}
+        for dataset in datasets:
+            column_names = [column.name for column in list(getattr(dataset, "columns", []) or []) if getattr(column, "is_allowed", True)]
+            all_columns[dataset.id] = {name.lower() for name in column_names}
+            primary_keys[dataset.id] = [name for name in column_names if self._is_probable_primary_key(name, dataset.name)]
+
+        for dataset in datasets:
+            source_key = dataset_key_lookup[dataset.id]
+            column_names = [column.name for column in list(getattr(dataset, "columns", []) or []) if getattr(column, "is_allowed", True)]
+            for column_name in column_names:
+                lowered = column_name.lower()
+                if lowered == "id" or not lowered.endswith("_id"):
+                    continue
+                for target in datasets:
+                    if target.id == dataset.id:
+                        continue
+                    target_key = dataset_key_lookup[target.id]
+                    target_pks = primary_keys.get(target.id) or []
+                    target_fields = all_columns.get(target.id) or set()
+                    target_field = None
+                    if lowered in target_fields and lowered in {value.lower() for value in target_pks}:
+                        target_field = column_name
+                    elif "id" in {value.lower() for value in target_pks} and self._matches_target_name(lowered, target_key, target.name):
+                        target_field = next((value for value in target_pks if value.lower() == "id"), target_pks[0] if target_pks else None)
+                    elif lowered in target_fields:
+                        target_field = column_name
+                    if not target_field:
+                        continue
+                    signature = (source_key, column_name, target_key, target_field)
+                    if signature in signatures:
+                        continue
+                    signatures.add(signature)
+                    relationships.append(
+                        {
+                            "name": f"{source_key}_to_{target_key}",
+                            "source_dataset": source_key,
+                            "source_field": column_name,
+                            "target_dataset": target_key,
+                            "target_field": target_field,
+                            "type": "many_to_one",
+                        }
+                    )
+        return relationships
 
     def _validate_generated_payload(
         self,
         *,
         payload: Dict[str, Any],
-        table_blueprints: List[Dict[str, Any]],
+        datasets: list[DatasetRecord],
+        selected_fields: Mapping[str, list[str]],
     ) -> None:
         try:
             model = load_semantic_model(payload)
@@ -587,65 +526,43 @@ class SemanticModelService:
         if len(relationship_names) != len(set(relationship_names)):
             raise BusinessValidationError("Generated semantic model contains duplicate relationship names.")
 
-        for blueprint in table_blueprints:
-            entity_name = blueprint["entity_name"]
-            table = model.tables.get(entity_name)
-            if table is None:
-                raise BusinessValidationError(
-                    f"Generated semantic model is missing selected table '{entity_name}'."
-                )
-            selected_column_names = {column.name for column in blueprint["selected_columns"]}
+        payload_keys = {str(dataset.dataset_id) for dataset in model.datasets.values()}
+        expected_keys = {str(dataset.id) for dataset in datasets}
+        if payload_keys != expected_keys:
+            raise BusinessValidationError("Generated semantic model does not reference the selected datasets.")
+
+        for dataset in datasets:
+            selected_column_names = set(selected_fields.get(str(dataset.id), [])) or {
+                column.name
+                for column in list(getattr(dataset, "columns", []) or [])
+                if getattr(column, "is_allowed", True)
+            }
+            matching = next(
+                (
+                    semantic_dataset
+                    for semantic_dataset in model.datasets.values()
+                    if str(semantic_dataset.dataset_id) == str(dataset.id)
+                ),
+                None,
+            )
+            if matching is None:
+                raise BusinessValidationError(f"Generated semantic model is missing dataset '{dataset.name}'.")
             generated_column_names = {
-                dimension.name for dimension in table.dimensions or []
+                dimension.name for dimension in matching.dimensions or []
             } | {
-                measure.name for measure in table.measures or []
+                measure.name for measure in matching.measures or []
             }
             if selected_column_names != generated_column_names:
                 raise BusinessValidationError(
-                    f"Generated semantic model columns do not match selection for table '{blueprint['table_reference']}'."
+                    f"Generated semantic model fields do not match selection for dataset '{dataset.name}'."
                 )
 
-    @staticmethod
-    def _table_reference(schema: str, table_name: str) -> str:
-        schema_value = (schema or "").strip()
-        table_value = (table_name or "").strip()
-        if schema_value:
-            return f"{schema_value}.{table_value}"
-        return table_value
-
-    @staticmethod
-    def _build_entity_name(*, schema: str, table_name: str, registry: set[str]) -> str:
-        base_name = re.sub(r"[^a-zA-Z0-9_]+", "_", f"{schema}_{table_name}".strip("_")).lower()
-        root_name = base_name or "table"
-        candidate = root_name
-        suffix = 2
-        while candidate in registry:
-            candidate = f"{root_name}_{suffix}"
-            suffix += 1
-        registry.add(candidate)
-        return candidate
-
-    @staticmethod
-    def _map_column_type(data_type: str) -> str:
-        normalized = (data_type or "").lower()
-        if any(token in normalized for token in TYPE_NUMERIC):
-            if "int" in normalized and "point" not in normalized:
-                return "integer"
-            if any(token in normalized for token in ("double", "float")):
-                return "float"
-            return "decimal"
-        if any(token == normalized or token in normalized for token in TYPE_BOOLEAN):
-            return "boolean"
-        if any(token == normalized or token in normalized for token in TYPE_DATE) or any(
-            token in normalized for token in ("date", "time")
-        ):
-            return "date"
-        return "string"
-
     async def _get_model_entity(self, model_id: UUID, organization_id: UUID) -> SemanticModelEntry:
-        model = await self._repository.get_for_scope(
-            model_id=model_id,
-            organization_id=organization_id,
+        model = await self._maybe_await(
+            self._repository.get_for_scope(
+                model_id=model_id,
+                organization_id=organization_id,
+            )
         )
         if not model:
             raise BusinessValidationError("Semantic model not found")
@@ -653,17 +570,9 @@ class SemanticModelService:
 
     def _normalize_record(self, model: SemanticModelEntry) -> SemanticModelRecordResponse:
         response = SemanticModelRecordResponse.model_validate(model)
-        if self._resolve_model_kind(model) == "unified":
-            return response
-        try:
-            semantic_model = load_semantic_model(response.content_yaml)
-        except SemanticModelError:
-            return response
-        if response.name and not semantic_model.name:
-            semantic_model.name = response.name
-        if response.description and not semantic_model.description:
-            semantic_model.description = response.description
-        response.content_yaml = semantic_model.yml_dump()
+        response.source_dataset_ids = self._extract_source_dataset_ids_from_payload(
+            self._parse_model_payload(model) or {}
+        )
         return response
 
     @staticmethod
@@ -671,9 +580,7 @@ class SemanticModelService:
         payload = SemanticModelService._parse_model_payload(model)
         if payload is None:
             return "standard"
-        has_unified_shape = isinstance(payload.get("semantic_models"), list) or isinstance(
-            payload.get("source_models"), list
-        )
+        has_unified_shape = isinstance(payload.get("semantic_models"), list) or isinstance(payload.get("source_models"), list)
         return "unified" if has_unified_shape else "standard"
 
     @staticmethod
@@ -715,286 +622,155 @@ class SemanticModelService:
         return None
 
     @staticmethod
-    def _is_unified_payload(payload: Dict[str, Any] | None) -> bool:
-        if payload is None:
-            return False
-        return isinstance(payload.get("semantic_models"), list) or isinstance(payload.get("source_models"), list)
-
-    async def _populate_vector_indexes(
-        self,
-        semantic_model: SemanticModel,
-        connector_id: UUID,
-        semantic_id: UUID,
-        reset_index: bool = False,
-    ) -> None:
-        vector_targets = self._discover_vectorized_dimensions(semantic_model)
-        if not vector_targets:
-            return
-
-        connector = await self._connector_service.get_connector(connector_id)
-        if not connector:
-            raise BusinessValidationError("Connector not found for vectorization.")
-
-        if not connector.connector_type:
-            raise BusinessValidationError("Connector missing runtime type; cannot vectorize semantic model.")
-        runtime = ConnectorRuntimeType(connector.connector_type.upper())
-        sql_connector = await self._connector_service.async_create_sql_connector(
-            runtime,
-            connector.config or {},
-        )
-
-        embedder = await self._build_embedding_provider()
-
-        vector_db_types: List[VectorDBType] = self._vector_factory.get_all_managed_vector_dbs()
-        if not vector_db_types:
-            raise BusinessValidationError(
-                "No managed vector databases are configured; cannot vectorize semantic model."
-            )
-
-        vector_managed_instance, connector_response = await self.__get_default_semantic_vecotr_connnector(connector.organization_id, semantic_id)
-        await vector_managed_instance.test_connection()
-        if reset_index:
-            # Ensure the managed index can be recreated when updating an existing model.
-            try:
-                await vector_managed_instance.delete_index()
-            except Exception as exc:
-                message = str(exc).lower()
-                if "not found" not in message and "does not exist" not in message:
-                    raise
-
-        index_initialized = False
-        index_dimension: Optional[int] = None
-
-        for target in vector_targets:
-            raw_values = await self._fetch_distinct_values(
-                sql_connector,
-                target["schema"],
-                target["table"],
-                target["column"],
-            )
-            values = self._prepare_vector_values(raw_values)
-            if not values:
-                target["dimension"].vector_index = None
+    def _extract_source_dataset_ids_from_payload(payload: Mapping[str, Any]) -> list[UUID]:
+        datasets = payload.get("datasets") if isinstance(payload.get("datasets"), Mapping) else payload.get("tables")
+        if not isinstance(datasets, Mapping):
+            return []
+        values: list[UUID] = []
+        seen: set[UUID] = set()
+        for raw_dataset in datasets.values():
+            if not isinstance(raw_dataset, Mapping):
                 continue
-
-            embeddings = await embedder.embed(values)
-            if not embeddings:
-                target["dimension"].vector_index = None
+            raw_dataset_id = raw_dataset.get("dataset_id") or raw_dataset.get("datasetId")
+            if not raw_dataset_id:
                 continue
-
-            vector_length = len(embeddings[0])
-            if not index_initialized:
-                await vector_managed_instance.create_index(dimension=vector_length)
-                index_initialized = True
-                index_dimension = vector_length
-            elif index_dimension and vector_length != index_dimension:
-                raise BusinessValidationError(
-                    "Embedding dimension mismatch while populating vector index."
-                )
-
-            metadata_entries = [
-                {
-                    "entity": target["entity"],
-                    "column": target["column"],
-                    "value": value,
-                }
-                for value in values
-            ]
-
             try:
-                await vector_managed_instance.upsert_vectors(
-                    embeddings,
-                    metadata=metadata_entries,
-                )
-            except ConnectorError as exc:
-                raise BusinessValidationError(
-                    f"Failed to persist vectors for {target['entity']}.{target['column']}: {exc}"
-                ) from exc
+                dataset_id = UUID(str(raw_dataset_id))
+            except (TypeError, ValueError):
+                continue
+            if dataset_id in seen:
+                continue
+            seen.add(dataset_id)
+            values.append(dataset_id)
+        return values
 
-            vector_reference = self._build_vector_reference(
-                vector_db_type=vector_managed_instance.VECTOR_DB_TYPE,
-                connector_id=connector_id,
-                entity=target["entity"],
-                column=target["column"],
-                vector_db_config=getattr(vector_managed_instance, "config", None),
-            )
-
-            vector_index_meta: Dict[str, Any] = {
-                "model": embedder.embedding_model,
-                "dimension": vector_length,
-                "size": len(values),
-                "vector_namespace": str(connector_response.id),
-            }
-            # Persist the backing vector store metadata so the orchestrator can evolve to read from it.
-            vector_index_meta["vector_store"] = {
-                "type": vector_managed_instance.VECTOR_DB_TYPE.value,
-            }
-            config_dict = getattr(vector_managed_instance, "config", None)
-            location = getattr(config_dict, "location", None)
-            if location:
-                vector_index_meta["vector_store"]["location"] = location
-            vector_index_meta["reference"] = {
-                "entity": target["entity"],
-                "column": target["column"],
-                "vector_reference": vector_reference,
-            }
-
-            target["dimension"].vector_index = vector_index_meta
-            target["dimension"].vector_reference = vector_reference
-
-    async def __get_default_semantic_vecotr_connnector(
-            self,
-            organization_id: UUID,
-            semantic_id: UUID
-    ) -> Tuple[ManagedVectorDB, ConnectorResponse]:
-        #TODO: revist this, currently only supports FAISS, will break on qdrant managed vector db
-
-        default_vector_connector_id: str | None = await self._emvironment_service.get_setting(
-            organization_id=organization_id,
-            key=EnvironmentSettingKey.DEFAULT_SEMANTIC_VECTOR_CONNECTOR.value,
-        )
-        if not default_vector_connector_id:
-            raise BusinessValidationError(
-                "Default semantic vector connector not configured"
-            )
-
-        connector_response: ConnectorResponse = await self._connector_service.get_connector(UUID(default_vector_connector_id))
-
-        vector_managed_class_ref: Type[ManagedVectorDB] = (
-            self._vector_factory.get_managed_vector_db_class_reference(VectorDBType(connector_response.connector_type))    
-        )
-        vector_id: str = f"semantic_model_{connector_response.id.hex}_{semantic_id.hex}_idx" # type: ignore
-        vector_managed_instance: ManagedVectorDB = await vector_managed_class_ref.create_managed_instance(
-            kwargs={
-                "index_name": vector_id
-            },
-        )
-
-        return vector_managed_instance, connector_response
-
-    def _discover_vectorized_dimensions(self, semantic_model: SemanticModel) -> List[Dict[str, Any]]:
-        targets: List[Dict[str, Any]] = []
-        for entity_name, table in semantic_model.tables.items():
-            schema = table.schema or None
-            table_name = table.name
-            for dimension in table.dimensions or []:
-                if not dimension.vectorized:
-                    continue
-                targets.append(
-                    {
-                        "entity": entity_name,
-                        "schema": schema,
-                        "table": table_name,
-                        "column": dimension.name,
-                        "dimension": dimension,
-                    }
-                )
-        return targets
-
-    def _build_vector_reference(
+    async def _resolve_connector_id(
         self,
         *,
-        vector_db_type: VectorDBType,
-        connector_id: UUID,
-        entity: str,
-        column: str,
-        vector_db_config: Any | None,
-    ) -> str:
-        """
-        Build a stable reference string pointing to the managed vector index for a given entity/column pair.
-        """
-        location = getattr(vector_db_config, "location", None)
-        location_token = str(location).strip() if location else "managed"
-        entity_component = entity.replace(" ", "_")
-        column_component = column.replace(" ", "_")
-        return f"{vector_db_type.value}:{location_token}:{connector_id}:{entity_component}.{column_component}"
-
-    async def _build_embedding_provider(self) -> EmbeddingProvider:
-        connections = await self._agent_service.list_llm_connection_secrets()
-        if not connections:
-            raise BusinessValidationError(
-                "No LLM connections configured; enable one before vectorizing semantic models."
+        organization_id: UUID,
+        source_dataset_ids: Iterable[UUID],
+        fallback: UUID | None,
+    ) -> UUID | None:
+        dataset_ids = list(dict.fromkeys(source_dataset_ids))
+        if not dataset_ids:
+            return fallback
+        if self._dataset_repository is None:
+            return fallback
+        datasets = await self._maybe_await(
+            self._dataset_repository.get_by_ids_for_workspace(
+                workspace_id=organization_id,
+                dataset_ids=dataset_ids,
             )
-        connection = connections[0]
-        try:
-            return EmbeddingProvider.from_llm_connection(connection)
-        except EmbeddingProviderError as exc:
-            raise BusinessValidationError(f"Embedding provider misconfigured: {exc}") from exc
+        )
+        connector_ids = {
+            connection_id
+            for dataset in datasets
+            if (connection_id := getattr(dataset, "connection_id", None)) is not None
+        }
+        if len(connector_ids) == 1:
+            return next(iter(connector_ids))
+        if len(connector_ids) > 1:
+            return None
+        return fallback
 
-    async def _fetch_distinct_values(
-        self,
-        sql_connector,
-        schema: Optional[str],
-        table_name: str,
-        column_name: str,
-    ) -> List[Any]:
-        attempts = self._build_identifier_attempts(schema, table_name, column_name)
-        last_error: Exception | None = None
-        for attempt in attempts:
-            query = (
-                f"SELECT DISTINCT {attempt['column']} "
-                f"FROM {attempt['table']} "
-                f"WHERE {attempt['column']} IS NOT NULL "
-            )
-            try:
-                result = await sql_connector.execute(query)
-            except (ConnectorError, Exception) as exc:  # pragma: no cover - depends on connector runtime
-                last_error = exc
-                continue
-            return [row[0] for row in result.rows if row]
-
-        if last_error:
-            raise BusinessValidationError(
-                f"Unable to fetch values for {table_name}.{column_name}: {last_error}"
-            ) from last_error
-        return []
-
-    def _build_identifier_attempts(
-        self,
-        schema: Optional[str],
-        table_name: str,
-        column_name: str,
-    ) -> List[Dict[str, str]]:
-        attempts = []
-        for left, right in (('"', '"'), ("`", "`"), ("[", "]"), (None, None)):
-            column_expr = self._format_identifier(column_name, left, right)
-            if schema:
-                table_expr = (
-                    f"{self._format_identifier(schema, left, right)}."
-                    f"{self._format_identifier(table_name, left, right)}"
-                )
-            else:
-                table_expr = self._format_identifier(table_name, left, right)
-            attempts.append({"table": table_expr, "column": column_expr})
-        return attempts
+    async def _flush_repository(self) -> None:
+        flush = getattr(self._repository, "flush", None)
+        if flush is None:
+            return
+        await self._maybe_await(flush())
 
     @staticmethod
-    def _format_identifier(value: str, left: Optional[str], right: Optional[str]) -> str:
-        if not left and not right:
-            return value
-        left_token = left or ""
-        right_token = right or ""
-        escaped = value
-        if right_token:
-            escaped = escaped.replace(right_token, right_token * 2)
-        elif left_token:
-            escaped = escaped.replace(left_token, left_token * 2)
-        return f"{left_token}{escaped}{right_token}"
+    def _is_connector_null_integrity_error(exc: IntegrityError) -> bool:
+        message = str(exc).lower()
+        return "connector_id" in message and ("not-null" in message or "null value" in message)
 
-    def _prepare_vector_values(self, values: List[Any]) -> List[str]:
-        deduped: List[str] = []
-        seen: set[str] = set()
-        for value in values:
-            if value is None:
-                continue
-            text = str(value).strip()
-            if not text:
-                continue
-            if len(text) > VALUE_MAX_LENGTH:
-                text = text[:VALUE_MAX_LENGTH]
-            lowered = text.lower()
-            if lowered in seen:
-                continue
-            seen.add(lowered)
-            deduped.append(text)
-        return deduped
+    def _to_catalog_item(self, dataset: DatasetRecord) -> SemanticModelCatalogDatasetResponse:
+        fields = [
+            SemanticModelCatalogFieldResponse(
+                name=column.name,
+                type=column.data_type,
+                nullable=column.nullable,
+                primary_key=self._is_probable_primary_key(column.name, dataset.name),
+            )
+            for column in list(getattr(dataset, "columns", []) or [])
+            if getattr(column, "is_allowed", True)
+        ]
+        return SemanticModelCatalogDatasetResponse(
+            id=dataset.id,
+            name=dataset.name,
+            sql_alias=dataset.sql_alias,
+            description=dataset.description,
+            connection_id=dataset.connection_id,
+            source_kind=dataset.source_kind,
+            storage_kind=dataset.storage_kind,
+            fields=fields,
+        )
+
+    def _build_dataset_key(self, *, dataset: DatasetRecord, registry: set[str]) -> str:
+        base_name = re.sub(r"[^a-zA-Z0-9_]+", "_", (dataset.sql_alias or dataset.name or "dataset").strip()).strip("_").lower()
+        candidate = base_name or f"dataset_{dataset.id.hex[:8]}"
+        suffix = 2
+        while candidate in registry:
+            candidate = f"{base_name}_{suffix}"
+            suffix += 1
+        registry.add(candidate)
+        return candidate
+
+    @staticmethod
+    def _map_column_type(data_type: str) -> str:
+        normalized = (data_type or "").lower()
+        if any(token in normalized for token in TYPE_NUMERIC):
+            if "int" in normalized and "point" not in normalized:
+                return "integer"
+            if any(token in normalized for token in ("double", "float", "real")):
+                return "float"
+            return "decimal"
+        if any(token == normalized or token in normalized for token in TYPE_BOOLEAN):
+            return "boolean"
+        if any(token == normalized or token in normalized for token in TYPE_DATE) or any(
+            token in normalized for token in ("date", "time")
+        ):
+            return "date"
+        return "string"
+
+    @staticmethod
+    def _is_probable_primary_key(column_name: str, dataset_name: str) -> bool:
+        normalized_column = column_name.lower()
+        normalized_dataset = re.sub(r"[^a-z0-9]", "", dataset_name.lower())
+        if normalized_column == "id":
+            return True
+        if normalized_column == f"{normalized_dataset}id":
+            return True
+        if normalized_column == f"{normalized_dataset}_id":
+            return True
+        return False
+
+    @staticmethod
+    def _matches_target_name(column_name: str, dataset_key: str, dataset_name: str) -> bool:
+        normalized_column = column_name.lower()
+        base_candidates = {
+            re.sub(r"[^a-z0-9]", "", dataset_key.lower()),
+            re.sub(r"[^a-z0-9]", "", dataset_name.lower()),
+        }
+        candidates = {
+            candidate_variant
+            for candidate in base_candidates
+            if candidate
+            for candidate_variant in {candidate, candidate.rstrip("s")}
+            if candidate_variant
+        }
+        for candidate in candidates:
+            if normalized_column in {f"{candidate}_id", f"{candidate}s_id"}:
+                return True
+        return False
+
+    def _require_dataset_repository(self) -> DatasetRepository:
+        if self._dataset_repository is None:
+            raise BusinessValidationError("Dataset repository is required for semantic model operations.")
+        return self._dataset_repository
+
+    @staticmethod
+    async def _maybe_await(value: Any) -> Any:
+        if inspect.isawaitable(value):
+            return await value
+        return value

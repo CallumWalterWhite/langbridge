@@ -1,8 +1,8 @@
 try:  # pragma: no cover - optional deps for analyst stack can be missing in lightweight environments
-    from .analyst import AnalystAgent, SemanticToolSelector, ToolSelectionError
+    from .analyst import AnalystAgent, AnalyticalContextSelector, ToolSelectionError
 except Exception:  # pragma: no cover
     AnalystAgent = None
-    SemanticToolSelector = None
+    AnalyticalContextSelector = None
     ToolSelectionError = None
 
 try:  # pragma: no cover
@@ -52,7 +52,7 @@ except ImportError:  # pragma: no cover - optional dependency
 
 __all__ = [
     "AnalystAgent",
-    "SemanticToolSelector",
+    "AnalyticalContextSelector",
     "ToolSelectionError",
     "BICopilotAgent",
     "DeepResearchAgent",

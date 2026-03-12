@@ -355,6 +355,8 @@ class Container(containers.DeclarativeContainer):
         agent_service=agent_service,
         semantic_search_service=semantic_search_service,
         emvironment_service=environment_service,
+        dataset_repository=dataset_repository,
+        dataset_column_repository=dataset_column_repository,
         lineage_service=lineage_service,
     )
     semantic_query_execution_service = providers.Factory(

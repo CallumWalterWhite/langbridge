@@ -11,7 +11,7 @@ export interface SemanticDimension {
 
 export interface SemanticMeasure {
   name: string;
-  expression: string | null;
+  expression?: string | null;
   type: string;
   description?: string | null;
   aggregation?: string | null;
@@ -24,11 +24,11 @@ export interface SemanticFilter {
   synonyms?: string[] | null;
 }
 
-export interface SemanticTable {
+export interface SemanticDataset {
   datasetId?: string | null;
-  catalog?: string | null;
-  schema: string;
-  name: string;
+  relationName?: string | null;
+  schemaName?: string | null;
+  catalogName?: string | null;
   description?: string | null;
   synonyms?: string[] | null;
   dimensions?: SemanticDimension[] | null;
@@ -38,10 +38,11 @@ export interface SemanticTable {
 
 export interface SemanticRelationship {
   name: string;
-  from: string;
-  to: string;
+  sourceDataset: string;
+  sourceField: string;
+  targetDataset: string;
+  targetField: string;
   type: string;
-  joinOn: string;
 }
 
 export interface SemanticMetric {
@@ -53,72 +54,72 @@ export interface SemanticModel {
   version: string;
   connector?: string | null;
   description?: string | null;
-  tables: Record<string, SemanticTable>;
+  datasets: Record<string, SemanticDataset>;
   relationships?: SemanticRelationship[] | null;
   metrics?: Record<string, SemanticMetric> | null;
+  tables?: Record<string, SemanticDataset>;
 }
 
 export interface SemanticModelRecord {
   id: string;
   organizationId: string;
   projectId?: string | null;
-  connectorId: string;
+  connectorId?: string | null;
   name: string;
   description?: string | null;
   contentYaml: string;
   createdAt: string;
   updatedAt: string;
+  sourceDatasetIds?: string[];
 }
 
 export interface CreateSemanticModelPayload {
   organizationId: string;
   projectId?: string | null;
-  connectorId: string;
+  connectorId?: string | null;
   name: string;
   description?: string;
   autoGenerate?: boolean;
   modelYaml?: string;
+  sourceDatasetIds?: string[];
 }
 
 export interface UpdateSemanticModelPayload {
   projectId?: string | null;
-  connectorId?: string;
+  connectorId?: string | null;
   name?: string;
   description?: string;
   autoGenerate?: boolean;
   modelYaml?: string;
+  sourceDatasetIds?: string[];
 }
 
-export interface SemanticModelCatalogColumn {
+export interface SemanticModelCatalogField {
   name: string;
   type: string;
   nullable?: boolean | null;
   primaryKey?: boolean;
 }
 
-export interface SemanticModelCatalogTable {
-  schema: string;
+export interface SemanticModelCatalogDataset {
+  id: string;
   name: string;
-  fullyQualifiedName: string;
-  columns: SemanticModelCatalogColumn[];
-}
-
-export interface SemanticModelCatalogSchema {
-  name: string;
-  tables: SemanticModelCatalogTable[];
+  sqlAlias: string;
+  description?: string | null;
+  connectionId?: string | null;
+  sourceKind: string;
+  storageKind: string;
+  fields: SemanticModelCatalogField[];
 }
 
 export interface SemanticModelCatalogResponse {
-  connectorId: string;
-  schemas: SemanticModelCatalogSchema[];
-  tableCount: number;
-  columnCount: number;
+  workspaceId: string;
+  items: SemanticModelCatalogDataset[];
 }
 
 export interface SemanticModelSelectionGeneratePayload {
-  connectorId: string;
-  selectedTables: string[];
-  selectedColumns: Record<string, string[]>;
+  datasetIds: string[];
+  selectedFields?: Record<string, string[]>;
   includeSampleValues?: boolean;
   description?: string;
 }
@@ -129,13 +130,11 @@ export interface SemanticModelSelectionGenerateResponse {
 }
 
 export interface SemanticModelAgenticJobCreatePayload {
-  connectorId: string;
   projectId?: string | null;
   name: string;
   description?: string;
   filename?: string;
-  selectedTables: string[];
-  selectedColumns: Record<string, string[]>;
+  datasetIds: string[];
   questionPrompts: string[];
   includeSampleValues?: boolean;
 }

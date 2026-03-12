@@ -17,12 +17,7 @@ def _valid_payload() -> dict:
         "project_id": None,
         "user_id": uuid.uuid4(),
         "semantic_model_id": uuid.uuid4(),
-        "connector_id": uuid.uuid4(),
-        "selected_tables": ["sales.orders", "sales.customers"],
-        "selected_columns": {
-            "sales.orders": ["order_id", "customer_id", "amount"],
-            "sales.customers": ["customer_id", "region"],
-        },
+        "dataset_ids": [uuid.uuid4(), uuid.uuid4()],
         "question_prompts": [
             "revenue by region",
             "top customers by sales",
@@ -36,7 +31,7 @@ def test_agentic_job_contract_accepts_valid_payload() -> None:
     payload = CreateAgenticSemanticModelJobRequest(**_valid_payload())
 
     assert payload.job_type.value == "agentic_semantic_model"
-    assert len(payload.selected_tables) == 2
+    assert len(payload.dataset_ids) == 2
     assert len(payload.question_prompts) == 3
 
 
@@ -48,12 +43,9 @@ def test_agentic_job_contract_rejects_prompt_count_outside_range() -> None:
         CreateAgenticSemanticModelJobRequest(**invalid_payload)
 
 
-def test_agentic_job_contract_rejects_unknown_selected_columns_table_key() -> None:
+def test_agentic_job_contract_rejects_empty_dataset_ids() -> None:
     invalid_payload = _valid_payload()
-    invalid_payload["selected_columns"] = {
-        "sales.orders": ["order_id"],
-        "unknown.table": ["id"],
-    }
+    invalid_payload["dataset_ids"] = []
 
     with pytest.raises(ValidationError):
         CreateAgenticSemanticModelJobRequest(**invalid_payload)

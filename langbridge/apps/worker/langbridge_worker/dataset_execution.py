@@ -26,7 +26,7 @@ from langbridge.packages.federation.models import (
     VirtualRelationship,
     VirtualTableBinding,
 )
-from langbridge.packages.semantic.langbridge_semantic.model import SemanticModel, Table
+from langbridge.packages.semantic.langbridge_semantic.model import Dataset as SemanticDataset, SemanticModel
 
 
 class DatasetExecutionResolver:
@@ -66,49 +66,47 @@ class DatasetExecutionResolver:
         workflow_id: str,
         dataset_name: str,
         semantic_model: SemanticModel,
-        connector_fallbacks: Mapping[str, uuid.UUID],
-        raw_tables_payload: Mapping[str, Any] | None = None,
+        raw_datasets_payload: Mapping[str, Any] | None = None,
     ) -> tuple[FederationWorkflow, str]:
         table_bindings: dict[str, VirtualTableBinding] = {}
         dialects: list[str] = []
 
-        for table_key, table in semantic_model.tables.items():
-            raw_table = raw_tables_payload.get(table_key) if isinstance(raw_tables_payload, Mapping) else None
-            dataset_ref = self._extract_dataset_ref(table=table, raw_table=raw_table)
-            if dataset_ref is not None:
-                dataset = await self._load_dataset(
-                    workspace_id=organization_id,
-                    dataset_id=dataset_ref,
-                    table_key=table_key,
+        for dataset_key, semantic_dataset in semantic_model.datasets.items():
+            raw_dataset = (
+                raw_datasets_payload.get(dataset_key)
+                if isinstance(raw_datasets_payload, Mapping)
+                else None
+            )
+            dataset_ref = self._extract_dataset_ref(
+                semantic_dataset=semantic_dataset,
+                raw_dataset=raw_dataset,
+            )
+            if dataset_ref is None:
+                raise BusinessValidationError(
+                    f"Semantic dataset '{dataset_key}' must declare dataset_id for federated execution."
                 )
-                binding, dialect = self._build_binding_from_dataset_record(
-                    dataset=dataset,
-                    table_key=table_key,
-                    logical_schema=(table.schema or None),
-                    logical_table_name=table.name,
-                    catalog_name=table.catalog,
-                )
-            else:
-                connector_id = connector_fallbacks.get(table_key)
-                if connector_id is None:
-                    raise BusinessValidationError(
-                        f"Missing connector fallback for semantic table '{table_key}'."
-                    )
-                binding, dialect = self._build_binding_from_legacy_table(
-                    table_key=table_key,
-                    table=table,
-                    connector_id=connector_id,
-                )
-            table_bindings[table_key] = binding
+            dataset = await self._load_dataset(
+                workspace_id=organization_id,
+                dataset_id=dataset_ref,
+                table_key=dataset_key,
+            )
+            binding, dialect = self._build_binding_from_dataset_record(
+                dataset=dataset,
+                table_key=dataset_key,
+                logical_schema=(semantic_dataset.schema_name or None),
+                logical_table_name=semantic_dataset.relation_name,
+                catalog_name=semantic_dataset.catalog_name,
+            )
+            table_bindings[dataset_key] = binding
             dialects.append(dialect)
 
         relationships = [
             VirtualRelationship(
                 name=relationship.name,
-                left_table=relationship.from_,
-                right_table=relationship.to,
+                left_table=relationship.source_dataset,
+                right_table=relationship.target_dataset,
                 join_type=relationship.type,
-                condition=relationship.join_on,
+                condition=relationship.join_condition,
             )
             for relationship in (semantic_model.relationships or [])
         ]
@@ -220,31 +218,6 @@ class DatasetExecutionResolver:
 
         raise BusinessValidationError(
             f"Dataset type '{dataset.dataset_type}' is not supported for semantic or dataset execution."
-        )
-
-    @staticmethod
-    def _build_binding_from_legacy_table(
-        *,
-        table_key: str,
-        table: Table,
-        connector_id: uuid.UUID,
-    ) -> tuple[VirtualTableBinding, str]:
-        return (
-            VirtualTableBinding(
-                table_key=table_key,
-                source_id=f"source_{connector_id.hex[:12]}",
-                connector_id=connector_id,
-                schema=table.schema or None,
-                table=table.name,
-                catalog=table.catalog,
-                metadata={
-                    "source_kind": "connector",
-                    "physical_catalog": table.catalog,
-                    "physical_schema": table.schema,
-                    "physical_table": table.name,
-                },
-            ),
-            "tsql",
         )
 
     async def _build_federated_dataset_workflow(
@@ -371,15 +344,15 @@ class DatasetExecutionResolver:
     @staticmethod
     def _extract_dataset_ref(
         *,
-        table: Table,
-        raw_table: Any,
+        semantic_dataset: SemanticDataset,
+        raw_dataset: Any,
     ) -> uuid.UUID | None:
-        raw_value = table.dataset_id
-        if raw_value is None and isinstance(raw_table, Mapping):
-            raw_value = raw_table.get("dataset_id") or raw_table.get("datasetId")
+        raw_value = semantic_dataset.dataset_id
+        if raw_value is None and isinstance(raw_dataset, Mapping):
+            raw_value = raw_dataset.get("dataset_id") or raw_dataset.get("datasetId")
         if raw_value in {None, ""}:
             return None
-        return DatasetExecutionResolver._parse_uuid(raw_value, context="semantic table dataset_id")
+        return DatasetExecutionResolver._parse_uuid(raw_value, context="semantic dataset dataset_id")
 
     @staticmethod
     def _resolve_file_storage_uri(dataset: DatasetRecord) -> str:
@@ -484,9 +457,25 @@ class DatasetExecutionResolver:
         for item in raw_relationships:
             if not isinstance(item, Mapping):
                 continue
-            left_table = item.get("left_table") or item.get("leftTable")
-            right_table = item.get("right_table") or item.get("rightTable")
+            left_table = (
+                item.get("left_table")
+                or item.get("leftTable")
+                or item.get("source_dataset")
+                or item.get("sourceDataset")
+            )
+            right_table = (
+                item.get("right_table")
+                or item.get("rightTable")
+                or item.get("target_dataset")
+                or item.get("targetDataset")
+            )
             condition = item.get("condition") or item.get("on")
+            if not condition:
+                source_field = item.get("source_field") or item.get("sourceField")
+                target_field = item.get("target_field") or item.get("targetField")
+                operator = item.get("operator") or "="
+                if left_table and right_table and source_field and target_field:
+                    condition = f"{left_table}.{source_field} {operator} {right_table}.{target_field}"
             if not left_table or not right_table or not condition:
                 continue
             relationships.append(

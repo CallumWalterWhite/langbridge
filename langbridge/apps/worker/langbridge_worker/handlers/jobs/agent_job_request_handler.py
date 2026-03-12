@@ -33,7 +33,10 @@ from langbridge.packages.common.langbridge_common.repositories.agent_repository 
 from langbridge.packages.common.langbridge_common.repositories.conversation_memory_repository import (
     ConversationMemoryRepository,
 )
-from langbridge.packages.common.langbridge_common.interfaces.connectors import IConnectorStore
+from langbridge.packages.common.langbridge_common.repositories.dataset_repository import (
+    DatasetColumnRepository,
+    DatasetRepository,
+)
 from langbridge.packages.common.langbridge_common.interfaces.semantic_models import (
     ISemanticModelStore,
 )
@@ -73,7 +76,8 @@ class AgentJobRequestHandler(BaseMessageHandler):
         agent_definition_repository: AgentRepository,
         llm_repository: LLMConnectionRepository,
         semantic_model_store: ISemanticModelStore,
-        connector_store: IConnectorStore,
+        dataset_repository: DatasetRepository,
+        dataset_column_repository: DatasetColumnRepository,
         thread_repository: ThreadRepository,
         thread_message_repository: ThreadMessageRepository,
         memory_repository: ConversationMemoryRepository,
@@ -90,7 +94,8 @@ class AgentJobRequestHandler(BaseMessageHandler):
         self._message_broker = message_broker
         self._agent_orchestrator_factory = AgentOrchestratorFactory(
             semantic_model_store=semantic_model_store,
-            connector_store=connector_store,
+            dataset_repository=dataset_repository,
+            dataset_column_repository=dataset_column_repository,
             federated_query_tool=federated_query_tool,
         )
 

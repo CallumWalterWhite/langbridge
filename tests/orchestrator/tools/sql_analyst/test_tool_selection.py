@@ -1,152 +1,171 @@
 import pathlib
 import sys
+import uuid
 
 sys.path.append(str(pathlib.Path(__file__).resolve().parents[5] / "langbridge" / "langbridge"))
 
-from typing import Any
-
-
 from langbridge.packages.orchestrator.langbridge_orchestrator.agents.analyst.agent import AnalystAgent
-from langbridge.packages.orchestrator.langbridge_orchestrator.tools.sql_analyst.interfaces import AnalystQueryRequest, SemanticModel
+from langbridge.packages.orchestrator.langbridge_orchestrator.tools.sql_analyst.interfaces import (
+    AnalyticalColumn,
+    AnalyticalContext,
+    AnalyticalDatasetBinding,
+    AnalyticalMetric,
+)
 from langbridge.packages.orchestrator.langbridge_orchestrator.tools.sql_analyst.tool import SqlAnalystTool
 
 
 class StaticLLM:
-    def __init__(self, sql: str) -> None:
-        self._sql = sql
+    def __init__(self, payload: str) -> None:
+        self._payload = payload
 
     def complete(self, prompt: str, *, temperature: float = 0.0, max_tokens: int | None = None) -> str:
-        return self._sql
+        _ = (prompt, temperature, max_tokens)
+        return self._payload
 
 
-class RecorderConnector:
-    DIALECT = type("D", (), {"name": "POSTGRES"})
-
+class FakeFederatedExecutor:
     def __init__(self, label: str) -> None:
         self.label = label
-        self.calls: list[str] = []
+        self.calls: list[dict[str, object]] = []
 
-    async def execute(
+    async def execute_sql(
         self,
-        sql: str,
         *,
-        params: dict[str, Any] | None = None,
+        sql: str,
+        dialect: str,
         max_rows: int | None = None,
-        timeout_s: int | None = None,
-    ) -> Any:
-        self.calls.append(sql)
+    ):
+        self.calls.append({"sql": sql, "dialect": dialect, "max_rows": max_rows})
+        from langbridge.packages.orchestrator.langbridge_orchestrator.tools.sql_analyst.interfaces import QueryResult
 
-        class Result:
-            def __init__(self, sql_text: str) -> None:
-                self.columns = ["value"]
-                self.rows = [(label,)]
-                self.rowcount = 1
-                self.elapsed_ms = 0
-                self.sql = sql_text
-
-        label = self.label
-        return Result(sql)
+        return QueryResult(
+            columns=["value"],
+            rows=[(self.label,)],
+            rowcount=1,
+            elapsed_ms=0,
+            source_sql=sql,
+        )
 
 
-def _model(name: str, entity: str, tags: list[str] | None = None) -> SemanticModel:
-    return SemanticModel(
-        version="1.0",
-        name=name,
+def _dataset_context(name: str, sql_alias: str, *, tags: list[str] | None = None) -> AnalyticalContext:
+    return AnalyticalContext(
+        asset_type="dataset",
+        asset_id=str(uuid.uuid4()),
+        asset_name=name,
+        description=f"{name} dataset",
         tags=tags or [],
-        tables={
-            entity: {
-                "name": entity,
-                "dimensions": [{"name": "id", "type": "integer"}],
-            },
-        },
-        relationships=[],
-        metrics={"total": {"expression": "COUNT(*)"}},
+        datasets=[
+            AnalyticalDatasetBinding(
+                dataset_id=str(uuid.uuid4()),
+                dataset_name=name,
+                sql_alias=sql_alias,
+                source_kind="connector",
+                storage_kind="table",
+                columns=[AnalyticalColumn(name="id", data_type="integer")],
+            )
+        ],
+        tables=[sql_alias],
     )
 
 
-def _tool(name: str, entity: str, sql: str, connector_label: str, priority: int = 0, tags: list[str] | None = None) -> tuple[SqlAnalystTool, RecorderConnector]:
-    connector = RecorderConnector(connector_label)
+def _semantic_context(name: str, sql_alias: str, metric_name: str) -> AnalyticalContext:
+    return AnalyticalContext(
+        asset_type="semantic_model",
+        asset_id=str(uuid.uuid4()),
+        asset_name=name,
+        description=f"{name} governed model",
+        datasets=[
+            AnalyticalDatasetBinding(
+                dataset_id=str(uuid.uuid4()),
+                dataset_name=f"{name}_dataset",
+                sql_alias=sql_alias,
+                source_kind="connector",
+                storage_kind="table",
+                columns=[AnalyticalColumn(name="id", data_type="integer")],
+            )
+        ],
+        tables=[sql_alias],
+        metrics=[AnalyticalMetric(name=metric_name, expression="COUNT(*)")],
+    )
+
+
+def _tool(
+    context: AnalyticalContext,
+    sql: str,
+    label: str,
+    *,
+    priority: int = 0,
+) -> tuple[SqlAnalystTool, FakeFederatedExecutor]:
+    executor = FakeFederatedExecutor(label)
     tool = SqlAnalystTool(
         llm=StaticLLM(sql),
-        semantic_model=_model(name, entity, tags=tags),
-        connector=connector,
-        dialect="postgres",
+        context=context,
+        federated_sql_executor=executor,
         priority=priority,
     )
-    return tool, connector
+    return tool, executor
 
 
-def test_analyst_agent_selects_tool_by_keywords() -> None:
-    customers_tool, customers_connector = _tool(
-        "customers_model",
-        "customers",
+def test_analyst_agent_selects_dataset_asset_by_keywords() -> None:
+    customers_tool, customers_executor = _tool(
+        _dataset_context("customers_dataset", "customers"),
         "SELECT COUNT(*) FROM customers",
         "customers",
     )
-    sales_tool, sales_connector = _tool(
-        "sales_model",
-        "orders",
+    orders_tool, orders_executor = _tool(
+        _dataset_context("orders_dataset", "orders", tags=["revenue", "orders"]),
         "SELECT COUNT(*) FROM orders",
-        "sales",
-        tags=["revenue", "orders"],
+        "orders",
     )
 
-    agent = AnalystAgent(StaticLLM(""), [], [customers_tool, sales_tool])
+    agent = AnalystAgent(StaticLLM(""), [customers_tool, orders_tool])
     response = agent.answer("Show revenue by orders")
 
     assert response.error is None
-    assert sales_connector.calls, "Sales connector should have been invoked"
-    assert not customers_connector.calls, "Customers connector should not have been invoked"
-    assert response.model_name == "sales_model"
+    assert response.asset_type == "dataset"
+    assert response.asset_name == "orders_dataset"
+    assert orders_executor.calls
+    assert not customers_executor.calls
 
 
 def test_analyst_agent_uses_priority_on_tie() -> None:
-    tool_a, conn_a = _tool(
-        "model_a",
-        "entity_a",
-        "SELECT 1",
+    tool_a, exec_a = _tool(
+        _dataset_context("dataset_a", "entity_a"),
+        "SELECT 1 FROM entity_a",
         "a",
         priority=1,
     )
-    tool_b, conn_b = _tool(
-        "model_b",
-        "entity_b",
-        "SELECT 1",
+    tool_b, exec_b = _tool(
+        _dataset_context("dataset_b", "entity_b"),
+        "SELECT 1 FROM entity_b",
         "b",
         priority=5,
     )
 
-    agent = AnalystAgent(StaticLLM(""), [], [tool_a, tool_b])
+    agent = AnalystAgent(StaticLLM(""), [tool_a, tool_b])
     response = agent.answer("General question with no keywords")
 
-    assert response.model_name == "model_b"
-    assert conn_b.calls
-    assert not conn_a.calls
+    assert response.asset_name == "dataset_b"
+    assert exec_b.calls
+    assert not exec_a.calls
 
 
-def test_semantic_tool_selector_handles_filters() -> None:
-    tool_a, conn_a = _tool(
-        "metrics_model",
-        "metrics_table",
-        "SELECT COUNT(*) FROM metrics_table",
-        "metrics",
-        tags=["kpi"],
-    )
-    tool_b, conn_b = _tool(
-        "inventory_model",
-        "inventory",
+def test_analyst_agent_prefers_semantic_model_when_metric_matches() -> None:
+    dataset_tool, dataset_executor = _tool(
+        _dataset_context("inventory_dataset", "inventory"),
         "SELECT COUNT(*) FROM inventory",
         "inventory",
     )
-
-    agent = AnalystAgent(StaticLLM(""), [], [tool_a, tool_b])
-    response = agent.answer_with_request(
-        AnalystQueryRequest(
-            question="Give me KPI results",
-            filters={"kpi": "retention"},
-        )
+    semantic_tool, semantic_executor = _tool(
+        _semantic_context("kpi_model", "metrics", "retention"),
+        "SELECT COUNT(*) FROM metrics",
+        "metrics",
     )
 
-    assert response.model_name == "metrics_model"
-    assert conn_a.calls
-    assert not conn_b.calls
+    agent = AnalystAgent(StaticLLM(""), [dataset_tool, semantic_tool])
+    response = agent.answer("Give me retention KPI results")
+
+    assert response.asset_type == "semantic_model"
+    assert response.asset_name == "kpi_model"
+    assert semantic_executor.calls
+    assert not dataset_executor.calls

@@ -1,9 +1,9 @@
 """
-Protocol and data model definitions for the SQL analyst tooling.
+Protocol and data model definitions for dataset-first analytical tooling.
 """
 
 
-from typing import Any, List, Protocol, Sequence
+from typing import Any, List, Literal, Protocol, Sequence
 
 from pydantic import BaseModel, Field
 
@@ -12,7 +12,7 @@ from langbridge.packages.semantic.langbridge_semantic.model import SemanticModel
 
 class ConnectorQueryResult(Protocol):
     """
-    Runtime type returned by existing connectors.
+    Generic tabular runtime result shape.
     """
 
     columns: Sequence[str]
@@ -31,7 +31,7 @@ class QueryResult(BaseModel):
     rows: list[Sequence[Any]]
     rowcount: int | None = Field(default=None)
     elapsed_ms: int | None = Field(default=None)
-    source_sql: str | None = Field(default=None, description="SQL text the connector executed.")
+    source_sql: str | None = Field(default=None, description="SQL text executed by the analytical runtime.")
 
     @classmethod
     def from_connector(cls, result: ConnectorQueryResult) -> "QueryResult":
@@ -61,15 +61,64 @@ class AnalystQueryRequest(BaseModel):
         description="Optional list of formatted semantic search results to include in the prompt.",
     )
 
+
+class AnalyticalColumn(BaseModel):
+    name: str
+    data_type: str | None = None
+    description: str | None = None
+
+
+class AnalyticalField(BaseModel):
+    name: str
+    synonyms: list[str] = Field(default_factory=list)
+
+
+class AnalyticalMetric(BaseModel):
+    name: str
+    expression: str | None = None
+    description: str | None = None
+
+
+class AnalyticalDatasetBinding(BaseModel):
+    dataset_id: str
+    dataset_name: str
+    sql_alias: str
+    description: str | None = None
+    source_kind: str | None = None
+    storage_kind: str | None = None
+    columns: list[AnalyticalColumn] = Field(default_factory=list)
+
+
+class AnalyticalContext(BaseModel):
+    asset_type: Literal["dataset", "semantic_model"]
+    asset_id: str
+    asset_name: str
+    description: str | None = None
+    tags: list[str] = Field(default_factory=list)
+    execution_mode: Literal["federated"] = "federated"
+    dialect: str = "postgres"
+    datasets: list[AnalyticalDatasetBinding] = Field(default_factory=list)
+    tables: list[str] = Field(default_factory=list)
+    dimensions: list[AnalyticalField] = Field(default_factory=list)
+    measures: list[AnalyticalField] = Field(default_factory=list)
+    metrics: list[AnalyticalMetric] = Field(default_factory=list)
+    relationships: list[str] = Field(default_factory=list)
+
+
 class AnalystQueryResponse(BaseModel):
     """
     Response payload emitted by the SQL analyst tool.
     """
 
+    analysis_path: Literal["dataset", "semantic_model"]
+    execution_mode: Literal["federated"]
+    asset_type: Literal["dataset", "semantic_model"]
+    asset_id: str
+    asset_name: str
     sql_canonical: str
     sql_executable: str
     dialect: str
-    model_name: str
+    selected_datasets: list[AnalyticalDatasetBinding] = Field(default_factory=list)
     result: QueryResult | None = None
     error: str | None = None
     execution_time_ms: int | None = None

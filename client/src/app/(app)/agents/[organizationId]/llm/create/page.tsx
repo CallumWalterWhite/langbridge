@@ -1,6 +1,6 @@
 'use client';
 
-import { JSX, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { JSX, use, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { LucideIcon } from 'lucide-react';
 import { Bot, BrainCircuit, Sparkles } from 'lucide-react';
 
@@ -84,10 +84,11 @@ function resolveErrorMessage(error: unknown): string {
 }
 
 type LLMCreatePageProps = {
-  params: { organizationId: string };
+  params: Promise<{ organizationId: string }>;
 };
 
 export default function AgentsPage({ params }: LLMCreatePageProps): JSX.Element {
+  const { organizationId: routeOrganizationId } = use(params);
   const [selectedProvider, setSelectedProvider] = useState<LLMProvider | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [feedback, setFeedback] = useState<FeedbackState | null>(null);
@@ -105,8 +106,6 @@ export default function AgentsPage({ params }: LLMCreatePageProps): JSX.Element 
 
   const organizationId = formState.organizationId;
   const projectId = formState.projectId;
-  const routeOrganizationId = params.organizationId;
-
   const {
     organizations,
     loading: organizationsLoading,

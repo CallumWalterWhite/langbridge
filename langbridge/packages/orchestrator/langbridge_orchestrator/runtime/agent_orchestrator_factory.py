@@ -1,36 +1,18 @@
-from __future__ import annotations
-
 import logging
 import uuid
 from dataclasses import dataclass, field
-from typing import Any, Dict, Optional, Type
+from typing import Any, Dict, Optional
 
 import yaml
 
-from langbridge.packages.common.langbridge_common.config import settings
-from langbridge.packages.common.langbridge_common.contracts.connectors import ConnectorDTO
+from langbridge.apps.worker.langbridge_worker.dataset_execution import DatasetExecutionResolver
 from langbridge.packages.common.langbridge_common.contracts.semantic import SemanticModelRecordResponse
+from langbridge.packages.common.langbridge_common.db.dataset import DatasetRecord
 from langbridge.packages.common.langbridge_common.errors.application_errors import BusinessValidationError
 from langbridge.packages.common.langbridge_common.interfaces.agent_events import IAgentEventEmitter
-from langbridge.packages.common.langbridge_common.interfaces.connectors import IConnectorStore
 from langbridge.packages.common.langbridge_common.interfaces.semantic_models import ISemanticModelStore
+from langbridge.packages.common.langbridge_common.repositories.dataset_repository import DatasetColumnRepository, DatasetRepository
 from langbridge.packages.common.langbridge_common.utils.embedding_provider import EmbeddingProvider
-from langbridge.packages.connectors.langbridge_connectors.api.config import (
-    BaseConnectorConfigFactory,
-    ConnectorRuntimeType,
-    get_connector_config_factory,
-)
-from langbridge.packages.connectors.langbridge_connectors.api.connector import (
-    ConnectorRuntimeTypeSqlDialectMap,
-    ManagedVectorDB,
-    SqlConnector,
-    SqlDialetcs,
-    VectorDBType,
-)
-from langbridge.packages.connectors.langbridge_connectors.api.registry import (
-    SqlConnectorFactory,
-    VectorDBConnectorFactory,
-)
 from langbridge.packages.orchestrator.langbridge_orchestrator.agents.analyst import AnalystAgent
 from langbridge.packages.orchestrator.langbridge_orchestrator.agents.deep_research import DeepResearchAgent
 from langbridge.packages.orchestrator.langbridge_orchestrator.agents.planner import (
@@ -44,25 +26,28 @@ from langbridge.packages.orchestrator.langbridge_orchestrator.agents.web_search 
 from langbridge.packages.orchestrator.langbridge_orchestrator.definitions import AgentDefinitionModel, ExecutionMode
 from langbridge.packages.orchestrator.langbridge_orchestrator.definitions.model import ToolType
 from langbridge.packages.orchestrator.langbridge_orchestrator.llm.provider import LLMProvider
-from langbridge.packages.orchestrator.langbridge_orchestrator.tools.semantic_search import SemanticSearchTool
 from langbridge.packages.orchestrator.langbridge_orchestrator.tools.sql_analyst import SqlAnalystTool
 from langbridge.packages.orchestrator.langbridge_orchestrator.tools.sql_analyst.interfaces import (
+    AnalyticalColumn,
+    AnalyticalContext,
+    AnalyticalDatasetBinding,
+    AnalyticalField,
+    AnalyticalMetric,
     QueryResult,
 )
-from langbridge.packages.federation.models import (
-    FederationWorkflow,
-    VirtualDataset,
-    VirtualRelationship,
-    VirtualTableBinding,
-)
+from langbridge.packages.common.langbridge_common.config import settings
+from langbridge.packages.federation.models import FederationWorkflow, VirtualDataset
 from langbridge.packages.semantic.langbridge_semantic.loader import load_semantic_model
-from langbridge.packages.semantic.langbridge_semantic.model import SemanticModel
-from langbridge.packages.semantic.langbridge_semantic.unified_query import (
-    TenantAwareQueryContext,
-    UnifiedSourceModel,
-    apply_tenant_aware_context,
-    build_unified_semantic_model,
-)
+from langbridge.packages.semantic.langbridge_semantic.model import Dimension, Measure, Metric, SemanticModel, Table
+
+
+
+@dataclass(slots=True)
+class AnalystBinding:
+    name: str
+    description: str | None = None
+    dataset_ids: list[uuid.UUID] = field(default_factory=list)
+    semantic_model_ids: list[uuid.UUID] = field(default_factory=list)
 
 
 @dataclass(slots=True)
@@ -71,7 +56,7 @@ class AgentToolConfig:
     allow_web_search: bool
     allow_deep_research: bool
     allow_visualization: bool
-    sql_model_ids: set[uuid.UUID] = field(default_factory=set)
+    analyst_bindings: list[AnalystBinding] = field(default_factory=list)
     web_search_defaults: dict[str, Any] = field(default_factory=dict)
 
 
@@ -80,13 +65,6 @@ class AgentRuntime:
     supervisor: SupervisorOrchestrator
     planning_constraints: PlanningConstraints
     planning_context: Dict[str, Any] | None
-
-
-@dataclass(slots=True, frozen=True)
-class _UnifiedSqlModelConfig:
-    source_model_ids: list[uuid.UUID]
-    joins: list[dict[str, Any]]
-    metrics: dict[str, Any]
 
 
 class _FederatedSqlExecutor:
@@ -153,20 +131,23 @@ class _FederatedSqlExecutor:
 
 
 class AgentOrchestratorFactory:
-    """Builds orchestrator runtime components for worker-side agent execution."""
+    """Build worker-side orchestrator components for dataset-first federated analysis."""
 
     def __init__(
         self,
         semantic_model_store: ISemanticModelStore,
-        connector_store: IConnectorStore,
+        dataset_repository: DatasetRepository | None = None,
+        dataset_column_repository: DatasetColumnRepository | None = None,
         federated_query_tool: Any | None = None,
     ) -> None:
         self._logger = logging.getLogger(__name__)
         self._semantic_model_store = semantic_model_store
-        self._connector_store = connector_store
+        self._dataset_repository = dataset_repository
+        self._dataset_column_repository = dataset_column_repository
         self._federated_query_tool = federated_query_tool
-        self._vector_factory = VectorDBConnectorFactory()
-        self._sql_connector_factory = SqlConnectorFactory()
+        self._dataset_execution_resolver = DatasetExecutionResolver(
+            dataset_repository=self._dataset_repository,
+        )
 
     async def create_runtime(
         self,
@@ -177,28 +158,29 @@ class AgentOrchestratorFactory:
         event_emitter: Optional[IAgentEventEmitter] = None,
     ) -> AgentRuntime:
         tool_config = self._build_agent_tool_config(definition)
-
-        sql_tools, semantic_search_tools = await self._build_analyst_tools(
-            tool_config,
-            llm_provider,
-            embedding_provider,
-            event_emitter,
+        analyst_tools = await self._build_analyst_tools(
+            tool_config=tool_config,
+            llm_provider=llm_provider,
+            embedding_provider=embedding_provider,
+            event_emitter=event_emitter,
         )
 
-        if tool_config.allow_sql and not sql_tools:
+        if tool_config.allow_sql and not analyst_tools:
             self._logger.warning(
-                "No SQL tools could be created from the selected semantic model ids; disabling analyst route."
+                "No analytical tools could be created from the selected asset ids; disabling analyst route."
             )
             tool_config.allow_sql = False
 
         planning_constraints = self._build_planning_constraints(tool_config, definition)
-        planning_context = await self._build_planner_tool_context(tool_config)
+        planning_context = self._build_planner_tool_context(
+            tool_config=tool_config,
+            analyst_tools=analyst_tools,
+        )
         supervisor = self._build_supervisor_orchestrator(
             definition=definition,
             llm_provider=llm_provider,
             planning_constraints=planning_constraints,
-            sql_tools=sql_tools,
-            semantic_search_tools=semantic_search_tools,
+            analyst_tools=analyst_tools,
             event_emitter=event_emitter,
         )
 
@@ -215,19 +197,28 @@ class AgentOrchestratorFactory:
         web_search_tools = [tool for tool in tools if tool.tool_type == ToolType.web]
         doc_tools = [tool for tool in tools if tool.tool_type == ToolType.doc]
 
-        sql_semantic_model_ids: set[uuid.UUID] = set()
+        analyst_bindings: list[AnalystBinding] = []
         for tool in sql_tools:
             try:
-                sql_semantic_model_ids.add(tool.get_sql_tool_config().definition_id)
+                config = tool.get_sql_tool_config()
             except (ValueError, TypeError) as exc:
                 self._logger.warning("Invalid SQL tool config for tool '%s': %s", tool.name, exc)
+                continue
+            analyst_bindings.append(
+                AnalystBinding(
+                    name=tool.name,
+                    description=tool.description,
+                    dataset_ids=list(config.dataset_ids),
+                    semantic_model_ids=list(config.semantic_model_ids),
+                )
+            )
 
         return AgentToolConfig(
-            allow_sql=bool(sql_tools),
+            allow_sql=bool(analyst_bindings),
             allow_web_search=bool(web_search_tools),
             allow_deep_research=definition.features.deep_research_enabled or bool(doc_tools),
             allow_visualization=definition.features.visualization_enabled,
-            sql_model_ids=sql_semantic_model_ids,
+            analyst_bindings=analyst_bindings,
         )
 
     def _build_planning_constraints(
@@ -249,22 +240,18 @@ class AgentOrchestratorFactory:
             allow_deep_research=tool_config.allow_deep_research,
         )
 
-    async def _build_planner_tool_context(
+    def _build_planner_tool_context(
         self,
+        *,
         tool_config: AgentToolConfig,
+        analyst_tools: list[SqlAnalystTool],
     ) -> Dict[str, Any] | None:
-        semantic_model_entries: list[SemanticModelRecordResponse] = []
-        if tool_config.sql_model_ids:
-            semantic_model_entries = await self._get_semantic_model_definitions(
-                list(tool_config.sql_model_ids)
-            )
-
         available_agents = [
             {
                 "agent": "Analyst",
-                "description": "Query structured data via semantic models (NL to SQL).",
+                "description": "Query datasets and governed semantic models through federated execution.",
                 "enabled": tool_config.allow_sql,
-                "notes": "Uses the semantic_models list.",
+                "notes": "Uses the analytical_assets list.",
             },
             {
                 "agent": "Visual",
@@ -288,16 +275,32 @@ class AgentOrchestratorFactory:
             },
         ]
 
-        semantic_models: Dict[str, Dict[str, str | None]] = {}
-        for entry in semantic_model_entries:
-            semantic_models[str(entry.id)] = {
-                "name": entry.name,
-                "description": entry.description,
+        analytical_assets: Dict[str, Dict[str, Any]] = {}
+        for tool in analyst_tools:
+            analytical_assets[tool.context.asset_id] = {
+                "name": tool.context.asset_name,
+                "asset_type": tool.context.asset_type,
+                "description": tool.context.description,
+                "execution_mode": tool.context.execution_mode,
+                "datasets": [
+                    {
+                        "name": dataset.dataset_name,
+                        "sql_alias": dataset.sql_alias,
+                        "source_kind": dataset.source_kind,
+                        "storage_kind": dataset.storage_kind,
+                    }
+                    for dataset in tool.context.datasets
+                ],
+                "tables": list(tool.context.tables),
+                "metrics": [metric.name for metric in tool.context.metrics],
+                "dimensions": [field.name for field in tool.context.dimensions],
+                "measures": [field.name for field in tool.context.measures],
             }
 
         context: Dict[str, Any] = {
             "available_agents": available_agents,
-            "semantic_models": semantic_models,
+            "analytical_assets": analytical_assets,
+            "analytical_assets_count": len(analytical_assets),
         }
         if tool_config.web_search_defaults:
             context.update(tool_config.web_search_defaults)
@@ -306,336 +309,476 @@ class AgentOrchestratorFactory:
 
     async def _build_analyst_tools(
         self,
-        agent_tool_config: AgentToolConfig,
+        *,
+        tool_config: AgentToolConfig,
         llm_provider: LLMProvider,
         embedding_provider: Optional[EmbeddingProvider],
         event_emitter: Optional[IAgentEventEmitter],
-    ) -> tuple[list[SqlAnalystTool], list[SemanticSearchTool]]:
-        if not agent_tool_config.allow_sql or not agent_tool_config.sql_model_ids:
-            return [], []
+    ) -> list[SqlAnalystTool]:
+        if not tool_config.allow_sql or not tool_config.analyst_bindings:
+            return []
+        if self._federated_query_tool is None:
+            self._logger.warning("Federated query tool is not configured; analyst route cannot be built.")
+            return []
 
-        semantic_model_entries = await self._get_semantic_model_definitions(
-            list(agent_tool_config.sql_model_ids)
-        )
-
-        connector_instances: Dict[uuid.UUID, SqlConnector] = {}
         sql_tools: list[SqlAnalystTool] = []
-        semantic_search_tools: list[SemanticSearchTool] = []
-
-        for entry in semantic_model_entries:
-            unified_config = self._parse_unified_sql_model_config(entry)
-            if unified_config is not None:
-                sql_tool = await self._build_unified_sql_tool(
-                    semantic_model_entry=entry,
-                    unified_config=unified_config,
-                    llm_provider=llm_provider,
-                    embedding_provider=embedding_provider,
-                    event_emitter=event_emitter,
-                )
-                semantic_search_tools.extend(
-                    await self._build_semantic_search_tools(llm_provider, sql_tool.semantic_model)
-                )
-                sql_tools.append(sql_tool)
-                continue
-
-            connector = await self._get_connector(entry.connector_id)
-            if connector is None:
-                self._logger.warning(
-                    "No connector found for semantic model %s (connector_id=%s)",
-                    entry.id,
-                    entry.connector_id,
+        for binding in tool_config.analyst_bindings:
+            if binding.dataset_ids:
+                datasets = await self._load_datasets(binding.dataset_ids)
+                sql_tools.append(
+                    await self._build_dataset_tool(
+                        dataset=datasets[0],
+                        selected_datasets=datasets,
+                        binding=binding,
+                        llm_provider=llm_provider,
+                        embedding_provider=embedding_provider,
+                        event_emitter=event_emitter,
+                    )
                 )
                 continue
 
-            sql_connector = self._get_or_create_sql_connector(
-                connector=connector,
-                connector_instances=connector_instances,
-            )
-            semantic_model: SemanticModel = load_semantic_model(entry.content_yaml)
-            base_dialect = semantic_model.dialect
-            dialect_str = str((base_dialect or getattr(sql_connector.DIALECT, "name", "postgres"))).lower()
-            table_source_map = {
-                str(table_key): str(entry.connector_id)
-                for table_key in semantic_model.tables.keys()
-            }
-
-            semantic_search_tools.extend(
-                await self._build_semantic_search_tools(llm_provider, semantic_model)
-            )
-
-            sql_tools.append(
-                SqlAnalystTool(
-                    llm=llm_provider,
-                    semantic_model=semantic_model,
-                    connector=sql_connector,
-                    dialect=dialect_str,
-                    priority=0,
-                    embedder=embedding_provider,
-                    event_emitter=event_emitter,
-                    table_source_map=table_source_map,
+            for semantic_model_id in binding.semantic_model_ids:
+                semantic_model_entry = await self._semantic_model_store.get_by_id(semantic_model_id)
+                if semantic_model_entry is None:
+                    self._logger.warning(
+                        "Semantic model %s configured on analyst binding '%s' was not found.",
+                        semantic_model_id,
+                        binding.name,
+                    )
+                    continue
+                sql_tools.append(
+                    await self._build_semantic_model_tool(
+                        semantic_model_entry=semantic_model_entry,
+                        binding=binding,
+                        llm_provider=llm_provider,
+                        embedding_provider=embedding_provider,
+                        event_emitter=event_emitter,
+                    )
                 )
-            )
 
-        return sql_tools, semantic_search_tools
+        return sql_tools
 
-    @staticmethod
-    def _parse_connector_config(connector: ConnectorDTO) -> Dict[str, Any]:
-        if not connector.config:
-            return {}
-        if isinstance(connector.config.get("config"), dict):
-            return connector.config["config"]
-        return connector.config
-
-    async def _get_connector(self, connector_id: uuid.UUID) -> ConnectorDTO | None:
-        connectors = await self._get_connectors({connector_id})
-        return connectors[0] if connectors else None
-
-    def _get_or_create_sql_connector(
+    async def _build_dataset_tool(
         self,
         *,
-        connector: ConnectorDTO,
-        connector_instances: Dict[uuid.UUID, SqlConnector],
-    ) -> SqlConnector:
-        connector_id = connector.id
-        if connector_id is None:
-            raise BusinessValidationError("Connector ID is required for SQL tool execution.")
-        if connector.connector_type is None:
-            raise BusinessValidationError(
-                f"Connector {connector_id} has no connector_type configured."
-            )
-
-        connector_type = ConnectorRuntimeType(connector.connector_type.upper())
-        if connector_id not in connector_instances:
-            dialect: SqlDialetcs | None = ConnectorRuntimeTypeSqlDialectMap.get(connector_type)
-            if dialect is None:
-                raise BusinessValidationError(
-                    f"Connector type {connector_type.value} does not support SQL operations."
-                )
-
-            config_factory: Type[BaseConnectorConfigFactory] = get_connector_config_factory(
-                connector_type
-            )
-            connector_config_payload = self._parse_connector_config(connector)
-            config_instance = config_factory.create(connector_config_payload)
-            connector_instances[connector_id] = self._sql_connector_factory.create_sql_connector(
-                dialect,
-                config_instance,
-                logger=self._logger,
-            )
-
-        return connector_instances[connector_id]
-
-    @staticmethod
-    def _parse_unified_sql_model_config(
-        semantic_model_entry: SemanticModelRecordResponse,
-    ) -> _UnifiedSqlModelConfig | None:
-        try:
-            payload = yaml.safe_load(semantic_model_entry.content_yaml)
-        except Exception:
-            return None
-        if not isinstance(payload, dict):
-            return None
-
-        source_models_raw = payload.get("source_models") or payload.get("sourceModels")
-        if not isinstance(source_models_raw, list):
-            if isinstance(payload.get("semantic_models"), list):
-                raise BusinessValidationError(
-                    "Unified semantic model is missing source_models metadata required for SQL tool federation."
-                )
-            return None
-
-        source_model_ids: list[uuid.UUID] = []
-        seen: set[uuid.UUID] = set()
-        for source_model in source_models_raw:
-            if not isinstance(source_model, dict):
-                continue
-            source_id = source_model.get("id")
-            if source_id is None:
-                continue
-            try:
-                parsed_id = uuid.UUID(str(source_id))
-            except (TypeError, ValueError) as exc:
-                raise BusinessValidationError(
-                    "Unified semantic model contains an invalid source model id."
-                ) from exc
-            if parsed_id in seen:
-                continue
-            seen.add(parsed_id)
-            source_model_ids.append(parsed_id)
-
-        if not source_model_ids:
-            raise BusinessValidationError(
-                "Unified semantic model is missing source model ids."
-            )
-
-        joins_raw = payload.get("relationships")
-        joins = [dict(join) for join in joins_raw if isinstance(join, dict)] if isinstance(joins_raw, list) else []
-
-        metrics_raw = payload.get("metrics")
-        metrics = dict(metrics_raw) if isinstance(metrics_raw, dict) else {}
-
-        return _UnifiedSqlModelConfig(
-            source_model_ids=source_model_ids,
-            joins=joins,
-            metrics=metrics,
-        )
-
-    async def _build_unified_sql_tool(
-        self,
-        *,
-        semantic_model_entry: SemanticModelRecordResponse,
-        unified_config: _UnifiedSqlModelConfig,
+        dataset: DatasetRecord,
+        selected_datasets: list[DatasetRecord],
+        binding: AnalystBinding,
         llm_provider: LLMProvider,
         embedding_provider: Optional[EmbeddingProvider],
         event_emitter: Optional[IAgentEventEmitter],
     ) -> SqlAnalystTool:
-        if self._federated_query_tool is None:
-            raise BusinessValidationError(
-                "Federated query tool is required to execute unified SQL tool queries."
-            )
-
-        source_entries = await self._get_semantic_model_definitions(unified_config.source_model_ids)
-        source_entry_lookup = {entry.id: entry for entry in source_entries}
-
-        source_models: list[UnifiedSourceModel] = []
-        for source_model_id in unified_config.source_model_ids:
-            source_entry = source_entry_lookup.get(source_model_id)
-            if source_entry is None:
-                raise BusinessValidationError(
-                    f"Unified source semantic model '{source_model_id}' was not found."
-                )
-            source_models.append(
-                UnifiedSourceModel(
-                    model=load_semantic_model(source_entry.content_yaml),
-                    connector_id=source_entry.connector_id,
-                )
-            )
-
-        unified_model, table_connector_map = build_unified_semantic_model(
-            source_models=source_models,
-            joins=unified_config.joins,
-            metrics=unified_config.metrics or None,
-            name=semantic_model_entry.name,
-            description=semantic_model_entry.description,
-            dialect="postgres",
+        workflow, _workflow_dialect = await self._build_dataset_workflow(selected_datasets)
+        context = await self._build_dataset_context(
+            asset_dataset=dataset,
+            selected_datasets=selected_datasets,
+            binding=binding,
+            workflow=workflow,
+        )
+        federated_executor = _FederatedSqlExecutor(
+            federated_query_tool=self._federated_query_tool,
+            workflow=workflow,
+            workspace_id=str(dataset.workspace_id),
+        )
+        semantic_model = self._build_dataset_semantic_model(context=context)
+        return SqlAnalystTool(
+            llm=llm_provider,
+            context=context,
+            semantic_model=semantic_model,
+            federated_sql_executor=federated_executor,
+            logger=self._logger,
+            priority=0,
+            embedder=embedding_provider,
+            event_emitter=event_emitter,
         )
 
-        execution_model = apply_tenant_aware_context(
-            unified_model,
-            context=TenantAwareQueryContext(
-                organization_id=semantic_model_entry.organization_id,
-                execution_connector_id=self._build_unified_execution_connector_id(
-                    organization_id=semantic_model_entry.organization_id
-                ),
-            ),
-            table_connector_map=table_connector_map,
-        )
-        if not execution_model.name:
-            execution_model.name = semantic_model_entry.name or f"model_{semantic_model_entry.id}"
-
-        workflow = self._build_unified_workflow_payload(
+    async def _build_semantic_model_tool(
+        self,
+        *,
+        semantic_model_entry: SemanticModelRecordResponse,
+        binding: AnalystBinding,
+        llm_provider: LLMProvider,
+        embedding_provider: Optional[EmbeddingProvider],
+        event_emitter: Optional[IAgentEventEmitter],
+    ) -> SqlAnalystTool:
+        semantic_model = load_semantic_model(semantic_model_entry.content_yaml)
+        raw_model_payload = self._parse_yaml_payload(semantic_model_entry.content_yaml)
+        workflow, _workflow_dialect = await self._dataset_execution_resolver.build_semantic_workflow(
             organization_id=semantic_model_entry.organization_id,
-            semantic_model=execution_model,
-            source_semantic_model=unified_model,
-            table_connector_map=table_connector_map,
-            semantic_model_id=semantic_model_entry.id,
+            workflow_id=f"workflow_semantic_agent_{semantic_model_entry.id.hex[:12]}",
+            dataset_name=semantic_model_entry.name or f"semantic_model_{semantic_model_entry.id.hex[:8]}",
+            semantic_model=semantic_model,
+            raw_datasets_payload=(
+                raw_model_payload.get("datasets")
+                if isinstance(raw_model_payload.get("datasets"), dict)
+                else (
+                    raw_model_payload.get("tables")
+                    if isinstance(raw_model_payload.get("tables"), dict)
+                    else None
+                )
+            ),
         )
-
-        table_source_map = {
-            table_key: str(connector_id)
-            for table_key, connector_id in table_connector_map.items()
-        }
+        context = await self._build_semantic_model_context(
+            binding=binding,
+            semantic_model_entry=semantic_model_entry,
+            semantic_model=semantic_model,
+            workflow=workflow,
+        )
         federated_executor = _FederatedSqlExecutor(
             federated_query_tool=self._federated_query_tool,
             workflow=workflow,
             workspace_id=str(semantic_model_entry.organization_id),
         )
-        dialect_str = str(execution_model.dialect or "postgres").lower()
-
         return SqlAnalystTool(
             llm=llm_provider,
-            semantic_model=execution_model,
-            connector=None,
-            dialect=dialect_str,
+            context=context,
+            semantic_model=semantic_model,
+            federated_sql_executor=federated_executor,
+            logger=self._logger,
             priority=0,
             embedder=embedding_provider,
             event_emitter=event_emitter,
-            federated_sql_executor=federated_executor,
-            table_source_map=table_source_map,
-            prefer_federated_execution=True,
         )
 
-    def _build_unified_workflow_payload(
+    async def _build_dataset_workflow(
         self,
-        *,
-        organization_id: uuid.UUID,
-        semantic_model: SemanticModel,
-        source_semantic_model: SemanticModel,
-        table_connector_map: dict[str, uuid.UUID],
-        semantic_model_id: uuid.UUID,
-    ) -> FederationWorkflow:
-        workspace_id = str(organization_id)
-        dataset_id = f"unified_semantic_{organization_id.hex[:12]}_{semantic_model_id.hex[:12]}"
-
-        table_bindings: dict[str, VirtualTableBinding] = {}
-        for table_key, table in semantic_model.tables.items():
-            source_table = source_semantic_model.tables.get(table_key, table)
-            connector_id = table_connector_map.get(table_key)
-            if connector_id is None:
-                raise BusinessValidationError(
-                    f"Missing connector binding for unified table '{table_key}'."
-                )
-            source_catalog = source_table.catalog
-            uses_synthetic_catalog = source_catalog is None and table.catalog is not None
-
-            table_bindings[table_key] = VirtualTableBinding(
-                table_key=table_key,
-                source_id=f"source_{connector_id.hex[:12]}",
-                connector_id=connector_id,
-                schema=table.schema,
-                table=table.name,
-                catalog=table.catalog,
-                metadata={
-                    "physical_catalog": source_catalog,
-                    "physical_schema": source_table.schema,
-                    "physical_table": source_table.name,
-                    "skip_catalog_in_pushdown": uses_synthetic_catalog,
-                },
+        datasets: list[DatasetRecord],
+    ) -> tuple[FederationWorkflow, str]:
+        if len(datasets) == 1:
+            workflow, _default_table_key, workflow_dialect = await self._dataset_execution_resolver.build_workflow_for_dataset(
+                dataset=datasets[0],
             )
+            return workflow, workflow_dialect
 
-        relationships = [
-            VirtualRelationship(
-                name=relationship.name,
-                left_table=relationship.from_,
-                right_table=relationship.to,
-                join_type=relationship.type,
-                condition=relationship.join_on,
+        table_bindings: dict[str, Any] = {}
+        dialects: list[str] = []
+        for dataset in datasets:
+            sql_alias = str(dataset.sql_alias or "").strip().lower()
+            if not sql_alias:
+                raise BusinessValidationError(f"Dataset '{dataset.name}' is missing a sql_alias.")
+            binding, dialect = self._dataset_execution_resolver._build_binding_from_dataset_record(
+                dataset=dataset,
+                table_key=sql_alias,
+                logical_schema=None,
+                logical_table_name=sql_alias,
+                catalog_name=None,
             )
-            for relationship in (semantic_model.relationships or [])
-        ]
+            table_bindings[binding.table_key] = binding
+            dialects.append(dialect)
 
-        return FederationWorkflow(
-            id=f"workflow_{dataset_id}",
-            workspace_id=workspace_id,
+        context_id = uuid.uuid5(
+            uuid.NAMESPACE_DNS,
+            "langbridge-analyst-datasets:" + ",".join(sorted(str(dataset.id) for dataset in datasets)),
+        )
+        workflow = FederationWorkflow(
+            id=f"workflow_dataset_{context_id.hex[:12]}",
+            workspace_id=str(datasets[0].workspace_id),
             dataset=VirtualDataset(
-                id=dataset_id,
-                name="Unified Semantic Dataset",
-                workspace_id=workspace_id,
+                id=f"dataset_context_{context_id.hex[:12]}",
+                name="Dataset Analyst Context",
+                workspace_id=str(datasets[0].workspace_id),
                 tables=table_bindings,
-                relationships=relationships,
+                relationships=[],
             ),
             broadcast_threshold_bytes=settings.FEDERATION_BROADCAST_THRESHOLD_BYTES,
             partition_count=settings.FEDERATION_PARTITION_COUNT,
             max_stage_retries=settings.FEDERATION_STAGE_MAX_RETRIES,
             stage_parallelism=settings.FEDERATION_STAGE_PARALLELISM,
         )
+        return workflow, self._choose_workflow_dialect(dialects)
+
+    def _build_dataset_semantic_model(self, *, context: AnalyticalContext) -> SemanticModel:
+        tables: dict[str, Table] = {}
+        for dataset in context.datasets:
+            dimensions: list[Dimension] = []
+            measures: list[Measure] = []
+            for column in dataset.columns:
+                data_type = column.data_type or "text"
+                dimensions.append(
+                    Dimension(
+                        name=column.name,
+                        type=data_type,
+                        description=column.description,
+                        primary_key=column.name.lower() == "id" or column.name.lower().endswith("_id"),
+                    )
+                )
+                if self._is_numeric_type(data_type):
+                    measures.append(
+                        Measure(
+                            name=column.name,
+                            type=data_type,
+                            description=column.description,
+                            aggregation="sum",
+                        )
+                    )
+            tables[dataset.sql_alias] = Table(
+                dataset_id=dataset.dataset_id,
+                name=dataset.sql_alias,
+                description=dataset.description,
+                dimensions=dimensions,
+                measures=measures,
+            )
+
+        metrics = {
+            "row_count": Metric(
+                expression="COUNT(*)",
+                description="Count of rows",
+            )
+        }
+        return SemanticModel(
+            version="1.0",
+            name=context.asset_name,
+            description=context.description,
+            dialect=context.dialect,
+            tags=context.tags,
+            tables=tables,
+            relationships=[],
+            metrics=metrics,
+        )
+
+    async def _load_datasets(self, dataset_ids: list[uuid.UUID]) -> list[DatasetRecord]:
+        if self._dataset_repository is None:
+            raise BusinessValidationError("Dataset repository is required for dataset-backed analysis.")
+        ordered: list[DatasetRecord] = []
+        for dataset_id in dataset_ids:
+            dataset = await self._dataset_repository.get_by_id(dataset_id)
+            if dataset is None:
+                raise BusinessValidationError(f"Dataset '{dataset_id}' was not found.")
+            ordered.append(dataset)
+        return ordered
+
+    async def _build_dataset_context(
+        self,
+        *,
+        asset_dataset: DatasetRecord,
+        selected_datasets: list[DatasetRecord],
+        binding: AnalystBinding,
+        workflow: FederationWorkflow,
+    ) -> AnalyticalContext:
+        datasets = await self._build_context_dataset_bindings(
+            workspace_id=asset_dataset.workspace_id,
+            workflow=workflow,
+        )
+        dimensions: list[AnalyticalField] = []
+        measures: list[AnalyticalField] = []
+        for dataset_binding in datasets:
+            for column in dataset_binding.columns:
+                field_name = f"{dataset_binding.sql_alias}.{column.name}"
+                dimensions.append(AnalyticalField(name=field_name))
+                if self._is_numeric_type(column.data_type):
+                    measures.append(AnalyticalField(name=field_name))
+
+        relationships = [self._format_virtual_relationship(item) for item in workflow.dataset.relationships]
+        context_name = asset_dataset.name
+        if len(selected_datasets) > 1:
+            context_name = binding.description or ", ".join(dataset.name for dataset in selected_datasets)
+        return AnalyticalContext(
+            asset_type="dataset",
+            asset_id=str(asset_dataset.id) if len(selected_datasets) == 1 else str(
+                uuid.uuid5(
+                    uuid.NAMESPACE_DNS,
+                    "langbridge-analyst-datasets:" + ",".join(sorted(str(dataset.id) for dataset in selected_datasets)),
+                )
+            ),
+            asset_name=context_name,
+            description=asset_dataset.description,
+            tags=list(asset_dataset.tags_json or []),
+            execution_mode="federated",
+            dialect="postgres",
+            datasets=datasets,
+            tables=[binding.sql_alias for binding in datasets],
+            dimensions=dimensions,
+            measures=measures,
+            metrics=[AnalyticalMetric(name="row_count", expression="COUNT(*)", description="Count of rows")],
+            relationships=relationships,
+        )
+
+    async def _build_semantic_model_context(
+        self,
+        *,
+        binding: AnalystBinding,
+        semantic_model_entry: SemanticModelRecordResponse,
+        semantic_model: SemanticModel,
+        workflow: FederationWorkflow,
+    ) -> AnalyticalContext:
+        datasets = await self._build_context_dataset_bindings(
+            workspace_id=semantic_model_entry.organization_id,
+            workflow=workflow,
+        )
+        dimensions: list[AnalyticalField] = []
+        measures: list[AnalyticalField] = []
+        for table_key, table in semantic_model.tables.items():
+            for dimension in table.dimensions or []:
+                dimensions.append(
+                    AnalyticalField(
+                        name=f"{table_key}.{dimension.name}",
+                        synonyms=list(dimension.synonyms or []),
+                    )
+                )
+            for measure in table.measures or []:
+                measures.append(
+                    AnalyticalField(
+                        name=f"{table_key}.{measure.name}",
+                        synonyms=list(measure.synonyms or []),
+                    )
+                )
+        metrics = [
+            AnalyticalMetric(
+                name=metric_name,
+                expression=getattr(metric, "expression", None),
+                description=getattr(metric, "description", None),
+            )
+            for metric_name, metric in (semantic_model.metrics or {}).items()
+        ]
+        relationships = [
+            self._format_semantic_relationship(relationship)
+            for relationship in (semantic_model.relationships or [])
+        ]
+        return AnalyticalContext(
+            asset_type="semantic_model",
+            asset_id=str(semantic_model_entry.id),
+            asset_name=semantic_model_entry.name or semantic_model.name or binding.name,
+            description=semantic_model_entry.description or semantic_model.description or binding.description,
+            tags=list(semantic_model.tags or []),
+            execution_mode="federated",
+            dialect="postgres",
+            datasets=datasets,
+            tables=list(semantic_model.tables.keys()),
+            dimensions=dimensions,
+            measures=measures,
+            metrics=metrics,
+            relationships=relationships,
+        )
+
+    async def _build_context_dataset_bindings(
+        self,
+        *,
+        workspace_id: uuid.UUID,
+        workflow: FederationWorkflow,
+    ) -> list[AnalyticalDatasetBinding]:
+        dataset_records_by_id = await self._load_workflow_dataset_records(
+            workspace_id=workspace_id,
+            workflow=workflow,
+        )
+        bindings: list[AnalyticalDatasetBinding] = []
+        for table_binding in workflow.dataset.tables.values():
+            metadata = table_binding.metadata if isinstance(table_binding.metadata, dict) else {}
+            dataset_id_raw = metadata.get("dataset_id")
+            dataset_id = None
+            try:
+                dataset_id = uuid.UUID(str(dataset_id_raw)) if dataset_id_raw else None
+            except (TypeError, ValueError):
+                dataset_id = None
+            dataset_record = dataset_records_by_id.get(dataset_id) if dataset_id is not None else None
+            columns = await self._list_dataset_columns(dataset_id) if dataset_id is not None else []
+            bindings.append(
+                AnalyticalDatasetBinding(
+                    dataset_id=str(dataset_record.id if dataset_record is not None else dataset_id or ""),
+                    dataset_name=dataset_record.name if dataset_record is not None else str(table_binding.table),
+                    sql_alias=str(table_binding.table_key),
+                    description=dataset_record.description if dataset_record is not None else None,
+                    source_kind=(
+                        getattr(getattr(table_binding, "dataset_descriptor", None), "source_kind", None)
+                        or (dataset_record.source_kind if dataset_record is not None else None)
+                    ),
+                    storage_kind=(
+                        getattr(getattr(table_binding, "dataset_descriptor", None), "storage_kind", None)
+                        or (dataset_record.storage_kind if dataset_record is not None else None)
+                    ),
+                    columns=columns,
+                )
+            )
+        return bindings
+
+    async def _load_workflow_dataset_records(
+        self,
+        *,
+        workspace_id: uuid.UUID,
+        workflow: FederationWorkflow,
+    ) -> dict[uuid.UUID, DatasetRecord]:
+        if self._dataset_repository is None:
+            return {}
+
+        dataset_ids: list[uuid.UUID] = []
+        for table_binding in workflow.dataset.tables.values():
+            metadata = table_binding.metadata if isinstance(table_binding.metadata, dict) else {}
+            dataset_id_raw = metadata.get("dataset_id")
+            if not dataset_id_raw:
+                continue
+            try:
+                dataset_id = uuid.UUID(str(dataset_id_raw))
+            except (TypeError, ValueError):
+                continue
+            if dataset_id not in dataset_ids:
+                dataset_ids.append(dataset_id)
+        if not dataset_ids:
+            return {}
+
+        rows = await self._dataset_repository.get_by_ids_for_workspace(
+            workspace_id=workspace_id,
+            dataset_ids=dataset_ids,
+        )
+        return {row.id: row for row in rows}
+
+    async def _list_dataset_columns(self, dataset_id: uuid.UUID) -> list[AnalyticalColumn]:
+        if self._dataset_column_repository is None:
+            return []
+        rows = await self._dataset_column_repository.list_for_dataset(dataset_id=dataset_id)
+        return [
+            AnalyticalColumn(
+                name=row.name,
+                data_type=row.data_type,
+                description=row.description,
+            )
+            for row in rows
+        ]
 
     @staticmethod
-    def _build_unified_execution_connector_id(*, organization_id: uuid.UUID) -> uuid.UUID:
-        return uuid.uuid5(
-            uuid.NAMESPACE_DNS,
-            f"langbridge-unified-federation:{organization_id}",
+    def _parse_yaml_payload(content_yaml: str) -> dict[str, Any]:
+        try:
+            payload = yaml.safe_load(content_yaml)
+        except Exception:
+            return {}
+        return payload if isinstance(payload, dict) else {}
+
+    @staticmethod
+    def _format_virtual_relationship(relationship: Any) -> str:
+        join_type = str(getattr(relationship, "join_type", "inner") or "inner").upper()
+        return (
+            f"{join_type} join "
+            f"{getattr(relationship, 'left_table', '')} -> "
+            f"{getattr(relationship, 'right_table', '')} on "
+            f"{getattr(relationship, 'condition', '')}"
         )
+
+    @staticmethod
+    def _format_semantic_relationship(relationship: Any) -> str:
+        join_type = str(getattr(relationship, "type", "inner") or "inner").upper()
+        return (
+            f"{join_type} join "
+            f"{getattr(relationship, 'from_', '')} -> "
+            f"{getattr(relationship, 'to', '')} on "
+            f"{getattr(relationship, 'join_on', '')}"
+        )
+
+    @staticmethod
+    def _is_numeric_type(data_type: str | None) -> bool:
+        normalized = str(data_type or "").strip().lower()
+        return any(
+            token in normalized
+            for token in ("int", "decimal", "numeric", "number", "float", "double", "real")
+        )
+
+    @staticmethod
+    def _choose_workflow_dialect(dialects: list[str]) -> str:
+        normalized = [str(value or "").strip().lower() for value in dialects if str(value or "").strip()]
+        if not normalized:
+            return "postgres"
+        if any(value == "duckdb" for value in normalized):
+            return "duckdb"
+        if any(value == "postgres" for value in normalized):
+            return "postgres"
+        return normalized[0]
 
     def _build_supervisor_orchestrator(
         self,
@@ -643,16 +786,14 @@ class AgentOrchestratorFactory:
         definition: AgentDefinitionModel,
         llm_provider: LLMProvider,
         planning_constraints: PlanningConstraints,
-        sql_tools: list[SqlAnalystTool],
-        semantic_search_tools: list[SemanticSearchTool],
+        analyst_tools: list[SqlAnalystTool],
         event_emitter: Optional[IAgentEventEmitter],
     ) -> SupervisorOrchestrator:
         analyst_agent = None
-        if sql_tools:
+        if analyst_tools:
             analyst_agent = AnalystAgent(
                 llm=llm_provider,
-                sql_tools=sql_tools,
-                search_tools=semantic_search_tools,
+                tools=analyst_tools,
                 logger=self._logger,
             )
 
@@ -695,80 +836,4 @@ class AgentOrchestratorFactory:
             llm=llm_provider,
             max_iterations=max_iterations,
             logger=self._logger,
-        )
-
-    async def _get_semantic_model_definitions(
-        self,
-        semantic_model_ids: list[uuid.UUID],
-    ) -> list[SemanticModelRecordResponse]:
-        if not semantic_model_ids:
-            return []
-        return await self._semantic_model_store.get_by_ids(semantic_model_ids)
-
-    async def _get_connectors(self, connector_ids: set[uuid.UUID]) -> list[ConnectorDTO]:
-        if not connector_ids:
-            return []
-        return await self._connector_store.get_by_ids(list(connector_ids))
-
-    def _get_vector_semantic_searches(self, semantic_model: SemanticModel) -> list[dict[str, Any]]:
-        searches: list[dict[str, Any]] = []
-        for table_key, table in semantic_model.tables.items():
-            for dimension in table.dimensions or []:
-                if not dimension.vectorized:
-                    continue
-                vector_index = dimension.vector_index or {}
-                if not vector_index:
-                    continue
-                self._logger.info("Found vectorized dimension: %s.%s", table_key, dimension.name)
-                vector_parameters = {
-                    **vector_index,
-                    "semantic_name": f"{semantic_model.name or 'semantic_model'}::{table_key}.{dimension.name}",
-                }
-                searches.append(
-                    {
-                        "metadata_filters": {},
-                        "vector_parameters": vector_parameters,
-                    }
-                )
-        return searches
-
-    async def _build_semantic_search_tools(
-        self,
-        llm_provider: LLMProvider,
-        semantic_model: SemanticModel,
-    ) -> list[SemanticSearchTool]:
-        tools: list[SemanticSearchTool] = []
-        vector_searches = self._get_vector_semantic_searches(semantic_model)
-
-        for vector_search in vector_searches:
-            vector_params = vector_search.get("vector_parameters", {})
-            if not vector_params:
-                continue
-            tool = await self._build_semantic_search_tool(
-                llm_provider,
-                vector_type=VectorDBType.FAISS,
-                vector_params=vector_params,
-            )
-            tools.append(tool)
-        return tools
-
-    async def _build_semantic_search_tool(
-        self,
-        llm_provider: LLMProvider,
-        vector_type: VectorDBType,
-        vector_params: dict[str, Any],
-    ) -> SemanticSearchTool:
-        vector_managed_class_ref: Type[ManagedVectorDB] = (
-            self._vector_factory.get_managed_vector_db_class_reference(vector_type)
-        )
-        vector_store: ManagedVectorDB = await vector_managed_class_ref.create_managed_instance(
-            kwargs={"index_name": vector_params.get("vector_namespace")},
-            logger=self._logger,
-        )
-        return SemanticSearchTool(
-            semantic_name=vector_params.get("semantic_name", "default_search"),
-            llm=llm_provider,
-            embedding_model=vector_params.get("model"),
-            vector_store=vector_store,
-            entity_reconignition=True,
         )

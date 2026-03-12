@@ -1,10 +1,9 @@
 from .semantic_models import (
     SemanticModelAgenticJobCreateRequest,
     SemanticModelAgenticJobCreateResponse,
-    SemanticModelCatalogColumnResponse,
+    SemanticModelCatalogDatasetResponse,
+    SemanticModelCatalogFieldResponse,
     SemanticModelCatalogResponse,
-    SemanticModelCatalogSchemaResponse,
-    SemanticModelCatalogTableResponse,
     SemanticModelCreateRequest,
     SemanticModelSelectionGenerateRequest,
     SemanticModelSelectionGenerateResponse,
@@ -26,9 +25,8 @@ from .semantic_query import (
 
 __all__ = [
     "SemanticModelCreateRequest",
-    "SemanticModelCatalogColumnResponse",
-    "SemanticModelCatalogTableResponse",
-    "SemanticModelCatalogSchemaResponse",
+    "SemanticModelCatalogFieldResponse",
+    "SemanticModelCatalogDatasetResponse",
     "SemanticModelCatalogResponse",
     "SemanticModelSelectionGenerateRequest",
     "SemanticModelSelectionGenerateResponse",

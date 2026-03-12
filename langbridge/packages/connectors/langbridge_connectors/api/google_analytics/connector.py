@@ -101,6 +101,8 @@ class GoogleAnalyticsApiConnector(HttpApiConnector):
         },
     }
 
+    config: GoogleAnalyticsConnectorConfig
+
     def __init__(self, config: GoogleAnalyticsConnectorConfig, logger=None, **kwargs: Any) -> None:
         super().__init__(config=config, logger=logger, **kwargs)
         self._access_token: str | None = None

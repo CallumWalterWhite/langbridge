@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import asyncio
 import json
 import logging
@@ -157,8 +155,8 @@ class QuestionClassifier:
                 "available_agents",
                 "available_tools",
                 "tool_capabilities",
-                "semantic_models_count",
-                "semantic_models",
+                "analytical_assets_count",
+                "analytical_assets",
                 "connector_names",
                 "routing",
                 "resolved_entities",

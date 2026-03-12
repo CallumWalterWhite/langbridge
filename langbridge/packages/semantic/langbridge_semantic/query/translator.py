@@ -27,7 +27,7 @@ class FilterTarget:
     kind: str
     expression: exp.Expression
     data_type: Optional[str]
-    tables: Set[str]
+    datasets: Set[str]
 
 
 @dataclass(frozen=True)
@@ -79,7 +79,7 @@ class TsqlSemanticTranslator:
 
         segments = [resolver.resolve_segment(segment) for segment in parsed.segments]
 
-        required_tables = self._collect_required_tables(
+        required_datasets = self._collect_required_datasets(
             resolver,
             dimensions,
             time_dimensions,
@@ -88,7 +88,7 @@ class TsqlSemanticTranslator:
             filter_targets,
             segments,
         )
-        base_table = self._choose_base_table(
+        base_dataset = self._choose_base_dataset(
             dimensions,
             time_dimensions,
             measures,
@@ -96,11 +96,11 @@ class TsqlSemanticTranslator:
             filter_targets,
             segments,
         )
-        if base_table not in required_tables:
-            required_tables.add(base_table)
+        if base_dataset not in required_datasets:
+            required_datasets.add(base_dataset)
 
-        join_steps = JoinPlanner(model.relationships).plan(base_table, required_tables)
-        alias_map = self._build_alias_map(base_table, join_steps)
+        join_steps = JoinPlanner(model.relationships).plan(base_dataset, required_datasets)
+        alias_map = self._build_alias_map(base_dataset, join_steps)
 
         #TODO: implement ctes. Currently we just inline everything which works but can lead to duplicated expressions and subqueries. We can start by implementing CTEs for joined tables and then expand to more complex expressions if needed.
         # cte_clauses = self._build_ctes
@@ -126,7 +126,7 @@ class TsqlSemanticTranslator:
         )
 
         query_expr = exp.select(*select_clauses)
-        query_expr = self._apply_from(query_expr, model, base_table, alias_map, join_steps)
+        query_expr = self._apply_from(query_expr, model, base_dataset, alias_map, join_steps)
 
         if where_conditions:
             query_expr = query_expr.where(self._combine_conditions(where_conditions))
@@ -147,7 +147,7 @@ class TsqlSemanticTranslator:
     def load_semantic_model(self, yaml_text: str) -> SemanticModel:
         return load_semantic_model(yaml_text)
 
-    def _collect_required_tables(
+    def _collect_required_datasets(
         self,
         resolver: SemanticModelResolver,
         dimensions: Sequence[DimensionRef],
@@ -157,24 +157,24 @@ class TsqlSemanticTranslator:
         filter_targets: Sequence[FilterTarget],
         segments: Sequence[SegmentRef],
     ) -> Set[str]:
-        required_tables: Set[str] = set()
+        required_datasets: Set[str] = set()
 
         for dimension in dimensions:
-            required_tables.add(dimension.table)
+            required_datasets.add(dimension.dataset)
         for time_dimension in time_dimensions:
-            required_tables.add(time_dimension.dimension.table)
+            required_datasets.add(time_dimension.dimension.dataset)
         for measure in measures:
-            required_tables.add(measure.table)
+            required_datasets.add(measure.dataset)
         for metric in metrics:
-            required_tables.update(resolver.extract_tables_from_expression(metric.expression))
+            required_datasets.update(resolver.extract_datasets_from_expression(metric.expression))
         for target in filter_targets:
-            required_tables.update(target.tables)
+            required_datasets.update(target.datasets)
         for segment in segments:
-            required_tables.add(segment.table)
+            required_datasets.add(segment.dataset)
 
-        return required_tables
+        return required_datasets
 
-    def _choose_base_table(
+    def _choose_base_dataset(
         self,
         dimensions: Sequence[DimensionRef],
         time_dimensions: Sequence[TimeDimensionRef],
@@ -184,33 +184,33 @@ class TsqlSemanticTranslator:
         segments: Sequence[SegmentRef],
     ) -> str:
         if measures:
-            return measures[0].table
+            return measures[0].dataset
         if metrics:
-            for table in self._tables_from_expression(metrics[0].key):
-                return table
+            for dataset in self._datasets_from_expression(metrics[0].key):
+                return dataset
         if time_dimensions:
-            return time_dimensions[0].dimension.table
+            return time_dimensions[0].dimension.dataset
         if dimensions:
-            return dimensions[0].table
+            return dimensions[0].dataset
         if filter_targets:
-            return next(iter(filter_targets[0].tables))
+            return next(iter(filter_targets[0].datasets))
         if segments:
-            return segments[0].table
+            return segments[0].dataset
         raise SemanticQueryError(f"Semantic query did not reference any tables in {dimensions}, {time_dimensions}, {measures}, {metrics}, {filter_targets}, {segments}.")
 
-    def _tables_from_expression(self, expression: str) -> List[str]:
+    def _datasets_from_expression(self, expression: str) -> List[str]:
         matches = re.findall(r"\b([A-Za-z_][A-Za-z0-9_]*)\.", expression)
         return matches
 
-    def _build_alias_map(self, base_table: str, join_steps: Sequence[Any]) -> Dict[str, str]:
-        alias_map: Dict[str, str] = {base_table: "t0"}
+    def _build_alias_map(self, base_dataset: str, join_steps: Sequence[Any]) -> Dict[str, str]:
+        alias_map: Dict[str, str] = {base_dataset: "t0"}
         counter = 1
         for step in join_steps:
-            if step.right_table not in alias_map:
-                alias_map[step.right_table] = f"t{counter}"
+            if step.right_dataset not in alias_map:
+                alias_map[step.right_dataset] = f"t{counter}"
                 counter += 1
-            if step.left_table not in alias_map:
-                alias_map[step.left_table] = f"t{counter}"
+            if step.left_dataset not in alias_map:
+                alias_map[step.left_dataset] = f"t{counter}"
                 counter += 1
         return alias_map
 
@@ -228,22 +228,22 @@ class TsqlSemanticTranslator:
         order_aliases: Dict[str, str] = {}
 
         for dimension in dimensions:
-            expr = self._column_expression(alias_map, dimension.table, dimension.column, dimension.expression, data_type=dimension.data_type)
-            alias = self._alias_for_member(f"{dimension.table}.{dimension.column}")
+            expr = self._column_expression(alias_map, dimension.dataset, dimension.column, dimension.expression, data_type=dimension.data_type)
+            alias = self._alias_for_member(f"{dimension.dataset}.{dimension.column}")
             select_clauses.append(exp.alias_(expr, alias, quoted=True))
             group_by_expressions.append(expr)
             self._register_column_order_aliases(
                 order_aliases=order_aliases,
                 alias=alias,
                 resolver=resolver,
-                table=dimension.table,
+                dataset=dimension.dataset,
                 column=dimension.column,
             )
 
         for time_dimension in time_dimensions:
             base_expr = self._column_expression(
                 alias_map,
-                time_dimension.dimension.table,
+                time_dimension.dimension.dataset,
                 time_dimension.dimension.column,
                 data_type=time_dimension.dimension.data_type,
             )
@@ -251,7 +251,7 @@ class TsqlSemanticTranslator:
             if time_dimension.granularity:
                 expr = date_trunc(time_dimension.granularity, base_expr, dialect=self._dialect)
             alias = self._alias_for_time_dimension(
-                time_dimension.dimension.table,
+                time_dimension.dimension.dataset,
                 time_dimension.dimension.column,
                 time_dimension.granularity,
             )
@@ -261,20 +261,20 @@ class TsqlSemanticTranslator:
                 order_aliases=order_aliases,
                 alias=alias,
                 resolver=resolver,
-                table=time_dimension.dimension.table,
+                dataset=time_dimension.dimension.dataset,
                 column=time_dimension.dimension.column,
                 granularity=time_dimension.granularity,
             )
 
         for measure in measures:
             expr = self._measure_expression(alias_map, measure)
-            alias = self._alias_for_member(f"{measure.table}.{measure.column}")
+            alias = self._alias_for_member(f"{measure.dataset}.{measure.column}")
             select_clauses.append(exp.alias_(expr, alias, quoted=True))
             self._register_column_order_aliases(
                 order_aliases=order_aliases,
                 alias=alias,
                 resolver=resolver,
-                table=measure.table,
+                dataset=measure.dataset,
                 column=measure.column,
             )
 
@@ -311,7 +311,7 @@ class TsqlSemanticTranslator:
                 dimension_expression = None
             column_expr = self._column_expression(
                 alias_map,
-                time_dimension.dimension.table,
+                time_dimension.dimension.dataset,
                 time_dimension.dimension.column,
                 dimension_expression,
             )
@@ -386,10 +386,10 @@ class TsqlSemanticTranslator:
         metrics: Sequence[MetricRef],
     ) -> exp.Expression:
         for time_dimension in time_dimensions:
-            if member == f"{time_dimension.dimension.table}.{time_dimension.dimension.column}":
+            if member == f"{time_dimension.dimension.dataset}.{time_dimension.dimension.column}":
                 expr = self._column_expression(
                     alias_map,
-                    time_dimension.dimension.table,
+                    time_dimension.dimension.dataset,
                     time_dimension.dimension.column,
                     time_dimension.dimension.expression,
                 )
@@ -401,7 +401,7 @@ class TsqlSemanticTranslator:
         if matching_time_dimension is not None:
             expr = self._column_expression(
                 alias_map,
-                matching_time_dimension.dimension.table,
+                matching_time_dimension.dimension.dataset,
                 matching_time_dimension.dimension.column,
                 matching_time_dimension.dimension.expression,
             )
@@ -411,7 +411,7 @@ class TsqlSemanticTranslator:
 
         try:
             dimension = resolver.resolve_dimension(member)
-            return self._column_expression(alias_map, dimension.table, dimension.column, dimension.expression)
+            return self._column_expression(alias_map, dimension.dataset, dimension.column, dimension.expression)
         except SemanticModelError:
             pass
 
@@ -450,16 +450,16 @@ class TsqlSemanticTranslator:
         self,
         query: exp.Select,
         model: SemanticModel,
-        base_table: str,
+        base_dataset: str,
         alias_map: Dict[str, str],
         join_steps: Sequence[Any],
     ) -> exp.Select:
-        base_ref = self._table_ref(model, base_table, alias=alias_map[base_table])
+        base_ref = self._dataset_ref(model, base_dataset, alias=alias_map[base_dataset])
         query = query.from_(base_ref)
 
         for step in join_steps:
-            right_ref = self._table_ref(model, step.right_table, alias=alias_map[step.right_table])
-            join_on = self._replace_table_refs(step.relationship.join_on, alias_map)
+            right_ref = self._dataset_ref(model, step.right_dataset, alias=alias_map[step.right_dataset])
+            join_on = self._replace_table_refs(step.relationship.join_condition, alias_map)
             join_type = self._join_type(step.relationship.type).lower()
             query = query.join(right_ref, on=join_on, join_type=join_type)
 
@@ -475,13 +475,13 @@ class TsqlSemanticTranslator:
 
         if item.dimension or item.time_dimension:
             dimension = resolver.resolve_dimension(member)
-            expr = self._column_expression({}, dimension.table, dimension.column, dimension.expression, allow_placeholder=True)
+            expr = self._column_expression({}, dimension.dataset, dimension.column, dimension.expression, allow_placeholder=True)
             condition = self._build_filter_expression(expr, operator, values, dimension.data_type)
             return FilterTarget(
                 kind="dimension",
                 expression=condition,
                 data_type=dimension.data_type,
-                tables={dimension.table},
+                datasets={dimension.dataset},
             )
 
         if item.measure:
@@ -493,7 +493,7 @@ class TsqlSemanticTranslator:
                     kind="metric",
                     expression=condition,
                     data_type=None,
-                    tables=resolver.extract_tables_from_expression(expr),
+                    datasets=resolver.extract_datasets_from_expression(expr),
                 )
             expr = self._measure_expression({}, resolved, allow_placeholder=True)
             condition = self._build_filter_expression(expr, operator, values, resolved.data_type)
@@ -501,7 +501,7 @@ class TsqlSemanticTranslator:
                 kind="measure",
                 expression=condition,
                 data_type=resolved.data_type,
-                tables={resolved.table},
+                datasets={resolved.dataset},
             )
 
         if member in (resolver.model.metrics or {}):
@@ -512,18 +512,18 @@ class TsqlSemanticTranslator:
                 kind="metric",
                 expression=condition,
                 data_type=None,
-                tables=resolver.extract_tables_from_expression(expr),
+                datasets=resolver.extract_datasets_from_expression(expr),
             )
 
         try:
             dimension = resolver.resolve_dimension(member)
-            expr = self._column_expression({}, dimension.table, dimension.column, dimension.expression, allow_placeholder=True)
+            expr = self._column_expression({}, dimension.dataset, dimension.column, dimension.expression, allow_placeholder=True)
             condition = self._build_filter_expression(expr, operator, values, dimension.data_type)
             return FilterTarget(
                 kind="dimension",
                 expression=condition,
                 data_type=dimension.data_type,
-                tables={dimension.table},
+                datasets={dimension.dataset},
             )
         except SemanticModelError:
             pass
@@ -536,7 +536,7 @@ class TsqlSemanticTranslator:
                 kind="metric",
                 expression=condition,
                 data_type=None,
-                tables=resolver.extract_tables_from_expression(expr),
+                datasets=resolver.extract_datasets_from_expression(expr),
             )
         expr = self._measure_expression({}, resolved, allow_placeholder=True)
         condition = self._build_filter_expression(expr, operator, values, resolved.data_type)
@@ -544,7 +544,7 @@ class TsqlSemanticTranslator:
             kind="measure",
             expression=condition,
             data_type=resolved.data_type,
-            tables={resolved.table},
+            datasets={resolved.dataset},
         )
 
     def _build_filter_expression(
@@ -630,7 +630,7 @@ class TsqlSemanticTranslator:
     ) -> exp.Expression:
         column_expr = self._column_expression(
             alias_map,
-            measure.table,
+            measure.dataset,
             measure.column,
             expression=measure.expression,
             allow_placeholder=allow_placeholder,
@@ -658,7 +658,7 @@ class TsqlSemanticTranslator:
     def _column_expression(
         self,
         alias_map: Dict[str, str],
-        table: str,
+        dataset: str,
         column: str,
         expression: Optional[str] = None,
         allow_placeholder: bool = False,
@@ -667,9 +667,9 @@ class TsqlSemanticTranslator:
         if not alias_map:
             if not allow_placeholder:
                 raise SemanticQueryError("Column expression requested before aliases are available.")
-            alias = table
+            alias = dataset
         else:
-            alias = alias_map[table]
+            alias = alias_map[dataset]
         if expression:
             expr = self._ensure_expression(expression)
             if isinstance(expr, exp.Column):
@@ -710,12 +710,12 @@ class TsqlSemanticTranslator:
 
         return expr.transform(_replace)
 
-    def _table_ref(self, model: SemanticModel, table_key: str, alias: Optional[str] = None) -> exp.Expression:
-        table = model.tables.get(table_key)
-        if table is None:
-            raise SemanticQueryError(f"Unknown table '{table_key}'.")
-        catalog = table.catalog
-        schema = table.schema
+    def _dataset_ref(self, model: SemanticModel, dataset_key: str, alias: Optional[str] = None) -> exp.Expression:
+        dataset = model.datasets.get(dataset_key)
+        if dataset is None:
+            raise SemanticQueryError(f"Unknown dataset '{dataset_key}'.")
+        catalog = dataset.catalog_name
+        schema = dataset.schema_name
 
         if not catalog and schema and "." in schema:
             first, remainder = schema.split(".", 1)
@@ -723,7 +723,7 @@ class TsqlSemanticTranslator:
             schema = remainder
 
         return exp.table_(
-            table.name,
+            dataset.get_relation_name(dataset_key),
             db=schema or None,
             catalog=catalog or None,
             quoted=True,
@@ -734,8 +734,8 @@ class TsqlSemanticTranslator:
         alias = member.replace(".", "__").replace(" ", "_")
         return re.sub(r"[^A-Za-z0-9_]+", "_", alias)
 
-    def _alias_for_time_dimension(self, table: str, column: str, granularity: Optional[str]) -> str:
-        base = self._alias_for_member(f"{table}.{column}")
+    def _alias_for_time_dimension(self, dataset: str, column: str, granularity: Optional[str]) -> str:
+        base = self._alias_for_member(f"{dataset}.{column}")
         if not granularity:
             return base
         return f"{base}_{granularity}"
@@ -778,12 +778,12 @@ class TsqlSemanticTranslator:
         order_aliases: Dict[str, str],
         alias: str,
         resolver: SemanticModelResolver,
-        table: str,
+        dataset: str,
         column: str,
         granularity: Optional[str] = None,
     ) -> None:
         order_aliases[alias] = alias
-        for key in self._build_member_candidates(resolver, table, column):
+        for key in self._build_member_candidates(resolver, dataset, column):
             order_aliases[key] = alias
             if granularity:
                 order_aliases[f"{key}.{granularity}"] = alias
@@ -791,19 +791,20 @@ class TsqlSemanticTranslator:
     def _build_member_candidates(
         self,
         resolver: SemanticModelResolver,
-        table: str,
+        dataset: str,
         column: str,
     ) -> List[str]:
-        candidates = [f"{table}.{column}"]
-        table_meta = resolver.model.tables.get(table)
-        if table_meta:
-            if table_meta.name:
-                candidates.append(f"{table_meta.name}.{column}")
-            schema_table = ".".join(part for part in [table_meta.schema, table_meta.name] if part)
-            if schema_table:
-                candidates.append(f"{schema_table}.{column}")
-                if table_meta.catalog:
-                    candidates.append(f"{table_meta.catalog}.{schema_table}.{column}")
+        candidates = [f"{dataset}.{column}"]
+        dataset_meta = resolver.model.datasets.get(dataset)
+        if dataset_meta:
+            relation_name = dataset_meta.get_relation_name(dataset)
+            if relation_name:
+                candidates.append(f"{relation_name}.{column}")
+            schema_relation = ".".join(part for part in [dataset_meta.schema_name, relation_name] if part)
+            if schema_relation:
+                candidates.append(f"{schema_relation}.{column}")
+                if dataset_meta.catalog_name:
+                    candidates.append(f"{dataset_meta.catalog_name}.{schema_relation}.{column}")
         deduped: List[str] = []
         seen: Set[str] = set()
         for candidate in candidates:
@@ -826,7 +827,7 @@ class TsqlSemanticTranslator:
 
         for time_dimension in time_dimensions:
             if (
-                time_dimension.dimension.table == resolved_member.table
+                time_dimension.dimension.dataset == resolved_member.dataset
                 and time_dimension.dimension.column == resolved_member.column
             ):
                 return time_dimension

@@ -55,8 +55,7 @@ class AgenticSemanticModelJobRequestService:
                         "source": "api",
                         "details": {
                             "semantic_model_id": str(request.semantic_model_id),
-                            "connector_id": str(request.connector_id),
-                            "selected_table_count": len(request.selected_tables),
+                            "selected_dataset_count": len(request.dataset_ids),
                             "question_prompt_count": len(request.question_prompts),
                         },
                     },

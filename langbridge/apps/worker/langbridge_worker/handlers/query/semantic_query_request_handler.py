@@ -409,10 +409,6 @@ class SemanticQueryRequestHandler(BaseMessageHandler):
             semantic_model_id=semantic_model_id,
             organization_id=request.organisation_id,
             project_id=request.project_id,
-            connector_fallbacks={
-                table_key: semantic_model_record.connector_id
-                for table_key in semantic_model.tables.keys()
-            },
             raw_model_payload=raw_model_payload,
             event_emitter=event_emitter,
         )
@@ -425,7 +421,6 @@ class SemanticQueryRequestHandler(BaseMessageHandler):
         semantic_model_id: uuid.UUID,
         organization_id: uuid.UUID,
         project_id: uuid.UUID | None,
-        connector_fallbacks: Mapping[str, uuid.UUID],
         raw_model_payload: Mapping[str, Any],
         event_emitter: BrokerJobEventEmitter,
     ) -> SemanticQueryResponse:
@@ -439,11 +434,14 @@ class SemanticQueryRequestHandler(BaseMessageHandler):
             workflow_id=f"workflow_semantic_dataset_{semantic_model_id.hex[:12]}",
             dataset_name=f"semantic_dataset_{semantic_model_id.hex[:12]}",
             semantic_model=semantic_model,
-            connector_fallbacks=connector_fallbacks,
-            raw_tables_payload=(
-                raw_model_payload.get("tables")
-                if isinstance(raw_model_payload.get("tables"), Mapping)
-                else None
+            raw_datasets_payload=(
+                raw_model_payload.get("datasets")
+                if isinstance(raw_model_payload.get("datasets"), Mapping)
+                else (
+                    raw_model_payload.get("tables")
+                    if isinstance(raw_model_payload.get("tables"), Mapping)
+                    else None
+                )
             ),
         )
 

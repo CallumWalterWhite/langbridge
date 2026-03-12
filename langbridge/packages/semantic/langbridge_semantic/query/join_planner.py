@@ -9,8 +9,16 @@ from langbridge.packages.semantic.langbridge_semantic.model import Relationship
 @dataclass(frozen=True)
 class JoinStep:
     relationship: Relationship
-    left_table: str
-    right_table: str
+    left_dataset: str
+    right_dataset: str
+
+    @property
+    def left_table(self) -> str:
+        return self.left_dataset
+
+    @property
+    def right_table(self) -> str:
+        return self.right_dataset
 
 
 class JoinPlanner:
@@ -19,24 +27,24 @@ class JoinPlanner:
         self._adjacency: Dict[str, List[Tuple[str, Relationship]]] = {}
         self._build_graph()
 
-    def plan(self, base_table: str, required_tables: Set[str]) -> List[JoinStep]:
-        if not required_tables:
+    def plan(self, base_dataset: str, required_datasets: Set[str]) -> List[JoinStep]:
+        if not required_datasets:
             return []
 
-        joined: Set[str] = {base_table}
+        joined: Set[str] = {base_dataset}
         join_steps: List[JoinStep] = []
 
-        for target in sorted(required_tables - {base_table}):
-            path = self._find_path(base_table, target)
+        for target in sorted(required_datasets - {base_dataset}):
+            path = self._find_path(base_dataset, target)
             for relationship in path:
-                left, right = relationship.from_, relationship.to
+                left, right = relationship.source_dataset, relationship.target_dataset
                 if left in joined and right in joined:
                     continue
                 if left in joined:
-                    join_steps.append(JoinStep(relationship=relationship, left_table=left, right_table=right))
+                    join_steps.append(JoinStep(relationship=relationship, left_dataset=left, right_dataset=right))
                     joined.add(right)
                 elif right in joined:
-                    join_steps.append(JoinStep(relationship=relationship, left_table=right, right_table=left))
+                    join_steps.append(JoinStep(relationship=relationship, left_dataset=right, right_dataset=left))
                     joined.add(left)
                 else:
                     raise JoinPathError(
@@ -47,8 +55,8 @@ class JoinPlanner:
 
     def _build_graph(self) -> None:
         for relationship in self._relationships:
-            self._adjacency.setdefault(relationship.from_, []).append((relationship.to, relationship))
-            self._adjacency.setdefault(relationship.to, []).append((relationship.from_, relationship))
+            self._adjacency.setdefault(relationship.source_dataset, []).append((relationship.target_dataset, relationship))
+            self._adjacency.setdefault(relationship.target_dataset, []).append((relationship.source_dataset, relationship))
 
     def _find_path(self, start: str, target: str) -> List[Relationship]:
         if start == target:

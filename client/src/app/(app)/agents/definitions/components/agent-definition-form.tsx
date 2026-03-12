@@ -1,8 +1,9 @@
 'use client';
 
 import { JSX, useEffect, useMemo, useState } from 'react';
+import type { CSSProperties } from 'react';
 import type { FormEvent } from 'react';
-import { Plus, Trash2 } from 'lucide-react';
+import { Bot, Database, FileText, Globe, Layers3, Network, Sparkles, Trash2 } from 'lucide-react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { Badge } from '@/components/ui/badge';
@@ -20,45 +21,59 @@ import {
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select } from '@/components/ui/select';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Textarea } from '@/components/ui/textarea';
 import { useToast } from '@/components/ui/toast';
 import { useWorkspaceScope } from '@/context/workspaceScope';
+import { cn } from '@/lib/utils';
 import {
   createAgentDefinition,
+  deleteAgentDefinition,
   fetchAgentDefinition,
   fetchLLMConnections,
   getAvailableFileRetriverDefinitions,
   getAvailableSemanticModels,
   updateAgentDefinition,
-  deleteAgentDefinition
 } from '@/orchestration/agents';
 import type {
   AgentDefinition,
   CreateAgentDefinitionPayload,
+  FileRetriverDefinitionResponse,
   LLMConnection,
+  SemanticModelResponse,
   UpdateAgentDefinitionPayload,
 } from '@/orchestration/agents';
+import { fetchDatasetCatalog } from '@/orchestration/datasets';
+import type { DatasetCatalogItem, DatasetCatalogResponse } from '@/orchestration/datasets';
 import { ApiError } from '@/orchestration/http';
 
-// const memoryStrategies = ['none', 'transient', 'conversation', 'long_term', 'vector', 'database'] as const;
 const memoryStrategies = ['database'] as const;
 const executionModes = ['single_step', 'iterative'] as const;
 const responseModes = ['analyst', 'chat', 'executive', 'explainer'] as const;
 const outputFormats = ['text', 'markdown', 'json', 'yaml'] as const;
-// const logLevels = ['debug', 'info', 'warning', 'error', 'critical'] as const;
 
 const responseModeLabels: Record<(typeof responseModes)[number], string> = {
-  analyst: 'Analyst (data + visuals)',
+  analyst: 'Analyst (federated analysis)',
   chat: 'Chat (conversation only)',
   executive: 'Executive brief',
   explainer: 'Plain-language explainer',
 };
 
+type AnalyticalRoute = 'dataset' | 'semantic_model';
+
+enum ToolType {
+  sql = 'sql',
+  web = 'web',
+  doc = 'doc',
+}
+
 interface ToolState {
   toolType: ToolType;
   name: string;
-  connectorId: string;
   description: string;
+  analyticalRoute: AnalyticalRoute;
+  datasetIds: string[];
+  semanticModelIds: string[];
   config: string;
 }
 
@@ -95,7 +110,6 @@ interface FormState {
   blockedCategories: string;
   regexDenylist: string;
   escalationMessage: string;
-  // logLevel: (typeof logLevels)[number];
   emitTraces: boolean;
   capturePrompts: boolean;
   auditFields: string;
@@ -107,76 +121,66 @@ interface ToolDefinitionOption {
   description: string;
 }
 
-enum ToolType {
-  sql = 'sql',
-  web = 'web',
-  doc = 'doc',
+interface AgentDefinitionFormProps {
+  mode: 'create' | 'edit';
+  agentId?: string;
+  organizationId: string;
+  initialAgent?: AgentDefinition | null;
+  onComplete?: () => void;
 }
 
-const ToolTypeLabels: Record<ToolType, string> = {
-  [ToolType.sql]: 'SQL Tool',
-  [ToolType.web]: 'Web Search Tool',
-  [ToolType.doc]: 'Document Retrieval Tool',
+const TOOL_DEFAULTS: Record<ToolType, Pick<ToolState, 'name' | 'description' | 'config' | 'analyticalRoute' | 'datasetIds' | 'semanticModelIds'>> = {
+  [ToolType.sql]: {
+    name: 'federated_analyst',
+    description: 'Reason over analytical assets through the federated dataset execution path.',
+    analyticalRoute: 'dataset',
+    datasetIds: [],
+    semanticModelIds: [],
+    config: '{}',
+  },
+  [ToolType.web]: {
+    name: 'web_research',
+    description: 'Search the public web for supporting context and current sources.',
+    analyticalRoute: 'dataset',
+    datasetIds: [],
+    semanticModelIds: [],
+    config: '{\n  "max_results": 6,\n  "safe_search": "moderate"\n}',
+  },
+  [ToolType.doc]: {
+    name: 'document_retrieval',
+    description: 'Retrieve internal documents and knowledge definitions.',
+    analyticalRoute: 'dataset',
+    datasetIds: [],
+    semanticModelIds: [],
+    config: '{}',
+  },
 };
 
-const ToolTypeOptions: ToolType[] = [
-  ToolType.sql,
-  ToolType.web,
-  ToolType.doc,
-];
-
-const ToolDefinitionLabels: Record<ToolType, string> = {
-  [ToolType.sql]: 'Semantic model',
-  [ToolType.web]: 'Web search definition',
-  [ToolType.doc]: 'Document retriever definition',
+const TOOL_LABELS: Record<ToolType, string> = {
+  [ToolType.sql]: 'Analyst route',
+  [ToolType.web]: 'Web research',
+  [ToolType.doc]: 'Document retrieval',
 };
 
-const TOOL_TYPES_WITH_DEFINITIONS = new Set<ToolType>([
-  ToolType.sql,
-  ToolType.doc,
-]);
-
-const TOOL_DEFAULT_DESCRIPTIONS: Record<ToolType, string> = {
-  [ToolType.sql]: 'Query structured data through semantic models.',
-  [ToolType.web]: 'Search the public web for sources and summaries.',
-  [ToolType.doc]: 'Retrieve documents from configured sources.',
+const TOOL_TONES: Record<ToolType, CSSProperties> = {
+  [ToolType.sql]: {
+    backgroundImage:
+      'linear-gradient(135deg, rgba(14,165,233,0.16), rgba(16,185,129,0.12), transparent 72%), linear-gradient(180deg, var(--panel-bg), var(--panel-bg))',
+  },
+  [ToolType.web]: {
+    backgroundImage:
+      'linear-gradient(135deg, rgba(245,158,11,0.16), rgba(249,115,22,0.12), transparent 72%), linear-gradient(180deg, var(--panel-bg), var(--panel-bg))',
+  },
+  [ToolType.doc]: {
+    backgroundImage:
+      'linear-gradient(135deg, rgba(99,102,241,0.16), rgba(59,130,246,0.12), transparent 72%), linear-gradient(180deg, var(--panel-bg), var(--panel-bg))',
+  },
 };
 
-const TOOL_DEFAULT_CONFIG: Record<ToolType, Record<string, unknown>> = {
-  [ToolType.sql]: {},
-  [ToolType.web]: { max_results: 6, safe_search: 'moderate' },
-  [ToolType.doc]: {},
+const HERO_SECTION_STYLE: CSSProperties = {
+  backgroundImage:
+    'linear-gradient(135deg, rgba(125,211,252,0.16), rgba(16,185,129,0.12), transparent 76%), linear-gradient(180deg, var(--panel-bg), var(--panel-bg))',
 };
-
-const ALL_SEMANTIC_MODELS_OPTION = '__all__';
-
-const WEB_SEARCH_TOOL_NAMES = new Set(['web', 'web_search', 'web_searcher', 'web_search_agent']);
-const TOOL_TYPE_VALUES = new Set(Object.values(ToolType));
-
-function normalizeToolName(value: string): string {
-  return value.trim().toLowerCase();
-}
-
-function resolveToolType(value: unknown, name: string): ToolType {
-  if (typeof value === 'string' && TOOL_TYPE_VALUES.has(value as ToolType)) {
-    return value as ToolType;
-  }
-  const normalized = normalizeToolName(name);
-  if (normalized.includes('sql')) {
-    return ToolType.sql;
-  }
-  if (normalized.includes('web')) {
-    return ToolType.web;
-  }
-  if (normalized.includes('doc') || normalized.includes('file') || normalized.includes('retriever') || normalized.includes('semantic')) {
-    return ToolType.doc;
-  }
-  return ToolType.sql;
-}
-
-function isWebSearchTool(toolType: ToolType, name: string): boolean {
-  return toolType === ToolType.web || WEB_SEARCH_TOOL_NAMES.has(normalizeToolName(name));
-}
 
 function defaultFormState(): FormState {
   return {
@@ -212,52 +216,14 @@ function defaultFormState(): FormState {
     blockedCategories: '',
     regexDenylist: '',
     escalationMessage: '',
-    // logLevel: 'info',
     emitTraces: true,
     capturePrompts: true,
     auditFields: '',
   };
 }
 
-function listFromCsv(value: string): string[] {
-  return value
-    .split(',')
-    .map((item) => item.trim())
-    .filter(Boolean);
-}
-
-function parseJsonSafe(value: string): unknown {
-  try {
-    return JSON.parse(value);
-  } catch {
-    return {};
-  }
-}
-
-function stringifyConfig(value: unknown): string {
-  if (typeof value === 'string') {
-    return value;
-  }
-  try {
-    return JSON.stringify(value, null, 2);
-  } catch {
-    return '';
-  }
-}
-
-function readConfigField(config: string, key: string): string {
-  const parsed = parseJsonSafe(config);
-  if (!parsed || typeof parsed !== 'object') {
-    return '';
-  }
-  const value = (parsed as Record<string, unknown>)[key];
-  if (value === null || value === undefined) {
-    return '';
-  }
-  if (typeof value === 'string' || typeof value === 'number') {
-    return String(value);
-  }
-  return '';
+function createToolState(toolType: ToolType): ToolState {
+  return { toolType, ...TOOL_DEFAULTS[toolType] };
 }
 
 function toRecord(value: unknown): Record<string, unknown> {
@@ -269,13 +235,13 @@ function toArray(value: unknown): unknown[] {
 }
 
 function toStringValue(value: unknown, fallback = ''): string {
-  if (typeof value === 'string') {
-    return value;
-  }
-  if (typeof value === 'number') {
-    return String(value);
-  }
+  if (typeof value === 'string') return value;
+  if (typeof value === 'number') return String(value);
   return fallback;
+}
+
+function toStringArray(value: unknown): string[] {
+  return toArray(value).map((item) => toStringValue(item)).filter(Boolean);
 }
 
 function toBooleanValue(value: unknown, fallback: boolean): boolean {
@@ -283,20 +249,87 @@ function toBooleanValue(value: unknown, fallback: boolean): boolean {
 }
 
 function toCsvString(value: unknown): string {
-  return toArray(value)
-    .filter((item): item is string => typeof item === 'string')
-    .join(', ');
+  return toArray(value).filter((item): item is string => typeof item === 'string').join(', ');
 }
 
 function isOption<T extends string>(value: unknown, options: readonly T[]): value is T {
   return typeof value === 'string' && options.includes(value as T);
 }
 
-function hydrateFromDefinition(definition: unknown, base: FormState): FormState {
-  if (!definition || typeof definition !== 'object') {
-    return base;
+function uniqueStrings(values: string[]): string[] {
+  return Array.from(new Set(values.map((item) => item.trim()).filter(Boolean)));
+}
+
+function parseJsonSafe(value: string): unknown {
+  try {
+    return JSON.parse(value);
+  } catch {
+    return {};
+  }
+}
+
+function stringifyConfig(value: unknown): string {
+  if (typeof value === 'string') return value;
+  try {
+    return JSON.stringify(value, null, 2);
+  } catch {
+    return '';
+  }
+}
+
+function readConfigField(config: string, key: string): string {
+  const parsed = parseJsonSafe(config);
+  if (!parsed || typeof parsed !== 'object') return '';
+  const value = (parsed as Record<string, unknown>)[key];
+  if (typeof value === 'string' || typeof value === 'number') return String(value);
+  return '';
+}
+
+function listFromCsv(value: string): string[] {
+  return value.split(',').map((item) => item.trim()).filter(Boolean);
+}
+
+function resolveToolType(value: unknown, name: string): ToolType {
+  if (value === ToolType.web || value === ToolType.doc || value === ToolType.sql) return value;
+  const normalized = name.trim().toLowerCase();
+  if (normalized.includes('web')) return ToolType.web;
+  if (normalized.includes('doc') || normalized.includes('file') || normalized.includes('retriever')) return ToolType.doc;
+  return ToolType.sql;
+}
+
+function hydrateToolState(tool: unknown): ToolState {
+  const record = toRecord(tool);
+  const name = toStringValue(record.name);
+  const toolType = resolveToolType(record.tool_type, name);
+  const description = toStringValue(record.description);
+  const config = toRecord(record.config);
+
+  if (toolType === ToolType.sql) {
+    const datasetIds = uniqueStrings(toStringArray(config.dataset_ids));
+    const semanticModelIds = datasetIds.length
+      ? []
+      : uniqueStrings(toStringArray(config.semantic_model_ids).concat(config.definition_id ? [toStringValue(config.definition_id)] : []));
+    return {
+      ...createToolState(ToolType.sql),
+      name: name || TOOL_DEFAULTS[ToolType.sql].name,
+      description: description || TOOL_DEFAULTS[ToolType.sql].description,
+      analyticalRoute: datasetIds.length ? 'dataset' : 'semantic_model',
+      datasetIds,
+      semanticModelIds,
+      config: '{}',
+    };
   }
 
+  return {
+    ...createToolState(toolType),
+    name: name || TOOL_DEFAULTS[toolType].name,
+    description: description || TOOL_DEFAULTS[toolType].description,
+    config: stringifyConfig(config) || TOOL_DEFAULTS[toolType].config,
+  };
+}
+
+function hydrateFromDefinition(definition: unknown, base: FormState): FormState {
+  if (!definition || typeof definition !== 'object') return base;
   const payload = toRecord(definition);
   const prompt = toRecord(payload.prompt);
   const memory = toRecord(payload.memory);
@@ -319,36 +352,19 @@ function hydrateFromDefinition(definition: unknown, base: FormState): FormState 
     userInstructions: toStringValue(prompt.user_instructions),
     styleGuidance: toStringValue(prompt.style_guidance),
     memoryStrategy: isOption(memory.strategy, memoryStrategies) ? memory.strategy : base.memoryStrategy,
-    ttlSeconds: memory.ttl_seconds === null || memory.ttl_seconds === undefined ? '' : String(memory.ttl_seconds),
+    ttlSeconds: memory.ttl_seconds == null ? '' : String(memory.ttl_seconds),
     vectorIndex: toStringValue(memory.vector_index),
     databaseTable: toStringValue(memory.database_table),
-    tools: tools.length
-      ? tools.map((tool) => {
-          const candidateTool = toRecord(tool);
-          const name = toStringValue(candidateTool.name);
-          return {
-            toolType: resolveToolType(candidateTool.tool_type, name),
-            name,
-            connectorId: toStringValue(candidateTool.connector_id),
-            description: toStringValue(candidateTool.description),
-            config: stringifyConfig(candidateTool.config ?? {}),
-          };
-        })
-      : base.tools,
+    tools: tools.length ? tools.map(hydrateToolState) : base.tools,
     allowedConnectors: toCsvString(accessPolicy.allowed_connectors),
     deniedConnectors: toCsvString(accessPolicy.denied_connectors),
     piiHandling: toStringValue(accessPolicy.pii_handling),
     rowLevelFilter: toStringValue(accessPolicy.row_level_filter),
     executionMode: isOption(execution.mode, executionModes) ? execution.mode : base.executionMode,
     responseMode: isOption(execution.response_mode, responseModes) ? execution.response_mode : base.responseMode,
-    maxIterations:
-      execution.max_iterations === null || execution.max_iterations === undefined
-        ? base.maxIterations
-        : String(execution.max_iterations),
+    maxIterations: execution.max_iterations == null ? base.maxIterations : String(execution.max_iterations),
     maxStepsPerIteration:
-      execution.max_steps_per_iteration === null || execution.max_steps_per_iteration === undefined
-        ? base.maxStepsPerIteration
-        : String(execution.max_steps_per_iteration),
+      execution.max_steps_per_iteration == null ? base.maxStepsPerIteration : String(execution.max_steps_per_iteration),
     allowParallelTools: toBooleanValue(execution.allow_parallel_tools, base.allowParallelTools),
     outputFormat: isOption(output.format, outputFormats) ? output.format : base.outputFormat,
     jsonSchema: output.json_schema ? stringifyConfig(output.json_schema) : '',
@@ -357,19 +373,37 @@ function hydrateFromDefinition(definition: unknown, base: FormState): FormState 
     blockedCategories: toCsvString(guardrails.blocked_categories),
     regexDenylist: toCsvString(guardrails.regex_denylist),
     escalationMessage: toStringValue(guardrails.escalation_message),
-    // logLevel: observability.log_level ?? base.logLevel,
     emitTraces: toBooleanValue(observability.emit_traces, base.emitTraces),
     capturePrompts: toBooleanValue(observability.capture_prompts, base.capturePrompts),
     auditFields: toCsvString(observability.audit_fields),
   };
 }
 
-interface AgentDefinitionFormProps {
-  mode: 'create' | 'edit';
-  agentId?: string;
-  organizationId: string;
-  initialAgent?: AgentDefinition | null;
-  onComplete?: () => void;
+function ArchitectureLane({
+  icon,
+  title,
+  description,
+  stat,
+}: {
+  icon: JSX.Element;
+  title: string;
+  description: string;
+  stat: string;
+}): JSX.Element {
+  return (
+    <div className="surface-card rounded-[28px] p-4 shadow-soft">
+      <div className="flex items-start justify-between gap-3">
+        <div className="inline-flex h-11 w-11 items-center justify-center rounded-2xl bg-[color:var(--chip-bg)] text-[color:var(--text-primary)]">
+          {icon}
+        </div>
+        <Badge variant="secondary">{stat}</Badge>
+      </div>
+      <div className="mt-4 space-y-1">
+        <p className="text-sm font-semibold text-[color:var(--text-primary)]">{title}</p>
+        <p className="text-xs leading-5 text-[color:var(--text-muted)]">{description}</p>
+      </div>
+    </div>
+  );
 }
 
 export function AgentDefinitionForm({
@@ -381,13 +415,10 @@ export function AgentDefinitionForm({
 }: AgentDefinitionFormProps): JSX.Element {
   const queryClient = useQueryClient();
   const { toast } = useToast();
-  const { selectedOrganizationId } = useWorkspaceScope();
+  const { selectedOrganizationId, selectedProjectId, selectedProject } = useWorkspaceScope();
   const scopeOrganizationId = organizationId || selectedOrganizationId;
   const [formState, setFormState] = useState<FormState>(defaultFormState());
   const [pending, setPending] = useState(false);
-  const [toolPickerOpen, setToolPickerOpen] = useState(false);
-  const [selectedToolType, setSelectedToolType] = useState<ToolType | ''>('');
-  const [selectedToolDefinitionId, setSelectedToolDefinitionId] = useState('');
 
   const connectionsQuery = useQuery<LLMConnection[]>({
     queryKey: ['llm-connections', scopeOrganizationId],
@@ -395,34 +426,27 @@ export function AgentDefinitionForm({
     queryFn: () => fetchLLMConnections(scopeOrganizationId),
   });
 
-  const toolSupportsDefinitions = Boolean(
-    selectedToolType && TOOL_TYPES_WITH_DEFINITIONS.has(selectedToolType as ToolType),
-  );
+  const datasetsQuery = useQuery<DatasetCatalogResponse>({
+    queryKey: ['dataset-catalog', scopeOrganizationId, selectedProjectId],
+    enabled: Boolean(scopeOrganizationId),
+    queryFn: () => fetchDatasetCatalog(scopeOrganizationId ?? '', selectedProjectId || undefined),
+  });
 
-  const toolDefinitionsQuery = useQuery<ToolDefinitionOption[]>({
-    queryKey: ['agent-tool-definitions', scopeOrganizationId, selectedToolType],
-    enabled: toolPickerOpen && toolSupportsDefinitions && Boolean(scopeOrganizationId),
+  const semanticModelsQuery = useQuery<SemanticModelResponse[]>({
+    queryKey: ['semantic-models', scopeOrganizationId, selectedProjectId],
+    enabled: Boolean(scopeOrganizationId),
+    queryFn: () => getAvailableSemanticModels(scopeOrganizationId ?? '', selectedProjectId || undefined),
+  });
+
+  const documentDefinitionsQuery = useQuery<ToolDefinitionOption[]>({
+    queryKey: ['agent-doc-definitions'],
     queryFn: async () => {
-      switch (selectedToolType) {
-        case ToolType.sql: {
-          const models = await getAvailableSemanticModels(scopeOrganizationId ?? '');
-          return models.map((model) => ({
-            id: model.id,
-            name: model.name,
-            description: model.description ?? '',
-          }));
-        }
-        case ToolType.doc: {
-          const retrievers = await getAvailableFileRetriverDefinitions();
-          return retrievers.map((retriever) => ({
-            id: retriever.id,
-            name: retriever.name,
-            description: retriever.description ?? '',
-          }));
-        }
-        default:
-          return [];
-      }
+      const retrievers: FileRetriverDefinitionResponse[] = await getAvailableFileRetriverDefinitions();
+      return retrievers.map((retriever) => ({
+        id: retriever.id,
+        name: retriever.name,
+        description: retriever.description ?? '',
+      }));
     },
   });
 
@@ -433,9 +457,7 @@ export function AgentDefinitionForm({
   });
 
   useEffect(() => {
-    if (initialAgent || !agentDefinitionQuery.data) {
-      return;
-    }
+    if (initialAgent || !agentDefinitionQuery.data) return;
     const agent = agentDefinitionQuery.data;
     const base = defaultFormState();
     setFormState({
@@ -448,16 +470,15 @@ export function AgentDefinitionForm({
   }, [agentDefinitionQuery.data, initialAgent]);
 
   useEffect(() => {
-    if (initialAgent) {
-      const base = defaultFormState();
-      setFormState({
-        ...hydrateFromDefinition(initialAgent.definition, base),
-        name: initialAgent.name,
-        description: initialAgent.description ?? '',
-        llmConnectionId: initialAgent.llmConnectionId,
-        isActive: initialAgent.isActive,
-      });
-    }
+    if (!initialAgent) return;
+    const base = defaultFormState();
+    setFormState({
+      ...hydrateFromDefinition(initialAgent.definition, base),
+      name: initialAgent.name,
+      description: initialAgent.description ?? '',
+      llmConnectionId: initialAgent.llmConnectionId,
+      isActive: initialAgent.isActive,
+    });
   }, [initialAgent]);
 
   useEffect(() => {
@@ -467,57 +488,39 @@ export function AgentDefinitionForm({
     }
   }, [connectionsQuery.data, formState.llmConnectionId]);
 
-  useEffect(() => {
-    if (!toolPickerOpen) {
-      setSelectedToolType('');
-      setSelectedToolDefinitionId('');
-    }
-  }, [toolPickerOpen]);
-
-  useEffect(() => {
-    setSelectedToolDefinitionId('');
-  }, [selectedToolType]);
-
-  useEffect(() => {
-    if (!toolPickerOpen) {
-      return;
-    }
-    if (selectedToolType !== ToolType.sql) {
-      return;
-    }
-    if (!toolDefinitionsQuery.data || toolDefinitionsQuery.data.length === 0) {
-      return;
-    }
-    if (!selectedToolDefinitionId) {
-      setSelectedToolDefinitionId(ALL_SEMANTIC_MODELS_OPTION);
-    }
-  }, [selectedToolDefinitionId, selectedToolType, toolDefinitionsQuery.data, toolPickerOpen]);
-
   const tools = formState.tools;
-  const toolDefinitionOptions = toolDefinitionsQuery.data ?? [];
-  const selectedToolDefinition = toolDefinitionOptions.find((option) => option.id === selectedToolDefinitionId);
-  const toolDefinitionLabel = selectedToolType ? ToolDefinitionLabels[selectedToolType] : 'Definition';
-  const canAddTool = Boolean(selectedToolType) && !toolDefinitionsQuery.isLoading;
+  const datasetOptions = useMemo(() => datasetsQuery.data?.items ?? [], [datasetsQuery.data]);
+  const semanticModelOptions = useMemo(() => semanticModelsQuery.data ?? [], [semanticModelsQuery.data]);
+  const documentDefinitionOptions = useMemo(
+    () => documentDefinitionsQuery.data ?? [],
+    [documentDefinitionsQuery.data],
+  );
+  const llmOptions = (connectionsQuery.data ?? []).filter((conn) =>
+    scopeOrganizationId ? conn.organizationId === scopeOrganizationId || !conn.organizationId : true,
+  );
+  const scopeLabel = selectedProject ? `${selectedProject.name} project` : 'Organization scope';
 
-  const connectionLookup = useMemo(() => {
-    return Object.fromEntries((connectionsQuery.data ?? []).map((conn) => [conn.id, conn.name]));
-  }, [connectionsQuery.data]);
+  const connectionLookup = useMemo(
+    () => Object.fromEntries((connectionsQuery.data ?? []).map((conn) => [conn.id, conn.name])),
+    [connectionsQuery.data],
+  );
+  const datasetLookup = useMemo<Record<string, DatasetCatalogItem>>(
+    () => Object.fromEntries(datasetOptions.map((dataset) => [dataset.id, dataset])),
+    [datasetOptions],
+  );
+  const semanticModelLookup = useMemo<Record<string, SemanticModelResponse>>(
+    () => Object.fromEntries(semanticModelOptions.map((model) => [model.id, model])),
+    [semanticModelOptions],
+  );
+  const documentDefinitionLookup = useMemo<Record<string, ToolDefinitionOption>>(
+    () => Object.fromEntries(documentDefinitionOptions.map((definition) => [definition.id, definition])),
+    [documentDefinitionOptions],
+  );
 
-  const handleToolChange = (index: number, field: keyof ToolState, value: string) => {
+  const updateTool = (index: number, next: Partial<ToolState>) => {
     setFormState((prev) => {
       const nextTools = prev.tools.slice();
-      nextTools[index] = { ...nextTools[index], [field]: value } as ToolState;
-      return { ...prev, tools: nextTools };
-    });
-  };
-
-  const handleToolTypeChange = (index: number, value: ToolType) => {
-    setFormState((prev) => {
-      const nextTools = prev.tools.slice();
-      nextTools[index] = {
-        ...nextTools[index],
-        toolType: value,
-      };
+      nextTools[index] = { ...nextTools[index], ...next };
       return { ...prev, tools: nextTools };
     });
   };
@@ -528,59 +531,71 @@ export function AgentDefinitionForm({
       const currentConfig = parseJsonSafe(nextTools[index].config);
       const nextConfig: Record<string, unknown> =
         currentConfig && typeof currentConfig === 'object' ? { ...(currentConfig as Record<string, unknown>) } : {};
-
       Object.entries(updates).forEach(([key, value]) => {
-        if (value === '' || value === undefined || value === null) {
-          delete nextConfig[key];
-        } else {
-          nextConfig[key] = value;
-        }
+        if (value === '' || value === undefined || value === null) delete nextConfig[key];
+        else nextConfig[key] = value;
       });
-
-      nextTools[index] = {
-        ...nextTools[index],
-        config: stringifyConfig(nextConfig) || '{}',
-      };
+      nextTools[index] = { ...nextTools[index], config: stringifyConfig(nextConfig) || '{}' };
       return { ...prev, tools: nextTools };
     });
   };
 
-  const handleAddTool = () => {
-    if (!selectedToolType) {
-      return;
-    }
-
-    const configPayload: Record<string, unknown> = {
-      ...TOOL_DEFAULT_CONFIG[selectedToolType],
-    };
-    const shouldAttachDefinition =
-      Boolean(selectedToolDefinition) && selectedToolDefinitionId !== ALL_SEMANTIC_MODELS_OPTION;
-    if (shouldAttachDefinition && selectedToolDefinition) {
-      configPayload.definition_id = selectedToolDefinition.id;
-      configPayload.definition_name = selectedToolDefinition.name;
-    }
-
-    setFormState((prev) => ({
-      ...prev,
-      tools: [
-        ...prev.tools,
-        {
-          toolType: selectedToolType,
-          name: selectedToolType,
-          connectorId: '',
-          description: selectedToolDefinition?.description ?? TOOL_DEFAULT_DESCRIPTIONS[selectedToolType],
-          config: stringifyConfig(configPayload) || '{}',
-        },
-      ],
-    }));
-    setToolPickerOpen(false);
+  const addTool = (toolType: ToolType) => {
+    setFormState((prev) => ({ ...prev, tools: [...prev.tools, createToolState(toolType)] }));
   };
 
   const removeTool = (index: number) => {
-    setFormState((prev) => ({
-      ...prev,
-      tools: prev.tools.filter((_, i) => i !== index),
-    }));
+    setFormState((prev) => ({ ...prev, tools: prev.tools.filter((_, toolIndex) => toolIndex !== index) }));
+  };
+
+  const setSqlRoute = (index: number, route: AnalyticalRoute) => {
+    updateTool(index, {
+      analyticalRoute: route,
+      datasetIds: route === 'dataset' ? tools[index].datasetIds : [],
+      semanticModelIds: route === 'semantic_model' ? tools[index].semanticModelIds : [],
+    });
+  };
+
+  const toggleSqlAsset = (index: number, route: AnalyticalRoute, assetId: string) => {
+    const current = tools[index];
+    const selectedIds = route === 'dataset' ? current.datasetIds : current.semanticModelIds;
+    const nextIds = selectedIds.includes(assetId)
+      ? selectedIds.filter((candidateId) => candidateId !== assetId)
+      : [...selectedIds, assetId];
+    updateTool(index, {
+      analyticalRoute: route,
+      datasetIds: route === 'dataset' ? nextIds : [],
+      semanticModelIds: route === 'semantic_model' ? nextIds : [],
+    });
+  };
+
+  const validateSqlTool = (tool: ToolState, index: number): string | null => {
+    const hasDatasets = uniqueStrings(tool.datasetIds).length > 0;
+    const hasSemanticModels = uniqueStrings(tool.semanticModelIds).length > 0;
+    return hasDatasets === hasSemanticModels
+      ? `Analyst route ${index + 1} must target either datasets or semantic models.`
+      : null;
+  };
+
+  const handleDelete = async () => {
+    if (mode !== 'edit' || !agentId || !scopeOrganizationId) return;
+    try {
+      setPending(true);
+      await deleteAgentDefinition(scopeOrganizationId, agentId);
+      toast({ title: 'Agent deleted', description: 'Your agent definition has been deleted.' });
+      queryClient.invalidateQueries({ queryKey: ['agent-definitions', scopeOrganizationId] });
+      onComplete?.();
+    } catch (error) {
+      const message =
+        error instanceof ApiError
+          ? error.message
+          : error instanceof Error
+            ? error.message
+            : 'Unable to delete agent right now.';
+      toast({ title: 'Delete failed', description: message, variant: 'destructive' });
+    } finally {
+      setPending(false);
+    }
   };
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
@@ -598,6 +613,20 @@ export function AgentDefinitionForm({
       return;
     }
 
+    for (const [index, tool] of tools.entries()) {
+      if (!tool.name.trim()) {
+        toast({ title: `Tool ${index + 1} needs a name`, variant: 'destructive' });
+        return;
+      }
+      if (tool.toolType === ToolType.sql) {
+        const validationError = validateSqlTool(tool, index);
+        if (validationError) {
+          toast({ title: 'Analytical route is incomplete', description: validationError, variant: 'destructive' });
+          return;
+        }
+      }
+    }
+
     const payloadDefinition = {
       prompt: {
         system_prompt: formState.systemPrompt,
@@ -610,15 +639,24 @@ export function AgentDefinitionForm({
         vector_index: formState.vectorIndex || undefined,
         database_table: formState.databaseTable || undefined,
       },
-      tools: tools
-        .filter((tool) => tool.name.trim())
-        .map((tool) => ({
-          name: tool.name.trim(),
-          connector_id: tool.connectorId || undefined,
-          tool_type: tool.toolType,
-          description: tool.description || undefined,
-          config: parseJsonSafe(tool.config),
-        })),
+      tools: tools.map((tool) =>
+        tool.toolType === ToolType.sql
+          ? {
+              name: tool.name.trim(),
+              tool_type: tool.toolType,
+              description: tool.description || undefined,
+              config:
+                tool.analyticalRoute === 'dataset'
+                  ? { dataset_ids: uniqueStrings(tool.datasetIds) }
+                  : { semantic_model_ids: uniqueStrings(tool.semanticModelIds) },
+            }
+          : {
+              name: tool.name.trim(),
+              tool_type: tool.toolType,
+              description: tool.description || undefined,
+              config: parseJsonSafe(tool.config),
+            },
+      ),
       features: {
         bi_copilot_enabled: formState.biCopilotEnabled,
         deep_research_enabled: formState.deepResearchEnabled,
@@ -650,7 +688,6 @@ export function AgentDefinitionForm({
         escalation_message: formState.escalationMessage || undefined,
       },
       observability: {
-        // log_level: formState.logLevel,
         emit_traces: formState.emitTraces,
         capture_prompts: formState.capturePrompts,
         audit_fields: listFromCsv(formState.auditFields),
@@ -670,15 +707,12 @@ export function AgentDefinitionForm({
       if (mode === 'edit' && agentId) {
         await updateAgentDefinition(scopeOrganizationId, agentId, payload as UpdateAgentDefinitionPayload);
         toast({ title: 'Agent updated', description: 'Your agent definition has been saved.' });
-        queryClient.invalidateQueries({ queryKey: ['agent-definitions', scopeOrganizationId] });
       } else {
         await createAgentDefinition(scopeOrganizationId, payload as CreateAgentDefinitionPayload);
-        queryClient.invalidateQueries({ queryKey: ['agent-definitions', scopeOrganizationId] });
-        toast({ title: 'Agent created', description: 'Your agent is ready to use.' });
+        toast({ title: 'Agent created', description: 'Your federated agent is ready to use.' });
       }
-      if (onComplete) {
-        onComplete();
-      }
+      queryClient.invalidateQueries({ queryKey: ['agent-definitions', scopeOrganizationId] });
+      onComplete?.();
     } catch (error) {
       const message =
         error instanceof ApiError
@@ -692,73 +726,322 @@ export function AgentDefinitionForm({
     }
   };
 
-  const handleDelete = async () => { 
-    if (mode !== 'edit' || !agentId) {
-      return;
-    }
-    if (!scopeOrganizationId) {
-      toast({ title: 'Select an organization', variant: 'destructive' });
-      return;
-    }
-    try {
-      setPending(true);
-      await deleteAgentDefinition(scopeOrganizationId, agentId);
-      toast({ title: 'Agent deleted', description: 'Your agent definition has been deleted.' });
-      queryClient.invalidateQueries({ queryKey: ['agent-definitions', scopeOrganizationId] });
-      if (onComplete) {
-        onComplete();
-      }
-    } catch (error) {
-      const message =
-        error instanceof ApiError
-          ? error.message
-          : error instanceof Error
-            ? error.message
-            : 'Unable to delete agent right now.';
-      toast({ title: 'Delete failed', description: message, variant: 'destructive' });
-    } finally {
-      setPending(false);
-    }
+  const selectedSqlAssetNames = (tool: ToolState): string[] => {
+    const ids = tool.analyticalRoute === 'dataset' ? tool.datasetIds : tool.semanticModelIds;
+    return tool.analyticalRoute === 'dataset'
+      ? ids.map((id) => datasetLookup[id]?.name ?? id)
+      : ids.map((id) => semanticModelLookup[id]?.name ?? id);
   };
 
-  const connections = connectionsQuery.data ?? [];
-  const llmOptions = connections.filter((conn) =>
-    scopeOrganizationId ? conn.organizationId === scopeOrganizationId || !conn.organizationId : true,
-  );
+  const renderSqlToolCard = (tool: ToolState, index: number): JSX.Element => {
+    const selectedNames = selectedSqlAssetNames(tool);
+    const availableCount = tool.analyticalRoute === 'dataset' ? datasetOptions.length : semanticModelOptions.length;
+    const isLoading = tool.analyticalRoute === 'dataset' ? datasetsQuery.isLoading : semanticModelsQuery.isLoading;
+    const isError = tool.analyticalRoute === 'dataset' ? datasetsQuery.isError : semanticModelsQuery.isError;
+
+    return (
+      <div key={index} className="surface-panel overflow-hidden rounded-[28px] p-5 shadow-soft" style={TOOL_TONES[tool.toolType]}>
+        <div className="flex items-start justify-between gap-4">
+          <div className="space-y-2">
+            <div className="flex flex-wrap gap-2">
+              <Badge variant="secondary">{TOOL_LABELS[tool.toolType]}</Badge>
+              <Badge variant="secondary">Federated execution</Badge>
+              <Badge variant="secondary">{tool.analyticalRoute === 'dataset' ? 'Dataset path' : 'Governed path'}</Badge>
+            </div>
+            <div>
+              <p className="text-lg font-semibold text-[color:var(--text-primary)]">Analyst route {index + 1}</p>
+              <p className="text-sm text-[color:var(--text-secondary)]">
+                {tool.analyticalRoute === 'dataset'
+                  ? 'Query datasets directly. Connectors resolve underneath the dataset abstraction.'
+                  : 'Use a semantic model as a governed layer over datasets. Execution still flows through federation.'}
+              </p>
+            </div>
+          </div>
+          <Button type="button" variant="ghost" size="icon" onClick={() => removeTool(index)}>
+            <Trash2 className="h-4 w-4" />
+          </Button>
+        </div>
+
+        <div className="mt-5 grid gap-4 lg:grid-cols-[1fr_1.2fr]">
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <Label>Name</Label>
+              <Input value={tool.name} onChange={(event) => updateTool(index, { name: event.target.value })} />
+            </div>
+            <div className="space-y-2">
+              <Label>Description</Label>
+              <Textarea
+                rows={4}
+                value={tool.description}
+                onChange={(event) => updateTool(index, { description: event.target.value })}
+              />
+            </div>
+            <div className="surface-card rounded-3xl p-4">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <p className="text-sm font-semibold text-[color:var(--text-primary)]">Current selection</p>
+                  <p className="text-xs text-[color:var(--text-muted)]">
+                    {selectedNames.length
+                      ? `${selectedNames.length} analytical asset${selectedNames.length === 1 ? '' : 's'} selected`
+                      : 'No analytical assets selected yet.'}
+                  </p>
+                </div>
+                <Badge variant="secondary">{availableCount} in scope</Badge>
+              </div>
+              {selectedNames.length ? (
+                <div className="mt-3 flex flex-wrap gap-2">
+                  {selectedNames.map((name) => (
+                    <Badge key={name} variant="secondary">
+                      {name}
+                    </Badge>
+                  ))}
+                </div>
+              ) : null}
+            </div>
+          </div>
+
+          <div className="surface-card rounded-3xl p-4">
+            <Tabs
+              defaultValue={tool.analyticalRoute}
+              value={tool.analyticalRoute}
+              onValueChange={(value) => setSqlRoute(index, value as AnalyticalRoute)}
+              className="w-full"
+            >
+              <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                <div>
+                  <p className="text-sm font-semibold text-[color:var(--text-primary)]">Analytical path</p>
+                  <p className="text-xs text-[color:var(--text-muted)]">
+                    Datasets are the default route. Semantic models are optional governed overlays.
+                  </p>
+                </div>
+                <TabsList className="w-full lg:w-auto">
+                  <TabsTrigger value="dataset">Datasets first</TabsTrigger>
+                  <TabsTrigger value="semantic_model">Semantic model</TabsTrigger>
+                </TabsList>
+              </div>
+
+              <TabsContent value="dataset">
+                {isLoading ? (
+                  <p className="text-sm text-[color:var(--text-muted)]">Loading datasets...</p>
+                ) : isError ? (
+                  <p className="text-sm text-rose-500">Unable to load datasets right now.</p>
+                ) : datasetOptions.length === 0 ? (
+                  <div className="rounded-3xl border border-dashed border-[color:var(--panel-border)] bg-[color:var(--panel-alt)]/60 p-5 text-sm text-[color:var(--text-muted)]">
+                    Create or publish datasets before attaching an analyst route.
+                  </div>
+                ) : (
+                  <div className="grid max-h-80 gap-3 overflow-auto pr-1">
+                    {datasetOptions.map((dataset) => {
+                      const selected = tool.datasetIds.includes(dataset.id);
+                      return (
+                        <label
+                          key={dataset.id}
+                          className={cn(
+                            'block cursor-pointer rounded-3xl border p-4 transition',
+                            selected
+                              ? 'border-[color:var(--accent)] bg-[color:var(--chip-bg)]'
+                              : 'border-[color:var(--panel-border)] bg-[color:var(--panel-bg)] hover:bg-[color:var(--panel-alt)]',
+                          )}
+                        >
+                          <div className="flex items-start gap-3">
+                            <input
+                              type="checkbox"
+                              checked={selected}
+                              onChange={() => toggleSqlAsset(index, 'dataset', dataset.id)}
+                              className="mt-1 h-4 w-4 rounded border-[color:var(--panel-border)]"
+                            />
+                            <div className="min-w-0 flex-1">
+                              <div className="flex flex-wrap items-center gap-2">
+                                <p className="text-sm font-semibold text-[color:var(--text-primary)]">{dataset.name}</p>
+                                <Badge variant="secondary">{dataset.sqlAlias}</Badge>
+                                <Badge variant="secondary">{dataset.datasetType}</Badge>
+                              </div>
+                              <p className="mt-1 text-xs text-[color:var(--text-muted)]">
+                                {dataset.sourceKind} / {dataset.storageKind} / {dataset.columns.length} columns
+                              </p>
+                            </div>
+                          </div>
+                        </label>
+                      );
+                    })}
+                  </div>
+                )}
+              </TabsContent>
+
+              <TabsContent value="semantic_model">
+                {isLoading ? (
+                  <p className="text-sm text-[color:var(--text-muted)]">Loading semantic models...</p>
+                ) : isError ? (
+                  <p className="text-sm text-rose-500">Unable to load semantic models right now.</p>
+                ) : semanticModelOptions.length === 0 ? (
+                  <div className="rounded-3xl border border-dashed border-[color:var(--panel-border)] bg-[color:var(--panel-alt)]/60 p-5 text-sm text-[color:var(--text-muted)]">
+                    Create a dataset-backed semantic model before using the governed route.
+                  </div>
+                ) : (
+                  <div className="grid max-h-80 gap-3 overflow-auto pr-1">
+                    {semanticModelOptions.map((model) => {
+                      const selected = tool.semanticModelIds.includes(model.id);
+                      return (
+                        <label
+                          key={model.id}
+                          className={cn(
+                            'block cursor-pointer rounded-3xl border p-4 transition',
+                            selected
+                              ? 'border-[color:var(--accent)] bg-[color:var(--chip-bg)]'
+                              : 'border-[color:var(--panel-border)] bg-[color:var(--panel-bg)] hover:bg-[color:var(--panel-alt)]',
+                          )}
+                        >
+                          <div className="flex items-start gap-3">
+                            <input
+                              type="checkbox"
+                              checked={selected}
+                              onChange={() => toggleSqlAsset(index, 'semantic_model', model.id)}
+                              className="mt-1 h-4 w-4 rounded border-[color:var(--panel-border)]"
+                            />
+                            <div className="min-w-0 flex-1">
+                              <div className="flex flex-wrap items-center gap-2">
+                                <p className="text-sm font-semibold text-[color:var(--text-primary)]">{model.name}</p>
+                                <Badge variant="secondary">Semantic model</Badge>
+                              </div>
+                              <p className="mt-1 text-xs text-[color:var(--text-muted)]">
+                                {model.description || 'No description provided.'}
+                              </p>
+                            </div>
+                          </div>
+                        </label>
+                      );
+                    })}
+                  </div>
+                )}
+              </TabsContent>
+            </Tabs>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  const renderUtilityToolCard = (tool: ToolState, index: number): JSX.Element => {
+    const selectedDefinition = documentDefinitionLookup[readConfigField(tool.config, 'definition_id')];
+    return (
+      <div key={index} className="surface-panel overflow-hidden rounded-[28px] p-5 shadow-soft" style={TOOL_TONES[tool.toolType]}>
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <div className="flex flex-wrap gap-2">
+              <Badge variant="secondary">{TOOL_LABELS[tool.toolType]}</Badge>
+              {tool.toolType === ToolType.web ? <Badge variant="secondary">Live sources</Badge> : <Badge variant="secondary">Internal knowledge</Badge>}
+            </div>
+            <p className="mt-2 text-lg font-semibold text-[color:var(--text-primary)]">
+              {tool.toolType === ToolType.web ? 'Web research tool' : 'Document retrieval tool'}
+            </p>
+          </div>
+          <Button type="button" variant="ghost" size="icon" onClick={() => removeTool(index)}>
+            <Trash2 className="h-4 w-4" />
+          </Button>
+        </div>
+        <div className="mt-5 grid gap-4 lg:grid-cols-2">
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <Label>Name</Label>
+              <Input value={tool.name} onChange={(event) => updateTool(index, { name: event.target.value })} />
+            </div>
+            <div className="space-y-2">
+              <Label>Description</Label>
+              <Textarea rows={4} value={tool.description} onChange={(event) => updateTool(index, { description: event.target.value })} />
+            </div>
+          </div>
+          <div className="surface-card rounded-3xl p-4">
+            {tool.toolType === ToolType.web ? (
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div className="space-y-2">
+                  <Label className="text-xs">Max results</Label>
+                  <Input type="number" value={readConfigField(tool.config, 'max_results')} onChange={(event) => updateToolConfig(index, { max_results: event.target.value ? Number(event.target.value) : '' })} />
+                </div>
+                <div className="space-y-2">
+                  <Label className="text-xs">Region</Label>
+                  <Input value={readConfigField(tool.config, 'region')} onChange={(event) => updateToolConfig(index, { region: event.target.value })} />
+                </div>
+                <div className="space-y-2 sm:col-span-2">
+                  <Label className="text-xs">Safe search</Label>
+                  <Select value={readConfigField(tool.config, 'safe_search')} onChange={(event) => updateToolConfig(index, { safe_search: event.target.value })}>
+                    <option value="">Default</option>
+                    <option value="off">Off</option>
+                    <option value="moderate">Moderate</option>
+                    <option value="strict">Strict</option>
+                  </Select>
+                </div>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                <div className="space-y-2">
+                  <Label>Retriever definition</Label>
+                  <Select
+                    value={readConfigField(tool.config, 'definition_id')}
+                    onChange={(event) => {
+                      const definition = documentDefinitionLookup[event.target.value];
+                      updateToolConfig(index, { definition_id: event.target.value, definition_name: definition?.name ?? '' });
+                    }}
+                  >
+                    <option value="">Select a retriever definition</option>
+                    {documentDefinitionOptions.map((definition) => (
+                      <option key={definition.id} value={definition.id}>
+                        {definition.name}
+                      </option>
+                    ))}
+                  </Select>
+                </div>
+                <p className="text-xs text-[color:var(--text-muted)]">
+                  {selectedDefinition?.description || 'Attach a retriever definition so this tool can ground answers in internal sources.'}
+                </p>
+                <div className="space-y-2">
+                  <Label>Advanced config (JSON)</Label>
+                  <Textarea rows={5} value={tool.config} onChange={(event) => updateTool(index, { config: event.target.value })} />
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  };
 
   return (
-    <form onSubmit={handleSubmit} className="space-y-6">
-      <div className="surface-panel rounded-3xl p-6 shadow-soft">
-        <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-          <div className="space-y-2">
-            <p className="text-xs font-semibold uppercase tracking-[0.2em] text-[color:var(--text-muted)]">
-              Agent builder
-            </p>
-            <h1 className="text-2xl font-semibold text-[color:var(--text-primary)]">
-              {mode === 'edit' ? 'Edit agent' : 'Create a new agent'}
-            </h1>
-            <p className="text-sm text-[color:var(--text-secondary)]">
-              Define prompts, memory, tools, and guardrails. We’ll store the definition and wire it to an existing LLM
-              connection.
-            </p>
+    <form onSubmit={handleSubmit} className="space-y-6 text-[color:var(--text-secondary)]">
+      <section className="surface-panel relative overflow-hidden rounded-[32px] p-6 shadow-soft" style={HERO_SECTION_STYLE}>
+        <div className="flex flex-col gap-5 xl:flex-row xl:items-end xl:justify-between">
+          <div className="max-w-3xl space-y-3">
+            <p className="text-xs font-semibold uppercase tracking-[0.24em] text-[color:var(--text-muted)]">Agent builder</p>
+            <div className="space-y-2">
+              <h1 className="text-3xl font-semibold tracking-tight text-[color:var(--text-primary)]">
+                {mode === 'edit' ? 'Refine analytical agent' : 'Design a federated analytical agent'}
+              </h1>
+              <p className="max-w-2xl text-sm leading-6 text-[color:var(--text-secondary)] md:text-base">
+                Configure how the agent reasons over datasets, when it uses semantic models as a governed layer, and
+                how it executes through Langbridge&apos;s federated query path.
+              </p>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <Badge variant="secondary">{scopeLabel}</Badge>
+              <Badge variant="secondary">{datasetOptions.length} datasets ready</Badge>
+              <Badge variant="secondary">{semanticModelOptions.length} semantic models ready</Badge>
+              <Badge variant="secondary">{tools.filter((tool) => tool.toolType === ToolType.sql).length} analyst routes</Badge>
+            </div>
           </div>
           <div className="flex flex-wrap items-center gap-3">
             <Badge variant="secondary">{formState.isActive ? 'Active' : 'Inactive'}</Badge>
-            <div className="flex items-center gap-2 text-sm text-[color:var(--text-muted)]">
-              <label className="flex items-center gap-2">
-                <input
-                  type="checkbox"
-                  checked={formState.isActive}
-                  onChange={(e) => setFormState((prev) => ({ ...prev, isActive: e.target.checked }))}
-                  className="h-4 w-4 rounded border-[color:var(--panel-border)]"
-                />
-                Active
-              </label>
-            </div>
+            <label className="surface-card inline-flex items-center gap-2 rounded-full px-3 py-2 text-sm text-[color:var(--text-primary)] shadow-sm">
+              <input
+                type="checkbox"
+                checked={formState.isActive}
+                onChange={(event) => setFormState((prev) => ({ ...prev, isActive: event.target.checked }))}
+                className="h-4 w-4 rounded border-[color:var(--panel-border)]"
+              />
+              Active
+            </label>
             {mode === 'edit' ? (
               <Dialog>
                 <DialogTrigger>
-                  <Button variant="destructive" disabled={pending}>
+                  <Button type="button" variant="outline" disabled={pending} className="gap-2">
                     <Trash2 className="h-4 w-4" />
                     <span>Delete agent</span>
                   </Button>
@@ -766,15 +1049,14 @@ export function AgentDefinitionForm({
                 <DialogContent>
                   <DialogHeader>
                     <DialogTitle>Delete agent definition</DialogTitle>
-                    <DialogDescription>
-                      Are you sure you want to delete this agent definition? This action cannot be undone.
-                    </DialogDescription>
+                    <DialogDescription>This action cannot be undone.</DialogDescription>
                   </DialogHeader>
                   <DialogFooter>
                     <DialogClose>
-                      <Button variant="destructive" disabled={pending} onClick={handleDelete}>
-                        Delete
-                      </Button>
+                      <Button type="button" variant="ghost">Cancel</Button>
+                    </DialogClose>
+                    <DialogClose>
+                      <Button type="button" variant="outline" disabled={pending} onClick={handleDelete}>Delete</Button>
                     </DialogClose>
                   </DialogFooter>
                 </DialogContent>
@@ -782,357 +1064,292 @@ export function AgentDefinitionForm({
             ) : null}
           </div>
         </div>
-      </div>
 
-      <div className="grid gap-6 xl:grid-cols-2">
-        <section className="surface-panel rounded-3xl p-6 shadow-soft">
-          <div className="space-y-4">
-            <div className="space-y-2">
-              <Label htmlFor="name">Agent name</Label>
-              <Input
-                id="name"
-                placeholder="Revenue analyst"
-                value={formState.name}
-                onChange={(e) => setFormState((prev) => ({ ...prev, name: e.target.value }))}
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="description">Description</Label>
-              <Textarea
-                id="description"
-                rows={3}
-                placeholder="What is this agent great at?"
-                value={formState.description}
-                onChange={(e) => setFormState((prev) => ({ ...prev, description: e.target.value }))}
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="llm-connection">LLM connection</Label>
-              <Select
-                id="llm-connection"
-                value={formState.llmConnectionId}
-                onChange={(e) => setFormState((prev) => ({ ...prev, llmConnectionId: e.target.value }))}
-              >
-                <option value="" disabled>
-                  {connectionsQuery.isLoading ? 'Loading...' : 'Select a connection'}
-                </option>
-                {llmOptions.map((connection) => (
-                  <option key={connection.id} value={connection.id}>
-                    {connection.name} ({connection.provider.toUpperCase()})
-                  </option>
-                ))}
-              </Select>
-              {!llmOptions.length && !connectionsQuery.isLoading ? (
-                <p className="text-xs text-[color:var(--text-muted)]">Create an LLM connection first.</p>
-              ) : null}
-            </div>
-          </div>
-        </section>
-
-        <section className="surface-panel rounded-3xl p-6 shadow-soft">
-          <div className="space-y-3">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm font-semibold text-[color:var(--text-primary)]">Prompt contract</p>
-                <p className="text-xs text-[color:var(--text-muted)]">System guidance and style.</p>
-              </div>
-            </div>
-            <div className="space-y-3">
-              <div className="space-y-2">
-                <Label htmlFor="system-prompt">System prompt</Label>
-                <Textarea
-                  id="system-prompt"
-                  rows={3}
-                  value={formState.systemPrompt}
-                  onChange={(e) => setFormState((prev) => ({ ...prev, systemPrompt: e.target.value }))}
-                  placeholder="You are a data analyst..."
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="user-instructions">User instructions</Label>
-                <Textarea
-                  id="user-instructions"
-                  rows={2}
-                  value={formState.userInstructions}
-                  onChange={(e) => setFormState((prev) => ({ ...prev, userInstructions: e.target.value }))}
-                  placeholder="Interpret questions as business requests..."
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="style-guidance">Style guidance</Label>
-                <Input
-                  id="style-guidance"
-                  value={formState.styleGuidance}
-                  onChange={(e) => setFormState((prev) => ({ ...prev, styleGuidance: e.target.value }))}
-                  placeholder="Concise, factual, bullet-first"
-                />
-              </div>
-            </div>
-          </div>
-        </section>
-      </div>
-
-      <div className="grid gap-6 xl:grid-cols-2">
-        <section className="surface-panel rounded-3xl p-6 shadow-soft">
-          <div className="space-y-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm font-semibold text-[color:var(--text-primary)]">Memory</p>
-                <p className="text-xs text-[color:var(--text-muted)]">Pick how context is persisted.</p>
-              </div>
-            </div>
-            <div className="grid gap-3 sm:grid-cols-2">
-              <div className="space-y-2">
-                <Label htmlFor="memory-strategy">Strategy</Label>
-                <Select
-                  id="memory-strategy"
-                  value={formState.memoryStrategy}
-                  onChange={(e) => setFormState((prev) => ({
-                    ...prev,
-                    memoryStrategy: e.target.value as FormState['memoryStrategy'],
-                  }))}
-                >
-                  {memoryStrategies.map((strategy) => (
-                    <option key={strategy} value={strategy}>
-                      {strategy.replace('_', ' ')}
-                    </option>
-                  ))}
-                </Select>
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="ttl-seconds">TTL (seconds)</Label>
-                <Input
-                  id="ttl-seconds"
-                  type="number"
-                  value={formState.ttlSeconds}
-                  onChange={(e) => setFormState((prev) => ({ ...prev, ttlSeconds: e.target.value }))}
-                  placeholder="300"
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="vector-index">Vector index</Label>
-                <Input
-                  id="vector-index"
-                  value={formState.vectorIndex}
-                  onChange={(e) => setFormState((prev) => ({ ...prev, vectorIndex: e.target.value }))}
-                  placeholder="analytics_vectors"
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="database-table">DB table</Label>
-                <Input
-                  id="database-table"
-                  value={formState.databaseTable}
-                  onChange={(e) => setFormState((prev) => ({ ...prev, databaseTable: e.target.value }))}
-                  placeholder="agent_memory"
-                />
-              </div>
-            </div>
-          </div>
-        </section>
-
-        <section className="surface-panel rounded-3xl p-6 shadow-soft">
-          <div className="space-y-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm font-semibold text-[color:var(--text-primary)]">Data access & policy</p>
-                <p className="text-xs text-[color:var(--text-muted)]">Constrain connectors and rows.</p>
-              </div>
-            </div>
-            <div className="space-y-2">
-              <Label>Allowed connectors</Label>
-              <Input
-                placeholder="connector-id-1, connector-id-2"
-                value={formState.allowedConnectors}
-                onChange={(e) => setFormState((prev) => ({ ...prev, allowedConnectors: e.target.value }))}
-              />
-              <p className="text-xs text-[color:var(--text-muted)]">Comma-separated connector IDs.</p>
-            </div>
-            <div className="space-y-2">
-              <Label>Denied connectors</Label>
-              <Input
-                placeholder="blocklist-id"
-                value={formState.deniedConnectors}
-                onChange={(e) => setFormState((prev) => ({ ...prev, deniedConnectors: e.target.value }))}
-              />
-            </div>
-            <div className="space-y-2">
-              <Label>Row-level filter</Label>
-              <Input
-                placeholder="department = 'finance'"
-                value={formState.rowLevelFilter}
-                onChange={(e) => setFormState((prev) => ({ ...prev, rowLevelFilter: e.target.value }))}
-              />
-            </div>
-            <div className="space-y-2">
-              <Label>PII handling</Label>
-              <Textarea
-                rows={2}
-                placeholder="Mask emails in responses"
-                value={formState.piiHandling}
-                onChange={(e) => setFormState((prev) => ({ ...prev, piiHandling: e.target.value }))}
-              />
-            </div>
-          </div>
-        </section>
-      </div>
-
-      <section className="surface-panel rounded-3xl p-6 shadow-soft">
-        <div className="space-y-4">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm font-semibold text-[color:var(--text-primary)]">Agent features</p>
-              <p className="text-xs text-[color:var(--text-muted)]">Toggle optional capabilities for this agent.</p>
-            </div>
-          </div>
-          <div className="grid gap-3 sm:grid-cols-2">
-            <div className="space-y-2">
-              <Label className="flex items-center gap-2">
-                <input
-                  type="checkbox"
-                  checked={formState.biCopilotEnabled}
-                  onChange={(e) => setFormState((prev) => ({ ...prev, biCopilotEnabled: e.target.checked }))}
-                  className="h-4 w-4 rounded border-[color:var(--panel-border)]"
-                />
-                BI copilot
-              </Label>
-            </div>
-            <div className="space-y-2">
-              <Label className="flex items-center gap-2">
-                <input
-                  type="checkbox"
-                  checked={formState.deepResearchEnabled}
-                  onChange={(e) => setFormState((prev) => ({ ...prev, deepResearchEnabled: e.target.checked }))}
-                  className="h-4 w-4 rounded border-[color:var(--panel-border)]"
-                />
-                Deep research
-              </Label>
-            </div>
-            <div className="space-y-2">
-              <Label className="flex items-center gap-2">
-                <input
-                  type="checkbox"
-                  checked={formState.visualizationEnabled}
-                  onChange={(e) => setFormState((prev) => ({ ...prev, visualizationEnabled: e.target.checked }))}
-                  className="h-4 w-4 rounded border-[color:var(--panel-border)]"
-                />
-                Visualization
-              </Label>
-            </div>
-            <div className="space-y-2">
-              <Label className="flex items-center gap-2">
-                <input
-                  type="checkbox"
-                  checked={formState.mcpEnabled}
-                  onChange={(e) => setFormState((prev) => ({ ...prev, mcpEnabled: e.target.checked }))}
-                  className="h-4 w-4 rounded border-[color:var(--panel-border)]"
-                />
-                MCP
-              </Label>
-            </div>
-          </div>
+        <div className="mt-6 grid gap-3 lg:grid-cols-3">
+          <ArchitectureLane
+            icon={<Database className="h-5 w-5" />}
+            title="Datasets are the primary asset"
+            description="Attach datasets directly to the analyst route. This is now the default structured analysis path."
+            stat={`${datasetOptions.length} ready`}
+          />
+          <ArchitectureLane
+            icon={<Network className="h-5 w-5" />}
+            title="Execution is federated by default"
+            description="Dataset resolution happens before execution and analytical questions route into the federated query runtime."
+            stat="Federated"
+          />
+          <ArchitectureLane
+            icon={<Layers3 className="h-5 w-5" />}
+            title="Semantic models are optional governance"
+            description="Use semantic models when the agent needs governed business vocabulary or curated metrics over datasets."
+            stat={`${semanticModelOptions.length} ready`}
+          />
         </div>
       </section>
 
-      <div className="grid gap-6 xl:grid-cols-2">
-        <section className="surface-panel rounded-3xl p-6 shadow-soft">
-          <div className="space-y-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm font-semibold text-[color:var(--text-primary)]">Execution</p>
-                <p className="text-xs text-[color:var(--text-muted)]">Control planning behavior.</p>
+      <div className="grid gap-6 xl:grid-cols-[1.55fr_1fr]">
+        <div className="space-y-6">
+          <section className="surface-panel rounded-[28px] p-6 shadow-soft">
+            <div className="grid gap-6 lg:grid-cols-[1fr_1.1fr]">
+              <div className="space-y-4">
+                <div className="space-y-1">
+                  <p className="text-sm font-semibold text-[color:var(--text-primary)]">Identity</p>
+                  <p className="text-xs text-[color:var(--text-muted)]">Name the agent and bind it to an LLM connection.</p>
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="name">Agent name</Label>
+                  <Input id="name" value={formState.name} onChange={(event) => setFormState((prev) => ({ ...prev, name: event.target.value }))} placeholder="Revenue federation analyst" />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="description">Description</Label>
+                  <Textarea id="description" rows={4} value={formState.description} onChange={(event) => setFormState((prev) => ({ ...prev, description: event.target.value }))} placeholder="What analytical work should this agent own?" />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="llm-connection">LLM connection</Label>
+                  <Select id="llm-connection" value={formState.llmConnectionId} onChange={(event) => setFormState((prev) => ({ ...prev, llmConnectionId: event.target.value }))}>
+                    <option value="" disabled>{connectionsQuery.isLoading ? 'Loading...' : 'Select a connection'}</option>
+                    {llmOptions.map((connection) => (
+                      <option key={connection.id} value={connection.id}>
+                        {connection.name} ({connection.provider.toUpperCase()})
+                      </option>
+                    ))}
+                  </Select>
+                </div>
+              </div>
+
+              <div className="space-y-4">
+                <div className="space-y-1">
+                  <p className="text-sm font-semibold text-[color:var(--text-primary)]">Prompt contract</p>
+                  <p className="text-xs text-[color:var(--text-muted)]">Guide the supervisor toward dataset-first, federated analysis.</p>
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="system-prompt">System prompt</Label>
+                  <Textarea id="system-prompt" rows={4} value={formState.systemPrompt} onChange={(event) => setFormState((prev) => ({ ...prev, systemPrompt: event.target.value }))} placeholder="Route analytical questions to the best dataset-backed context." />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="user-instructions">User instructions</Label>
+                  <Textarea id="user-instructions" rows={3} value={formState.userInstructions} onChange={(event) => setFormState((prev) => ({ ...prev, userInstructions: event.target.value }))} placeholder="Prefer datasets first. Use semantic models when governed definitions matter." />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="style-guidance">Style guidance</Label>
+                  <Input id="style-guidance" value={formState.styleGuidance} onChange={(event) => setFormState((prev) => ({ ...prev, styleGuidance: event.target.value }))} placeholder="Direct, concise, evidence-first" />
+                </div>
               </div>
             </div>
-            <div className="grid gap-3 sm:grid-cols-2">
-              <div className="space-y-2">
-                <Label htmlFor="execution-mode">Mode</Label>
-                <Select
-                  id="execution-mode"
-                  value={formState.executionMode}
-                  onChange={(e) => setFormState((prev) => ({
-                    ...prev,
-                    executionMode: e.target.value as FormState['executionMode'],
-                  }))}
-                >
-                  {executionModes.map((modeOption) => (
-                    <option key={modeOption} value={modeOption}>
-                      {modeOption.replace('_', ' ')}
-                    </option>
-                  ))}
-                </Select>
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="response-mode">Response mode</Label>
-                <Select
-                  id="response-mode"
-                  value={formState.responseMode}
-                  onChange={(e) => setFormState((prev) => ({
-                    ...prev,
-                    responseMode: e.target.value as FormState['responseMode'],
-                  }))}
-                >
-                  {responseModes.map((modeOption) => (
-                    <option key={modeOption} value={modeOption}>
-                      {responseModeLabels[modeOption]}
-                    </option>
-                  ))}
-                </Select>
-                <p className="text-xs text-[color:var(--text-muted)]">
-                  Controls whether this agent runs tools or responds conversationally.
+          </section>
+
+          <section className="surface-panel rounded-[28px] p-6 shadow-soft">
+            <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+              <div className="space-y-1">
+                <p className="text-sm font-semibold text-[color:var(--text-primary)]">Analytical routes & tools</p>
+                <p className="text-xs leading-5 text-[color:var(--text-muted)]">
+                  Build around analytical assets. The analyst route is dataset-first. Semantic models remain optional.
                 </p>
               </div>
-              <div className="space-y-2">
-                <Label htmlFor="max-iterations">Max iterations</Label>
-                <Input
-                  id="max-iterations"
-                  type="number"
-                  value={formState.maxIterations}
-                  onChange={(e) => setFormState((prev) => ({ ...prev, maxIterations: e.target.value }))}
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="max-steps">Max steps / iteration</Label>
-                <Input
-                  id="max-steps"
-                  type="number"
-                  value={formState.maxStepsPerIteration}
-                  onChange={(e) => setFormState((prev) => ({ ...prev, maxStepsPerIteration: e.target.value }))}
-                />
-              </div>
-              <div className="space-y-2">
-                <Label className="flex items-center gap-2">
-                  <input
-                    type="checkbox"
-                    checked={formState.allowParallelTools}
-                    onChange={(e) => setFormState((prev) => ({ ...prev, allowParallelTools: e.target.checked }))}
-                    className="h-4 w-4 rounded border-[color:var(--panel-border)]"
-                  />
-                  Allow parallel tools
-                </Label>
+              <div className="flex flex-wrap gap-2">
+                <Button type="button" variant="secondary" size="sm" className="gap-2" onClick={() => addTool(ToolType.sql)}>
+                  <Database className="h-4 w-4" />
+                  Add analyst route
+                </Button>
+                <Button type="button" variant="secondary" size="sm" className="gap-2" onClick={() => addTool(ToolType.web)}>
+                  <Globe className="h-4 w-4" />
+                  Add web research
+                </Button>
+                <Button type="button" variant="secondary" size="sm" className="gap-2" onClick={() => addTool(ToolType.doc)}>
+                  <FileText className="h-4 w-4" />
+                  Add document retrieval
+                </Button>
               </div>
             </div>
-          </div>
-        </section>
 
-        <section className="surface-panel rounded-3xl p-6 shadow-soft">
-          <div className="space-y-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm font-semibold text-[color:var(--text-primary)]">Output & schema</p>
-                <p className="text-xs text-[color:var(--text-muted)]">Enforce output format.</p>
+            <div className="mt-5 space-y-4">
+              {tools.length === 0 ? (
+                <div className="rounded-[28px] border border-dashed border-[color:var(--panel-border)] bg-[color:var(--panel-alt)]/50 p-8 text-center">
+                  <p className="text-base font-semibold text-[color:var(--text-primary)]">No analytical routes yet</p>
+                  <p className="mt-2 text-sm text-[color:var(--text-muted)]">
+                    Start with an analyst route and attach datasets. Add semantic models only when the agent needs a
+                    governed vocabulary or metric layer.
+                  </p>
+                </div>
+              ) : null}
+              {tools.map((tool, index) => (tool.toolType === ToolType.sql ? renderSqlToolCard(tool, index) : renderUtilityToolCard(tool, index)))}
+            </div>
+          </section>
+
+          <section className="surface-panel rounded-[28px] p-6 shadow-soft">
+            <div className="space-y-4">
+              <div className="space-y-1">
+                <p className="text-sm font-semibold text-[color:var(--text-primary)]">Guardrails</p>
+                <p className="text-xs text-[color:var(--text-muted)]">Protect downstream responses without changing the analytical routing contract.</p>
+              </div>
+              <div className="grid gap-4 lg:grid-cols-2">
+                <div className="space-y-3">
+                  <Label className="flex items-center gap-2">
+                    <input type="checkbox" checked={formState.moderationEnabled} onChange={(event) => setFormState((prev) => ({ ...prev, moderationEnabled: event.target.checked }))} className="h-4 w-4 rounded border-[color:var(--panel-border)]" />
+                    Enable moderation
+                  </Label>
+                  <div className="space-y-2">
+                    <Label>Blocked categories</Label>
+                    <Input value={formState.blockedCategories} onChange={(event) => setFormState((prev) => ({ ...prev, blockedCategories: event.target.value }))} placeholder="violence, hate" />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Regex denylist</Label>
+                    <Input value={formState.regexDenylist} onChange={(event) => setFormState((prev) => ({ ...prev, regexDenylist: event.target.value }))} placeholder="secret|password" />
+                  </div>
+                </div>
+                <div className="space-y-2">
+                  <Label>Escalation message</Label>
+                  <Textarea rows={6} value={formState.escalationMessage} onChange={(event) => setFormState((prev) => ({ ...prev, escalationMessage: event.target.value }))} placeholder="Content blocked by policy." />
+                </div>
               </div>
             </div>
-            <div className="grid gap-3 sm:grid-cols-2">
+          </section>
+        </div>
+        <div className="space-y-6">
+          <section className="surface-panel rounded-[28px] p-6 shadow-soft">
+            <div className="space-y-4">
+              <div className="space-y-1">
+                <p className="text-sm font-semibold text-[color:var(--text-primary)]">Runtime & scope</p>
+                <p className="text-xs text-[color:var(--text-muted)]">Control planning behavior and answer style once the asset path is selected.</p>
+              </div>
+              <div className="grid gap-4 sm:grid-cols-2">
+                <div className="rounded-3xl border border-[color:var(--panel-border)] bg-[color:var(--panel-alt)]/60 p-4">
+                  <div className="flex items-center gap-3">
+                    <Sparkles className="h-5 w-5 text-[color:var(--accent)]" />
+                    <div>
+                      <p className="text-sm font-semibold text-[color:var(--text-primary)]">Response mode</p>
+                      <p className="text-xs text-[color:var(--text-muted)]">Final answer style.</p>
+                    </div>
+                  </div>
+                  <div className="mt-3">
+                    <Select value={formState.responseMode} onChange={(event) => setFormState((prev) => ({ ...prev, responseMode: event.target.value as FormState['responseMode'] }))}>
+                      {responseModes.map((modeOption) => (
+                        <option key={modeOption} value={modeOption}>
+                          {responseModeLabels[modeOption]}
+                        </option>
+                      ))}
+                    </Select>
+                  </div>
+                </div>
+                <div className="rounded-3xl border border-[color:var(--panel-border)] bg-[color:var(--panel-alt)]/60 p-4">
+                  <div className="flex items-center gap-3">
+                    <Bot className="h-5 w-5 text-[color:var(--accent)]" />
+                    <div>
+                      <p className="text-sm font-semibold text-[color:var(--text-primary)]">Execution mode</p>
+                      <p className="text-xs text-[color:var(--text-muted)]">Single response or iterative planning.</p>
+                    </div>
+                  </div>
+                  <div className="mt-3">
+                    <Select value={formState.executionMode} onChange={(event) => setFormState((prev) => ({ ...prev, executionMode: event.target.value as FormState['executionMode'] }))}>
+                      {executionModes.map((modeOption) => (
+                        <option key={modeOption} value={modeOption}>
+                          {modeOption.replace('_', ' ')}
+                        </option>
+                      ))}
+                    </Select>
+                  </div>
+                </div>
+              </div>
+
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div className="space-y-2">
+                  <Label htmlFor="max-iterations">Max iterations</Label>
+                  <Input id="max-iterations" type="number" value={formState.maxIterations} onChange={(event) => setFormState((prev) => ({ ...prev, maxIterations: event.target.value }))} />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="max-steps">Max steps / iteration</Label>
+                  <Input id="max-steps" type="number" value={formState.maxStepsPerIteration} onChange={(event) => setFormState((prev) => ({ ...prev, maxStepsPerIteration: event.target.value }))} />
+                </div>
+                <div className="space-y-2 sm:col-span-2">
+                  <Label className="flex items-center gap-2">
+                    <input type="checkbox" checked={formState.allowParallelTools} onChange={(event) => setFormState((prev) => ({ ...prev, allowParallelTools: event.target.checked }))} className="h-4 w-4 rounded border-[color:var(--panel-border)]" />
+                    Allow parallel tools
+                  </Label>
+                </div>
+              </div>
+
+              <div className="rounded-3xl border border-[color:var(--panel-border)] bg-[color:var(--panel-alt)]/60 p-4">
+                <p className="text-sm font-semibold text-[color:var(--text-primary)]">Feature flags</p>
+                <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                  <Label className="flex items-center gap-2">
+                    <input type="checkbox" checked={formState.biCopilotEnabled} onChange={(event) => setFormState((prev) => ({ ...prev, biCopilotEnabled: event.target.checked }))} className="h-4 w-4 rounded border-[color:var(--panel-border)]" />
+                    BI copilot
+                  </Label>
+                  <Label className="flex items-center gap-2">
+                    <input type="checkbox" checked={formState.deepResearchEnabled} onChange={(event) => setFormState((prev) => ({ ...prev, deepResearchEnabled: event.target.checked }))} className="h-4 w-4 rounded border-[color:var(--panel-border)]" />
+                    Deep research
+                  </Label>
+                  <Label className="flex items-center gap-2">
+                    <input type="checkbox" checked={formState.visualizationEnabled} onChange={(event) => setFormState((prev) => ({ ...prev, visualizationEnabled: event.target.checked }))} className="h-4 w-4 rounded border-[color:var(--panel-border)]" />
+                    Visualization
+                  </Label>
+                  <Label className="flex items-center gap-2">
+                    <input type="checkbox" checked={formState.mcpEnabled} onChange={(event) => setFormState((prev) => ({ ...prev, mcpEnabled: event.target.checked }))} className="h-4 w-4 rounded border-[color:var(--panel-border)]" />
+                    MCP
+                  </Label>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <section className="surface-panel rounded-[28px] p-6 shadow-soft">
+            <div className="space-y-4">
+              <div className="space-y-1">
+                <p className="text-sm font-semibold text-[color:var(--text-primary)]">Memory & access</p>
+                <p className="text-xs text-[color:var(--text-muted)]">Connector policy is now an advanced constraint beneath the dataset abstraction.</p>
+              </div>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div className="space-y-2">
+                  <Label htmlFor="memory-strategy">Strategy</Label>
+                  <Select id="memory-strategy" value={formState.memoryStrategy} onChange={(event) => setFormState((prev) => ({ ...prev, memoryStrategy: event.target.value as FormState['memoryStrategy'] }))}>
+                    {memoryStrategies.map((strategy) => (
+                      <option key={strategy} value={strategy}>
+                        {strategy.replace('_', ' ')}
+                      </option>
+                    ))}
+                  </Select>
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="ttl-seconds">TTL (seconds)</Label>
+                  <Input id="ttl-seconds" type="number" value={formState.ttlSeconds} onChange={(event) => setFormState((prev) => ({ ...prev, ttlSeconds: event.target.value }))} />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="vector-index">Vector index</Label>
+                  <Input id="vector-index" value={formState.vectorIndex} onChange={(event) => setFormState((prev) => ({ ...prev, vectorIndex: event.target.value }))} />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="database-table">DB table</Label>
+                  <Input id="database-table" value={formState.databaseTable} onChange={(event) => setFormState((prev) => ({ ...prev, databaseTable: event.target.value }))} />
+                </div>
+              </div>
+              <div className="space-y-2">
+                <Label>Allowed connectors</Label>
+                <Input value={formState.allowedConnectors} onChange={(event) => setFormState((prev) => ({ ...prev, allowedConnectors: event.target.value }))} placeholder="connector-id-1, connector-id-2" />
+              </div>
+              <div className="space-y-2">
+                <Label>Denied connectors</Label>
+                <Input value={formState.deniedConnectors} onChange={(event) => setFormState((prev) => ({ ...prev, deniedConnectors: event.target.value }))} placeholder="connector-id-3" />
+              </div>
+              <div className="space-y-2">
+                <Label>Row-level filter</Label>
+                <Input value={formState.rowLevelFilter} onChange={(event) => setFormState((prev) => ({ ...prev, rowLevelFilter: event.target.value }))} placeholder="department = 'finance'" />
+              </div>
+              <div className="space-y-2">
+                <Label>PII handling</Label>
+                <Textarea rows={3} value={formState.piiHandling} onChange={(event) => setFormState((prev) => ({ ...prev, piiHandling: event.target.value }))} placeholder="Mask emails in responses" />
+              </div>
+            </div>
+          </section>
+
+          <section className="surface-panel rounded-[28px] p-6 shadow-soft">
+            <div className="space-y-4">
+              <div className="space-y-1">
+                <p className="text-sm font-semibold text-[color:var(--text-primary)]">Output & observability</p>
+                <p className="text-xs text-[color:var(--text-muted)]">Shape outputs, traces, and audit metadata.</p>
+              </div>
               <div className="space-y-2">
                 <Label htmlFor="output-format">Format</Label>
-                <Select
-                  id="output-format"
-                  value={formState.outputFormat}
-                  onChange={(e) => setFormState((prev) => ({
-                    ...prev,
-                    outputFormat: e.target.value as FormState['outputFormat'],
-                  }))}
-                >
+                <Select id="output-format" value={formState.outputFormat} onChange={(event) => setFormState((prev) => ({ ...prev, outputFormat: event.target.value as FormState['outputFormat'] }))}>
                   {outputFormats.map((format) => (
                     <option key={format} value={format}>
                       {format.toUpperCase()}
@@ -1140,327 +1357,34 @@ export function AgentDefinitionForm({
                   ))}
                 </Select>
               </div>
-            </div>
-            <div className="space-y-2">
-              <Label>JSON schema</Label>
-              <Textarea
-                rows={4}
-                placeholder='{ "type": "object", "properties": { ... } }'
-                value={formState.jsonSchema}
-                onChange={(e) => setFormState((prev) => ({ ...prev, jsonSchema: e.target.value }))}
-              />
-            </div>
-            <div className="space-y-2">
-              <Label>Markdown template</Label>
-              <Textarea
-                rows={3}
-                placeholder="## Summary\n- bullet"
-                value={formState.markdownTemplate}
-                onChange={(e) => setFormState((prev) => ({ ...prev, markdownTemplate: e.target.value }))}
-              />
-            </div>
-          </div>
-        </section>
-      </div>
-
-      <section className="surface-panel rounded-3xl p-6 shadow-soft">
-        <div className="flex items-center justify-between">
-          <div>
-            <p className="text-sm font-semibold text-[color:var(--text-primary)]">Tools & connectors</p>
-            <p className="text-xs text-[color:var(--text-muted)]">Map functions or connectors the agent can call.</p>
-          </div>
-          <Dialog open={toolPickerOpen} onOpenChange={setToolPickerOpen}>
-            <DialogTrigger>
-              <Button type="button" size="sm" className="gap-2">
-                <Plus className="h-4 w-4" /> Add tool
-              </Button>
-            </DialogTrigger>
-            <DialogContent className="max-w-xl">
-              <DialogHeader>
-                <DialogTitle>Add tool</DialogTitle>
-              <DialogDescription>
-                  Pick a tool type. SQL and document tools can be scoped to a definition.
-                </DialogDescription>
-              </DialogHeader>
-              <div className="space-y-4">
-                <div className="space-y-2">
-                  <Label htmlFor="tool-type">Tool type</Label>
-                  <Select
-                    id="tool-type"
-                    value={selectedToolType}
-                    onChange={(event) => setSelectedToolType(event.target.value as ToolType)}
-                    placeholder="Choose a tool type"
-                  >
-                    {ToolTypeOptions.map((toolType) => (
-                      <option key={toolType} value={toolType}>
-                        {ToolTypeLabels[toolType]}
-                      </option>
-                    ))}
-                  </Select>
-                </div>
-                {selectedToolType ? (
-                  toolSupportsDefinitions ? (
-                    <div className="space-y-2">
-                      <Label htmlFor="tool-definition">{toolDefinitionLabel}</Label>
-                      {toolDefinitionsQuery.isLoading ? (
-                        <p className="text-xs text-[color:var(--text-muted)]">Loading available definitions...</p>
-                      ) : toolDefinitionsQuery.isError ? (
-                        <p className="text-xs text-rose-500">Unable to load definitions right now.</p>
-                      ) : toolDefinitionOptions.length ? (
-                        <>
-                          <Select
-                            id="tool-definition"
-                            value={selectedToolDefinitionId}
-                            onChange={(event) => setSelectedToolDefinitionId(event.target.value)}
-                            placeholder={`Select a ${toolDefinitionLabel.toLowerCase()}`}
-                          >
-                            {selectedToolType === ToolType.sql ? (
-                              <option value={ALL_SEMANTIC_MODELS_OPTION}>All semantic models</option>
-                            ) : null}
-                            {toolDefinitionOptions.map((option) => (
-                              <option key={option.id} value={option.id}>
-                                {option.name}
-                              </option>
-                            ))}
-                          </Select>
-                          {selectedToolDefinition ? (
-                            <p className="text-xs text-[color:var(--text-muted)]">
-                              {selectedToolDefinition.description || 'No description provided.'}
-                            </p>
-                          ) : selectedToolDefinitionId === ALL_SEMANTIC_MODELS_OPTION ? (
-                            <p className="text-xs text-[color:var(--text-muted)]">
-                              All available semantic models will be available to this agent.
-                            </p>
-                          ) : null}
-                        </>
-                      ) : (
-                        <p className="text-xs text-[color:var(--text-muted)]">
-                          No definitions available yet. You can still add the tool and configure it manually.
-                        </p>
-                      )}
-                    </div>
-                  ) : (
-                    <p className="text-xs text-[color:var(--text-muted)]">
-                      This is a built-in tool. You can configure it after adding.
-                    </p>
-                  )
-                ) : null}
-              </div>
-              <DialogFooter>
-                <DialogClose>
-                  <Button type="button" variant="ghost">
-                    Cancel
-                  </Button>
-                </DialogClose>
-                <Button type="button" onClick={handleAddTool} disabled={!canAddTool}>
-                  Add tool
-                </Button>
-              </DialogFooter>
-            </DialogContent>
-          </Dialog>
-        </div>
-        <div className="mt-4 space-y-3">
-          {tools.map((tool, index) => (
-            <div
-              key={index}
-              className="rounded-2xl border border-[color:var(--panel-border)] bg-[color:var(--panel-bg)] p-4"
-            >
-              <div className="flex items-center justify-between">
-                <p className="text-sm font-semibold text-[color:var(--text-primary)]">Tool {index + 1}</p>
-                {tools.length > 1 ? (
-                  <Button variant="ghost" size="icon" type="button" onClick={() => removeTool(index)}>
-                    <Trash2 className="h-4 w-4" />
-                  </Button>
-                ) : null}
-              </div>
-              <div className="mt-3 grid gap-3 md:grid-cols-2">
-                <div className="space-y-2">
-                  <Label>Tool type</Label>
-                  <Select
-                    value={tool.toolType}
-                    onChange={(e) => handleToolTypeChange(index, e.target.value as ToolType)}
-                  >
-                    {ToolTypeOptions.map((toolType) => (
-                      <option key={toolType} value={toolType}>
-                        {ToolTypeLabels[toolType]}
-                      </option>
-                    ))}
-                  </Select>
-                </div>
-                <div className="space-y-2">
-                  <Label>Name</Label>
-                  <Input
-                    value={tool.name}
-                    onChange={(e) => handleToolChange(index, 'name', e.target.value)}
-                    placeholder="sql-analyst"
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label>Connector ID</Label>
-                  <Input
-                    value={tool.connectorId}
-                    onChange={(e) => handleToolChange(index, 'connectorId', e.target.value)}
-                    placeholder="optional connector id"
-                  />
-                </div>
-              </div>
-              <div className="mt-3 space-y-2">
-                <Label>Description</Label>
-                <Input
-                  value={tool.description}
-                  onChange={(e) => handleToolChange(index, 'description', e.target.value)}
-                  placeholder="Short description"
-                />
-              </div>
-              <div className="mt-3 space-y-2">
-                <Label>Config (JSON)</Label>
-                <Textarea
-                  rows={3}
-                  value={tool.config}
-                  onChange={(e) => handleToolChange(index, 'config', e.target.value)}
-                />
-              </div>
-              {isWebSearchTool(tool.toolType, tool.name) ? (
-                <div className="mt-4 grid gap-3 rounded-2xl border border-[color:var(--panel-border)] bg-[color:var(--panel-alt)] p-4 text-xs text-[color:var(--text-muted)] sm:grid-cols-3">
-                  <div className="space-y-2">
-                    <Label className="text-xs">Max results</Label>
-                    <Input
-                      type="number"
-                      min={1}
-                      max={20}
-                      value={readConfigField(tool.config, 'max_results')}
-                      onChange={(event) => {
-                        const rawValue = event.target.value;
-                        updateToolConfig(index, {
-                          max_results: rawValue ? Number(rawValue) : '',
-                        });
-                      }}
-                      placeholder="6"
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label className="text-xs">Region</Label>
-                    <Input
-                      value={readConfigField(tool.config, 'region')}
-                      onChange={(event) => updateToolConfig(index, { region: event.target.value })}
-                      placeholder="us-en"
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label className="text-xs">Safe search</Label>
-                    <Select
-                      value={readConfigField(tool.config, 'safe_search')}
-                      onChange={(event) => updateToolConfig(index, { safe_search: event.target.value })}
-                    >
-                      <option value="">Default</option>
-                      <option value="off">Off</option>
-                      <option value="moderate">Moderate</option>
-                      <option value="strict">Strict</option>
-                    </Select>
-                  </div>
-                  <p className="sm:col-span-3">
-                    These fields map to the web search tool config (`max_results`, `region`, `safe_search`).
-                  </p>
-                </div>
-              ) : null}
-            </div>
-          ))}
-        </div>
-      </section>
-
-      <div className="grid gap-6 xl:grid-cols-2">
-        <section className="surface-panel rounded-3xl p-6 shadow-soft">
-          <div className="space-y-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm font-semibold text-[color:var(--text-primary)]">Guardrails</p>
-                <p className="text-xs text-[color:var(--text-muted)]">Moderation and deny lists.</p>
-              </div>
-            </div>
-            <div className="space-y-2">
-              <Label className="flex items-center gap-2">
-                <input
-                  type="checkbox"
-                  checked={formState.moderationEnabled}
-                  onChange={(e) => setFormState((prev) => ({ ...prev, moderationEnabled: e.target.checked }))}
-                  className="h-4 w-4 rounded border-[color:var(--panel-border)]"
-                />
-                Enable moderation
-              </Label>
-            </div>
-            <div className="space-y-2">
-              <Label>Blocked categories</Label>
-              <Input
-                placeholder="violence, hate"
-                value={formState.blockedCategories}
-                onChange={(e) => setFormState((prev) => ({ ...prev, blockedCategories: e.target.value }))}
-              />
-            </div>
-            <div className="space-y-2">
-              <Label>Regex denylist</Label>
-              <Input
-                placeholder="secret|password"
-                value={formState.regexDenylist}
-                onChange={(e) => setFormState((prev) => ({ ...prev, regexDenylist: e.target.value }))}
-              />
-            </div>
-            <div className="space-y-2">
-              <Label>Escalation message</Label>
-              <Textarea
-                rows={2}
-                placeholder="Content blocked by policy."
-                value={formState.escalationMessage}
-                onChange={(e) => setFormState((prev) => ({ ...prev, escalationMessage: e.target.value }))}
-              />
-            </div>
-          </div>
-        </section>
-
-        <section className="surface-panel rounded-3xl p-6 shadow-soft">
-          <div className="space-y-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm font-semibold text-[color:var(--text-primary)]">Observability</p>
-                <p className="text-xs text-[color:var(--text-muted)]">Tracing, prompts, and audit fields.</p>
-              </div>
-            </div>
-            <div className="grid gap-3 sm:grid-cols-2">
               <div className="space-y-2">
+                <Label>JSON schema</Label>
+                <Textarea rows={4} value={formState.jsonSchema} onChange={(event) => setFormState((prev) => ({ ...prev, jsonSchema: event.target.value }))} placeholder='{ "type": "object", "properties": { ... } }' />
+              </div>
+              <div className="space-y-2">
+                <Label>Markdown template</Label>
+                <Textarea rows={3} value={formState.markdownTemplate} onChange={(event) => setFormState((prev) => ({ ...prev, markdownTemplate: event.target.value }))} placeholder="## Summary" />
+              </div>
+              <div className="grid gap-3 sm:grid-cols-2">
                 <Label className="flex items-center gap-2">
-                  <input
-                    type="checkbox"
-                    checked={formState.emitTraces}
-                    onChange={(e) => setFormState((prev) => ({ ...prev, emitTraces: e.target.checked }))}
-                    className="h-4 w-4 rounded border-[color:var(--panel-border)]"
-                  />
+                  <input type="checkbox" checked={formState.emitTraces} onChange={(event) => setFormState((prev) => ({ ...prev, emitTraces: event.target.checked }))} className="h-4 w-4 rounded border-[color:var(--panel-border)]" />
                   Emit traces
                 </Label>
-              </div>
-              <div className="space-y-2">
                 <Label className="flex items-center gap-2">
-                  <input
-                    type="checkbox"
-                    checked={formState.capturePrompts}
-                    onChange={(e) => setFormState((prev) => ({ ...prev, capturePrompts: e.target.checked }))}
-                    className="h-4 w-4 rounded border-[color:var(--panel-border)]"
-                  />
+                  <input type="checkbox" checked={formState.capturePrompts} onChange={(event) => setFormState((prev) => ({ ...prev, capturePrompts: event.target.checked }))} className="h-4 w-4 rounded border-[color:var(--panel-border)]" />
                   Capture prompts
                 </Label>
               </div>
+              <div className="space-y-2">
+                <Label>Audit fields</Label>
+                <Input value={formState.auditFields} onChange={(event) => setFormState((prev) => ({ ...prev, auditFields: event.target.value }))} placeholder="user_id, project_id" />
+              </div>
+              {agentId ? (
+                <p className="text-xs text-[color:var(--text-muted)]">Linked connection: {connectionLookup[formState.llmConnectionId] ?? formState.llmConnectionId}</p>
+              ) : null}
             </div>
-            <div className="space-y-2">
-              <Label>Audit fields</Label>
-              <Input
-                placeholder="user_id, project_id"
-                value={formState.auditFields}
-                onChange={(e) => setFormState((prev) => ({ ...prev, auditFields: e.target.value }))}
-              />
-            </div>
-            {agentId ? (
-              <p className="text-xs text-[color:var(--text-muted)]">Linked connection: {connectionLookup[formState.llmConnectionId] ?? formState.llmConnectionId}</p>
-            ) : null}
-          </div>
-        </section>
+          </section>
+        </div>
       </div>
 
       <div className="flex justify-end gap-3">

@@ -5,18 +5,15 @@ from datetime import datetime, timezone
 from typing import Any
 
 import pytest
-import yaml
 
-from langbridge.packages.common.langbridge_common.contracts.semantic import (
-    SemanticModelRecordResponse,
-)
-from langbridge.packages.orchestrator.langbridge_orchestrator.tools.sql_analyst.interfaces import (
-    AnalystQueryRequest,
-)
+from langbridge.packages.common.langbridge_common.contracts.semantic import SemanticModelRecordResponse
+from langbridge.packages.common.langbridge_common.db.dataset import DatasetColumnRecord, DatasetRecord
 from langbridge.packages.orchestrator.langbridge_orchestrator.runtime.agent_orchestrator_factory import (
     AgentOrchestratorFactory,
     AgentToolConfig,
+    AnalystBinding,
 )
+from langbridge.packages.orchestrator.langbridge_orchestrator.tools.sql_analyst.interfaces import AnalystQueryRequest
 from langbridge.packages.semantic.langbridge_semantic.model import Dimension, SemanticModel, Table
 
 
@@ -33,14 +30,53 @@ class _SemanticModelStore:
     def __init__(self, entries: dict[uuid.UUID, SemanticModelRecordResponse]) -> None:
         self._entries = entries
 
+    async def get_by_id(self, model_id: uuid.UUID) -> SemanticModelRecordResponse | None:
+        return self._entries.get(model_id)
+
     async def get_by_ids(self, model_ids: list[uuid.UUID]) -> list[SemanticModelRecordResponse]:
         return [self._entries[model_id] for model_id in model_ids if model_id in self._entries]
 
 
-class _ConnectorStore:
-    async def get_by_ids(self, connector_ids: list[uuid.UUID]) -> list[Any]:
-        _ = connector_ids
-        return []
+class _DatasetRepository:
+    def __init__(self, datasets: dict[uuid.UUID, DatasetRecord]) -> None:
+        self._datasets = datasets
+
+    async def get_by_id(self, dataset_id: uuid.UUID) -> DatasetRecord | None:
+        return self._datasets.get(dataset_id)
+
+    async def get_by_ids(self, dataset_ids: list[uuid.UUID]) -> list[DatasetRecord]:
+        return [self._datasets[dataset_id] for dataset_id in dataset_ids if dataset_id in self._datasets]
+
+    async def get_by_ids_for_workspace(
+        self,
+        *,
+        workspace_id: uuid.UUID,
+        dataset_ids: list[uuid.UUID],
+    ) -> list[DatasetRecord]:
+        return [
+            dataset
+            for dataset_id in dataset_ids
+            if (dataset := self._datasets.get(dataset_id)) is not None and dataset.workspace_id == workspace_id
+        ]
+
+    async def get_for_workspace(
+        self,
+        *,
+        dataset_id: uuid.UUID,
+        workspace_id: uuid.UUID,
+    ) -> DatasetRecord | None:
+        dataset = self._datasets.get(dataset_id)
+        if dataset is None or dataset.workspace_id != workspace_id:
+            return None
+        return dataset
+
+
+class _DatasetColumnRepository:
+    def __init__(self, by_dataset: dict[uuid.UUID, list[DatasetColumnRecord]]) -> None:
+        self._by_dataset = by_dataset
+
+    async def list_for_dataset(self, *, dataset_id: uuid.UUID) -> list[DatasetColumnRecord]:
+        return list(self._by_dataset.get(dataset_id, []))
 
 
 class _FederatedQueryTool:
@@ -50,8 +86,8 @@ class _FederatedQueryTool:
     async def execute_federated_query(self, payload: dict[str, Any]) -> dict[str, Any]:
         self.calls.append(payload)
         return {
-            "columns": ["order_id", "customer_id"],
-            "rows": [{"order_id": 1, "customer_id": 10}],
+            "columns": ["order_id"],
+            "rows": [{"order_id": 1}],
             "execution": {"total_runtime_ms": 13},
         }
 
@@ -61,22 +97,85 @@ def anyio_backend() -> str:
     return "asyncio"
 
 
-def _build_source_entry(
+def _build_dataset(
+    *,
+    dataset_id: uuid.UUID,
+    workspace_id: uuid.UUID,
+    name: str,
+    sql_alias: str,
+) -> DatasetRecord:
+    now = datetime.now(timezone.utc)
+    return DatasetRecord(
+        id=dataset_id,
+        workspace_id=workspace_id,
+        project_id=None,
+        connection_id=uuid.uuid4(),
+        created_by=None,
+        updated_by=None,
+        name=name,
+        sql_alias=sql_alias,
+        description=f"{name} description",
+        tags_json=["analytics"],
+        dataset_type="TABLE",
+        source_kind="database",
+        connector_kind="postgres",
+        storage_kind="table",
+        dialect="postgres",
+        catalog_name=None,
+        schema_name="public",
+        table_name=sql_alias,
+        storage_uri=None,
+        sql_text=None,
+        relation_identity_json={},
+        execution_capabilities_json={},
+        referenced_dataset_ids_json=[],
+        federated_plan_json=None,
+        file_config_json=None,
+        status="published",
+        revision_id=None,
+        row_count_estimate=None,
+        bytes_estimate=None,
+        last_profiled_at=None,
+        created_at=now,
+        updated_at=now,
+    )
+
+
+def _build_columns(*, dataset: DatasetRecord) -> list[DatasetColumnRecord]:
+    return [
+        DatasetColumnRecord(
+            id=uuid.uuid4(),
+            dataset_id=dataset.id,
+            workspace_id=dataset.workspace_id,
+            name="order_id",
+            data_type="integer",
+            nullable=False,
+            ordinal_position=1,
+            description=None,
+            is_allowed=True,
+            is_computed=False,
+            expression=None,
+            created_at=datetime.now(timezone.utc),
+            updated_at=datetime.now(timezone.utc),
+        )
+    ]
+
+
+def _build_semantic_entry(
     *,
     model_id: uuid.UUID,
-    connector_id: uuid.UUID,
     organization_id: uuid.UUID,
-    table_key: str,
-    table_name: str,
+    dataset: DatasetRecord,
 ) -> SemanticModelRecordResponse:
     model = SemanticModel(
         version="1.0",
-        name=table_key,
+        name="orders_model",
         tables={
-            table_key: Table(
+            "orders": Table(
+                dataset_id=str(dataset.id),
                 schema="public",
-                name=table_name,
-                dimensions=[Dimension(name=f"{table_key}_id", type="integer", primary_key=True)],
+                name=dataset.table_name or dataset.sql_alias,
+                dimensions=[Dimension(name="order_id", type="integer", primary_key=True)],
             )
         },
     )
@@ -85,105 +184,102 @@ def _build_source_entry(
         id=model_id,
         organization_id=organization_id,
         project_id=None,
-        name=table_key,
-        description=None,
+        name="orders_model",
+        description="Orders governed model",
         content_yaml=model.yml_dump(),
         created_at=now,
         updated_at=now,
-        connector_id=connector_id,
+        connector_id=dataset.connection_id,
     )
 
 
 @pytest.mark.anyio
-async def test_agent_orchestrator_factory_routes_unified_sql_tool_to_federation() -> None:
-    organization_id = uuid.uuid4()
-    connector_a = uuid.uuid4()
-    connector_b = uuid.uuid4()
-    source_model_a = uuid.uuid4()
-    source_model_b = uuid.uuid4()
-    unified_model_id = uuid.uuid4()
-    now = datetime.now(timezone.utc)
-
-    source_a_entry = _build_source_entry(
-        model_id=source_model_a,
-        connector_id=connector_a,
-        organization_id=organization_id,
-        table_key="orders",
-        table_name="orders",
+async def test_agent_orchestrator_factory_builds_dataset_tool_for_federated_analysis() -> None:
+    workspace_id = uuid.uuid4()
+    dataset = _build_dataset(
+        dataset_id=uuid.uuid4(),
+        workspace_id=workspace_id,
+        name="orders_dataset",
+        sql_alias="orders",
     )
-    source_b_entry = _build_source_entry(
-        model_id=source_model_b,
-        connector_id=connector_b,
-        organization_id=organization_id,
-        table_key="customers",
-        table_name="customers",
-    )
-
-    unified_payload = {
-        "version": "1.0",
-        "name": "unified_orders_customers",
-        "source_models": [{"id": str(source_model_a)}, {"id": str(source_model_b)}],
-        "relationships": [
-            {
-                "name": "orders_to_customers",
-                "from_": "orders",
-                "to": "customers",
-                "type": "inner",
-                "join_on": "orders.orders_id = customers.customers_id",
-            }
-        ],
-    }
-    unified_entry = SemanticModelRecordResponse(
-        id=unified_model_id,
-        organization_id=organization_id,
-        project_id=None,
-        name="unified_orders_customers",
-        description=None,
-        content_yaml=yaml.safe_dump(unified_payload, sort_keys=False),
-        created_at=now,
-        updated_at=now,
-        connector_id=connector_a,
-    )
-
-    store = _SemanticModelStore(
-        entries={
-            unified_model_id: unified_entry,
-            source_model_a: source_a_entry,
-            source_model_b: source_b_entry,
-        }
-    )
+    columns = _build_columns(dataset=dataset)
     federated_tool = _FederatedQueryTool()
     factory = AgentOrchestratorFactory(
-        semantic_model_store=store,
-        connector_store=_ConnectorStore(),
+        semantic_model_store=_SemanticModelStore(entries={}),
+        dataset_repository=_DatasetRepository({dataset.id: dataset}),
+        dataset_column_repository=_DatasetColumnRepository({dataset.id: columns}),
         federated_query_tool=federated_tool,
     )
 
-    catalog_a = f"org_{organization_id.hex[:12]}__src_{connector_a.hex[:12]}"
-    catalog_b = f"org_{organization_id.hex[:12]}__src_{connector_b.hex[:12]}"
-    llm = _StaticLLM(
-        "SELECT o.orders_id, c.customers_id "
-        f'FROM "{catalog_a}"."public"."orders" AS o '
-        f'JOIN "{catalog_b}"."public"."customers" AS c ON o.orders_id = c.customers_id'
-    )
-    sql_tools, _ = await factory._build_analyst_tools(  # noqa: SLF001 - intentional white-box test
-        AgentToolConfig(
+    tools = await factory._build_analyst_tools(  # noqa: SLF001
+        tool_config=AgentToolConfig(
             allow_sql=True,
             allow_web_search=False,
             allow_deep_research=False,
             allow_visualization=False,
-            sql_model_ids={unified_model_id},
+            analyst_bindings=[AnalystBinding(name="orders", dataset_ids=[dataset.id])],
         ),
-        llm_provider=llm,  # type: ignore[arg-type]
+        llm_provider=_StaticLLM("SELECT order_id FROM orders"),  # type: ignore[arg-type]
         embedding_provider=None,
         event_emitter=None,
     )
 
-    assert len(sql_tools) == 1
+    assert len(tools) == 1
 
-    response = await sql_tools[0].arun(AnalystQueryRequest(question="Join orders and customers"))
+    response = await tools[0].arun(AnalystQueryRequest(question="List orders"))
 
     assert response.error is None
+    assert response.asset_type == "dataset"
+    assert response.asset_name == "orders_dataset"
     assert response.result is not None
-    assert response.result.rows == [(1, 10)]
+    assert response.result.rows == [(1,)]
+    assert len(federated_tool.calls) == 1
+
+
+@pytest.mark.anyio
+async def test_agent_orchestrator_factory_builds_dataset_backed_semantic_tool() -> None:
+    workspace_id = uuid.uuid4()
+    dataset = _build_dataset(
+        dataset_id=uuid.uuid4(),
+        workspace_id=workspace_id,
+        name="orders_dataset",
+        sql_alias="orders",
+    )
+    columns = _build_columns(dataset=dataset)
+    model_id = uuid.uuid4()
+    semantic_entry = _build_semantic_entry(
+        model_id=model_id,
+        organization_id=workspace_id,
+        dataset=dataset,
+    )
+    federated_tool = _FederatedQueryTool()
+    factory = AgentOrchestratorFactory(
+        semantic_model_store=_SemanticModelStore(entries={model_id: semantic_entry}),
+        dataset_repository=_DatasetRepository({dataset.id: dataset}),
+        dataset_column_repository=_DatasetColumnRepository({dataset.id: columns}),
+        federated_query_tool=federated_tool,
+    )
+
+    tools = await factory._build_analyst_tools(  # noqa: SLF001
+        tool_config=AgentToolConfig(
+            allow_sql=True,
+            allow_web_search=False,
+            allow_deep_research=False,
+            allow_visualization=False,
+            analyst_bindings=[AnalystBinding(name="orders_model", semantic_model_ids=[model_id])],
+        ),
+        llm_provider=_StaticLLM("SELECT orders.order_id FROM orders"),  # type: ignore[arg-type]
+        embedding_provider=None,
+        event_emitter=None,
+    )
+
+    assert len(tools) == 1
+
+    response = await tools[0].arun(AnalystQueryRequest(question="List orders"))
+
+    assert response.error is None
+    assert response.asset_type == "semantic_model"
+    assert response.asset_name == "orders_model"
+    assert response.result is not None
+    assert response.result.rows == [(1,)]
     assert len(federated_tool.calls) == 1

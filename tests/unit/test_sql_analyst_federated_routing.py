@@ -3,13 +3,17 @@ from __future__ import annotations
 from typing import Any
 
 from langbridge.packages.orchestrator.langbridge_orchestrator.tools.sql_analyst.interfaces import (
+    AnalyticalColumn,
+    AnalyticalContext,
+    AnalyticalDatasetBinding,
+    AnalyticalField,
+    AnalyticalMetric,
     AnalystQueryRequest,
     QueryResult,
 )
 from langbridge.packages.orchestrator.langbridge_orchestrator.tools.sql_analyst.tool import (
     SqlAnalystTool,
 )
-from langbridge.packages.semantic.langbridge_semantic.model import Dimension, SemanticModel, Table
 
 
 class _StaticLLM:
@@ -19,34 +23,6 @@ class _StaticLLM:
     def complete(self, prompt: str, *, temperature: float = 0.0, max_tokens: int | None = None) -> str:
         _ = (prompt, temperature, max_tokens)
         return self._sql
-
-
-class _RecordingConnector:
-    DIALECT = type("D", (), {"name": "POSTGRES"})
-
-    def __init__(self) -> None:
-        self.calls: list[str] = []
-
-    async def execute(
-        self,
-        sql: str,
-        *,
-        params: dict[str, Any] | None = None,
-        max_rows: int | None = None,
-        timeout_s: int | None = None,
-    ) -> Any:
-        _ = (params, max_rows, timeout_s)
-        self.calls.append(sql)
-
-        class _Result:
-            def __init__(self, sql_text: str) -> None:
-                self.columns = ["value"]
-                self.rows = [(42,)]
-                self.rowcount = 1
-                self.elapsed_ms = 7
-                self.sql = sql_text
-
-        return _Result(sql)
 
 
 class _FakeFederatedExecutor:
@@ -70,141 +46,81 @@ class _FakeFederatedExecutor:
         )
 
 
-def _multi_source_model() -> SemanticModel:
-    return SemanticModel(
-        version="1.0",
-        name="unified_orders",
-        dialect="postgres",
-        tables={
-            "orders_a": Table(
-                catalog="org_abc__src_111",
-                schema="public",
-                name="orders",
-                dimensions=[Dimension(name="order_id", type="integer", primary_key=True)],
+def _semantic_context() -> AnalyticalContext:
+    return AnalyticalContext(
+        asset_type="semantic_model",
+        asset_id="semantic-1",
+        asset_name="orders_model",
+        description="Governed orders model",
+        datasets=[
+            AnalyticalDatasetBinding(
+                dataset_id="dataset-1",
+                dataset_name="orders_dataset",
+                sql_alias="orders",
+                source_kind="connector",
+                storage_kind="table",
+                columns=[AnalyticalColumn(name="order_id", data_type="integer")],
             ),
-            "customers_b": Table(
-                catalog="org_abc__src_222",
-                schema="public",
-                name="customers",
-                dimensions=[Dimension(name="customer_id", type="integer", primary_key=True)],
+            AnalyticalDatasetBinding(
+                dataset_id="dataset-2",
+                dataset_name="customers_dataset",
+                sql_alias="customers",
+                source_kind="connector",
+                storage_kind="table",
+                columns=[AnalyticalColumn(name="customer_id", data_type="integer")],
             ),
-        },
+        ],
+        tables=["orders", "customers"],
+        dimensions=[
+            AnalyticalField(name="order_id"),
+            AnalyticalField(name="customer_id"),
+        ],
+        metrics=[AnalyticalMetric(name="total_orders", expression="COUNT(*)")],
+        relationships=["INNER join orders -> customers on orders.customer_id = customers.customer_id"],
     )
 
 
-def test_sql_analyst_tool_detects_cross_source_without_federation() -> None:
-    connector = _RecordingConnector()
-    llm = _StaticLLM(
-        'SELECT o.order_id, c.customer_id '
-        'FROM "org_abc__src_111"."public"."orders" AS o '
-        'JOIN "org_abc__src_222"."public"."customers" AS c ON o.order_id = c.customer_id'
-    )
+def test_sql_analyst_tool_executes_semantic_model_context_through_federation() -> None:
+    executor = _FakeFederatedExecutor()
     tool = SqlAnalystTool(
-        llm=llm,
-        semantic_model=_multi_source_model(),
-        connector=connector,
-        dialect="postgres",
-        table_source_map={"orders_a": "source_a", "customers_b": "source_b"},
-    )
-
-    response = tool.run(AnalystQueryRequest(question="Join orders and customers"))
-
-    assert response.error is not None
-    assert "Cross-source query detected" in response.error
-    assert connector.calls == []
-
-
-def test_sql_analyst_tool_routes_cross_source_to_federation() -> None:
-    connector = _RecordingConnector()
-    federated_executor = _FakeFederatedExecutor()
-    llm = _StaticLLM(
-        'SELECT o.order_id, c.customer_id '
-        'FROM "org_abc__src_111"."public"."orders" AS o '
-        'JOIN "org_abc__src_222"."public"."customers" AS c ON o.order_id = c.customer_id'
-    )
-    tool = SqlAnalystTool(
-        llm=llm,
-        semantic_model=_multi_source_model(),
-        connector=connector,
-        dialect="postgres",
-        table_source_map={"orders_a": "source_a", "customers_b": "source_b"},
-        federated_sql_executor=federated_executor,
+        llm=_StaticLLM(
+            "SELECT orders.order_id, customers.customer_id "
+            "FROM orders JOIN customers ON orders.customer_id = customers.customer_id"
+        ),
+        context=_semantic_context(),
+        federated_sql_executor=executor,
     )
 
     response = tool.run(AnalystQueryRequest(question="Join orders and customers", limit=50))
 
     assert response.error is None
+    assert response.asset_type == "semantic_model"
+    assert response.execution_mode == "federated"
     assert response.result is not None
     assert response.result.rows == [(1, 100)]
-    assert connector.calls == []
-    assert len(federated_executor.calls) == 1
-    assert federated_executor.calls[0]["dialect"] == "postgres"
-    assert federated_executor.calls[0]["max_rows"] == 50
+    assert len(response.selected_datasets) == 2
+    assert executor.calls == [
+        {
+            "sql": (
+                "SELECT orders.order_id, customers.customer_id "
+                "FROM orders JOIN customers ON orders.customer_id = customers.customer_id LIMIT 50"
+            ),
+            "dialect": "postgres",
+            "max_rows": 50,
+        }
+    ]
 
 
-def test_sql_analyst_tool_single_source_uses_connector_execution() -> None:
-    connector = _RecordingConnector()
-    llm = _StaticLLM("SELECT order_id FROM public.orders")
-    model = SemanticModel(
-        version="1.0",
-        name="orders",
-        dialect="postgres",
-        tables={
-            "orders": Table(
-                schema="public",
-                name="orders",
-                dimensions=[Dimension(name="order_id", type="integer", primary_key=True)],
-            )
-        },
-    )
+def test_sql_analyst_tool_returns_parse_error_for_invalid_sql() -> None:
+    executor = _FakeFederatedExecutor()
     tool = SqlAnalystTool(
-        llm=llm,
-        semantic_model=model,
-        connector=connector,
-        dialect="postgres",
-        table_source_map={"orders": "source_a"},
+        llm=_StaticLLM("SELECT FROM"),
+        context=_semantic_context(),
+        federated_sql_executor=executor,
     )
 
-    response = tool.run(AnalystQueryRequest(question="List orders", limit=10))
+    response = tool.run(AnalystQueryRequest(question="Break the parser"))
 
-    assert response.error is None
-    assert response.result is not None
-    assert response.result.rows == [(42,)]
-    assert len(connector.calls) == 1
-
-
-def test_sql_analyst_tool_routes_catalog_qualified_single_source_sql_to_federation() -> None:
-    connector = _RecordingConnector()
-    federated_executor = _FakeFederatedExecutor()
-    llm = _StaticLLM(
-        'SELECT "org_abc__src_111"."public"."orders"."order_id" '
-        'FROM "org_abc__src_111"."public"."orders"'
-    )
-    model = SemanticModel(
-        version="1.0",
-        name="orders",
-        dialect="postgres",
-        tables={
-            "orders": Table(
-                catalog="org_abc__src_111",
-                schema="public",
-                name="orders",
-                dimensions=[Dimension(name="order_id", type="integer", primary_key=True)],
-            )
-        },
-    )
-    tool = SqlAnalystTool(
-        llm=llm,
-        semantic_model=model,
-        connector=connector,
-        dialect="postgres",
-        table_source_map={"orders": "source_a"},
-        federated_sql_executor=federated_executor,
-    )
-
-    response = tool.run(AnalystQueryRequest(question="List orders"))
-
-    assert response.error is None
-    assert response.result is not None
-    assert connector.calls == []
-    assert len(federated_executor.calls) == 1
+    assert response.error is not None
+    assert "failed to parse" in response.error.lower()
+    assert executor.calls == []

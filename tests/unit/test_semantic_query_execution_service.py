@@ -5,6 +5,7 @@ import logging
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -15,7 +16,6 @@ from langbridge.apps.worker.langbridge_worker.semantic_query_execution_service i
 from langbridge.packages.common.langbridge_common.errors.application_errors import (
     BusinessValidationError,
 )
-from langbridge.packages.common.langbridge_common.db.dataset import DatasetRecord
 from langbridge.packages.semantic.langbridge_semantic.model import Dimension, SemanticModel, Table
 from langbridge.packages.semantic.langbridge_semantic.query import SemanticQuery
 
@@ -169,7 +169,7 @@ class _FakeFederatedQueryTool:
 
 
 class _FakeDatasetRepository:
-    def __init__(self, datasets: dict[uuid.UUID, DatasetRecord]) -> None:
+    def __init__(self, datasets: dict[uuid.UUID, Any]) -> None:
         self._datasets = datasets
 
     async def get_for_workspace(self, *, dataset_id: uuid.UUID, workspace_id: uuid.UUID) -> DatasetRecord | None:
@@ -179,6 +179,59 @@ class _FakeDatasetRepository:
         return dataset
 
 
+def _dataset_stub(
+    *,
+    dataset_id: uuid.UUID,
+    workspace_id: uuid.UUID,
+    connection_id: uuid.UUID | None,
+    name: str,
+    dataset_type: str,
+    dialect: str,
+    schema_name: str | None,
+    table_name: str | None,
+    storage_uri: str | None,
+    file_config_json: dict[str, Any] | None,
+    source_kind: str | None = None,
+    connector_kind: str | None = None,
+    storage_kind: str | None = None,
+) -> Any:
+    now = datetime.now(timezone.utc)
+    return SimpleNamespace(
+        id=dataset_id,
+        workspace_id=workspace_id,
+        project_id=None,
+        connection_id=connection_id,
+        created_by=None,
+        updated_by=None,
+        name=name,
+        sql_alias=name,
+        description=None,
+        tags_json=[],
+        dataset_type=dataset_type,
+        source_kind=source_kind,
+        connector_kind=connector_kind,
+        storage_kind=storage_kind,
+        dialect=dialect,
+        catalog_name=None,
+        schema_name=schema_name,
+        table_name=table_name,
+        storage_uri=storage_uri,
+        sql_text=None,
+        relation_identity_json={},
+        execution_capabilities_json={},
+        referenced_dataset_ids_json=[],
+        federated_plan_json=None,
+        file_config_json=file_config_json,
+        status="published",
+        revision_id=None,
+        row_count_estimate=None,
+        bytes_estimate=None,
+        last_profiled_at=None,
+        created_at=now,
+        updated_at=now,
+    )
+
+
 @pytest.mark.anyio
 async def test_execute_unified_query_routes_through_federated_tool() -> None:
     pytest.importorskip("pyarrow")
@@ -186,11 +239,13 @@ async def test_execute_unified_query_routes_through_federated_tool() -> None:
     organization_id = uuid.uuid4()
     model_id = uuid.uuid4()
     connector_id = uuid.uuid4()
+    dataset_id = uuid.uuid4()
 
     source_model = SemanticModel(
         version="1.0",
         tables={
             "orders": Table(
+                dataset_id=str(dataset_id),
                 schema="public",
                 name="orders",
                 dimensions=[Dimension(name="id", type="integer", primary_key=True)],
@@ -208,7 +263,25 @@ async def test_execute_unified_query_routes_through_federated_tool() -> None:
     tool = _FakeFederatedQueryTool(rows=[{"orders__id": 1}])
     service = SemanticQueryExecutionService(
         semantic_model_repository=repo,
-        dataset_repository=_FakeDatasetRepository({}),
+        dataset_repository=_FakeDatasetRepository(
+            {
+                dataset_id: _dataset_stub(
+                    dataset_id=dataset_id,
+                    workspace_id=organization_id,
+                    connection_id=connector_id,
+                    name="orders_table",
+                    dataset_type="TABLE",
+                    source_kind="database",
+                    connector_kind="postgres",
+                    storage_kind="table",
+                    dialect="postgres",
+                    schema_name="public",
+                    table_name="orders",
+                    storage_uri=None,
+                    file_config_json=None,
+                )
+            }
+        ),
         federated_query_tool=tool,
         logger=logging.getLogger(__name__),
     )
@@ -267,61 +340,32 @@ async def test_execute_unified_query_resolves_dataset_backed_tables_per_table() 
     )
     dataset_repo = _FakeDatasetRepository(
         {
-            file_dataset_id: DatasetRecord(
-                id=file_dataset_id,
+            file_dataset_id: _dataset_stub(
+                dataset_id=file_dataset_id,
                 workspace_id=organization_id,
-                project_id=None,
                 connection_id=None,
-                created_by=None,
-                updated_by=None,
                 name="orders_file",
-                description=None,
-                tags_json=[],
                 dataset_type="FILE",
                 dialect="duckdb",
-                catalog_name=None,
                 schema_name=None,
                 table_name="orders",
                 storage_uri="file:///tmp/orders.parquet",
-                sql_text=None,
-                referenced_dataset_ids_json=[],
-                federated_plan_json=None,
                 file_config_json={"format": "parquet"},
-                status="published",
-                revision_id=None,
-                row_count_estimate=None,
-                bytes_estimate=None,
-                last_profiled_at=None,
-                created_at=datetime.now(timezone.utc),
-                updated_at=datetime.now(timezone.utc),
             ),
-            table_dataset_id: DatasetRecord(
-                id=table_dataset_id,
+            table_dataset_id: _dataset_stub(
+                dataset_id=table_dataset_id,
                 workspace_id=organization_id,
-                project_id=None,
                 connection_id=warehouse_connector_id,
-                created_by=None,
-                updated_by=None,
                 name="inventory_table",
-                description=None,
-                tags_json=[],
                 dataset_type="TABLE",
+                source_kind="database",
+                connector_kind="postgres",
+                storage_kind="table",
                 dialect="postgres",
-                catalog_name=None,
                 schema_name="warehouse",
                 table_name="inventory",
                 storage_uri=None,
-                sql_text=None,
-                referenced_dataset_ids_json=[],
-                federated_plan_json=None,
                 file_config_json=None,
-                status="published",
-                revision_id=None,
-                row_count_estimate=None,
-                bytes_estimate=None,
-                last_profiled_at=None,
-                created_at=datetime.now(timezone.utc),
-                updated_at=datetime.now(timezone.utc),
             ),
         }
     )

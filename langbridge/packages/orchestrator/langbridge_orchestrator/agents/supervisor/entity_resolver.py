@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import asyncio
 import json
 import logging
@@ -216,7 +214,7 @@ class EntityResolver:
         classification_payload = classification.model_dump() if classification else {}
         minimal_context: Dict[str, Any] = {}
         if isinstance(context, dict):
-            for key in ("semantic_models", "retrieved_memories"):
+            for key in ("analytical_assets", "retrieved_memories"):
                 if key in context:
                     minimal_context[key] = context[key]
 

@@ -26,9 +26,13 @@ export interface SemanticFilterPayload {
   synonyms?: string[] | null;
 }
 
-export interface SemanticTablePayload {
-  schema: string;
-  name: string;
+export interface SemanticDatasetPayload {
+  dataset_id?: string | null;
+  relation_name?: string | null;
+  schema_name?: string | null;
+  catalog_name?: string | null;
+  schema?: string | null;
+  name?: string | null;
   description?: string | null;
   synonyms?: string[] | null;
   dimensions?: SemanticDimensionPayload[] | null;
@@ -36,12 +40,19 @@ export interface SemanticTablePayload {
   filters?: Record<string, SemanticFilterPayload> | null;
 }
 
+export type SemanticTablePayload = SemanticDatasetPayload;
+
 export interface SemanticRelationshipPayload {
   name: string;
-  from_: string;
-  to: string;
   type: string;
-  join_on: string;
+  source_dataset?: string | null;
+  source_field?: string | null;
+  target_dataset?: string | null;
+  target_field?: string | null;
+  operator?: string | null;
+  from_?: string | null;
+  to?: string | null;
+  join_on?: string | null;
 }
 
 export interface SemanticMetricPayload {
@@ -56,7 +67,8 @@ export interface SemanticModelPayload {
   dialect?: string | null;
   description?: string | null;
   tags?: string[] | null;
-  tables: Record<string, SemanticTablePayload>;
+  datasets?: Record<string, SemanticDatasetPayload> | null;
+  tables?: Record<string, SemanticTablePayload> | null;
   relationships?: SemanticRelationshipPayload[] | null;
   metrics?: Record<string, SemanticMetricPayload> | null;
 }
@@ -65,7 +77,7 @@ export interface SemanticQueryMetaResponse {
   id: string;
   name: string;
   description?: string | null;
-  connectorId: string;
+  connectorId?: string | null;
   organizationId: string;
   projectId?: string | null;
   semanticModel: SemanticModelPayload;
@@ -127,10 +139,15 @@ export interface SemanticQueryJobResponse {
 
 export interface UnifiedSemanticJoinPayload {
   name?: string | null;
-  from: string;
-  to: string;
+  sourceDataset?: string | null;
+  sourceField?: string | null;
+  targetDataset?: string | null;
+  targetField?: string | null;
+  operator?: string | null;
+  from?: string | null;
+  to?: string | null;
   type?: string;
-  on: string;
+  on?: string | null;
 }
 
 export interface UnifiedSemanticMetricPayload {
@@ -158,7 +175,7 @@ export interface UnifiedSemanticQueryMetaRequestPayload {
 }
 
 export interface UnifiedSemanticQueryMetaResponse {
-  connectorId: string;
+  connectorId?: string | null;
   organizationId: string;
   projectId?: string | null;
   semanticModelIds: string[];

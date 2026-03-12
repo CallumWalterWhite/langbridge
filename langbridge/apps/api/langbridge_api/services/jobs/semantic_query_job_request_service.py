@@ -119,6 +119,9 @@ class SemanticQueryJobRequestService:
         if semantic_model is None:
             return None, None
 
+        if semantic_model.connector_id is None:
+            return semantic_model.content_yaml, None
+
         connector = await self._connector_repository.get_by_id(semantic_model.connector_id)
         if connector is None:
             return semantic_model.content_yaml, None

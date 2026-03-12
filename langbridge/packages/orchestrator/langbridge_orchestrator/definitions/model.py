@@ -10,7 +10,7 @@ import uuid
 from enum import Enum
 from typing import Any, Dict, List, Optional, Union
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class MemoryStrategy(str, Enum):
@@ -80,7 +80,24 @@ class ToolType(str, Enum):
     custom = "custom"
 
 class SqlToolConfig(BaseModel):
-    definition_id: uuid.UUID = Field(..., description="Tool definition ID.")
+    dataset_ids: list[uuid.UUID] = Field(
+        default_factory=list,
+        description="Dataset ids available to the analyst for federated execution.",
+    )
+    semantic_model_ids: list[uuid.UUID] = Field(
+        default_factory=list,
+        description="Dataset-backed semantic model ids available to the analyst.",
+    )
+
+    @model_validator(mode="after")
+    def _validate_assets(self) -> "SqlToolConfig":
+        has_datasets = bool(self.dataset_ids)
+        has_semantic_models = bool(self.semantic_model_ids)
+        if has_datasets == has_semantic_models:
+            raise ValueError(
+                "SQL tool config must define either dataset_ids or semantic_model_ids."
+            )
+        return self
 
 class ToolBinding(BaseModel):
     name: str = Field(..., description="Registered tool/connector name.")
