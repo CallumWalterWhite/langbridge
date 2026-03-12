@@ -32,7 +32,15 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
 
   const toast = React.useCallback(
     ({ id, duration = 5000, ...options }: ToastOptions) => {
-      const toastId = id ?? (typeof crypto !== 'undefined' && 'randomUUID' in crypto ? crypto.randomUUID() : Math.random().toString(36).slice(2));
+      const randomId = () => {
+        try {
+          return typeof crypto !== 'undefined' && 'randomUUID' in crypto ? crypto.randomUUID() : Math.random().toString(36).slice(2);
+        } catch (error) {
+          console.error('Error generating random ID:', error);
+          return Math.random().toString(36).slice(2);
+        }
+      }
+      const toastId = id ?? randomId();
       setToasts((prev) => [...prev, { id: toastId, duration, ...options }]);
       if (duration > 0) {
         window.setTimeout(() => dismiss(toastId), duration);

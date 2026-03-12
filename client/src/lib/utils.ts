@@ -30,9 +30,15 @@ export function formatRelativeDate(value: string) {
 }
 
 export function createClientId(prefix?: string) {
-  const core =
+  try {
+    const core =
     typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
       ? crypto.randomUUID()
       : Math.random().toString(36).slice(2, 11);
-  return prefix ? `${prefix}-${core}` : core;
+    return prefix ? `${prefix}-${core}` : core;
+  }
+  catch (error) {    
+    console.error('Error generating client ID:', error);
+    return prefix ? `${prefix}-${Math.random().toString(36).slice(2, 11)}` : Math.random().toString(36).slice(2, 11);
+  }
 }
