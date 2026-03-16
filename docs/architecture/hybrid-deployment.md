@@ -1,48 +1,30 @@
-# Hybrid Deployment Architecture
+# Hybrid Deployment
 
-Langbridge supports hybrid deployment by separating control and execution planes.
+Hybrid deployment means the Langbridge runtime executes inside customer-managed
+infrastructure while still integrating with external systems for orchestration,
+metadata, or triggering.
 
-## Deployment Modes
+## Why Hybrid Exists
 
-- **Hosted**: control plane + worker runtime are hosted by Langbridge.
-- **Hybrid**: control plane hosted; worker runtime runs in customer network.
-- **Self-hosted**: control + execution planes run in customer-managed infrastructure.
+Hybrid deployment is useful when:
 
-## Runtime Registration Flow
+- data access must remain inside a customer network
+- execution needs to happen close to source systems
+- organizations want to keep runtime operations under their own control
+- orchestration and execution need to be separated cleanly
 
-```mermaid
-sequenceDiagram
-    participant Admin as Org Admin
-    participant CP as Control Plane API
-    participant CR as Customer Runtime Worker
-
-    Admin->>CP: POST /api/v1/runtimes/{org_id}/tokens
-    CP-->>Admin: one-time registration token
-    CR->>CP: POST /api/v1/runtimes/register (token + runtime metadata)
-    CP-->>CR: runtime identity + access token
-    loop heartbeat
-        CR->>CP: POST /api/v1/runtimes/heartbeat
-        CP-->>CR: liveness ack + token refresh
-    end
-    CR->>CP: POST /api/v1/runtimes/capabilities
-    CP-->>CR: capability update accepted
-```
-
-## Edge Task Transport Flow
+## Runtime Topology
 
 ```mermaid
 flowchart LR
-    CP[Control Plane Dispatch] --> PULL[/POST edge/tasks/pull/]
-    PULL --> CR[Customer Runtime Worker]
-    CR --> ACK[/POST edge/tasks/ack/]
-    CR --> RESULT[/POST edge/tasks/result/]
-    CR --> FAIL[/POST edge/tasks/fail/]
-    RESULT --> CP
+    EXT[External System / Orchestrator] --> RT[Customer-Managed Langbridge Runtime]
+    RT --> FQE[Federated Query Engine]
+    FQE --> DS[(Customer Data Sources)]
 ```
 
-## Security and Isolation
+## Design Rules
 
-- Runtime registration tokens are one-time and scoped.
-- Runtime principals are authenticated for heartbeat/capability/task transport.
-- Task routing is organization-aware and capability-aware.
-- Results ingestion is idempotent through request IDs and payload hashing.
+- runtime execution stays inside customer-managed infrastructure
+- connector credentials and source access stay on the runtime side
+- integration with external systems should use explicit contracts
+- runtime behavior should remain the same across local, self-hosted, and hybrid deployments

@@ -1,32 +1,34 @@
 # Federation Feature
 
-Federation in Langbridge is the built-in distributed planning and execution capability for cross-source workloads.
+Federation is Langbridge's built-in planning and execution capability for
+cross-source structured workloads.
 
 ## What Federation Does
 
-- Maps virtual datasets to connectors/sources.
-- Parses SQL or compiled semantic SQL into logical plans.
-- Optimizes and emits physical stage DAGs.
-- Executes remote scans and local compute stages.
-- Produces result handles and artifacts for API/UI retrieval.
+- maps datasets to connectors and source bindings
+- parses SQL or compiled semantic SQL into logical plans
+- optimizes and emits physical stage DAGs
+- executes remote scans and local compute stages
+- produces result rows, artifacts, and execution metadata
 
 ## Where It Runs
 
-- Runs in Worker execution plane.
-- Uses `langbridge/packages/federation` planner and executor modules.
-- Uses connector abstractions from `langbridge/packages/connectors`.
+- in the runtime worker
+- through `langbridge/packages/federation`
+- using connector abstractions from `langbridge/packages/connectors`
 
 ## Why It Matters
 
-- No external SQL gateway is required.
-- Single execution substrate for semantic + SQL workloads.
-- Works in hosted and customer runtime modes.
+- no separate SQL gateway is required
+- semantic and SQL workloads share one structured execution substrate
+- cross-source joins and transformations stay inside the runtime
 
 ## Explainability
 
-Federation exposes explain data:
-- Logical plan.
-- Physical plan.
-- Stage-level execution metadata.
+Federation can expose:
 
-See `docs/architecture/federated-query-engine.md` for DAG details.
+- logical plan data
+- physical plan data
+- stage-level execution metadata
+
+See `docs/architecture/federated-query-engine.md` for more detail.

@@ -1,63 +1,38 @@
 # Architecture Overview
 
-Langbridge is **Agentic Analytics Infrastructure with a Distributed Federated Query Engine**.
+Langbridge is a runtime for connecting data sources to semantic, analytical,
+and agent-style execution.
 
-It is organized into three runtime domains:
-- **Control Plane**: SaaS/API/UI/orchestration/policy and runtime registry.
-- **Execution Plane**: Worker runtime where jobs execute with connector access.
-- **Federated Query Engine**: planner + optimizer + stage executor used by workers.
+The runtime is organized around four main concerns:
 
-## Primary System Flow
+- **Connectors**: adapters for databases, warehouses, files, and APIs
+- **Datasets**: normalized structured data contracts over those sources
+- **Execution Runtime**: worker and runtime services that execute jobs and tasks
+- **Federated Engine**: planner and executor for cross-source structured workloads
+
+## Primary Runtime Flow
 
 ```mermaid
 flowchart TD
-    USER[User / Agent] --> UI[Web UI]
-    UI --> CP[Control Plane<br/>API + Orchestrator + Policy]
-    CP --> DISPATCH[Task Dispatch]
-    DISPATCH --> EP[Execution Plane Worker]
-    EP --> FQE[Federated Query Engine]
-    FQE --> SOURCES[Remote Data Sources]
-    FQE --> ARTIFACTS[Result Artifacts]
-    ARTIFACTS --> CP
-    CP --> UI
-```
-
-## Hosted Mode
-
-In hosted mode, Langbridge operates both control and execution planes.
-
-```mermaid
-flowchart LR
-    U[User] --> CP[Hosted Control Plane]
-    CP --> HW[Hosted Worker Pool]
-    HW --> FQE[Federated Query Engine]
-    FQE --> DS[(Customer Data Sources)]
-```
-
-## Hybrid Mode
-
-In hybrid mode, the control plane is hosted while worker runtime executes in customer infrastructure.
-
-```mermaid
-flowchart LR
-    U[User] --> HCP[Hosted Control Plane]
-    HCP --> EQ[Edge Task Queue / Pull API]
-    EQ --> CR[Customer Runtime Worker]
-    CR --> FQE[Federated Query Engine]
-    FQE --> CDS[(Customer Data Sources)]
+    APP[Application / Tool / User Flow] --> RT[Langbridge Runtime]
+    RT --> DS[Dataset Resolution]
+    DS --> FQE[Federated Query Engine]
+    FQE --> SRC[Connected Data Sources]
+    FQE --> RES[Rows / Artifacts / Metrics]
+    RES --> RT
+    RT --> APP
 ```
 
 ## Core Principles
 
-- All structured query execution is Worker-mediated.
-- SQL and semantic workloads share a common federated planning and execution substrate.
-- Control plane and execution plane are independently deployable.
-- Runtime registration and edge task transport are authenticated and auditable.
+- Data should remain usable where it already lives.
+- The runtime should work locally, embedded, self-hosted, and in hybrid deployments.
+- Semantic, SQL, and agent workloads should share the same execution substrate where possible.
+- Connectors and runtime capabilities should be reusable as packages, not only app code.
 
 ## Related Docs
 
-- `docs/architecture/control-plane.md`
 - `docs/architecture/execution-plane.md`
 - `docs/architecture/federated-query-engine.md`
 - `docs/architecture/hybrid-deployment.md`
-- `docs/architecture/deprecations.md`
+- `docs/architecture/runtime-boundary.md`

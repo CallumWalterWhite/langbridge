@@ -11,4 +11,4 @@ The current engine docs are now split into:
 
 - The built-in federated planner + executor is the primary structured data engine.
 - Worker runtime is the execution boundary.
-- SQL analyst tools bound to unified semantic models route execution through federation in the same worker job.
+- Semantic and SQL runtime workloads can route through federation in the same worker execution path.

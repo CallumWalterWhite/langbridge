@@ -1,23 +1,24 @@
 # Agent Features
 
-Langbridge agents are orchestrated analysis workers that can combine semantic, SQL, and external tools.
+Langbridge includes runtime primitives for agent-style analytical execution.
 
 ## Agent Stack
 
-- Planner agent for policy-aware route selection.
-- Supervisor/orchestrator flow for multi-step execution.
-- Tooling integrations (SQL analyst, semantic retrieval, web/doc workflows).
+- planner-style routing for workload selection
+- supervisor and orchestration flow for multi-step execution
+- tools for semantic, SQL, retrieval, and analytical operations
 
-## Relationship to Data Execution
+## Relationship To Data Execution
 
-- Agents do not bypass data execution policy.
-- Structured query workloads are routed through control plane and executed in worker runtime.
-- Federation and SQL guardrails apply consistently to agent-initiated and user-initiated workloads.
+- agents use the same runtime guardrails as direct workloads
+- semantic and structured queries still go through the runtime execution path
+- federation, limits, and result policies apply consistently to agent-initiated work
 
 ## Core Value
 
-Agents are first-class consumers of the same platform primitives:
-- Semantic layer.
-- SQL workbench and SQL job APIs.
-- Federated execution engine.
-- Runtime routing (hosted vs customer runtime).
+Agents are consumers of the same runtime primitives as the rest of the system:
+
+- semantic layer
+- SQL execution
+- federated execution engine
+- dataset contracts

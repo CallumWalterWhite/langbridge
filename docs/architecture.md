@@ -1,19 +1,21 @@
 # Architecture
 
-This page is a short index for the current architecture docs.
+Langbridge is a runtime for executing data-aware workloads across connectors,
+datasets, semantic models, and federated plans.
 
-Langbridge architecture is now defined by:
-- Control Plane (API/UI/orchestrator/policies/runtime registry)
-- Execution Plane (Worker runtime)
-- Built-in Federated Query Engine (planner + executor)
+At a high level, the runtime is made of:
 
-The built-in federated engine is the only supported structured execution runtime.
+- a connector layer for reaching data systems
+- a dataset layer for normalizing structured sources
+- a semantic layer for business-facing analytical structure
+- a federated engine for planning and executing cross-source workloads
+- a worker/runtime host for executing jobs and runtime tasks
 
 ## Read Next
 
 - `docs/architecture/overview.md`
-- `docs/architecture/control-plane.md`
 - `docs/architecture/execution-plane.md`
 - `docs/architecture/federated-query-engine.md`
 - `docs/architecture/hybrid-deployment.md`
-- `docs/architecture/deprecations.md`
+- `docs/architecture/runtime-boundary.md`
+- `docs/architecture/dataset-federation-upgrade.md`

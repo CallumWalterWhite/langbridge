@@ -1,24 +1,22 @@
 # Development
 
-This page now points to the split development docs.
+This page is a short index for runtime development.
 
 ## Development Docs
 
 - Local development: `docs/development/local-dev.md`
 - Worker development: `docs/development/worker-dev.md`
-- Hosted deployment: `docs/deployment/hosted.md`
-- Hybrid deployment: `docs/deployment/hybrid.md`
-- Self-hosted deployment: `docs/deployment/self-hosted.md`
+- Self-hosted runtime deployment: `docs/deployment/self-hosted.md`
+- Hybrid runtime deployment: `docs/deployment/hybrid.md`
 
 ## Quick Commands
 
-- API: `cd ../langbridge-cloud && python scripts/export_control_plane_openapi.py && PYTHONPATH=apps/api uvicorn langbridge_cloud_api.main:app --reload`
-- Worker: `python -m langbridge.apps.runtime_worker.main`
-- Web app: `cd ../langbridge-cloud/apps/web && npm install && npm run dev`
-- Unit tests: `pytest -q tests/unit`
-- Web lint: `cd ../langbridge-cloud/apps/web && npm run lint`
+- Install runtime dependencies: `pip install -r langbridge/requirements.txt`
+- Run the worker: `python -m langbridge.apps.runtime_worker.main`
+- Run unit tests: `pytest -q tests/unit`
+- Start the local runtime stack: `docker compose up --build db redis worker`
 
 ## Notes
 
-- SQL and semantic execution run through Worker + Federated Query Engine.
-- Federated SQL authoring is dataset-first and runs through worker-mediated federation.
+- SQL, semantic, dataset, and agent execution all run through the runtime worker.
+- Federated execution is the primary structured execution path in the runtime.

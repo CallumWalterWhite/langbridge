@@ -1,148 +1,164 @@
 # Langbridge
 
-Langbridge is **agentic analytics infrastructure** with a **distributed federated query engine**.
+Langbridge is an open runtime for connecting data to LLM and analytical workloads.
 
-This repository now owns the runtime product boundary. The product web app has
-been moved to `langbridge-cloud/apps/web`, and active cloud-owned copies of the
-hosted API and worker now live in `langbridge-cloud/apps/api` and
-`langbridge-cloud/apps/worker`.
+It provides a single execution layer for working with operational databases, warehouses,
+files, APIs, and virtual datasets without forcing all of your data into one place first.
+You can run it locally, self-host it, or embed it into Python applications.
 
-The legacy hosted API copy has been removed from this repo. Runtime worker
-assembly now lives in `langbridge/apps/runtime_worker`, while the hosted worker
-stays in `langbridge-cloud/apps/worker`.
+## What Langbridge Does
 
-The runtime package feed recommendation is:
+Langbridge is built around one idea:
 
-- Python runtime packages: AWS CodeArtifact
-- OCI images: GHCR
+**your data should be usable where it already lives.**
 
-GitHub Packages remains fine for npm later if Langbridge Cloud needs a private
-web-package feed, but it is not the right primary registry for the Python
-runtime packages consumed by `langbridge-cloud/apps/api` and
-`langbridge-cloud/apps/worker`.
+Instead of treating every source as an isolated integration, Langbridge provides a runtime
+that can:
 
-It is built for teams that need:
-- AI agents that can reason across data systems.
-- Native SQL authoring and execution in product.
-- Semantic modeling for governed analytics.
-- Hybrid execution across hosted and customer runtimes.
+- connect to different data systems through connectors
+- build virtual datasets over those sources
+- execute semantic and federated queries
+- power retrieval, analysis, and agent-style workflows
+- expose runtime APIs for local, self-hosted, and hybrid execution
 
-Langbridge is not a standalone BI suite and not a SQL proxy. It is a control-and-execution platform for agentic analytics workloads.
+That makes it useful for products and teams that want to build:
 
-## What Is Langbridge?
+- LLM applications grounded in real business data
+- semantic query and analytics experiences
+- federated data access across multiple systems
+- runtime services for self-hosted or hybrid enterprise deployments
+- developer tools that need a portable execution layer
 
-Langbridge provides a unified runtime for:
-- **Semantic** workloads (structured semantic query model).
-- **SQL** workloads (UI-native SQL workbench and saved SQL artifacts).
-- **AI agent** workflows (planner/supervisor/tool orchestration).
+## How To Think About Langbridge
 
-All heavy query execution happens through the Worker execution plane and federated planner/executor pipeline.
+Langbridge is a portable execution layer for data-aware applications.
 
-## Architecture Overview
+This repository focuses on:
 
-- **Cloud Control Plane** (`langbridge-cloud/`):
-  Product web UI now lives in `langbridge-cloud/apps/web`, and the managed
-  cloud/control-plane monorepo is the destination for API, orchestration,
-  auth, tenancy, and operational services.
-- **Cloud-Owned Control Plane Apps** (`langbridge-cloud/apps/api`, `langbridge-cloud/apps/worker`):
-  Hosted API and hosted worker ownership now live in the cloud monorepo.
-- **Runtime Worker Assembly App** (`langbridge/apps/runtime_worker`):
-  Thin runtime-owned execution surface for self-hosted and hybrid worker
-  execution.
-- **Federated Query Engine** (`langbridge/packages/federation`):
-  Logical planning, optimization, physical stage DAG generation, stage scheduling/execution.
+- connectors
+- semantic execution
+- federated execution
+- virtual datasets
+- retrieval and document execution
+- analytical and ML-oriented runtime operations
+- runtime APIs needed by the engine itself
 
-```mermaid
-flowchart TD
-    U[User / Agent] --> UI[Langbridge UI]
-    UI --> API[Control Plane API + Orchestrator]
-    API --> Q[Job Dispatch]
-    Q --> W[Execution Plane Worker]
-    W --> FP[Federated Query Planner]
-    FP --> DAG[Physical Stage DAG]
-    DAG --> RS[Remote Sources<br/>Postgres / Snowflake / MySQL / SQL Server / etc.]
-    DAG --> ART[Artifact Store]
-    ART --> API
-    API --> UI
-```
+## Core Concepts
 
-More architecture docs:
-- `docs/architecture/overview.md`
-- `docs/architecture/control-plane.md`
-- `docs/architecture/execution-plane.md`
-- `docs/architecture/federated-query-engine.md`
-- `docs/architecture/hybrid-deployment.md`
-- `docs/architecture/deprecations.md`
-- control-plane OpenAPI snapshot: `../langbridge-cloud/contracts/openapi/control-plane.openapi.json`
+### Connectors
 
-Legacy app retirement:
-- `langbridge/apps/api` has been removed. Control-plane API ownership is fully in `langbridge-cloud/apps/api`.
-- `langbridge/apps/runtime_worker` is the runtime-owned worker assembly surface.
-- cloud-hosted worker code is retired from this repo and should not be reintroduced.
-- `apps/` should remain only as a thin runtime assembly namespace such as `apps/runtime`, or disappear entirely if no assembly app is needed.
+Langbridge connects to different types of systems through runtime connectors.
 
-## Federated Query Engine
+Examples include:
 
-Primary structured query execution now uses the built-in federated engine in `langbridge/packages/federation` and the runtime federated tool in `langbridge/packages/runtime/execution/federated_query_tool.py`.
+- SQL databases
+- cloud warehouses
+- files and object storage
+- API-backed data sources
 
-Core capabilities:
-- SQL and semantic query planning.
-- Predicate/projection pushdown.
-- Join strategy selection and stage DAG planning.
-- Local and distributed stage execution adapters.
-- Artifact-backed results and execution summaries.
+The goal is to make those sources usable through one consistent runtime contract rather than
+a collection of one-off integrations.
 
-## SQL Feature
+### Virtual Datasets
 
-Langbridge includes a first-class SQL workbench UI under `/sql`:
-- Native SQL editor with dialect controls (default T-SQL / connector dialect).
-- Single-source execution and federated mode.
-- Schema browsing, params, explain, history, and saved queries.
-- Worker-enforced limits (rows, runtime, exports) and policy bounds.
-- Job lifecycle support including cancel for queued/running jobs.
+Langbridge can represent source data as runtime-managed datasets, whether the source is:
 
-Reference:
-- `docs/features/sql.md`
+- a physical table
+- a SQL definition
+- a file
+- a federated combination of other datasets
 
-## Hybrid Deployment
+This lets applications work with a stable data model even when the underlying sources differ.
 
-Langbridge supports:
-- **Hosted mode**: control plane and workers run in Langbridge-managed infrastructure.
-- **Hybrid mode**: control plane hosted; execution plane runs in customer runtime.
-- **Self-hosted mode**: customer operates control + execution in their own environment.
+### Semantic And Federated Execution
 
-Secure runtime registration is handled via `/api/v1/runtimes/*` and edge task transport endpoints `/api/v1/edge/tasks/*`.
+Langbridge is designed to execute more than raw connector calls.
 
-Reference:
-- `docs/deployment/hosted.md`
-- `docs/deployment/hybrid.md`
-- `docs/deployment/self-hosted.md`
+It supports:
+
+- semantic query workflows over modeled data
+- federated execution across multiple sources
+- runtime-side policy enforcement such as limits and redaction
+- execution planning that stays portable across local, hosted, and hybrid environments
+
+### Runtime Modes
+
+Langbridge is intended to work in more than one deployment shape:
+
+- **Embedded**: use the runtime from Python inside your own application
+- **Local**: run the runtime for development on your own machine
+- **Self-hosted**: deploy the runtime inside your own infrastructure
+- **Hybrid**: run the runtime in customer infrastructure while integrating with external systems
+
+## Repository Scope
+
+This repository is the home of the Langbridge runtime.
+
+It is focused on portable execution concerns and reusable runtime packages that can be used
+across local development, self-hosted deployments, and embedded application scenarios.
+
+## Repository Layout
+
+Important areas in this repository:
+
+- `langbridge/packages/runtime/` - runtime services, providers, and execution logic
+- `langbridge/packages/federation/` - federated planning and execution engine
+- `langbridge/packages/semantic/` - semantic execution and semantic model logic
+- `langbridge/packages/connectors/` - connector implementations and connector-facing runtime APIs
+- `langbridge/packages/contracts/` - published runtime-facing contracts and schemas
+- `langbridge/apps/runtime_worker/` - thin runtime worker assembly for local, self-hosted, and hybrid execution
+- `docs/` - architecture, deployment, and development documentation
 
 ## Getting Started
 
-### Local (runtime-focused)
-- API: `cd ../langbridge-cloud && python scripts/export_control_plane_openapi.py && pip install -e packages/shared -e packages/persistence && PYTHONPATH=apps/api uvicorn langbridge_cloud_api.main:app --reload`
-- Worker: `python -m langbridge.apps.runtime_worker.main`
-- Web app: `cd ../langbridge-cloud/apps/web && npm install && npm run dev`
+### Run The Runtime Worker
 
-### Docker (core services only)
-- `docker compose up --build migrate api worker db redis`
-- Web app: start from `langbridge-cloud/apps/web`
-- API docs: `http://localhost:8000/docs`
+For local runtime development:
+
+```bash
+python -m langbridge.apps.runtime_worker.main
+```
+
+### Run The Local Runtime Stack
+
+From this repository:
+
+```bash
+docker compose up --build db redis worker
+```
 
 ## Development
 
-Developer docs:
+Useful docs:
+
+- `docs/architecture/runtime-boundary.md`
+- `docs/architecture/execution-plane.md`
 - `docs/development/local-dev.md`
 - `docs/development/worker-dev.md`
-- `docs/api.md`
 - `docs/features/semantic.md`
 - `docs/features/federation.md`
 - `docs/features/agents.md`
 
-## Roadmap
+## Design Principles
 
-- Expand federated join strategies and planner heuristics.
-- Improve cost-based optimization and statistics feedback loops.
-- Add runtime autoscaling and placement policies for customer runtimes.
-- Continue SQL workbench UX improvements (profiling, collaboration, governance workflows).
+Langbridge is being shaped around a few rules:
+
+- keep execution portable
+- prefer explicit contracts between systems
+- support self-hosted and hybrid use cases as first-class deployment models
+- make connectors and execution capabilities reusable as packages, not just app code
+
+## Status
+
+Langbridge is actively evolving toward a cleaner package-oriented runtime architecture.
+
+The direction is:
+
+- thin assembly apps only where needed
+- core logic in packages
+- versioned runtime artifacts for downstream consumers
+- a clearer package-oriented runtime architecture
+
+## License
+
+See the license file in this repository for licensing terms.

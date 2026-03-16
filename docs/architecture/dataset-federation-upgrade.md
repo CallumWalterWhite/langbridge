@@ -1,39 +1,33 @@
-# Dataset Federation Upgrade Review
+# Dataset Federation Upgrade
 
-## What exists now
+## Current Direction
 
-- Langbridge already routes structured execution through the worker and built-in federated planner/executor.
-- Datasets already support versions, lineage, preview/profile jobs, virtual datasets, CSV/file ingest, and connector-synced parquet materialization.
-- The main gap is that dataset execution still branches on legacy `dataset_type` (`TABLE`, `SQL`, `FILE`, `FEDERATED`) instead of a normalized dataset contract.
-- SQL workspace federated mode is now dataset-backed, and analyst execution routes unified semantic queries through the same federation-first worker path.
+Langbridge is moving from coarse dataset typing toward a normalized dataset
+execution contract.
 
-## What is changing
+Today, legacy dataset types such as `TABLE`, `SQL`, `FILE`, and `FEDERATED`
+still exist for compatibility, but the runtime is increasingly driven by richer
+execution descriptors.
 
-- Add a first-class dataset contract across backend and worker metadata:
+## What Is Changing
+
+- add a first-class dataset contract across runtime metadata
+- normalize datasets around:
   - `source_kind`
   - `connector_kind`
   - `storage_kind`
-  - canonical `relation_identity`
-  - explicit `execution_capabilities`
-- Keep `dataset_type` as a compatibility field while deriving the richer descriptor for both new and existing records.
-- Refactor worker/federation entrypoints to consume normalized dataset descriptors before building runtime bindings.
-- Extend SQL workspace and SQL job contracts so federated execution targets datasets directly.
-- Prefer federation-first structured execution in analyst paths when the federation runtime is available.
+  - `relation_identity`
+  - `execution_capabilities`
+- refactor runtime and federation entrypoints to consume those normalized descriptors
 
-## Why the new model is needed
+## Why It Matters
 
-- A parquet-backed Shopify sync is structurally joinable data, but the current model can only label it as `FILE`.
-- That coarse typing leaks into planning, lineage, UI, and agent routing, forcing source-specific behavior where the platform should be dataset-first.
-- The richer contract lets Langbridge treat database tables, uploads, parquet-backed SaaS syncs, and virtual datasets as one structured federation surface.
+- parquet-backed syncs and files can behave like structured joinable datasets
+- database tables, files, and virtual datasets can share one execution surface
+- planner and runtime code can reason about capabilities instead of source-specific branches
 
-## Expected improvement
+## Expected Outcome
 
-- SQL workspace can default to federated execution for structured datasets and join synced Shopify parquet with Postgres/MySQL/Snowflake tables without special handling.
-- Worker planning stays incremental: policy enforcement, limits, job lifecycle, and artifact-backed results remain in place.
-- Agents can target the federation abstraction first, using connector-native execution only for direct single-source work.
-
-## Risks and tradeoffs
-
-- The main remaining regression risk is the legacy `dataset_type` branch surface that still underpins older dataset records.
-- `dataset_type` still remains as a compatibility field while the richer dataset descriptor continues to normalize old records.
-- Virtual datasets remain incremental: this upgrade focuses on normalizing execution metadata and federation entrypoints instead of replacing the planner or worker model.
+- the runtime becomes more dataset-first
+- structured execution becomes easier to extend
+- federation works across more source types without bespoke logic

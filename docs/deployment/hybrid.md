@@ -1,39 +1,29 @@
 # Hybrid Deployment
 
-Hybrid mode keeps Control Plane hosted while Execution Plane runs inside customer infrastructure.
+Hybrid deployment runs the Langbridge runtime in customer-managed infrastructure
+while allowing integration with external orchestration or metadata systems.
 
-## Topology
+## Typical Shape
 
-```mermaid
-flowchart LR
-    U[Users] --> CP[Hosted Control Plane]
-    CP --> RT[Runtime Registry + Edge Tasks API]
-    RT --> CW[Customer Worker Runtime]
-    CW --> DS[(Customer Data Sources)]
-```
+- the runtime worker runs close to customer data
+- connectors and secrets stay in the customer environment
+- external systems interact with the runtime through explicit contracts
 
-## Setup Steps
+## Runtime Setup
 
-1. Configure control plane runtime auth:
-   - `EDGE_RUNTIME_JWT_SECRET`
-2. Create a runtime registration token:
-   - `POST /api/v1/runtimes/{organization_id}/tokens`
-3. Start customer worker with:
-   - `WORKER_EXECUTION_MODE=customer_runtime`
-   - `EDGE_API_BASE_URL=<control-plane>/api/v1`
-   - `EDGE_REGISTRATION_TOKEN=<one-time-token>`
-4. Worker registers and starts pulling tasks from edge task endpoints.
+Start the runtime worker with the same core runtime configuration used for
+self-hosted deployments, then add any external integration settings required by
+your environment.
 
-## Edge Task Endpoints
+Useful runtime variables:
 
-- `POST /api/v1/edge/tasks/pull`
-- `POST /api/v1/edge/tasks/ack`
-- `POST /api/v1/edge/tasks/result`
-- `POST /api/v1/edge/tasks/fail`
+- `WORKER_CONCURRENCY`
+- `WORKER_BATCH_SIZE`
+- `WORKER_BROKER`
+- `FEDERATION_ARTIFACT_DIR`
 
-## Runtime APIs
+## Integration Guidance
 
-- `POST /api/v1/runtimes/register`
-- `POST /api/v1/runtimes/heartbeat`
-- `POST /api/v1/runtimes/capabilities`
-- `GET /api/v1/runtimes/{organization_id}/instances`
+- keep external integration boundaries explicit
+- do not let external orchestration logic leak into core runtime packages
+- prefer versioned schemas, clients, or message contracts over ad hoc coupling

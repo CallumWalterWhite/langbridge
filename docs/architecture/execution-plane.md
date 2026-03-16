@@ -1,44 +1,44 @@
 # Execution Plane
 
-The Execution Plane is where workloads run. In Langbridge this is the Worker runtime.
+The execution plane is where Langbridge workloads actually run.
+
+In this repository, that means the runtime worker plus the runtime services it
+uses to resolve datasets, instantiate connectors, execute queries, and produce
+result payloads.
 
 ## Responsibilities
 
-- Consume queued messages/jobs.
-- Resolve connector secrets and instantiate connectors.
-- Execute semantic and SQL job handlers.
-- Run federated query planning/execution pipeline.
-- Enforce runtime constraints (timeouts, limits, retries, cancellation best-effort).
-- Emit result artifacts and execution metadata.
+- consume runtime work items or jobs
+- resolve datasets, connectors, and secrets
+- execute semantic and SQL workloads
+- run federated planning and execution
+- enforce runtime limits, retries, and guardrails
+- persist or emit result payloads and execution metadata
 
 ## Main Components
 
-- Worker runtime: `langbridge/apps/runtime_worker/main.py`
-- Message dispatcher: `langbridge/apps/runtime_worker/handlers/dispatcher.py`
+- worker runtime: `langbridge/apps/runtime_worker/main.py`
+- message dispatcher: `langbridge/apps/runtime_worker/handlers/dispatcher.py`
 - SQL job handler: `langbridge/apps/runtime_worker/handlers/query/sql_job_request_handler.py`
-- Semantic query handler: `langbridge/apps/runtime_worker/handlers/query/semantic_query_request_handler.py`
-- Federated tool integration: `langbridge/packages/runtime/execution/federated_query_tool.py`
+- semantic query handler: `langbridge/apps/runtime_worker/handlers/query/semantic_query_request_handler.py`
+- dataset job handler: `langbridge/apps/runtime_worker/handlers/query/dataset_job_request_handler.py`
+- federated tool integration: `langbridge/packages/runtime/execution/federated_query_tool.py`
 
 ## Execution Modes
 
-- **Hosted mode**: workers consume jobs from internal broker.
-- **Customer runtime mode**: workers use edge task pull/ack/result/fail transport to execute in customer-managed infrastructure.
-
-## Connector and Secret Boundary
-
-- Connector configs are resolved at execution time.
-- Secrets are fetched through secret provider registry.
-- Plaintext secrets are not returned to UI clients.
-- Execution isolation is enforced by workspace and runtime routing policies.
+- **Embedded runtime**: execution happens in-process through runtime packages
+- **Local worker**: execution happens in a local runtime worker process
+- **Self-hosted runtime**: execution happens in customer-managed infrastructure
+- **Hybrid runtime**: execution happens in customer-managed infrastructure while integrating with external orchestration systems
 
 ## Worker Lifecycle
 
 ```mermaid
 flowchart TD
-    M[Message / Task] --> D[Worker Dispatcher]
+    M[Runtime Work Item] --> D[Worker Dispatcher]
     D --> H[Job Handler]
-    H --> C[Connector + Secret Resolution]
-    C --> FQE[Federated Planner/Executor]
+    H --> C[Connector + Dataset Resolution]
+    C --> FQE[Federated Planner / Executor]
     FQE --> OUT[Rows / Artifacts / Metrics]
-    OUT --> EVT[Emit events + persist status]
+    OUT --> EVT[Persist or Emit Result]
 ```

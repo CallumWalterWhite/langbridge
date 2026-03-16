@@ -1,28 +1,24 @@
 # Semantic Feature
 
-Langbridge semantic modeling provides governed analytical structure for agent and BI workloads.
+Langbridge semantic modeling provides business-facing analytical structure on top
+of runtime datasets and connectors.
 
 ## Capabilities
 
-- Canonical semantic model schema.
-- Semantic model CRUD and YAML retrieval.
-- Semantic query APIs for measure/dimension workflows.
-- Unified semantic datasets with federation workflow bindings.
-- Integration with BI Studio and agent tools.
+- canonical semantic model schema
+- semantic compilation and execution
+- dimension and measure modeling
+- semantic relationships across datasets
+- integration with federated execution
 
 ## Runtime Behavior
 
-- Semantic queries are orchestrated by control plane.
-- Execution is dispatched to worker.
-- Worker uses federated planner/executor for multi-source plans.
-
-## Key APIs
-
-- `/api/v1/semantic-model/*`
-- `/api/v1/semantic-query/{semantic_model_id}/meta`
-- `/api/v1/semantic-query/{semantic_model_id}/q`
+- semantic requests are normalized into the runtime semantic model
+- runtime services resolve referenced datasets and source bindings
+- execution routes through the federated planner when structured data access is required
 
 ## Related Docs
 
 - `docs/semantic-model.md`
 - `docs/features/federation.md`
+- `docs/datasets.md`
