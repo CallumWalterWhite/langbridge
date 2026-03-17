@@ -10,7 +10,7 @@ from langbridge.apps.runtime_worker.handlers.query.dataset_job_request_handler i
     DatasetJobRequestHandler,
 )
 from langbridge.packages.common.langbridge_common.config import settings
-from langbridge.packages.common.langbridge_common.contracts.jobs.dataset_job import (
+from langbridge.packages.runtime.models import (
     CreateDatasetBulkCreateJobRequest,
     CreateDatasetPreviewJobRequest,
 )

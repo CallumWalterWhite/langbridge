@@ -1,11 +1,9 @@
 from __future__ import annotations
 
-import uuid
 from typing import Any
 
-from langbridge.packages.contracts.connectors import (
-    ConnectorResponse,
-    SecretReference,
+from langbridge.packages.common.langbridge_common.repositories.sql_repository import (
+    SqlJobResultArtifactRepository,
 )
 from langbridge.packages.common.langbridge_common.repositories.connector_repository import (
     ConnectorRepository,
@@ -21,11 +19,22 @@ from langbridge.packages.common.langbridge_common.repositories.dataset_repositor
 from langbridge.packages.common.langbridge_common.repositories.semantic_model_repository import (
     SemanticModelRepository,
 )
+from langbridge.packages.runtime.adapters import (
+    to_runtime_connector,
+    to_runtime_dataset,
+    to_runtime_dataset_column,
+    to_runtime_dataset_policy,
+    to_runtime_secret_reference,
+    to_runtime_semantic_model,
+    to_runtime_sql_job_result_artifact,
+    to_runtime_sync_state,
+)
 from langbridge.packages.runtime.providers.protocols import (
     ConnectorMetadataProvider,
     CredentialProvider,
     DatasetMetadataProvider,
     SemanticModelMetadataProvider,
+    SqlJobResultArtifactProvider,
     SyncStateProvider,
 )
 from langbridge.packages.runtime.security import SecretProviderRegistry
@@ -44,26 +53,34 @@ class RepositoryDatasetMetadataProvider(DatasetMetadataProvider):
         self._dataset_policy_repository = dataset_policy_repository
 
     async def get_dataset(self, *, workspace_id, dataset_id) -> Any:
-        return await self._dataset_repository.get_for_workspace(
+        dataset = await self._dataset_repository.get_for_workspace(
             dataset_id=dataset_id,
             workspace_id=workspace_id,
         )
+        return to_runtime_dataset(dataset)
 
     async def get_datasets(self, *, workspace_id, dataset_ids) -> list[Any]:
-        return await self._dataset_repository.get_by_ids_for_workspace(
+        datasets = await self._dataset_repository.get_by_ids_for_workspace(
             workspace_id=workspace_id,
             dataset_ids=dataset_ids,
         )
+        return [
+            runtime_dataset
+            for dataset in datasets
+            if (runtime_dataset := to_runtime_dataset(dataset)) is not None
+        ]
 
     async def get_dataset_columns(self, *, dataset_id) -> list[Any]:
         if self._dataset_column_repository is None:
             return []
-        return await self._dataset_column_repository.list_for_dataset(dataset_id=dataset_id)
+        columns = await self._dataset_column_repository.list_for_dataset(dataset_id=dataset_id)
+        return [to_runtime_dataset_column(column) for column in columns]
 
     async def get_dataset_policy(self, *, dataset_id) -> Any | None:
         if self._dataset_policy_repository is None:
             return None
-        return await self._dataset_policy_repository.get_for_dataset(dataset_id=dataset_id)
+        policy = await self._dataset_policy_repository.get_for_dataset(dataset_id=dataset_id)
+        return to_runtime_dataset_policy(policy)
 
 
 class RepositoryConnectorMetadataProvider(ConnectorMetadataProvider):
@@ -72,9 +89,7 @@ class RepositoryConnectorMetadataProvider(ConnectorMetadataProvider):
 
     async def get_connector(self, connector_id) -> Any | None:
         connector = await self._connector_repository.get_by_id(connector_id)
-        if connector is None:
-            return None
-        return ConnectorResponse.from_connector(connector)
+        return to_runtime_connector(connector)
 
 
 class RepositorySemanticModelMetadataProvider(SemanticModelMetadataProvider):
@@ -82,10 +97,11 @@ class RepositorySemanticModelMetadataProvider(SemanticModelMetadataProvider):
         self._semantic_model_repository = semantic_model_repository
 
     async def get_semantic_model(self, *, organization_id, semantic_model_id) -> Any | None:
-        return await self._semantic_model_repository.get_for_scope(
+        semantic_model = await self._semantic_model_repository.get_for_scope(
             model_id=semantic_model_id,
             organization_id=organization_id,
         )
+        return to_runtime_semantic_model(semantic_model)
 
 
 class RepositorySyncStateProvider(SyncStateProvider):
@@ -99,20 +115,36 @@ class RepositorySyncStateProvider(SyncStateProvider):
             resource_name=kwargs["resource_name"],
         )
         if state is not None:
-            return state
+            return to_runtime_sync_state(state)
         state = kwargs["factory"]()
         self._connector_sync_state_repository.add(state)
-        return state
+        return to_runtime_sync_state(state)
 
     async def mark_failed(self, **kwargs: Any) -> None:
         state = kwargs["state"]
         state.status = kwargs["status"]
         state.error_message = kwargs["error_message"]
 
+class SqlArtifactRepository(SqlJobResultArtifactProvider):
+    def __init__(self, *, sql_job_result_artifact_repository: SqlJobResultArtifactRepository) -> None:
+        self._sql_job_result_artifact_repository = sql_job_result_artifact_repository
+
+    async def create_sql_job_result_artifact(self, **kwargs: Any) -> Any:
+        artifact = await self._sql_job_result_artifact_repository.create_sql_job_result_artifact(**kwargs)
+        return to_runtime_sql_job_result_artifact(artifact)
+
+    async def list_sql_job_result_artifacts(self, **kwargs: Any) -> list[Any]:
+        artifacts = await self._sql_job_result_artifact_repository.list_sql_job_result_artifacts(**kwargs)
+        return [
+            artifact
+            for item in artifacts
+            if (artifact := to_runtime_sql_job_result_artifact(item)) is not None
+        ]
+
 
 class SecretRegistryCredentialProvider(CredentialProvider):
     def __init__(self, *, registry: SecretProviderRegistry | None = None) -> None:
         self._registry = registry or SecretProviderRegistry()
 
-    def resolve_secret(self, reference: SecretReference) -> str:
-        return self._registry.resolve(reference)
+    def resolve_secret(self, reference) -> str:
+        return self._registry.resolve(to_runtime_secret_reference(reference))

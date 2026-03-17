@@ -3,13 +3,13 @@ from datetime import datetime, timezone
 
 from pydantic import ValidationError
 
-from langbridge.packages.common.langbridge_common.contracts.jobs.dataset_job import (
+from langbridge.packages.runtime.models import (
     CreateDatasetBulkCreateJobRequest,
     CreateDatasetCsvIngestJobRequest,
     CreateDatasetPreviewJobRequest,
     CreateDatasetProfileJobRequest,
+    JobType,
 )
-from langbridge.packages.common.langbridge_common.contracts.jobs.type import JobType
 from langbridge.packages.common.langbridge_common.db.job import JobStatus
 from langbridge.packages.common.langbridge_common.errors.application_errors import (
     BusinessValidationError,
@@ -81,13 +81,15 @@ class DatasetJobRequestHandler(BaseMessageHandler):
         if job_record.started_at is None:
             job_record.started_at = datetime.now(timezone.utc)
 
-        if payload.job_type not in {
-            JobType.DATASET_PREVIEW,
-            JobType.DATASET_PROFILE,
-            JobType.DATASET_CSV_INGEST,
-            JobType.DATASET_BULK_CREATE,
+        if self._job_type_value(payload.job_type) not in {
+            JobType.DATASET_PREVIEW.value,
+            JobType.DATASET_PROFILE.value,
+            JobType.DATASET_CSV_INGEST.value,
+            JobType.DATASET_BULK_CREATE.value,
         }:
-            raise BusinessValidationError(f"Unsupported dataset job type '{payload.job_type.value}'.")
+            raise BusinessValidationError(
+                f"Unsupported dataset job type '{self._job_type_value(payload.job_type)}'."
+            )
 
         try:
             request = self._parse_request(payload)
@@ -112,15 +114,20 @@ class DatasetJobRequestHandler(BaseMessageHandler):
         )
 
     def _parse_request(self, payload: DatasetJobRequestMessage) -> DatasetExecutionRequest:
-        if payload.job_type == JobType.DATASET_PREVIEW:
+        job_type = self._job_type_value(payload.job_type)
+        if job_type == JobType.DATASET_PREVIEW.value:
             return self._parse_preview_request(payload)
-        if payload.job_type == JobType.DATASET_PROFILE:
+        if job_type == JobType.DATASET_PROFILE.value:
             return self._parse_profile_request(payload)
-        if payload.job_type == JobType.DATASET_CSV_INGEST:
+        if job_type == JobType.DATASET_CSV_INGEST.value:
             return self._parse_csv_ingest_request(payload)
-        if payload.job_type == JobType.DATASET_BULK_CREATE:
+        if job_type == JobType.DATASET_BULK_CREATE.value:
             return self._parse_bulk_create_request(payload)
-        raise BusinessValidationError(f"Unsupported dataset job type '{payload.job_type.value}'.")
+        raise BusinessValidationError(f"Unsupported dataset job type '{job_type}'.")
+
+    @staticmethod
+    def _job_type_value(job_type) -> str:
+        return str(getattr(job_type, "value", job_type))
 
     @staticmethod
     def _parse_preview_request(payload: DatasetJobRequestMessage) -> CreateDatasetPreviewJobRequest:

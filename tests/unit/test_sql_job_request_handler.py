@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime, timezone
+from types import SimpleNamespace
 
 import pytest
 
@@ -12,7 +13,7 @@ from langbridge.packages.common.langbridge_common.contracts.connectors import (
     ConnectionPolicy,
     ConnectorResponse,
 )
-from langbridge.packages.common.langbridge_common.contracts.jobs.sql_job import (
+from langbridge.packages.runtime.models import (
     CreateSqlJobRequest,
 )
 from langbridge.packages.common.langbridge_common.contracts.jobs.type import JobType
@@ -48,8 +49,30 @@ class _FakeSqlArtifactRepository:
 
 
 class _FakeConnectorRepository:
-    async def get_by_id(self, _connector_id):
-        return object()
+    def __init__(self, *connector_ids: uuid.UUID) -> None:
+        resolved_ids = connector_ids or (uuid.uuid4(),)
+        self._connectors = {
+            connector_id: SimpleNamespace(
+                id=connector_id,
+                name=f"test-connector-{connector_id}",
+                description=None,
+                version=None,
+                label="test-connector",
+                icon=None,
+                connector_type="POSTGRES",
+                organization_id=uuid.uuid4(),
+                project_id=None,
+                config={"config": {}},
+                connection_policy=ConnectionPolicy(redaction_rules={"secret": "hash"}),
+                is_managed=False,
+            )
+            for connector_id in resolved_ids
+        }
+
+    async def get_by_id(self, connector_id):
+        if connector_id in self._connectors:
+            return self._connectors[connector_id]
+        return next(iter(self._connectors.values()))
 
 
 class _FakeDatasetRepository:
@@ -154,7 +177,7 @@ async def test_sql_job_request_handler_executes_and_redacts(monkeypatch) -> None
     handler = SqlJobRequestHandler(
         sql_job_repository=_FakeSqlJobRepository(job),
         sql_job_result_artifact_repository=_FakeSqlArtifactRepository(),
-        connector_repository=_FakeConnectorRepository(),
+        connector_repository=_FakeConnectorRepository(connection_id),
     )
 
     async def _fake_create_sql_connector(*, connector_type, connector_payload):

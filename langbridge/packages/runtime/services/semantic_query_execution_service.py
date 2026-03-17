@@ -14,8 +14,7 @@ from langbridge.packages.runtime.services.dataset_execution import (
     build_binding_for_dataset,
     synthetic_file_connector_id,
 )
-from langbridge.packages.common.langbridge_common.config import settings
-from langbridge.packages.contracts.semantic import (
+from langbridge.packages.runtime.models import (
     SemanticQueryResponse,
     UnifiedSemanticSourceModelRequest,
     UnifiedSemanticQueryResponse,
@@ -41,6 +40,7 @@ from langbridge.packages.runtime.providers import (
     DatasetMetadataProvider,
     SemanticModelMetadataProvider,
 )
+from langbridge.packages.runtime.settings import runtime_settings as settings
 from langbridge.packages.semantic.langbridge_semantic.loader import (
     SemanticModelError,
     load_semantic_model,
@@ -810,8 +810,6 @@ class SemanticQueryExecutionService:
             except Exception:
                 return None
         return None
-
-
 
 
 

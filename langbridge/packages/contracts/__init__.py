@@ -1,24 +1,43 @@
 """Runtime-owned contracts package.
 
-This package is the stable runtime-facing facade for contracts that will be
-published from `langbridge/` and consumed by `langbridge-cloud/`.
-During the migration window, most modules still re-export the existing
-implementations from `langbridge_common`.
+Importing a specific contracts submodule should not force the entire contracts
+surface, and its transitive infrastructure dependencies, into memory.
 """
 
-from langbridge.packages.contracts.agents import *  # noqa: F401,F403
-from langbridge.packages.contracts.auth import *  # noqa: F401,F403
-from langbridge.packages.contracts.base import _Base
-from langbridge.packages.contracts.connectors import *  # noqa: F401,F403
-from langbridge.packages.contracts.dashboards import *  # noqa: F401,F403
-from langbridge.packages.contracts.datasets import *  # noqa: F401,F403
-from langbridge.packages.contracts.jobs import *  # noqa: F401,F403
-from langbridge.packages.contracts.llm_connections import *  # noqa: F401,F403
-from langbridge.packages.contracts.organizations import *  # noqa: F401,F403
-from langbridge.packages.contracts.query import *  # noqa: F401,F403
-from langbridge.packages.contracts.runtime import *  # noqa: F401,F403
-from langbridge.packages.contracts.semantic import *  # noqa: F401,F403
-from langbridge.packages.contracts.sql import *  # noqa: F401,F403
-from langbridge.packages.contracts.threads import *  # noqa: F401,F403
+from __future__ import annotations
 
-__all__ = [name for name in globals() if name == "_Base" or not name.startswith("_")]
+from importlib import import_module
+from typing import Any
+
+_CONTRACT_MODULES = (
+    "base",
+    "agents",
+    "auth",
+    "connectors",
+    "dashboards",
+    "datasets",
+    "jobs",
+    "llm_connections",
+    "organizations",
+    "query",
+    "runtime",
+    "semantic",
+    "sql",
+    "threads",
+)
+
+__all__: list[str] = []
+
+
+def __getattr__(name: str) -> Any:
+    for module_name in _CONTRACT_MODULES:
+        module = import_module(f"{__name__}.{module_name}")
+        if hasattr(module, name):
+            value = getattr(module, name)
+            globals()[name] = value
+            return value
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+def __dir__() -> list[str]:
+    return sorted(set(globals()) | set(__all__))

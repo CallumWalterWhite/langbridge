@@ -7,11 +7,9 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Optional
 
-from langbridge.packages.contracts.jobs.agent_job import (
+from langbridge.packages.runtime.models import (
     CreateAgentJobRequest,
-)
-from langbridge.packages.contracts.llm_connections import (
-    LLMConnectionSecretResponse,
+    LLMConnectionSecret,
 )
 from langbridge.packages.common.langbridge_common.db.agent import AgentDefinition, LLMConnection
 from langbridge.packages.common.langbridge_common.db.threads import (
@@ -301,7 +299,7 @@ class AgentExecutionService:
         job_id: uuid.UUID,
         llm_connection: LLMConnection,
     ) -> Optional[EmbeddingProvider]:
-        llm_connection_response = LLMConnectionSecretResponse.model_validate(llm_connection)
+        llm_connection_response = LLMConnectionSecret.model_validate(llm_connection)
         try:
             return EmbeddingProvider.from_llm_connection(llm_connection_response)
         except EmbeddingProviderError as exc:

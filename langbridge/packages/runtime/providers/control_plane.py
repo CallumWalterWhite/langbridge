@@ -1,24 +1,23 @@
 from __future__ import annotations
 
-from types import SimpleNamespace
 from typing import Any
 
 import httpx
 
+from langbridge.packages.runtime.models import (
+    ConnectorMetadata,
+    ConnectorSyncState,
+    DatasetColumnMetadata,
+    DatasetMetadata,
+    DatasetPolicyMetadata,
+    SemanticModelMetadata,
+)
 from langbridge.packages.runtime.providers.protocols import (
     ConnectorMetadataProvider,
     DatasetMetadataProvider,
     SemanticModelMetadataProvider,
     SyncStateProvider,
 )
-
-
-def _to_namespace(value: Any) -> Any:
-    if isinstance(value, dict):
-        return SimpleNamespace(**{key: _to_namespace(item) for key, item in value.items()})
-    if isinstance(value, list):
-        return [_to_namespace(item) for item in value]
-    return value
 
 
 class ControlPlaneApiClient:
@@ -42,14 +41,14 @@ class ControlPlaneApiDatasetProvider(DatasetMetadataProvider):
     def __init__(self, *, client: ControlPlaneApiClient) -> None:
         self._client = client
 
-    async def get_dataset(self, *, workspace_id, dataset_id) -> Any:
+    async def get_dataset(self, *, workspace_id, dataset_id) -> DatasetMetadata | None:
         payload = await self._client.request(
             "GET",
             f"/api/v1/runtime-metadata/workspaces/{workspace_id}/datasets/{dataset_id}",
         )
-        return _to_namespace(payload) if payload is not None else None
+        return DatasetMetadata.model_validate(payload) if payload is not None else None
 
-    async def get_datasets(self, *, workspace_id, dataset_ids) -> list[Any]:
+    async def get_datasets(self, *, workspace_id, dataset_ids) -> list[DatasetMetadata]:
         payload = await self._client.request(
             "POST",
             "/api/v1/runtime-metadata/datasets/batch",
@@ -58,52 +57,52 @@ class ControlPlaneApiDatasetProvider(DatasetMetadataProvider):
                 "dataset_ids": [str(dataset_id) for dataset_id in dataset_ids],
             },
         )
-        return [_to_namespace(item) for item in (payload or [])]
+        return [DatasetMetadata.model_validate(item) for item in (payload or [])]
 
-    async def get_dataset_columns(self, *, dataset_id) -> list[Any]:
+    async def get_dataset_columns(self, *, dataset_id) -> list[DatasetColumnMetadata]:
         payload = await self._client.request(
             "GET",
             f"/api/v1/runtime-metadata/datasets/{dataset_id}/columns",
         )
-        return [_to_namespace(item) for item in (payload or [])]
+        return [DatasetColumnMetadata.model_validate(item) for item in (payload or [])]
 
-    async def get_dataset_policy(self, *, dataset_id) -> Any | None:
+    async def get_dataset_policy(self, *, dataset_id) -> DatasetPolicyMetadata | None:
         payload = await self._client.request(
             "GET",
             f"/api/v1/runtime-metadata/datasets/{dataset_id}/policy",
         )
-        return _to_namespace(payload) if payload is not None else None
+        return DatasetPolicyMetadata.model_validate(payload) if payload is not None else None
 
 
 class ControlPlaneApiConnectorProvider(ConnectorMetadataProvider):
     def __init__(self, *, client: ControlPlaneApiClient) -> None:
         self._client = client
 
-    async def get_connector(self, connector_id) -> Any | None:
+    async def get_connector(self, connector_id) -> ConnectorMetadata | None:
         payload = await self._client.request(
             "GET",
             f"/api/v1/runtime-metadata/connectors/{connector_id}",
         )
-        return _to_namespace(payload) if payload is not None else None
+        return ConnectorMetadata.model_validate(payload) if payload is not None else None
 
 
 class ControlPlaneApiSemanticModelProvider(SemanticModelMetadataProvider):
     def __init__(self, *, client: ControlPlaneApiClient) -> None:
         self._client = client
 
-    async def get_semantic_model(self, *, organization_id, semantic_model_id) -> Any | None:
+    async def get_semantic_model(self, *, organization_id, semantic_model_id) -> SemanticModelMetadata | None:
         payload = await self._client.request(
             "GET",
             f"/api/v1/runtime-metadata/organizations/{organization_id}/semantic-models/{semantic_model_id}",
         )
-        return _to_namespace(payload) if payload is not None else None
+        return SemanticModelMetadata.model_validate(payload) if payload is not None else None
 
 
 class ControlPlaneApiSyncStateProvider(SyncStateProvider):
     def __init__(self, *, client: ControlPlaneApiClient) -> None:
         self._client = client
 
-    async def get_or_create_state(self, **kwargs: Any) -> Any:
+    async def get_or_create_state(self, **kwargs: Any) -> ConnectorSyncState | None:
         payload = await self._client.request(
             "POST",
             "/api/v1/runtime-metadata/sync-states/upsert",
@@ -115,7 +114,7 @@ class ControlPlaneApiSyncStateProvider(SyncStateProvider):
                 "sync_mode": str(kwargs.get("sync_mode") or "INCREMENTAL"),
             },
         )
-        return _to_namespace(payload) if payload is not None else None
+        return ConnectorSyncState.model_validate(payload) if payload is not None else None
 
     async def mark_failed(self, **kwargs: Any) -> None:
         await self._client.request(

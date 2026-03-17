@@ -8,7 +8,7 @@ from typing import Any, Iterable, List, Sequence
 
 from openai import OpenAI, OpenAIError, AzureOpenAI  # type: ignore[import-untyped]
 
-from langbridge.packages.common.langbridge_common.contracts.llm_connections import LLMConnectionSecretResponse, LLMProvider
+from langbridge.packages.common.langbridge_common.contracts.llm_connections import LLMProvider
 
 
 DEFAULT_OPENAI_EMBED_MODEL = "text-embedding-3-small"
@@ -40,12 +40,14 @@ class EmbeddingProvider:
         self._batch_size = int(self.configuration.get("embedding_batch_size", 1000))
 
     @classmethod
-    def from_llm_connection(cls, connection: LLMConnectionSecretResponse) -> "EmbeddingProvider":
+    def from_llm_connection(cls, connection: Any) -> "EmbeddingProvider":
+        provider = getattr(connection, "provider", None)
+        provider_value = getattr(provider, "value", provider)
         return cls(
-            provider=connection.provider,
-            api_key=connection.api_key,
-            model_name=connection.model,
-            configuration=connection.configuration or {},
+            provider=LLMProvider(str(provider_value).lower()),
+            api_key=str(getattr(connection, "api_key")),
+            model_name=str(getattr(connection, "model")),
+            configuration=getattr(connection, "configuration", {}) or {},
         )
 
     async def embed(self, texts: Sequence[str]) -> List[List[float]]:

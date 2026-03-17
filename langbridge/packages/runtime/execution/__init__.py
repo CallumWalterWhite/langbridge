@@ -1,9 +1,6 @@
-from langbridge.packages.runtime.execution.duckdb_engine import DuckDbExecutionEngine
-from langbridge.packages.runtime.execution.engine import ExecutionEngine, ExecutionResult
-from langbridge.packages.runtime.execution.federated_query_tool import (
-    FederatedQueryExecutor,
-    FederatedQueryTool,
-)
+from __future__ import annotations
+
+from typing import Any
 
 __all__ = [
     "DuckDbExecutionEngine",
@@ -12,3 +9,28 @@ __all__ = [
     "FederatedQueryExecutor",
     "FederatedQueryTool",
 ]
+
+
+def __getattr__(name: str) -> Any:
+    if name in {"ExecutionEngine", "ExecutionResult"}:
+        from langbridge.packages.runtime.execution.engine import ExecutionEngine, ExecutionResult
+
+        return {
+            "ExecutionEngine": ExecutionEngine,
+            "ExecutionResult": ExecutionResult,
+        }[name]
+    if name in {"FederatedQueryExecutor", "FederatedQueryTool"}:
+        from langbridge.packages.runtime.execution.federated_query_tool import (
+            FederatedQueryExecutor,
+            FederatedQueryTool,
+        )
+
+        return {
+            "FederatedQueryExecutor": FederatedQueryExecutor,
+            "FederatedQueryTool": FederatedQueryTool,
+        }[name]
+    if name == "DuckDbExecutionEngine":
+        from langbridge.packages.runtime.execution.duckdb_engine import DuckDbExecutionEngine
+
+        return DuckDbExecutionEngine
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

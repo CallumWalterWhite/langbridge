@@ -12,7 +12,7 @@ from langbridge.packages.semantic.langbridge_semantic.model import SemanticModel
 from langbridge.packages.semantic.langbridge_semantic.loader import load_semantic_model
 from .query_model import FilterItem, SemanticQuery
 from .resolver import DimensionRef, MeasureRef, MetricRef, SemanticModelResolver, SegmentRef
-from .tsql import build_date_range_condition, date_trunc, format_literal
+from .tsql import DATE_TYPES, build_date_range_condition, date_trunc, format_literal
 
 
 @dataclass(frozen=True)
@@ -314,6 +314,7 @@ class TsqlSemanticTranslator:
                 time_dimension.dimension.dataset,
                 time_dimension.dimension.column,
                 dimension_expression,
+                data_type=time_dimension.dimension.data_type,
             )
             conditions.append(
                 build_date_range_condition(
@@ -673,24 +674,37 @@ class TsqlSemanticTranslator:
         if expression:
             expr = self._ensure_expression(expression)
             if isinstance(expr, exp.Column):
-                return exp.Column(
-                    this=exp.Identifier(this=column, quoted=True),
-                    table=exp.Identifier(this=alias, quoted=False),
-                )
-            # return self._replace_table_refs(expr, alias_map)
-        if data_type == "date":
-            # Sometimes the column might be stored as a string but semantically it's a date
-            # Breaks duckdb otherwise since it doesn't allow implicit string to date comparisons
-            return exp.Cast(
-                this=exp.Column(
-                    this=exp.Identifier(this=column, quoted=True),
-                    table=exp.Identifier(this=alias, quoted=False),
-                ),
-                to=exp.DataType(this="DATE"),
+                if expr.table:
+                    base_expr = self._replace_table_refs(expr, alias_map)
+                else:
+                    source_column = str(expr.name or column).strip() or column
+                    base_expr = exp.Column(
+                        this=exp.Identifier(this=source_column, quoted=True),
+                        table=exp.Identifier(this=alias, quoted=False),
+                    )
+            else:
+                base_expr = self._replace_table_refs(expr, alias_map)
+        else:
+            base_expr = exp.Column(
+                this=exp.Identifier(this=column, quoted=True),
+                table=exp.Identifier(this=alias, quoted=False),
             )
-        return exp.Column(
-            this=exp.Identifier(this=column, quoted=True),
-            table=exp.Identifier(this=alias, quoted=False),
+        return self._coerce_column_type(base_expr, data_type=data_type)
+
+    @staticmethod
+    def _coerce_column_type(
+        expression: exp.Expression,
+        *,
+        data_type: Optional[str],
+    ) -> exp.Expression:
+        normalized_type = str(data_type or "").strip().lower()
+        if normalized_type not in DATE_TYPES:
+            return expression
+
+        target_type = "TIMESTAMP" if normalized_type in {"datetime", "timestamp", "time"} else "DATE"
+        return exp.Cast(
+            this=expression,
+            to=exp.DataType(this=target_type),
         )
 
     def _replace_table_refs(

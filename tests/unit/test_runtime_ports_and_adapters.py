@@ -1,0 +1,216 @@
+from __future__ import annotations
+
+import uuid
+from datetime import datetime, timezone
+from types import SimpleNamespace
+
+import pytest
+
+from langbridge.packages.runtime.adapters import (
+    to_runtime_connector,
+    to_runtime_dataset,
+)
+from langbridge.packages.runtime.models import ConnectorSyncState
+from langbridge.packages.runtime.providers.memory import (
+    MemoryDatasetProvider,
+    MemorySyncStateProvider,
+)
+
+
+@pytest.fixture
+def anyio_backend():
+    return "asyncio"
+
+
+def test_to_runtime_connector_maps_legacy_connector_shape() -> None:
+    org_id = uuid.uuid4()
+    project_id = uuid.uuid4()
+    connector_id = uuid.uuid4()
+    legacy_connector = SimpleNamespace(
+        id=connector_id,
+        name="warehouse",
+        description="Primary warehouse",
+        connector_type="POSTGRES",
+        config_json='{"config": {"host": "db.internal", "database": "analytics"}}',
+        connection_metadata_json={
+            "host": "db.internal",
+            "database": "analytics",
+            "extra": {"sslmode": "require"},
+        },
+        secret_references_json={
+            "password": {
+                "provider_type": "env",
+                "identifier": "DB_PASSWORD",
+            }
+        },
+        access_policy_json={
+            "allowed_schemas": ["public"],
+            "allowed_tables": ["orders"],
+        },
+        is_managed=False,
+        organizations=[SimpleNamespace(id=org_id)],
+        projects=[SimpleNamespace(id=project_id)],
+    )
+
+    connector = to_runtime_connector(legacy_connector)
+
+    assert connector is not None
+    assert connector.id == connector_id
+    assert connector.organization_id == org_id
+    assert connector.project_id == project_id
+    assert connector.config == {"config": {"host": "db.internal", "database": "analytics"}}
+    assert connector.connection_metadata is not None
+    assert connector.connection_metadata.host == "db.internal"
+    assert connector.secret_references["password"].identifier == "DB_PASSWORD"
+    assert connector.connection_policy is not None
+    assert connector.connection_policy.allowed_schemas == ["public"]
+
+
+def test_to_runtime_dataset_maps_legacy_dataset_shape() -> None:
+    dataset_id = uuid.uuid4()
+    workspace_id = uuid.uuid4()
+    created_at = datetime.now(timezone.utc)
+    legacy_dataset = SimpleNamespace(
+        id=dataset_id,
+        workspace_id=workspace_id,
+        project_id=None,
+        connection_id=uuid.uuid4(),
+        created_by=uuid.uuid4(),
+        updated_by=None,
+        name="orders",
+        sql_alias="orders",
+        description="Orders dataset",
+        tags_json=["core", "finance"],
+        dataset_type="TABLE",
+        source_kind="database",
+        connector_kind="postgres",
+        storage_kind="table",
+        dialect="postgres",
+        catalog_name=None,
+        schema_name="public",
+        table_name="orders",
+        storage_uri=None,
+        sql_text=None,
+        relation_identity_json={"canonical_reference": "public.orders"},
+        execution_capabilities_json={"supports_sql_federation": True},
+        referenced_dataset_ids_json=[],
+        federated_plan_json=None,
+        file_config_json={"format": "csv"},
+        status="published",
+        revision_id=None,
+        row_count_estimate=123,
+        bytes_estimate=456,
+        last_profiled_at=None,
+        columns=[
+            SimpleNamespace(
+                id=uuid.uuid4(),
+                dataset_id=dataset_id,
+                name="order_id",
+                data_type="uuid",
+                nullable=False,
+                description=None,
+                is_allowed=True,
+                is_computed=False,
+                expression=None,
+                ordinal_position=1,
+            )
+        ],
+        policy=SimpleNamespace(
+            id=uuid.uuid4(),
+            dataset_id=dataset_id,
+            workspace_id=workspace_id,
+            max_rows_preview=100,
+            max_export_rows=1000,
+            redaction_rules_json={"email": "mask"},
+            row_filters_json=["tenant_id = current_tenant()"],
+            allow_dml=False,
+        ),
+        created_at=created_at,
+        updated_at=created_at,
+    )
+
+    dataset = to_runtime_dataset(legacy_dataset)
+
+    assert dataset is not None
+    assert dataset.id == dataset_id
+    assert dataset.tags == ["core", "finance"]
+    assert dataset.tags_json == ["core", "finance"]
+    assert dataset.file_config_json == {"format": "csv"}
+    assert dataset.columns[0].name == "order_id"
+    assert dataset.policy is not None
+    assert dataset.policy.redaction_rules_json == {"email": "mask"}
+
+
+@pytest.mark.anyio
+async def test_memory_providers_support_ephemeral_runtime_access_patterns() -> None:
+    workspace_id = uuid.uuid4()
+    dataset_id = uuid.uuid4()
+    state_id = uuid.uuid4()
+    connection_id = uuid.uuid4()
+    dataset = to_runtime_dataset(
+        SimpleNamespace(
+            id=dataset_id,
+            workspace_id=workspace_id,
+            project_id=None,
+            connection_id=None,
+            created_by=None,
+            updated_by=None,
+            name="customers",
+            sql_alias="customers",
+            description=None,
+            tags_json=[],
+            dataset_type="FILE",
+            source_kind="file",
+            connector_kind=None,
+            storage_kind="parquet",
+            dialect="duckdb",
+            catalog_name=None,
+            schema_name=None,
+            table_name="customers",
+            storage_uri="file:///tmp/customers.parquet",
+            sql_text=None,
+            relation_identity_json={},
+            execution_capabilities_json={},
+            referenced_dataset_ids_json=[],
+            federated_plan_json=None,
+            file_config_json={"format": "parquet"},
+            status="published",
+            revision_id=None,
+            row_count_estimate=None,
+            bytes_estimate=None,
+            last_profiled_at=None,
+            columns=[],
+            policy=None,
+            created_at=datetime.now(timezone.utc),
+            updated_at=datetime.now(timezone.utc),
+        )
+    )
+    assert dataset is not None
+
+    dataset_provider = MemoryDatasetProvider({dataset_id: dataset})
+    sync_state_provider = MemorySyncStateProvider()
+
+    loaded_dataset = await dataset_provider.get_dataset(
+        workspace_id=workspace_id,
+        dataset_id=dataset_id,
+    )
+    loaded_columns = await dataset_provider.get_dataset_columns(dataset_id=dataset_id)
+    loaded_policy = await dataset_provider.get_dataset_policy(dataset_id=dataset_id)
+    state = await sync_state_provider.get_or_create_state(
+        workspace_id=workspace_id,
+        connection_id=connection_id,
+        resource_name="customers",
+        factory=lambda: ConnectorSyncState(
+            id=state_id,
+            workspace_id=workspace_id,
+            connection_id=connection_id,
+            connector_type="FILE",
+            resource_name="customers",
+        ),
+    )
+
+    assert loaded_dataset is not None
+    assert loaded_dataset.name == "customers"
+    assert loaded_columns == []
+    assert loaded_policy is None
+    assert state.id == state_id

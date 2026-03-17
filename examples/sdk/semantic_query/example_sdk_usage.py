@@ -1,6 +1,5 @@
-from __future__ import annotations
-
 import asyncio
+import os
 from pathlib import Path
 import sys
 
@@ -25,19 +24,41 @@ async def main() -> None:
     print("Datasets")
     print(datasets.model_dump(mode="json"))
 
-    result = await client.datasets.query(
-        "shopify_orders",
-        metrics=["net_sales"],
-        dimensions=["country"],
-        limit=5,
-        order={"net_sales": "desc"},
+    preview = await client.datasets.query(
+        dataset_id=datasets.items[0].id,
+        limit=3,
     )
-    print("Dataset query")
-    print(result.model_dump(mode="json"))
+    print("Dataset preview")
+    print(preview.model_dump(mode="json"))
 
-    answer = await client.agents.ask("Show me top countries by net sales this quarter")
-    print("Agent answer")
-    print(answer.model_dump(mode="json"))
+    semantic_result = await client.semantic.query(
+        "commerce_performance",
+        measures=["shopify_orders.net_sales"],
+        dimensions=["shopify_orders.country"],
+        limit=5,
+        order={"shopify_orders.net_sales": "desc"},
+    )
+    print("Semantic query")
+    print(semantic_result.model_dump(mode="json"))
+
+    sql_result = await client.sql.query(
+        query=(
+            "SELECT country, SUM(net_revenue) AS net_sales "
+            "FROM orders_enriched "
+            "GROUP BY country "
+            "ORDER BY net_sales DESC"
+        ),
+        connection_name="commerce_demo",
+    )
+    print("Direct SQL query")
+    print(sql_result.model_dump(mode="json"))
+
+    if os.environ.get("OPENAI_API_KEY"):
+        answer = await client.agents.ask("Show me top countries by net sales this quarter")
+        print("Agent answer")
+        print(answer.model_dump(mode="json"))
+    else:
+        print("Agent answer skipped because OPENAI_API_KEY is not set.")
 
 
 if __name__ == "__main__":

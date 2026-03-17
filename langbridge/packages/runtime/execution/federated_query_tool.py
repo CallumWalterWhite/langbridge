@@ -4,9 +4,8 @@ from uuid import UUID
 
 from pydantic import BaseModel
 
-from langbridge.packages.common.langbridge_common.config import settings
-from langbridge.packages.contracts.connectors import ConnectorResponse
-from langbridge.packages.common.langbridge_common.db.connector import APIConnector, DatabaseConnector
+from langbridge.packages.runtime.adapters import to_runtime_connector
+from langbridge.packages.common.langbridge_common.db.connector import APIConnector
 from langbridge.packages.common.langbridge_common.repositories.connector_repository import ConnectorRepository
 from langbridge.packages.connectors.langbridge_connectors.api import (
     ConnectorRuntimeTypeSqlDialectMap,
@@ -24,7 +23,9 @@ from langbridge.packages.runtime.providers import (
     CredentialProvider,
     SecretRegistryCredentialProvider,
 )
+from langbridge.packages.runtime.models import ConnectorMetadata
 from langbridge.packages.runtime.security.secrets import SecretProviderRegistry
+from langbridge.packages.runtime.settings import runtime_settings as settings
 from langbridge.packages.semantic.langbridge_semantic.loader import load_semantic_model
 
 
@@ -164,22 +165,18 @@ class FederatedQueryTool:
                         f"Source id '{binding.source_id}' maps to multiple connector ids in workflow '{workflow.id}'."
                     )
             connector = None
+            raw_connector = None
             if self._connector_provider is not None:
                 connector = await self._connector_provider.get_connector(connector_id)
             elif self._connector_repository is not None:
-                connector = await self._connector_repository.get_by_id(connector_id)
+                raw_connector = await self._connector_repository.get_by_id(connector_id)
+                connector = to_runtime_connector(raw_connector)
             if connector is None:
                 raise ValueError(f"Connector '{connector_id}' not found for source '{source_id}'.")
-            if type(connector) is APIConnector:
+            if type(raw_connector) is APIConnector:
                 raise ValueError(f"Connector '{connector_id}' for source '{source_id}' is an API connector, which is not supported for federation sources.")
-
-            connector_response = (
-                connector
-                if isinstance(connector, ConnectorResponse)
-                else ConnectorResponse.from_connector(connector)
-            )
-            resolved_config = self._resolve_connector_config(connector_response)
-            runtime_type = ConnectorRuntimeType((connector_response.connector_type or "").upper())
+            resolved_config = self._resolve_connector_config(connector)
+            runtime_type = ConnectorRuntimeType((connector.connector_type or "").upper())
             sql_connector = await self._create_sql_connector(
                 connector_type=runtime_type,
                 connector_config=resolved_config,
@@ -215,7 +212,7 @@ class FederatedQueryTool:
         await sql_connector.test_connection()
         return sql_connector
 
-    def _resolve_connector_config(self, connector: ConnectorResponse) -> dict[str, Any]:
+    def _resolve_connector_config(self, connector: ConnectorMetadata) -> dict[str, Any]:
         resolved_payload = dict(connector.config or {})
         runtime_config = dict(resolved_payload.get("config") or {})
 

@@ -10,11 +10,19 @@ from langbridge.packages.runtime.providers.caching import (
     CachedDatasetMetadataProvider,
     CachedSemanticModelMetadataProvider,
 )
+from langbridge.packages.runtime.providers.memory import (
+    MemoryConnectorProvider,
+    MemoryDatasetProvider,
+    MemorySemanticModelProvider,
+    MemorySqlJobResultArtifactProvider,
+    MemorySyncStateProvider,
+)
 from langbridge.packages.runtime.providers.protocols import (
     ConnectorMetadataProvider,
     CredentialProvider,
     DatasetMetadataProvider,
     SemanticModelMetadataProvider,
+    SqlJobResultArtifactProvider,
     SyncStateProvider,
 )
 from langbridge.packages.runtime.providers.repository import (
@@ -23,6 +31,7 @@ from langbridge.packages.runtime.providers.repository import (
     RepositorySemanticModelMetadataProvider,
     RepositorySyncStateProvider,
     SecretRegistryCredentialProvider,
+    SqlArtifactRepository,
 )
 from langbridge.packages.runtime.providers.sqlite import (
     SqliteConnectorProvider,
@@ -43,12 +52,19 @@ __all__ = [
     "ConnectorMetadataProvider",
     "CredentialProvider",
     "DatasetMetadataProvider",
+    "MemoryConnectorProvider",
+    "MemoryDatasetProvider",
+    "MemorySemanticModelProvider",
+    "MemorySqlJobResultArtifactProvider",
+    "MemorySyncStateProvider",
     "RepositoryConnectorMetadataProvider",
     "RepositoryDatasetMetadataProvider",
     "RepositorySemanticModelMetadataProvider",
     "RepositorySyncStateProvider",
     "SemanticModelMetadataProvider",
     "SecretRegistryCredentialProvider",
+    "SqlArtifactRepository",
+    "SqlJobResultArtifactProvider",
     "SqliteConnectorProvider",
     "SqliteDatasetProvider",
     "SqliteSemanticModelProvider",

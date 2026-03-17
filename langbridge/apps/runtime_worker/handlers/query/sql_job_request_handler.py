@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 
 from pydantic import ValidationError
 
-from langbridge.packages.common.langbridge_common.contracts.jobs.sql_job import (
+from langbridge.packages.runtime.models import (
     CreateSqlJobRequest,
 )
 from langbridge.packages.common.langbridge_common.db.sql import SqlJobRecord

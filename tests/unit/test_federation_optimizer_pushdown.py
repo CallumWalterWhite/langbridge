@@ -5,6 +5,7 @@ import uuid
 from langbridge.packages.federation.models import FederationWorkflow, VirtualDataset, VirtualTableBinding
 from langbridge.packages.federation.models.plans import StageType
 from langbridge.packages.federation.planner import FederatedPlanner
+from langbridge.packages.federation.planner.parser import parse_sql
 
 
 def _workflow() -> FederationWorkflow:
@@ -329,3 +330,60 @@ def test_optimizer_supports_cte_references_without_mapping_cte_names() -> None:
     assert "WITH base_fact AS" in local_stage.sql
     assert "FROM top_20" in local_stage.sql
     assert "org_abc__src_" not in local_stage.sql
+
+
+def test_optimizer_avoids_full_query_pushdown_when_logical_alias_differs_from_physical_table() -> None:
+    planner = FederatedPlanner()
+    workspace = str(uuid.uuid4())
+    workflow = FederationWorkflow(
+        id="wf-opt-logical-physical-rewrite",
+        workspace_id=workspace,
+        dataset=VirtualDataset(
+            id="ds-opt-logical-physical-rewrite",
+            name="optimizer logical physical rewrite",
+            workspace_id=workspace,
+            tables={
+                "shopify_orders": VirtualTableBinding(
+                    table_key="shopify_orders",
+                    source_id="source_orders",
+                    connector_id=uuid.uuid4(),
+                    table="orders_enriched",
+                    metadata={
+                        "physical_table": "orders_enriched",
+                    },
+                ),
+            },
+        ),
+    )
+
+    output = planner.plan_sql(
+        sql="SELECT shopify_orders.country FROM shopify_orders",
+        dialect="postgres",
+        workflow=workflow,
+        source_dialects={"source_orders": "sqlite"},
+    )
+
+    stage_ids = {stage.stage_id for stage in output.physical_plan.stages}
+    assert "scan_full_query" not in stage_ids
+    scan_stage = next(
+        stage for stage in output.physical_plan.stages if stage.stage_type == StageType.REMOTE_SCAN
+    )
+    assert scan_stage.subplan is not None
+    assert 'FROM "orders_enriched" AS shopify_orders' in scan_stage.subplan.sql
+
+
+def test_parser_normalizes_trunc_and_interval_syntax() -> None:
+    parsed = parse_sql(
+        "SELECT shopify_orders.country, SUM(shopify_orders.net_sales) AS total_net_sales "
+        "FROM shopify_orders "
+        "WHERE shopify_orders.order_date >= TIMESTAMP_TRUNC(CURRENT_DATE, QUARTER) "
+        "AND shopify_orders.order_date < TIMESTAMP_TRUNC(CURRENT_DATE, QUARTER) + INTERVAL '3' MONTHS "
+        "GROUP BY shopify_orders.country ORDER BY total_net_sales DESC LIMIT 1000",
+        dialect="postgres",
+    )
+
+    normalized_sql = parsed.expression.sql(dialect="postgres")
+    assert "DATE_TRUNC('QUARTER', CURRENT_DATE)" in normalized_sql
+    assert "INTERVAL '3 MONTHS'" in normalized_sql
+    assert "GROUP BY" in normalized_sql
+    assert "MONTHS GROUP BY" not in normalized_sql

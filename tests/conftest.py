@@ -5,7 +5,14 @@ import sys
 import types
 
 
-if importlib.util.find_spec("redis.asyncio") is None:
+def _find_optional_spec(module_name: str):
+    try:
+        return importlib.util.find_spec(module_name)
+    except ModuleNotFoundError:
+        return None
+
+
+if _find_optional_spec("redis.asyncio") is None:
     redis_module = types.ModuleType("redis")
     redis_asyncio_module = types.ModuleType("redis.asyncio")
     redis_exceptions_module = types.ModuleType("redis.exceptions")
@@ -30,7 +37,7 @@ if importlib.util.find_spec("redis.asyncio") is None:
     sys.modules["redis.exceptions"] = redis_exceptions_module
 
 
-if importlib.util.find_spec("pyarrow") is None:
+if _find_optional_spec("pyarrow") is None:
     pyarrow_module = types.ModuleType("pyarrow")
     pyarrow_ipc_module = types.ModuleType("pyarrow.ipc")
     pyarrow_parquet_module = types.ModuleType("pyarrow.parquet")
@@ -82,7 +89,7 @@ if importlib.util.find_spec("pyarrow") is None:
     sys.modules["pyarrow.parquet"] = pyarrow_parquet_module
 
 
-if importlib.util.find_spec("duckdb") is None:
+if _find_optional_spec("duckdb") is None:
     duckdb_module = types.ModuleType("duckdb")
 
     class _FakeDuckDbConnection:
@@ -106,7 +113,7 @@ if importlib.util.find_spec("duckdb") is None:
     sys.modules["duckdb"] = duckdb_module
 
 
-if importlib.util.find_spec("jose") is None:
+if _find_optional_spec("jose") is None:
     jose_module = types.ModuleType("jose")
 
     class _JWTError(Exception):

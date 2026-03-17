@@ -5,49 +5,45 @@ import inspect
 import threading
 import time
 import uuid
-from datetime import datetime, timezone
-from typing import Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 
-import httpx
 from pydantic import Field
 
-from langbridge.packages.contracts.base import _Base
-from langbridge.packages.contracts.datasets import (
+if TYPE_CHECKING:
+    import httpx
+else:  # pragma: no cover - exercised indirectly in local-only environments
+    try:
+        import httpx
+    except ModuleNotFoundError:  # pragma: no cover - depends on install extras
+        httpx = None
+
+from langbridge.packages.common.langbridge_common.contracts.base import _Base
+from langbridge.packages.common.langbridge_common.contracts.datasets import (
     DatasetListResponse,
     DatasetPreviewColumn,
     DatasetPreviewRequest,
 )
-from langbridge.packages.contracts.jobs.agent_job import (
+from langbridge.packages.common.langbridge_common.contracts.jobs.agent_job import (
     AgentJobStateResponse,
-    CreateAgentJobRequest,
     JobEventResponse,
 )
-from langbridge.packages.contracts.jobs.dataset_job import (
-    CreateDatasetPreviewJobRequest,
-)
-from langbridge.packages.contracts.jobs.sql_job import (
-    CreateSqlJobRequest,
-)
-from langbridge.packages.contracts.jobs.type import JobType
-from langbridge.packages.contracts.sql import (
+from langbridge.packages.common.langbridge_common.contracts.sql import (
     SqlColumnMetadata,
     SqlDialect,
     SqlExecuteRequest,
     SqlJobResponse,
     SqlJobResultsResponse,
     SqlSelectedDataset,
-    SqlWorkbenchMode,
 )
-from langbridge.packages.contracts.threads import (
+from langbridge.packages.common.langbridge_common.contracts.threads import (
     ThreadChatRequest,
     ThreadCreateRequest,
     ThreadResponse,
 )
-from langbridge.packages.common.langbridge_common.db.threads import (
-    Role,
-    Thread,
-    ThreadMessage,
-    ThreadState,
+from langbridge.packages.runtime.models import (
+    CreateDatasetPreviewJobRequest,
+    CreateSqlJobRequest,
+    SqlWorkbenchMode,
 )
 
 
@@ -90,6 +86,22 @@ class DatasetQueryResult(_AwaitableModel):
     generated_sql: str | None = None
     error: str | None = None
     job_id: uuid.UUID | None = None
+
+
+class SemanticQueryResult(_AwaitableModel):
+    status: str
+    semantic_model_id: uuid.UUID | None = None
+    semantic_model_ids: list[uuid.UUID] = Field(default_factory=list)
+    connector_id: uuid.UUID | None = None
+    data: list[dict[str, Any]] = Field(default_factory=list)
+    annotations: list[dict[str, Any]] = Field(default_factory=list)
+    metadata: list[dict[str, Any]] | None = None
+    generated_sql: str | None = None
+    error: str | None = None
+
+    @property
+    def rows(self) -> list[dict[str, Any]]:
+        return list(self.data)
 
 
 class SqlQueryResult(_AwaitableModel):
@@ -151,14 +163,14 @@ class _SdkAdapter(Protocol):
         poll_interval_s: float,
     ) -> DatasetQueryResult: ...
 
-    def query_dataset_semantic(
+    def query_semantic(
         self,
         *,
-        dataset_name: str,
+        semantic_models: list[str],
         workspace_id: uuid.UUID,
         project_id: uuid.UUID | None,
         user_id: uuid.UUID | None,
-        metrics: list[str] | None,
+        measures: list[str] | None,
         dimensions: list[str] | None,
         filters: list[dict[str, Any]] | None,
         time_dimensions: list[dict[str, Any]] | None,
@@ -166,7 +178,7 @@ class _SdkAdapter(Protocol):
         order: dict[str, str] | list[dict[str, str]] | None,
         timeout_s: float,
         poll_interval_s: float,
-    ) -> DatasetQueryResult: ...
+    ) -> SemanticQueryResult: ...
 
     def query_sql(
         self,
@@ -229,12 +241,6 @@ def _run_awaitable(awaitable: Any) -> Any:
     if "exc" in error:
         raise error["exc"]
     return result.get("value")
-
-
-def _call_maybe_async(func: Any, *args: Any, **kwargs: Any) -> Any:
-    return _run_awaitable(func(*args, **kwargs))
-
-
 def _coalesce_uuid(value: uuid.UUID | None, fallback: uuid.UUID | None, field_name: str) -> uuid.UUID:
     resolved = value or fallback
     if resolved is None:
@@ -281,7 +287,7 @@ def _status_value(value: Any) -> str:
     return str(raw).strip().lower()
 
 
-class RemoteApiAdapter:
+class RemoteApiAdapter(_SdkAdapter):
     def __init__(
         self,
         *,
@@ -290,6 +296,10 @@ class RemoteApiAdapter:
         timeout: float = 30.0,
         client: httpx.Client | None = None,
     ) -> None:
+        if httpx is None and client is None:
+            raise ModuleNotFoundError(
+                "httpx is required for LangbridgeClient.remote(...) and LangbridgeClient.for_remote_api(...)."
+            )
         self._base_url = base_url.rstrip("/")
         self._owns_client = client is None
         self._client = client or httpx.Client(base_url=self._base_url, timeout=timeout)
@@ -389,14 +399,14 @@ class RemoteApiAdapter:
 
         return _wait_for_terminal(_fetch, timeout_s=timeout_s, poll_interval_s=poll_interval_s)
 
-    def query_dataset_semantic(
+    def query_semantic(
         self,
         *,
-        dataset_name: str,
+        semantic_models: list[str],
         workspace_id: uuid.UUID,
         project_id: uuid.UUID | None,
         user_id: uuid.UUID | None,
-        metrics: list[str] | None,
+        measures: list[str] | None,
         dimensions: list[str] | None,
         filters: list[dict[str, Any]] | None,
         time_dimensions: list[dict[str, Any]] | None,
@@ -404,9 +414,9 @@ class RemoteApiAdapter:
         order: dict[str, str] | list[dict[str, str]] | None,
         timeout_s: float,
         poll_interval_s: float,
-    ) -> DatasetQueryResult:
+    ) -> SemanticQueryResult:
         raise NotImplementedError(
-            "Semantic-style dataset queries are currently supported by the local runtime adapter only."
+            "Semantic queries are not yet exposed by the remote API adapter."
         )
 
     def query_sql(
@@ -554,17 +564,13 @@ class RemoteApiAdapter:
         )
 
 
-class LocalRuntimeAdapter:
+class LocalRuntimeAdapter(_SdkAdapter):
     def __init__(
         self,
         *,
         runtime_host: Any,
-        thread_repository: Any | None = None,
-        thread_message_repository: Any | None = None,
     ) -> None:
         self._runtime_host = runtime_host
-        self._thread_repository = thread_repository
-        self._thread_message_repository = thread_message_repository
 
     def close(self) -> None:
         return None
@@ -644,14 +650,14 @@ class LocalRuntimeAdapter:
             generated_sql=payload.get("generated_sql"),
         )
 
-    def query_dataset_semantic(
+    def query_semantic(
         self,
         *,
-        dataset_name: str,
+        semantic_models: list[str],
         workspace_id: uuid.UUID,
         project_id: uuid.UUID | None,
         user_id: uuid.UUID | None,
-        metrics: list[str] | None,
+        measures: list[str] | None,
         dimensions: list[str] | None,
         filters: list[dict[str, Any]] | None,
         time_dimensions: list[dict[str, Any]] | None,
@@ -659,17 +665,17 @@ class LocalRuntimeAdapter:
         order: dict[str, str] | list[dict[str, str]] | None,
         timeout_s: float,
         poll_interval_s: float,
-    ) -> DatasetQueryResult:
-        query_method = getattr(self._runtime_host, "query_dataset_by_name", None)
+    ) -> SemanticQueryResult:
+        query_method = getattr(self._runtime_host, "query_semantic_models", None)
         if query_method is None:
             raise ValueError(
-                "Semantic-style dataset queries require a config-backed local runtime host."
+                "Local runtime host does not expose query_semantic_models()."
             )
         try:
             payload = _run_awaitable(
                 query_method(
-                    dataset_name=dataset_name,
-                    metrics=metrics,
+                    semantic_models=semantic_models,
+                    measures=measures,
                     dimensions=dimensions,
                     filters=filters,
                     time_dimensions=time_dimensions,
@@ -678,22 +684,34 @@ class LocalRuntimeAdapter:
                 )
             )
         except Exception as exc:
-            return DatasetQueryResult(
-                dataset_name=dataset_name,
+            return SemanticQueryResult(
                 status="failed",
                 error=str(exc),
             )
-        return DatasetQueryResult(
-            dataset_id=payload.get("dataset_id"),
-            dataset_name=payload.get("dataset_name") or dataset_name,
+        semantic_model_ids = []
+        for value in payload.get("semantic_model_ids", []):
+            try:
+                semantic_model_ids.append(uuid.UUID(str(value)))
+            except (TypeError, ValueError):
+                continue
+        semantic_model_id = payload.get("semantic_model_id")
+        connector_id = payload.get("connector_id")
+        return SemanticQueryResult(
             status="succeeded",
-            columns=[DatasetPreviewColumn.model_validate(item) for item in payload.get("columns", [])],
-            rows=list(payload.get("rows", [])),
-            row_count_preview=int(payload.get("row_count_preview") or 0),
-            effective_limit=payload.get("effective_limit"),
-            redaction_applied=bool(payload.get("redaction_applied")),
-            duration_ms=payload.get("duration_ms"),
-            bytes_scanned=payload.get("bytes_scanned"),
+            semantic_model_id=(
+                uuid.UUID(str(semantic_model_id))
+                if semantic_model_id is not None
+                else None
+            ),
+            semantic_model_ids=semantic_model_ids,
+            connector_id=(
+                uuid.UUID(str(connector_id))
+                if connector_id is not None
+                else None
+            ),
+            data=list(payload.get("rows", [])),
+            annotations=list(payload.get("annotations", [])),
+            metadata=payload.get("metadata"),
             generated_sql=payload.get("generated_sql"),
         )
 
@@ -716,7 +734,7 @@ class LocalRuntimeAdapter:
         poll_interval_s: float,
     ) -> SqlQueryResult:
         execute_sql_text = getattr(self._runtime_host, "execute_sql_text", None)
-        if execute_sql_text is not None:
+        if execute_sql_text is not None and not selected_datasets:
             try:
                 payload = _run_awaitable(
                     execute_sql_text(
@@ -817,104 +835,38 @@ class LocalRuntimeAdapter:
         poll_interval_s: float,
     ) -> AgentAskResult:
         ask_agent_method = getattr(self._runtime_host, "ask_agent", None)
-        if ask_agent_method is not None:
-            try:
-                payload = _run_awaitable(
-                    ask_agent_method(
-                        prompt=message,
-                        agent_name=agent_name,
-                    )
-                )
-            except Exception as exc:
-                return AgentAskResult(
-                    status="failed",
-                    error={"message": str(exc)},
-                )
-            return AgentAskResult(
-                thread_id=thread_id,
-                status="succeeded",
-                summary=payload.get("summary"),
-                result=payload.get("result"),
-                visualization=payload.get("visualization"),
-                error=payload.get("error"),
-                events=[],
-            )
-
-        if self._thread_repository is None or self._thread_message_repository is None:
-            raise ValueError(
-                "Local agent execution requires thread repositories unless the runtime host exposes ask_agent()."
-            )
-        if agent_id is None:
-            raise ValueError("agent_id is required for repository-backed local agent execution.")
-
-        resolved_user_id = _coalesce_uuid(
-            user_id,
-            getattr(getattr(self._runtime_host, "context", None), "user_id", None),
-            "user_id",
-        )
-        resolved_project_id = _coalesce_uuid(project_id, None, "project_id")
-
-        thread = None
-        if thread_id is not None:
-            thread = _call_maybe_async(self._thread_repository.get_by_id, thread_id)
-        if thread is None:
-            thread = Thread(
-                id=thread_id or uuid.uuid4(),
-                organization_id=organization_id,
-                project_id=resolved_project_id,
-                title=title,
-                created_by=resolved_user_id,
-                state=ThreadState.awaiting_user_input,
-                metadata_json=metadata_json,
-            )
-            self._thread_repository.add(thread)
-
-        message_id = uuid.uuid4()
-        user_message = ThreadMessage(
-            id=message_id,
-            thread_id=thread.id,
-            role=Role.user,
-            content={"text": message},
-        )
-        self._thread_message_repository.add(user_message)
-        thread.last_message_id = message_id
-        thread.updated_at = datetime.now(timezone.utc)
-        thread.state = ThreadState.processing
-
-        job_id = uuid.uuid4()
-        request = CreateAgentJobRequest(
-            job_type=JobType.AGENT,
-            agent_definition_id=agent_id,
-            organisation_id=organization_id,
-            project_id=resolved_project_id,
-            user_id=resolved_user_id,
-            thread_id=thread.id,
-        )
+        if ask_agent_method is None:
+            raise ValueError("Local runtime host does not expose ask_agent().")
         try:
-            execution = _run_awaitable(
-                self._runtime_host.create_agent(
-                    job_id=job_id,
-                    request=request,
-                    event_emitter=None,
+            payload = _run_awaitable(
+                ask_agent_method(
+                    prompt=message,
+                    agent_name=agent_name,
                 )
             )
         except Exception as exc:
             return AgentAskResult(
-                thread_id=thread.id,
                 status="failed",
-                job_id=job_id,
                 error={"message": str(exc)},
             )
-
-        response = getattr(execution, "response", {}) or {}
+        payload_thread_id = payload.get("thread_id")
+        payload_job_id = payload.get("job_id")
         return AgentAskResult(
-            thread_id=thread.id,
+            thread_id=(
+                uuid.UUID(str(payload_thread_id))
+                if payload_thread_id is not None
+                else thread_id
+            ),
             status="succeeded",
-            job_id=job_id,
-            summary=response.get("summary"),
-            result=response.get("result"),
-            visualization=response.get("visualization"),
-            error=response.get("error"),
+            job_id=(
+                uuid.UUID(str(payload_job_id))
+                if payload_job_id is not None
+                else None
+            ),
+            summary=payload.get("summary"),
+            result=payload.get("result"),
+            visualization=payload.get("visualization"),
+            error=payload.get("error"),
             events=[],
         )
 
@@ -950,49 +902,38 @@ class _DatasetClient:
         user_context: dict[str, Any] | None = None,
         timeout_s: float = 30.0,
         poll_interval_s: float = 0.2,
-        metrics: list[str] | None = None,
-        dimensions: list[str] | None = None,
-        time_dimensions: list[dict[str, Any]] | None = None,
-        order: dict[str, str] | list[dict[str, str]] | None = None,
     ) -> DatasetQueryResult:
         resolved_workspace_id = _coalesce_uuid(
             workspace_id,
             self._owner.default_workspace_id,
             "workspace_id",
         )
-        semantic_query_requested = isinstance(dataset, str) or metrics is not None or dimensions is not None
-        if semantic_query_requested:
-            dataset_name = str(dataset or "").strip()
-            if not dataset_name:
-                raise ValueError("dataset name is required for semantic-style dataset queries.")
-            normalized_filters = (
-                filters
-                if isinstance(filters, list)
-                else [
-                    {"member": key, "operator": "equals", "values": [str(value)]}
-                    for key, value in (filters or {}).items()
-                ]
-            )
-            return self._owner._adapter.query_dataset_semantic(
-                dataset_name=dataset_name,
-                workspace_id=resolved_workspace_id,
-                project_id=project_id or self._owner.default_project_id,
-                user_id=user_id or self._owner.default_user_id,
-                metrics=metrics,
-                dimensions=dimensions,
-                filters=normalized_filters,
-                time_dimensions=time_dimensions,
-                limit=limit,
-                order=order,
-                timeout_s=timeout_s,
-                poll_interval_s=poll_interval_s,
+        if filters is not None and not isinstance(filters, dict):
+            raise ValueError(
+                "Dataset queries accept filters as a simple column-to-value mapping. "
+                "Use client.semantic.query(...) for semantic filter objects."
             )
 
         resolved_dataset_id = dataset_id
         if resolved_dataset_id is None and isinstance(dataset, uuid.UUID):
             resolved_dataset_id = dataset
+        if resolved_dataset_id is None and isinstance(dataset, str):
+            dataset_name = str(dataset).strip()
+            matches = [
+                item
+                for item in self.list(
+                    workspace_id=resolved_workspace_id,
+                    project_id=project_id or self._owner.default_project_id,
+                ).items
+                if item.id is not None and item.name == dataset_name
+            ]
+            if not matches:
+                raise ValueError(f"Unknown dataset '{dataset_name}'.")
+            if len(matches) > 1:
+                raise ValueError(f"Dataset name '{dataset_name}' is ambiguous; use dataset_id instead.")
+            resolved_dataset_id = matches[0].id
         if resolved_dataset_id is None:
-            raise ValueError("dataset_id is required for preview-style dataset queries.")
+            raise ValueError("dataset_id or dataset name is required for dataset queries.")
         return self._owner._adapter.query_dataset(
             dataset_id=resolved_dataset_id,
             workspace_id=resolved_workspace_id,
@@ -1002,6 +943,47 @@ class _DatasetClient:
             filters=filters if isinstance(filters, dict) else None,
             sort=sort,
             user_context=user_context,
+            timeout_s=timeout_s,
+            poll_interval_s=poll_interval_s,
+        )
+        
+        
+class _SemanticQueryClient:
+    def __init__(self, owner: "LangbridgeClient") -> None:
+        self._owner = owner
+        
+    def query(
+        self,
+        semantic_models: list[str] | str | None = None,
+        *,
+        workspace_id: uuid.UUID | None = None,
+        project_id: uuid.UUID | None = None,
+        user_id: uuid.UUID | None = None,
+        measures: list[str] | None = None,
+        dimensions: list[str] | None = None,
+        time_dimensions: list[dict[str, Any]] | None = None,
+        filters: list[dict[str, Any]] | None = None,
+        order: dict[str, str] | list[dict[str, str]] | None = None,
+        limit: int | None = None,
+        timeout_s: float = 30.0,
+        poll_interval_s: float = 0.2,
+    ) -> SemanticQueryResult:
+        normalized_models = (
+            [semantic_models]
+            if isinstance(semantic_models, str)
+            else list(semantic_models or [])
+        )
+        return self._owner._adapter.query_semantic(
+            semantic_models=normalized_models,
+            workspace_id=_coalesce_uuid(workspace_id, self._owner.default_workspace_id, "workspace_id"),
+            project_id=project_id or self._owner.default_project_id,
+            user_id=user_id or self._owner.default_user_id,
+            measures=measures,
+            dimensions=dimensions,
+            filters=filters,
+            time_dimensions=time_dimensions,
+            order=order,
+            limit=limit,
             timeout_s=timeout_s,
             poll_interval_s=poll_interval_s,
         )
@@ -1101,6 +1083,7 @@ class LangbridgeClient:
         self.default_project_id = default_project_id
         self.default_user_id = default_user_id
         self.datasets = _DatasetClient(self)
+        self.semantic = _SemanticQueryClient(self)
         self.sql = _SqlClient(self)
         self.agents = _AgentClient(self)
 
@@ -1189,8 +1172,6 @@ class LangbridgeClient:
         cls,
         *,
         runtime_host: Any,
-        thread_repository: Any | None = None,
-        thread_message_repository: Any | None = None,
         default_workspace_id: uuid.UUID | None = None,
         default_organization_id: uuid.UUID | None = None,
         default_project_id: uuid.UUID | None = None,
@@ -1199,8 +1180,6 @@ class LangbridgeClient:
         return cls(
             adapter=LocalRuntimeAdapter(
                 runtime_host=runtime_host,
-                thread_repository=thread_repository,
-                thread_message_repository=thread_message_repository,
             ),
             default_workspace_id=default_workspace_id,
             default_organization_id=default_organization_id,
@@ -1226,5 +1205,6 @@ __all__ = [
     "LangbridgeClient",
     "LocalRuntimeAdapter",
     "RemoteApiAdapter",
+    "SemanticQueryResult",
     "SqlQueryResult",
 ]

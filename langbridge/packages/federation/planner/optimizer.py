@@ -62,10 +62,20 @@ class FederatedOptimizer:
             _binding_requires_scan_level_rewrite(virtual_dataset.tables[table.table_key])
             for table in logical_plan.tables.values()
         )
+        requires_logical_name_rewrite = any(
+            _binding_requires_logical_name_rewrite(virtual_dataset.tables[table.table_key])
+            for table in logical_plan.tables.values()
+        )
+        requires_cross_dialect_rewrite = any(
+            _normalize_dialect(source_dialects.get(table.source_id)) != _normalize_dialect(input_dialect)
+            for table in logical_plan.tables.values()
+        )
         pushdown_full_query = (
             len(distinct_sources) == 1
             and not logical_plan.has_cte
             and not requires_physical_name_rewrite
+            and not requires_logical_name_rewrite
+            and not requires_cross_dialect_rewrite
         )
 
         source_subplans: list[SourceSubplan] = []
@@ -103,14 +113,21 @@ class FederatedOptimizer:
             pushed_filters = predicate_map.get(alias) or []
             source_id = table_ref.source_id
             target_dialect = source_dialects.get(source_id, input_dialect)
+            pushable_filters = [
+                predicate
+                for predicate in pushed_filters
+                if _can_push_filter(
+                    predicate=predicate,
+                    input_dialect=input_dialect,
+                    target_dialect=target_dialect,
+                )
+            ]
             sql = _build_scan_sql(
                 alias=alias,
                 binding=binding,
                 projected_columns=projected_columns,
-                pushed_filters=pushed_filters,
-                pushed_limit=(
-                    logical_plan.limit if len(logical_plan.tables) == 1 and logical_plan.limit is not None else None
-                ),
+                pushed_filters=pushable_filters,
+                pushed_limit=None,
                 dialect=target_dialect,
             )
             stats = stats_by_table.get(table_ref.table_key) or binding.stats or TableStatistics()
@@ -124,10 +141,11 @@ class FederatedOptimizer:
                     table_key=table_ref.table_key,
                     sql=sql,
                     projected_columns=projected_columns,
-                    pushed_filters=[expr.sql(dialect=target_dialect) for expr in pushed_filters],
-                    pushed_limit=(
-                        logical_plan.limit if len(logical_plan.tables) == 1 and logical_plan.limit is not None else None
-                    ),
+                    pushed_filters=[
+                        expr.sql(dialect=target_dialect)
+                        for expr in pushable_filters
+                    ],
+                    pushed_limit=None,
                     estimated_rows=estimated_rows,
                     estimated_bytes=estimated_bytes,
                 )
@@ -227,6 +245,46 @@ def _build_scan_sql(
     return select_expr.sql(dialect=dialect)
 
 
+_CROSS_DIALECT_SIMPLE_PREDICATE_NODES = (
+    exp.Column,
+    exp.Identifier,
+    exp.Literal,
+    exp.Null,
+    exp.Boolean,
+    exp.Paren,
+    exp.EQ,
+    exp.NEQ,
+    exp.GT,
+    exp.GTE,
+    exp.LT,
+    exp.LTE,
+    exp.Is,
+    exp.Not,
+    exp.In,
+    exp.Neg,
+    exp.Or,
+)
+
+
+def _can_push_filter(
+    *,
+    predicate: exp.Expression,
+    input_dialect: str,
+    target_dialect: str,
+) -> bool:
+    if _normalize_dialect(target_dialect) == _normalize_dialect(input_dialect):
+        return True
+    return _is_cross_dialect_simple_predicate(predicate)
+
+
+def _is_cross_dialect_simple_predicate(predicate: exp.Expression) -> bool:
+    for node in predicate.walk():
+        if isinstance(node, _CROSS_DIALECT_SIMPLE_PREDICATE_NODES):
+            continue
+        return False
+    return True
+
+
 def _rewrite_filter_for_scan(
     *,
     expression: exp.Expression,
@@ -297,6 +355,30 @@ def _binding_requires_scan_level_rewrite(binding) -> bool:
     if physical_table is not None and physical_table != binding.table:
         return True
     return False
+
+
+def _binding_requires_logical_name_rewrite(binding) -> bool:
+    metadata = binding.metadata if isinstance(getattr(binding, "metadata", None), dict) else {}
+
+    logical_names = {
+        str(value).strip().lower()
+        for value in (
+            binding.table_key,
+            metadata.get("dataset_alias"),
+        )
+        if str(value).strip()
+    }
+    physical_names = {
+        str(value).strip().lower()
+        for value in (
+            binding.table,
+            metadata.get("physical_table"),
+        )
+        if str(value).strip()
+    }
+    if not logical_names or not physical_names:
+        return False
+    return not logical_names.issubset(physical_names)
 
 
 def _choose_join_order(
@@ -373,3 +455,7 @@ def _transpile(sql: str, *, read: str, write: str) -> str:
         return sqlglot.transpile(sql, read=read, write=write)[0]
     except Exception:
         return sql
+
+
+def _normalize_dialect(value: str | None) -> str:
+    return str(value or "").strip().lower() or "tsql"

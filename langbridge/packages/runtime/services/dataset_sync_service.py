@@ -11,11 +11,6 @@ from typing import Any
 import pyarrow as pa
 import pyarrow.parquet as pq
 
-from langbridge.packages.common.langbridge_common.config import settings
-from langbridge.packages.contracts.connectors import (
-    ConnectorSyncMode,
-    ConnectorSyncStatus,
-)
 from langbridge.packages.common.langbridge_common.db.connector_sync import (
     ConnectorSyncStateRecord,
 )
@@ -53,8 +48,18 @@ from langbridge.packages.common.langbridge_common.utils.datasets import (
 )
 from langbridge.packages.connectors.langbridge_connectors.api import ApiResource
 from langbridge.packages.connectors.langbridge_connectors.api.config import ConnectorRuntimeType
+from langbridge.packages.runtime.settings import runtime_settings as settings
 
 _RESOURCE_SANITIZER = re.compile(r"[^0-9A-Za-z_]+")
+_SYNC_MODE_INCREMENTAL = "INCREMENTAL"
+_SYNC_MODE_FULL_REFRESH = "FULL_REFRESH"
+_SYNC_STATUS_NEVER_SYNCED = "never_synced"
+_SYNC_STATUS_SUCCEEDED = "succeeded"
+_SYNC_STATUS_FAILED = "failed"
+
+
+def _enum_value(value: Any) -> str:
+    return str(getattr(value, "value", value))
 
 
 @dataclass(slots=True)
@@ -92,8 +97,9 @@ class ConnectorSyncRuntime:
         connection_id: uuid.UUID,
         connector_type: ConnectorRuntimeType,
         resource_name: str,
-        sync_mode: ConnectorSyncMode,
+        sync_mode: Any,
     ) -> ConnectorSyncStateRecord:
+        sync_mode_value = _enum_value(sync_mode)
         state = await self._connector_sync_state_repository.get_for_resource(
             workspace_id=workspace_id,
             connection_id=connection_id,
@@ -107,11 +113,11 @@ class ConnectorSyncRuntime:
             connection_id=connection_id,
             connector_type=connector_type.value,
             resource_name=resource_name,
-            sync_mode=sync_mode.value,
+            sync_mode=sync_mode_value,
             last_cursor=None,
             last_sync_at=None,
             state_json={},
-            status=ConnectorSyncStatus.NEVER_SYNCED.value,
+            status=_SYNC_STATUS_NEVER_SYNCED,
             error_message=None,
             records_synced=0,
             bytes_synced=None,
@@ -133,14 +139,15 @@ class ConnectorSyncRuntime:
         resource: ApiResource,
         api_connector,
         state: ConnectorSyncStateRecord,
-        sync_mode: ConnectorSyncMode,
+        sync_mode: Any,
     ) -> dict[str, Any]:
-        effective_sync_mode = sync_mode
-        if sync_mode == ConnectorSyncMode.INCREMENTAL and not resource.supports_incremental:
-            effective_sync_mode = ConnectorSyncMode.FULL_REFRESH
+        sync_mode_value = _enum_value(sync_mode)
+        effective_sync_mode = sync_mode_value
+        if sync_mode_value == _SYNC_MODE_INCREMENTAL and not resource.supports_incremental:
+            effective_sync_mode = _SYNC_MODE_FULL_REFRESH
 
         since = None
-        if effective_sync_mode == ConnectorSyncMode.INCREMENTAL and resource.supports_incremental:
+        if effective_sync_mode == _SYNC_MODE_INCREMENTAL and resource.supports_incremental:
             since = state.last_cursor
 
         page_cursor: str | None = None
@@ -187,7 +194,7 @@ class ConnectorSyncRuntime:
         )
         for child_name, rows in child_rows.items():
             materialized.append(
-                await self._materialize_dataset(
+            await self._materialize_dataset(
                     workspace_id=workspace_id,
                     project_id=project_id,
                     user_id=user_id,
@@ -206,14 +213,14 @@ class ConnectorSyncRuntime:
             )
 
         bytes_synced = sum(item.bytes_written or 0 for item in materialized) or None
-        state.sync_mode = effective_sync_mode.value
+        state.sync_mode = effective_sync_mode
         state.last_cursor = (
             checkpoint_cursor
-            if effective_sync_mode == ConnectorSyncMode.INCREMENTAL and resource.supports_incremental
+            if effective_sync_mode == _SYNC_MODE_INCREMENTAL and resource.supports_incremental
             else state.last_cursor
         )
         state.last_sync_at = now
-        state.status = ConnectorSyncStatus.SUCCEEDED.value
+        state.status = _SYNC_STATUS_SUCCEEDED
         state.error_message = None
         state.records_synced = len(parent_rows) + sum(len(rows) for rows in child_rows.values())
         state.bytes_synced = bytes_synced
@@ -237,7 +244,7 @@ class ConnectorSyncRuntime:
 
         return {
             "resource_name": resource.name,
-            "sync_mode": effective_sync_mode.value,
+            "sync_mode": effective_sync_mode,
             "records_synced": int(state.records_synced or 0),
             "bytes_synced": bytes_synced,
             "last_cursor": state.last_cursor,
@@ -246,7 +253,7 @@ class ConnectorSyncRuntime:
         }
 
     async def mark_failed(self, *, state: ConnectorSyncStateRecord, error_message: str) -> None:
-        state.status = ConnectorSyncStatus.FAILED.value
+        state.status = _SYNC_STATUS_FAILED
         state.error_message = error_message
         state.updated_at = datetime.now(timezone.utc)
 
@@ -264,7 +271,7 @@ class ConnectorSyncRuntime:
         parent_resource_name: str | None,
         rows: list[dict[str, Any]],
         primary_key: str | None,
-        sync_mode: ConnectorSyncMode,
+        sync_mode: str,
         checkpoint_cursor: str | None,
         last_sync_at: datetime,
     ) -> MaterializedDatasetResult:
@@ -288,7 +295,7 @@ class ConnectorSyncRuntime:
             existing_rows=existing_rows,
             new_rows=rows,
             primary_key=primary_key,
-            full_refresh=sync_mode == ConnectorSyncMode.FULL_REFRESH,
+            full_refresh=sync_mode == _SYNC_MODE_FULL_REFRESH,
         )
         table = self._rows_to_table(rows=merged_rows, existing_schema=existing_schema)
         schema_drift = self._describe_schema_drift(existing_schema=existing_schema, next_schema=table.schema)
@@ -308,7 +315,7 @@ class ConnectorSyncRuntime:
                 "resource_name": resource_name,
                 "root_resource_name": root_resource_name,
                 "parent_resource_name": parent_resource_name,
-                "sync_mode": sync_mode.value,
+                "sync_mode": sync_mode,
                 "last_sync_at": last_sync_at.isoformat(),
                 "last_cursor": checkpoint_cursor,
                 "primary_key": primary_key,
@@ -380,7 +387,7 @@ class ConnectorSyncRuntime:
                 dataset=dataset,
                 connection_connector_type=connector_type.value,
             )
-            change_summary = f"{sync_mode.value.replace('_', ' ').title()} sync updated {resource_name}."
+            change_summary = f"{sync_mode.replace('_', ' ').title()} sync updated {resource_name}."
 
         await self._replace_columns(dataset=dataset, table=table)
         policy = await self._get_or_create_policy(dataset=dataset)

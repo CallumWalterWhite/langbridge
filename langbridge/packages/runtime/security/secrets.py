@@ -5,7 +5,7 @@ import os
 from pathlib import Path
 from typing import Protocol
 
-from langbridge.packages.contracts.connectors import SecretReference
+from langbridge.packages.runtime.models import SecretReference
 
 
 class SecretProvider(Protocol):

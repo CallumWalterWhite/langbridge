@@ -12,10 +12,13 @@ from langbridge.packages.runtime.providers import (
     SemanticModelMetadataProvider,
     SyncStateProvider,
 )
+from langbridge.packages.runtime.services.agent_execution_service import AgentExecutionService
+from langbridge.packages.runtime.services.dataset_query_service import DatasetQueryService
 from langbridge.packages.runtime.services.dataset_sync_service import ConnectorSyncRuntime
 from langbridge.packages.runtime.services.semantic_query_execution_service import (
     SemanticQueryExecutionService,
 )
+from langbridge.packages.runtime.services.sql_query_service import SqlQueryService
 
 
 @dataclass(slots=True)
@@ -31,10 +34,10 @@ class RuntimeProviders:
 class RuntimeServices:
     federated_query_tool: FederatedQueryTool | None = None
     semantic_query: SemanticQueryExecutionService | None = None
-    sql_query: Any | None = None
-    dataset_query: Any | None = None
+    sql_query: SqlQueryService | None = None
+    dataset_query: DatasetQueryService | None = None
     dataset_sync: ConnectorSyncRuntime | None = None
-    agent_execution: Any | None = None
+    agent_execution: AgentExecutionService | None = None
 
 
 @dataclass(slots=True)
@@ -70,3 +73,8 @@ class RuntimeHost:
         if self.services.semantic_query is None:
             raise RuntimeError("SemanticQueryExecutionService is not configured for this runtime host.")
         return await self.services.semantic_query.execute_standard_query(*args, **kwargs)
+
+    async def query_unified_semantic(self, *args: Any, **kwargs: Any) -> Any:
+        if self.services.semantic_query is None:
+            raise RuntimeError("SemanticQueryExecutionService is not configured for this runtime host.")
+        return await self.services.semantic_query.execute_unified_query(*args, **kwargs)

@@ -16,7 +16,7 @@ connectors:
   - name: commerce_demo
     type: sqlite
     connection:
-      path: ./example.db
+      location: ./example.db
 
 datasets:
   - name: shopify_orders
@@ -171,9 +171,19 @@ semantic_models:
           target_field: customer_id
           type: many_to_one
 
+llm_connections:
+  - name: local_openai
+    provider: openai
+    model: gpt-5.4
+    default: true
+    api_key_secret:
+      provider_type: env
+      identifier: OPENAI_API_KEY
+
 agents:
   - name: commerce_analyst
     description: Default local analytics agent for the SDK notebook and async examples.
+    llm_connection: local_openai
     semantic_model: commerce_performance
     dataset: shopify_orders
     default: true

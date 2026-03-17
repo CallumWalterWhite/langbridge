@@ -23,7 +23,6 @@ from langbridge.packages.common.langbridge_common.contracts.sql import (
     SqlExecutionMode,
 )
 from langbridge.packages.common.langbridge_common.contracts.threads import ThreadResponse
-from langbridge.packages.common.langbridge_common.db.threads import ThreadMessage
 from langbridge import LangbridgeClient
 
 
@@ -34,6 +33,9 @@ class _FakeRuntimeHost:
             user_id=user_id,
             request_id="sdk-local-request",
         )
+        self.execute_sql_calls: list[object] = []
+        self.execute_sql_text_calls: list[dict[str, object]] = []
+        self.query_semantic_calls: list[dict[str, object]] = []
 
     async def query_dataset(self, *, request):
         return {
@@ -47,6 +49,7 @@ class _FakeRuntimeHost:
         }
 
     async def execute_sql(self, *, request):
+        self.execute_sql_calls.append(request)
         return {
             "columns": [{"name": "value", "type": "integer"}],
             "rows": [{"value": 7}],
@@ -57,6 +60,69 @@ class _FakeRuntimeHost:
             "redaction_applied": False,
         }
 
+    async def execute_sql_text(
+        self,
+        *,
+        query: str,
+        connection_name: str | None = None,
+        requested_limit: int | None = None,
+    ):
+        self.execute_sql_text_calls.append(
+            {
+                "query": query,
+                "connection_name": connection_name,
+                "requested_limit": requested_limit,
+            }
+        )
+        return {
+            "columns": [{"name": "value", "type": "integer"}],
+            "rows": [{"value": 7}],
+            "row_count_preview": 1,
+            "total_rows_estimate": 1,
+            "bytes_scanned": 64,
+            "duration_ms": 5,
+            "redaction_applied": False,
+        }
+
+    async def query_semantic_models(
+        self,
+        *,
+        semantic_models,
+        measures=None,
+        dimensions=None,
+        filters=None,
+        limit=None,
+        order=None,
+        time_dimensions=None,
+    ):
+        self.query_semantic_calls.append(
+            {
+                "semantic_models": list(semantic_models or []),
+                "measures": list(measures or []),
+                "dimensions": list(dimensions or []),
+                "filters": list(filters or []),
+                "limit": limit,
+                "order": order,
+                "time_dimensions": list(time_dimensions or []),
+            }
+        )
+        return {
+            "rows": [{"shopify_orders.country": "United Kingdom", "shopify_orders.net_sales": 180.0}],
+            "annotations": [{"member": "shopify_orders.net_sales"}],
+            "metadata": [{"name": "shopify_orders.net_sales"}],
+            "generated_sql": "SELECT country, SUM(net_revenue) AS net_sales FROM orders_enriched",
+            "semantic_model_ids": [uuid.uuid4()],
+        }
+
+    async def ask_agent(self, *, prompt: str, agent_name: str | None = None):
+        return {
+            "thread_id": uuid.uuid4(),
+            "job_id": uuid.uuid4(),
+            "summary": f"Answered: {prompt}",
+            "result": {"text": "hello"},
+            "visualization": None,
+        }
+
     async def create_agent(self, *, job_id, request, event_emitter=None):
         return SimpleNamespace(
             response={
@@ -65,26 +131,6 @@ class _FakeRuntimeHost:
                 "visualization": None,
             }
         )
-
-
-class _FakeThreadRepository:
-    def __init__(self) -> None:
-        self.items: dict[uuid.UUID, object] = {}
-
-    def add(self, thread) -> None:
-        self.items[thread.id] = thread
-
-    async def get_by_id(self, thread_id: uuid.UUID):
-        return self.items.get(thread_id)
-
-
-class _FakeThreadMessageRepository:
-    def __init__(self) -> None:
-        self.items: list[ThreadMessage] = []
-
-    def add(self, message: ThreadMessage) -> None:
-        self.items.append(message)
-
 
 def test_remote_sdk_dataset_query_polls_preview_job() -> None:
     workspace_id = uuid.uuid4()
@@ -311,19 +357,91 @@ def test_local_sdk_dataset_and_sql_queries_use_runtime_adapter() -> None:
     assert dataset_result.row_count_preview == 1
     assert sql_result.status == "succeeded"
     assert sql_result.rows == [{"value": 7}]
+    assert len(runtime_host.execute_sql_text_calls) == 1
+    assert len(runtime_host.execute_sql_calls) == 0
 
 
-def test_local_sdk_agents_ask_uses_runtime_and_thread_repositories() -> None:
+def test_local_sdk_semantic_queries_use_dedicated_semantic_client() -> None:
+    user_id = uuid.uuid4()
+    runtime_host = _FakeRuntimeHost(user_id=user_id)
+    client = LangbridgeClient.for_local_runtime(
+        runtime_host=runtime_host,
+        default_workspace_id=runtime_host.context.workspace_id,
+        default_user_id=user_id,
+    )
+
+    result = client.semantic.query(
+        "commerce_performance",
+        measures=["shopify_orders.net_sales"],
+        dimensions=["shopify_orders.country"],
+        order={"shopify_orders.net_sales": "desc"},
+        limit=5,
+    )
+
+    assert result.status == "succeeded"
+    assert result.rows[0]["shopify_orders.country"] == "United Kingdom"
+    assert result.generated_sql == "SELECT country, SUM(net_revenue) AS net_sales FROM orders_enriched"
+    assert runtime_host.query_semantic_calls == [
+        {
+            "semantic_models": ["commerce_performance"],
+            "measures": ["shopify_orders.net_sales"],
+            "dimensions": ["shopify_orders.country"],
+            "filters": [],
+            "limit": 5,
+            "order": {"shopify_orders.net_sales": "desc"},
+            "time_dimensions": [],
+        }
+    ]
+
+
+def test_dataset_client_rejects_semantic_style_arguments() -> None:
+    user_id = uuid.uuid4()
+    runtime_host = _FakeRuntimeHost(user_id=user_id)
+    client = LangbridgeClient.for_local_runtime(
+        runtime_host=runtime_host,
+        default_workspace_id=runtime_host.context.workspace_id,
+        default_user_id=user_id,
+    )
+
+    try:
+        client.datasets.query("shopify_orders", metrics=["net_sales"])  # type: ignore[call-arg]
+    except TypeError as exc:
+        assert "metrics" in str(exc)
+    else:
+        raise AssertionError("Expected semantic-style dataset query to be rejected.")
+
+
+def test_local_sdk_dataset_backed_sql_uses_runtime_sql_service() -> None:
+    user_id = uuid.uuid4()
+    runtime_host = _FakeRuntimeHost(user_id=user_id)
+    client = LangbridgeClient.for_local_runtime(
+        runtime_host=runtime_host,
+        default_workspace_id=runtime_host.context.workspace_id,
+        default_user_id=user_id,
+    )
+
+    result = client.sql.query(
+        query="SELECT value FROM some_dataset",
+        selected_datasets=[
+            {
+                "dataset_id": str(uuid.uuid4()),
+                "alias": "orders",
+            }
+        ],
+    )
+
+    assert result.status == "succeeded"
+    assert len(runtime_host.execute_sql_calls) == 1
+    assert len(runtime_host.execute_sql_text_calls) == 0
+
+
+def test_local_sdk_agents_ask_uses_runtime_host() -> None:
     user_id = uuid.uuid4()
     organization_id = uuid.uuid4()
     project_id = uuid.uuid4()
     runtime_host = _FakeRuntimeHost(user_id=user_id)
-    thread_repository = _FakeThreadRepository()
-    thread_message_repository = _FakeThreadMessageRepository()
     client = LangbridgeClient.for_local_runtime(
         runtime_host=runtime_host,
-        thread_repository=thread_repository,
-        thread_message_repository=thread_message_repository,
         default_organization_id=organization_id,
         default_project_id=project_id,
         default_user_id=user_id,
@@ -333,8 +451,8 @@ def test_local_sdk_agents_ask_uses_runtime_and_thread_repositories() -> None:
 
     assert result.status == "succeeded"
     assert result.summary is not None
-    assert result.thread_id in thread_repository.items
-    assert len(thread_message_repository.items) == 1
+    assert result.thread_id is not None
+    assert result.job_id is not None
 
 
 def test_local_sdk_from_config_supports_async_usage(tmp_path: Path) -> None:
@@ -406,8 +524,15 @@ semantic_models:
               expression: gross_margin
               type: number
               aggregation: sum
+llm_connections:
+  - name: local_openai
+    provider: openai
+    model: gpt-4o-mini
+    api_key: test-key
+    default: true
 agents:
   - name: commerce_analyst
+    llm_connection: local_openai
     semantic_model: commerce_performance
     dataset: shopify_orders
     default: true
@@ -418,20 +543,31 @@ agents:
     async def run_flow() -> None:
         client = LangbridgeClient.local(config_path=str(config_path))
         datasets = await client.datasets.list()
-        result = await client.datasets.query(
-            "shopify_orders",
-            metrics=["net_sales"],
-            dimensions=["country"],
-            order={"net_sales": "desc"},
+        preview = await client.datasets.query(dataset_id=datasets.items[0].id, limit=2)
+        result = await client.semantic.query(
+            "commerce_performance",
+            measures=["shopify_orders.net_sales"],
+            dimensions=["shopify_orders.country"],
+            order={"shopify_orders.net_sales": "desc"},
             limit=5,
         )
-        answer = await client.agents.ask("Show me top countries by net sales this quarter")
+        sql_result = await client.sql.query(
+            query=(
+                "SELECT country, SUM(net_revenue) AS net_sales "
+                "FROM orders_enriched "
+                "GROUP BY country "
+                "ORDER BY net_sales DESC"
+            ),
+            connection_name="commerce_demo",
+        )
 
         assert datasets.total == 1
         assert datasets.items[0].name == "shopify_orders"
+        assert preview.status == "succeeded"
+        assert len(preview.rows) == 2
         assert result.status == "succeeded"
-        assert result.rows[0]["country"] == "United Kingdom"
-        assert answer.status == "succeeded"
-        assert "United Kingdom" in str(answer.text)
+        assert result.rows[0]["shopify_orders.country"] == "United Kingdom"
+        assert sql_result.status == "succeeded"
+        assert sql_result.rows[0]["country"] == "United Kingdom"
 
     asyncio.run(run_flow())

@@ -8,3 +8,7 @@ globals().update(
 )
 
 __all__ = [name for name in globals() if not name.startswith("_")]
+from langbridge.packages.common.langbridge_common.contracts.datasets import *
+__all__ += ["DatasetListResponse",
+    "DatasetPreviewColumn",
+    "DatasetPreviewRequest"]

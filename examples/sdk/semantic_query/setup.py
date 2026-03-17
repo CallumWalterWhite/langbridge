@@ -230,6 +230,9 @@ def setup_database(db_path: Path = DB_PATH) -> Path:
     customers = build_customers()
     orders, order_items, support_tickets = build_orders(customers)
 
+    if db_path.exists():
+        db_path.unlink()
+
     connection = sqlite3.connect(str(db_path))
     cursor = connection.cursor()
 

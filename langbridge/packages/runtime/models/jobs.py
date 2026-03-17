@@ -1,0 +1,224 @@
+from __future__ import annotations
+
+import re
+import uuid
+from enum import Enum
+from typing import Any, Literal
+
+from pydantic import Field, model_validator
+
+from langbridge.packages.runtime.models.base import RuntimeRequestModel
+
+
+class JobType(str, Enum):
+    AGENT = "agent"
+    SEMANTIC_QUERY = "semantic_query"
+    AGENTIC_SEMANTIC_MODEL = "agentic_semantic_model"
+    COPILOT_DASHBOARD = "copilot_dashboard"
+    SQL = "sql"
+    DATASET_PREVIEW = "dataset_preview"
+    DATASET_PROFILE = "dataset_profile"
+    DATASET_BULK_CREATE = "dataset_bulk_create"
+    DATASET_CSV_INGEST = "dataset_csv_ingest"
+    CONNECTOR_SYNC = "connector_sync"
+
+
+class SqlWorkbenchMode(str, Enum):
+    dataset = "dataset"
+    direct_sql = "direct_sql"
+
+
+class SqlSelectedDataset(RuntimeRequestModel):
+    alias: str | None = Field(default=None, min_length=1, max_length=128)
+    sql_alias: str | None = Field(default=None, min_length=1, max_length=128)
+    dataset_id: uuid.UUID
+    dataset_name: str | None = Field(default=None, max_length=255)
+    canonical_reference: str | None = Field(default=None, max_length=512)
+    connector_id: uuid.UUID | None = None
+    source_kind: str | None = Field(default=None, max_length=32)
+    storage_kind: str | None = Field(default=None, max_length=32)
+
+    @model_validator(mode="after")
+    def _hydrate_alias_fields(self) -> "SqlSelectedDataset":
+        alias = str(self.alias or "").strip() or None
+        sql_alias = str(self.sql_alias or "").strip().lower() or None
+
+        if alias and not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", alias):
+            raise ValueError(
+                "alias must start with a letter or underscore and contain only letters, numbers, or underscores."
+            )
+        if sql_alias and not re.fullmatch(r"[a-z_][a-z0-9_]*", sql_alias):
+            raise ValueError(
+                "sql_alias must start with a letter or underscore and contain only lowercase letters, numbers, or underscores."
+            )
+
+        if not sql_alias and alias:
+            sql_alias = alias.lower()
+        if not alias and sql_alias:
+            alias = sql_alias
+
+        self.alias = alias
+        self.sql_alias = sql_alias
+        return self
+
+
+class CreateSqlJobRequest(RuntimeRequestModel):
+    job_type: JobType = JobType.SQL
+    sql_job_id: uuid.UUID
+    workspace_id: uuid.UUID
+    project_id: uuid.UUID | None = None
+    user_id: uuid.UUID
+    workbench_mode: SqlWorkbenchMode = SqlWorkbenchMode.dataset
+    connection_id: uuid.UUID | None = None
+    execution_mode: Literal["single", "federated"] = "single"
+    query: str = Field(..., min_length=1)
+    query_dialect: str = Field(default="tsql", min_length=1, max_length=64)
+    params: dict[str, Any] = Field(default_factory=dict)
+    requested_limit: int | None = Field(default=None, ge=1)
+    requested_timeout_seconds: int | None = Field(default=None, ge=1)
+    enforced_limit: int = Field(..., ge=1)
+    enforced_timeout_seconds: int = Field(..., ge=1)
+    allow_dml: bool = False
+    allow_federation: bool = False
+    allowed_schemas: list[str] = Field(default_factory=list)
+    allowed_tables: list[str] = Field(default_factory=list)
+    redaction_rules: dict[str, str] = Field(default_factory=dict)
+    selected_datasets: list[SqlSelectedDataset] = Field(default_factory=list)
+    federated_datasets: list[SqlSelectedDataset] = Field(default_factory=list)
+    explain: bool = False
+    correlation_id: str | None = None
+
+    @model_validator(mode="after")
+    def _validate_request(self) -> "CreateSqlJobRequest":
+        if not self.selected_datasets and self.federated_datasets:
+            self.selected_datasets = list(self.federated_datasets)
+
+        if "workbench_mode" not in self.model_fields_set:
+            self.workbench_mode = (
+                SqlWorkbenchMode.dataset
+                if self.execution_mode == "federated"
+                else SqlWorkbenchMode.direct_sql
+            )
+
+        if self.workbench_mode == SqlWorkbenchMode.direct_sql:
+            if self.execution_mode != "single":
+                raise ValueError("Direct SQL jobs must use single execution mode.")
+            if self.connection_id is None:
+                raise ValueError("connection_id is required for direct SQL jobs.")
+            if self.selected_datasets:
+                raise ValueError("selected_datasets must be omitted for direct SQL jobs.")
+        else:
+            if self.execution_mode != "federated":
+                raise ValueError("Dataset SQL jobs must use federated execution mode.")
+            if self.connection_id is not None:
+                raise ValueError("connection_id must be omitted for dataset SQL jobs.")
+            if not self.allow_federation:
+                raise ValueError("Dataset SQL execution is not enabled for this workspace.")
+            if not self.selected_datasets:
+                raise ValueError("Dataset SQL jobs require at least one selected dataset.")
+
+        if not self.query.strip():
+            raise ValueError("query is required.")
+        self.query_dialect = self.query_dialect.strip().lower() or "tsql"
+        return self
+
+
+class DatasetPolicyDefaultsRequest(RuntimeRequestModel):
+    max_preview_rows: int | None = Field(default=None, ge=1)
+    max_export_rows: int | None = Field(default=None, ge=1)
+    allow_dml: bool | None = None
+    redaction_rules: dict[str, str] = Field(default_factory=dict)
+
+
+class DatasetSelectionColumnRequest(RuntimeRequestModel):
+    name: str = Field(..., min_length=1, max_length=255)
+    data_type: str | None = Field(default=None, max_length=128)
+    nullable: bool | None = None
+
+
+class DatasetSelectionRequest(RuntimeRequestModel):
+    schema: str = Field(..., min_length=1, max_length=255)
+    table: str = Field(..., min_length=1, max_length=255)
+    columns: list[DatasetSelectionColumnRequest] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def _validate_columns(self) -> "DatasetSelectionRequest":
+        names = [column.name.strip().lower() for column in self.columns if column.name.strip()]
+        if len(set(names)) != len(names):
+            raise ValueError("columns must contain unique names per table selection.")
+        return self
+
+
+class CreateDatasetPreviewJobRequest(RuntimeRequestModel):
+    job_type: JobType = JobType.DATASET_PREVIEW
+    dataset_id: uuid.UUID
+    workspace_id: uuid.UUID
+    project_id: uuid.UUID | None = None
+    user_id: uuid.UUID
+    requested_limit: int | None = Field(default=None, ge=1)
+    enforced_limit: int = Field(..., ge=1)
+    filters: dict[str, Any] = Field(default_factory=dict)
+    sort: list[dict[str, Any]] = Field(default_factory=list)
+    user_context: dict[str, Any] = Field(default_factory=dict)
+    correlation_id: str | None = None
+    operation: Literal["preview"] = "preview"
+
+    @model_validator(mode="after")
+    def _validate_request(self) -> "CreateDatasetPreviewJobRequest":
+        if self.requested_limit is not None and self.requested_limit < 1:
+            raise ValueError("requested_limit must be greater than zero when supplied.")
+        return self
+
+
+class CreateDatasetProfileJobRequest(RuntimeRequestModel):
+    job_type: JobType = JobType.DATASET_PROFILE
+    dataset_id: uuid.UUID
+    workspace_id: uuid.UUID
+    project_id: uuid.UUID | None = None
+    user_id: uuid.UUID
+    user_context: dict[str, Any] = Field(default_factory=dict)
+    correlation_id: str | None = None
+    operation: Literal["profile"] = "profile"
+
+
+class CreateDatasetCsvIngestJobRequest(RuntimeRequestModel):
+    job_type: JobType = JobType.DATASET_CSV_INGEST
+    dataset_id: uuid.UUID
+    workspace_id: uuid.UUID
+    project_id: uuid.UUID | None = None
+    user_id: uuid.UUID
+    storage_uri: str | None = None
+    correlation_id: str | None = None
+    operation: Literal["csv_ingest"] = "csv_ingest"
+
+
+class CreateDatasetBulkCreateJobRequest(RuntimeRequestModel):
+    job_type: JobType = JobType.DATASET_BULK_CREATE
+    workspace_id: uuid.UUID
+    project_id: uuid.UUID | None = None
+    user_id: uuid.UUID
+    connection_id: uuid.UUID
+    selections: list[DatasetSelectionRequest] = Field(default_factory=list)
+    naming_template: str = "{schema}.{table}"
+    policy_defaults: DatasetPolicyDefaultsRequest | None = None
+    tags: list[str] = Field(default_factory=list)
+    profile_after_create: bool = False
+    correlation_id: str | None = None
+    operation: Literal["bulk_create"] = "bulk_create"
+
+    @model_validator(mode="after")
+    def _validate_bulk(self) -> "CreateDatasetBulkCreateJobRequest":
+        if len(self.selections) == 0:
+            raise ValueError("Bulk create job requires at least one selection.")
+        if len(self.selections) > 500:
+            raise ValueError("Bulk create job supports at most 500 selections.")
+        return self
+
+
+class CreateAgentJobRequest(RuntimeRequestModel):
+    job_type: JobType
+    agent_definition_id: uuid.UUID
+    organisation_id: uuid.UUID
+    project_id: uuid.UUID
+    user_id: uuid.UUID
+    thread_id: uuid.UUID

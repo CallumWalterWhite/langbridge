@@ -5,3 +5,4 @@ globals().update(
 )
 
 __all__ = [name for name in globals() if not name.startswith("_")]
+from langbridge.packages.common.langbridge_common.contracts.agents import *

@@ -5,6 +5,7 @@ from typing import Iterable
 
 import sqlglot
 from sqlglot import exp
+import re
 
 from langbridge.packages.federation.models.plans import JoinRef, LogicalPlan, QueryType, TableRef
 from langbridge.packages.federation.models.virtual_dataset import VirtualDataset, VirtualTableBinding
@@ -21,8 +22,9 @@ class ParsedSql:
 
 
 def parse_sql(sql: str, *, dialect: str = "tsql") -> ParsedSql:
+    normalized_sql = _normalize_portable_sql(sql)
     try:
-        expression = sqlglot.parse_one(sql, read=dialect)
+        expression = sqlglot.parse_one(normalized_sql, read=dialect)
     except sqlglot.ParseError as exc:
         raise QueryParsingError(str(exc)) from exc
 
@@ -40,7 +42,8 @@ def logical_plan_from_sql(
     dialect: str = "tsql",
     query_type: QueryType = QueryType.SQL,
 ) -> tuple[LogicalPlan, exp.Expression]:
-    parsed = parse_sql(sql, dialect=dialect)
+    normalized_sql = _normalize_portable_sql(sql)
+    parsed = parse_sql(normalized_sql, dialect=dialect)
     select_expr = parsed.select
 
     cte_names = _extract_cte_names(select_expr)
@@ -93,7 +96,7 @@ def logical_plan_from_sql(
 
     logical_plan = LogicalPlan(
         query_type=query_type,
-        sql=sql,
+        sql=normalized_sql,
         from_alias=base_alias,
         tables=table_map,
         joins=joins,
@@ -106,6 +109,33 @@ def logical_plan_from_sql(
         has_cte=has_cte,
     )
     return logical_plan, parsed.expression
+
+
+_INTERVAL_LITERAL_WITH_UNIT_RE = re.compile(
+    r"(?i)\bINTERVAL\s+'([^']+)'\s+"
+    r"(DAY|DAYS|WEEK|WEEKS|MONTH|MONTHS|QUARTER|QUARTERS|YEAR|YEARS|HOUR|HOURS|MINUTE|MINUTES|SECOND|SECONDS)\b"
+)
+_TRUNC_FUNCTION_RE = re.compile(
+    r"(?i)\b(?:TIMESTAMP_TRUNC|DATE_TRUNC)\s*\(\s*"
+    r"(?P<expr>(?:CURRENT_DATE|CURRENT_TIMESTAMP|NOW\(\)|[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*))"
+    r"\s*,\s*(?P<unit>[A-Za-z_]+)\s*\)"
+)
+
+
+def _normalize_portable_sql(sql: str) -> str:
+    normalized = _INTERVAL_LITERAL_WITH_UNIT_RE.sub(
+        lambda match: f"INTERVAL '{match.group(1)} {match.group(2)}'",
+        sql,
+    )
+
+    def _replace_trunc(match: re.Match[str]) -> str:
+        expr_sql = str(match.group("expr") or "").strip()
+        unit_sql = str(match.group("unit") or "").strip().lower()
+        if not expr_sql or not unit_sql:
+            return match.group(0)
+        return f"DATE_TRUNC('{unit_sql}', {expr_sql})"
+
+    return _TRUNC_FUNCTION_RE.sub(_replace_trunc, normalized)
 
 
 def extract_required_columns(

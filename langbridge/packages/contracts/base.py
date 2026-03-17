@@ -8,4 +8,5 @@ globals().update(
     )
 )
 
+from langbridge.packages.common.langbridge_common.contracts.base import _Base
 __all__ = ["_Base"]

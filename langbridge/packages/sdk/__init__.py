@@ -6,6 +6,7 @@ from langbridge.packages.sdk.client import (
     LangbridgeClient,
     LocalRuntimeAdapter,
     RemoteApiAdapter,
+    SemanticQueryResult,
     SqlQueryResult,
 )
 
@@ -17,5 +18,6 @@ __all__ = [
     "LangbridgeClient",
     "LocalRuntimeAdapter",
     "RemoteApiAdapter",
+    "SemanticQueryResult",
     "SqlQueryResult",
 ]

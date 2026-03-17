@@ -1,0 +1,219 @@
+version: 1
+
+runtime:
+  mode: local
+  metadata_store:
+    type: sqlite
+    path: .langbridge/metadata.db
+  execution:
+    engine: duckdb
+    duckdb:
+      path: .langbridge/duckdb/execution.duckdb
+      temp_directory: .langbridge/tmp
+      threads: 4
+
+connectors:
+  - name: sales_reporting
+    type: postgres
+    description: Sales and commerce operational data running in Docker.
+    connection:
+      host: localhost
+      port: 5432
+      database: sales_reporting
+      user: reporting_user
+      password: securepassword
+
+  - name: crm_reporting
+    type: postgres
+    description: CRM account and contact data running in Docker.
+    connection:
+      host: localhost
+      port: 5433
+      database: crm_reporting
+      user: reporting_user
+      password: securepassword
+
+  - name: campaign_file
+    type: file
+    description: Local CSV with campaign attribution tags for CRM contacts.
+    connection: {}
+
+datasets:
+  - name: sales_orders
+    label: Sales Orders
+    description: Order-level sales facts enriched with the CRM contact key from the sales database.
+    connector: sales_reporting
+    semantic_model: customer_revenue_federation
+    default_time_dimension: order_date
+    source:
+      sql: |
+        SELECT
+          o.id AS order_id,
+          'CRM-' || LPAD(TRIM(REPLACE(c.crm_contact_external_id, 'CRM-', '')), 8, '0') AS crm_contact_external_id,
+          c.country,
+          c.loyalty_tier,
+          o.channel,
+          o.status,
+          CAST(o.order_ts AS DATE) AS order_date,
+          o.total AS order_total
+        FROM orders AS o
+        JOIN customers AS c
+          ON c.id = o.customer_id
+        WHERE o.status <> 'cancelled'
+
+  - name: crm_contacts
+    label: CRM Contacts
+    description: CRM contacts enriched with account segment and owner region from the CRM database.
+    connector: crm_reporting
+    semantic_model: customer_revenue_federation
+    source:
+      sql: |
+        SELECT
+          'CRM-' || LPAD(TRIM(REPLACE(c.contact_external_id, 'CRM-', '')), 8, '0') AS contact_external_id,
+          a.segment AS account_segment,
+          a.owner_region,
+          c.lifecycle_stage,
+          c.lead_score,
+          c.preferred_channel,
+          c.marketing_opt_in,
+          CAST(c.last_touch_at AS DATE) AS last_touch_date
+        FROM contacts AS c
+        JOIN accounts AS a
+          ON a.id = c.account_id
+
+  - name: marketing_campaigns
+    label: Marketing Campaigns
+    description: Campaign metadata loaded from a local CSV and joined to CRM contacts at runtime.
+    connector: campaign_file
+    semantic_model: customer_revenue_federation
+    default_time_dimension: touch_date
+    source:
+      path: ./marketing_campaign.csv
+      format: csv
+      header: true
+
+semantic_models:
+  - name: customer_revenue_federation
+    description: Revenue federation across sales orders, CRM contacts, and local campaign attribution data.
+    default: true
+    model:
+      version: "1"
+      name: customer_revenue_federation
+      description: Federated semantic model joining two Postgres sources and one CSV at query time.
+      datasets:
+        sales_orders:
+          relation_name: sales_orders
+          description: Order facts from the sales warehouse.
+          dimensions:
+            - name: order_id
+              expression: order_id
+              type: number
+              primary_key: true
+            - name: crm_contact_external_id
+              expression: crm_contact_external_id
+              type: string
+            - name: country
+              expression: country
+              type: string
+            - name: loyalty_tier
+              expression: loyalty_tier
+              type: string
+            - name: channel
+              expression: channel
+              type: string
+            - name: status
+              expression: status
+              type: string
+            - name: order_date
+              expression: order_date
+              type: time
+          measures:
+            - name: net_revenue
+              expression: order_total
+              type: number
+              aggregation: sum
+              synonyms: [revenue, sales]
+            - name: order_count
+              expression: order_id
+              type: number
+              aggregation: count
+
+        crm_contacts:
+          relation_name: crm_contacts
+          description: CRM contact and account context.
+          dimensions:
+            - name: contact_external_id
+              expression: contact_external_id
+              type: string
+              primary_key: true
+            - name: account_segment
+              expression: account_segment
+              type: string
+            - name: owner_region
+              expression: owner_region
+              type: string
+            - name: lifecycle_stage
+              expression: lifecycle_stage
+              type: string
+            - name: lead_score
+              expression: lead_score
+              type: number
+            - name: preferred_channel
+              expression: preferred_channel
+              type: string
+            - name: marketing_opt_in
+              expression: marketing_opt_in
+              type: boolean
+            - name: last_touch_date
+              expression: last_touch_date
+              type: time
+          measures:
+            - name: contact_count
+              expression: contact_external_id
+              type: number
+              aggregation: count
+
+        marketing_campaigns:
+          relation_name: marketing_campaigns
+          description: Campaign assignment data loaded from CSV.
+          dimensions:
+            - name: contact_external_id
+              expression: contact_external_id
+              type: string
+              primary_key: true
+            - name: campaign_name
+              expression: campaign_name
+              type: string
+            - name: campaign_channel
+              expression: campaign_channel
+              type: string
+            - name: offer_type
+              expression: offer_type
+              type: string
+            - name: target_region
+              expression: target_region
+              type: string
+            - name: touch_date
+              expression: touch_date
+              type: time
+            - name: engagement_score
+              expression: engagement_score
+              type: number
+          measures:
+            - name: influenced_contacts
+              expression: contact_external_id
+              type: number
+              aggregation: count
+      relationships:
+        - name: sales_to_crm
+          source_dataset: sales_orders
+          source_field: crm_contact_external_id
+          target_dataset: crm_contacts
+          target_field: contact_external_id
+          type: many_to_one
+        - name: campaigns_to_crm
+          source_dataset: marketing_campaigns
+          source_field: contact_external_id
+          target_dataset: crm_contacts
+          target_field: contact_external_id
+          type: many_to_one

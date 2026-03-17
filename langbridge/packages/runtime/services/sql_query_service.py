@@ -7,9 +7,8 @@ from typing import Any, Awaitable, Callable
 import sqlglot
 from sqlglot import exp
 
-from langbridge.packages.common.langbridge_common.config import settings
-from langbridge.packages.contracts.connectors import ConnectorResponse
-from langbridge.packages.contracts.jobs.sql_job import (
+from langbridge.packages.runtime.adapters import to_runtime_connector
+from langbridge.packages.runtime.models import (
     CreateSqlJobRequest,
 )
 from langbridge.packages.common.langbridge_common.db.sql import (
@@ -55,12 +54,14 @@ from langbridge.packages.runtime.providers import (
     DatasetMetadataProvider,
     SecretRegistryCredentialProvider,
 )
+from langbridge.packages.runtime.models import ConnectorMetadata
 from langbridge.packages.runtime.security import SecretProviderRegistry
 from langbridge.packages.runtime.services.dataset_execution import DatasetExecutionResolver
+from langbridge.packages.runtime.settings import runtime_settings as settings
 
 RewriteExpression = Callable[[sqlglot.Expression], sqlglot.Expression]
 CreateSqlConnector = Callable[..., Awaitable[Any]]
-ResolveConnectorConfig = Callable[[ConnectorResponse], dict[str, Any]]
+ResolveConnectorConfig = Callable[[ConnectorMetadata], dict[str, Any]]
 
 class SqlQueryService:
     def __init__(
@@ -436,27 +437,16 @@ class SqlQueryService:
         connection_id: uuid.UUID,
         workspace_id: uuid.UUID,
         project_id: uuid.UUID | None,
-    ) -> ConnectorResponse | None:
+    ) -> ConnectorMetadata | None:
         if self._connector_provider is not None:
-            connector = await self._connector_provider.get_connector(connection_id)
-            if connector is None:
-                return None
-            if isinstance(connector, ConnectorResponse):
-                return connector
-            return ConnectorResponse.model_validate(connector)
+            return await self._connector_provider.get_connector(connection_id)
 
         if self._connector_repository is None:
             raise BusinessValidationError("Connector metadata provider is required for SQL execution.")
         connector = await self._connector_repository.get_by_id(connection_id)
-        if connector is None:
-            return None
-        return ConnectorResponse.from_connector(
-            connector,
-            organization_id=workspace_id,
-            project_id=project_id,
-        )
+        return to_runtime_connector(connector)
 
-    def _resolve_connector_config(self, connector: ConnectorResponse) -> dict[str, Any]:
+    def _resolve_connector_config(self, connector: ConnectorMetadata) -> dict[str, Any]:
         resolved_payload = dict(connector.config or {})
         runtime_config = dict(resolved_payload.get("config") or {})
 

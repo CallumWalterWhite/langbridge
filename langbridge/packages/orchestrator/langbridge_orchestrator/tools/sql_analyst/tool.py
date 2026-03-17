@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Sequence
 
 import sqlglot
+from sqlglot import exp
 
 from langbridge.packages.common.langbridge_common.interfaces.agent_events import (
     AgentEventVisibility,
@@ -34,6 +35,7 @@ from .interfaces import (
 
 SQL_FENCE_RE = re.compile(r"```(?:sql)?\s*(.*?)```", re.IGNORECASE | re.DOTALL)
 VECTOR_SIMILARITY_THRESHOLD = 0.83
+TEMPORAL_TYPE_NAMES = {"date", "datetime", "time", "timestamp", "timestamptz"}
 
 
 @dataclass(slots=True)
@@ -229,6 +231,8 @@ class SqlAnalystTool:
             )
 
         canonical_sql = self._extract_sql(canonical_sql.strip())
+        canonical_sql = self._expand_semantic_measure_references(canonical_sql)
+        canonical_sql = self._normalize_temporal_predicates(canonical_sql)
         await self._emit_event(
             event_type="AnalyticalSqlGenerated",
             message="SQL was generated for federated execution.",
@@ -426,6 +430,7 @@ class SqlAnalystTool:
             "- Only join tables that are explicitly available in this context.\n"
             "- If the context includes relationships, use only those relationships.\n"
             "- If the context includes metrics, expand them faithfully.\n"
+            "- Treat semantic measures as logical aliases and expand them to their configured expressions.\n"
             "- Group only by non-aggregated selected dimensions.\n"
             "- Prefer a single query; CTEs are allowed when they simplify the plan.\n"
             "- Do not invent columns, tables, metrics, or joins.\n"
@@ -497,6 +502,8 @@ class SqlAnalystTool:
             parts.append("Tables:")
             for table in self.context.tables:
                 parts.append(f"  - {table}")
+        if self.semantic_model is not None:
+            parts.extend(self._render_semantic_model_definitions())
         self._append_field_block(parts, "Dimensions", self.context.dimensions)
         self._append_field_block(parts, "Measures", self.context.measures)
         if self.context.metrics:
@@ -666,6 +673,211 @@ class SqlAnalystTool:
     def _log_sql(self, telemetry: ToolTelemetry) -> None:
         self.logger.debug("Canonical SQL [%s]: %s", self.name, telemetry.canonical_sql)
         self.logger.debug("Executable SQL [%s -> %s]: %s", self.name, self.dialect, telemetry.executable_sql)
+
+    def _expand_semantic_measure_references(self, sql: str) -> str:
+        if self.semantic_model is None:
+            return sql
+
+        try:
+            expression = sqlglot.parse_one(sql, read="postgres")
+        except sqlglot.ParseError:
+            return sql
+
+        measure_map = {
+            (str(table_key).strip().lower(), str(measure.name).strip().lower()): str(
+                measure.expression or measure.name
+            ).strip()
+            for table_key, table in self.semantic_model.tables.items()
+            for measure in (table.measures or [])
+            if str(measure.expression or measure.name).strip()
+        }
+        if not measure_map:
+            return sql
+
+        def _transform(node: exp.Expression) -> exp.Expression:
+            if not isinstance(node, exp.Column):
+                return node
+            table_name = str(node.table or "").strip().lower()
+            column_name = str(node.name or "").strip().lower()
+            if not table_name or not column_name:
+                return node
+            expression_sql = measure_map.get((table_name, column_name))
+            if not expression_sql or expression_sql.lower() == column_name:
+                return node
+            replacement = self._build_measure_expression(
+                table_name=table_name,
+                expression_sql=expression_sql,
+            )
+            return replacement or node
+
+        return expression.transform(_transform).sql(dialect="postgres")
+
+    def _build_measure_expression(
+        self,
+        *,
+        table_name: str,
+        expression_sql: str,
+    ) -> exp.Expression | None:
+        try:
+            expression = sqlglot.parse_one(expression_sql, read="postgres")
+        except sqlglot.ParseError:
+            return None
+
+        def _qualify(node: exp.Expression) -> exp.Expression:
+            if isinstance(node, exp.Column) and not node.table:
+                return sqlglot.parse_one(f"{table_name}.{node.name}", read="postgres")
+            return node
+
+        return expression.transform(_qualify)
+
+    def _render_semantic_model_definitions(self) -> list[str]:
+        if self.semantic_model is None:
+            return []
+
+        parts: list[str] = ["Semantic definitions:"]
+        for table_key, table in self.semantic_model.tables.items():
+            parts.append(f"  - table {table_key}")
+            for dimension in table.dimensions or []:
+                expression_sql = str(dimension.expression or dimension.name).strip()
+                line = f"      dimension {table_key}.{dimension.name}"
+                if expression_sql:
+                    line = f"{line} => {expression_sql}"
+                if dimension.type:
+                    line = f"{line} [{dimension.type}]"
+                parts.append(line)
+            for measure in table.measures or []:
+                expression_sql = str(measure.expression or measure.name).strip()
+                line = f"      measure {table_key}.{measure.name}"
+                aggregation = str(measure.aggregation or "").strip().lower()
+                if aggregation:
+                    line = f"{line} ({aggregation})"
+                if expression_sql:
+                    line = f"{line} => {expression_sql}"
+                parts.append(line)
+        return parts
+
+    def _normalize_temporal_predicates(self, sql: str) -> str:
+        temporal_columns = self._temporal_columns_by_name()
+        if not temporal_columns:
+            return sql
+
+        try:
+            expression = sqlglot.parse_one(sql, read="postgres")
+        except sqlglot.ParseError:
+            return sql
+
+        def _transform(node: exp.Expression) -> exp.Expression:
+            if not isinstance(node, exp.Column):
+                return node
+            cast_target = self._cast_target_for_column(node=node, temporal_columns=temporal_columns)
+            if cast_target is None:
+                return node
+            if self._has_explicit_temporal_cast(node):
+                return node
+            if not self._is_temporal_predicate_context(node):
+                return node
+            return exp.Cast(this=node.copy(), to=exp.DataType.build(cast_target))
+
+        return expression.transform(_transform).sql(dialect="postgres")
+
+    def _temporal_columns_by_name(self) -> dict[tuple[str | None, str], str]:
+        columns: dict[tuple[str | None, str], str] = {}
+        unqualified_targets: dict[str, set[str]] = {}
+
+        for dataset in self.context.datasets:
+            alias = str(dataset.sql_alias or "").strip().lower() or None
+            for column in dataset.columns:
+                cast_target = self._cast_target_for_type(column.data_type)
+                if cast_target is None:
+                    continue
+                column_name = str(column.name or "").strip().lower()
+                if not column_name:
+                    continue
+                columns[(alias, column_name)] = cast_target
+                unqualified_targets.setdefault(column_name, set()).add(cast_target)
+
+        if self.semantic_model is not None:
+            for table_key, table in self.semantic_model.tables.items():
+                alias = str(table_key or "").strip().lower() or None
+                for dimension in table.dimensions or []:
+                    cast_target = self._cast_target_for_type(getattr(dimension, "type", None))
+                    if cast_target is None:
+                        continue
+                    column_name = str(getattr(dimension, "name", "") or "").strip().lower()
+                    if not column_name:
+                        continue
+                    columns[(alias, column_name)] = cast_target
+                    unqualified_targets.setdefault(column_name, set()).add(cast_target)
+
+        for column_name, targets in unqualified_targets.items():
+            if len(targets) == 1:
+                columns[(None, column_name)] = next(iter(targets))
+
+        return columns
+
+    @staticmethod
+    def _cast_target_for_type(data_type: str | None) -> str | None:
+        normalized = str(data_type or "").strip().lower()
+        if not normalized:
+            return None
+        if normalized in {"date"}:
+            return "DATE"
+        if normalized in TEMPORAL_TYPE_NAMES or "timestamp" in normalized:
+            return "TIMESTAMP"
+        return None
+
+    def _cast_target_for_column(
+        self,
+        *,
+        node: exp.Column,
+        temporal_columns: dict[tuple[str | None, str], str],
+    ) -> str | None:
+        column_name = str(node.name or "").strip().lower()
+        table_name = str(node.table or "").strip().lower() or None
+        if not column_name:
+            return None
+        return temporal_columns.get((table_name, column_name)) or temporal_columns.get((None, column_name))
+
+    @staticmethod
+    def _has_explicit_temporal_cast(node: exp.Column) -> bool:
+        ancestor = node.parent
+        while ancestor is not None:
+            if isinstance(ancestor, (exp.Cast, exp.TryCast)):
+                return True
+            if isinstance(ancestor, exp.Anonymous):
+                function_name = str(ancestor.name or "").strip().lower()
+                if function_name in {"date", "datetime", "timestamp"}:
+                    return True
+            if isinstance(ancestor, (exp.Where, exp.Having, exp.Join, exp.Select, exp.Subquery)):
+                return False
+            ancestor = ancestor.parent
+        return False
+
+    @staticmethod
+    def _is_temporal_predicate_context(node: exp.Column) -> bool:
+        comparison_types = (
+            exp.EQ,
+            exp.NEQ,
+            exp.GT,
+            exp.GTE,
+            exp.LT,
+            exp.LTE,
+            exp.Between,
+            exp.Is,
+            exp.In,
+            exp.Like,
+            exp.ILike,
+        )
+        boundary_types = (exp.Where, exp.Having, exp.Join, exp.Select, exp.Subquery)
+
+        ancestor = node.parent
+        while ancestor is not None:
+            if isinstance(ancestor, comparison_types):
+                return True
+            if isinstance(ancestor, boundary_types):
+                return False
+            ancestor = ancestor.parent
+        return False
 
 
 __all__ = ["SqlAnalystTool"]

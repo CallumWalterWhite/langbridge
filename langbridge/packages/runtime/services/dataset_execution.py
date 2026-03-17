@@ -5,9 +5,7 @@ import uuid
 from collections.abc import Mapping
 from typing import Any
 
-from langbridge.packages.common.langbridge_common.config import settings
 from langbridge.packages.common.langbridge_common.utils.storage_uri import resolve_local_storage_path
-from langbridge.packages.common.langbridge_common.db.dataset import DatasetRecord
 from langbridge.packages.common.langbridge_common.errors.application_errors import BusinessValidationError
 from langbridge.packages.common.langbridge_common.repositories.dataset_repository import DatasetRepository
 from langbridge.packages.runtime.providers import DatasetMetadataProvider
@@ -28,6 +26,7 @@ from langbridge.packages.federation.models import (
     VirtualTableBinding,
 )
 from langbridge.packages.semantic.langbridge_semantic.model import Dataset as SemanticDataset, SemanticModel
+from langbridge.packages.runtime.settings import runtime_settings as settings
 
 
 class DatasetExecutionResolver:
@@ -43,7 +42,7 @@ class DatasetExecutionResolver:
     async def build_workflow_for_dataset(
         self,
         *,
-        dataset: DatasetRecord,
+        dataset: Any,
     ) -> tuple[FederationWorkflow, str, str]:
         dataset_type = str(dataset.dataset_type or "").upper()
         if dataset_type in {"TABLE", "SQL", "FILE"}:
@@ -130,7 +129,7 @@ class DatasetExecutionResolver:
     def _build_binding_from_dataset_record(
         self,
         *,
-        dataset: DatasetRecord,
+        dataset: Any,
         table_key: str | None = None,
         logical_schema: str | None = None,
         logical_table_name: str | None = None,
@@ -230,7 +229,7 @@ class DatasetExecutionResolver:
     async def _build_federated_dataset_workflow(
         self,
         *,
-        dataset: DatasetRecord,
+        dataset: Any,
     ) -> tuple[FederationWorkflow, str, str]:
         if self._dataset_provider is None and self._dataset_repository is None:
             raise BusinessValidationError(
@@ -311,7 +310,7 @@ class DatasetExecutionResolver:
         workspace_id: uuid.UUID,
         dataset_id: uuid.UUID,
         table_key: str,
-    ) -> DatasetRecord:
+    ) -> Any:
         if self._dataset_provider is not None:
             dataset = await self._dataset_provider.get_dataset(
                 workspace_id=workspace_id,
@@ -372,7 +371,7 @@ class DatasetExecutionResolver:
         return DatasetExecutionResolver._parse_uuid(raw_value, context="semantic dataset dataset_id")
 
     @staticmethod
-    def _resolve_file_storage_uri(dataset: DatasetRecord) -> str:
+    def _resolve_file_storage_uri(dataset: Any) -> str:
         file_config = dict(dataset.file_config_json or {})
         storage_uri = (
             str(dataset.storage_uri or "").strip()
@@ -383,7 +382,7 @@ class DatasetExecutionResolver:
         return storage_uri
 
     @staticmethod
-    def _resolve_file_format(dataset: DatasetRecord, *, storage_uri: str) -> str:
+    def _resolve_file_format(dataset: Any, *, storage_uri: str) -> str:
         file_config = dict(dataset.file_config_json or {})
         configured = str(file_config.get("format") or file_config.get("file_format") or "").strip().lower()
         if configured in {"csv", "parquet"}:
@@ -400,7 +399,7 @@ class DatasetExecutionResolver:
     @staticmethod
     def _logical_table_name(
         *,
-        dataset: DatasetRecord,
+        dataset: Any,
         logical_table_name: str | None,
     ) -> str:
         candidate = (logical_table_name or dataset.table_name or "").strip()
@@ -412,7 +411,7 @@ class DatasetExecutionResolver:
     @staticmethod
     def _logical_schema_name(
         *,
-        dataset: DatasetRecord,
+        dataset: Any,
         logical_schema: str | None,
     ) -> str | None:
         if logical_schema is not None:
@@ -519,7 +518,7 @@ class DatasetExecutionResolver:
         return normalized or None
 
     @staticmethod
-    def _build_dataset_execution_descriptor(dataset: DatasetRecord) -> DatasetExecutionDescriptor:
+    def _build_dataset_execution_descriptor(dataset: Any) -> DatasetExecutionDescriptor:
         connector_kind = resolve_dataset_connector_kind(
             explicit_connector_kind=getattr(dataset, "connector_kind", None),
             connection_connector_type=(dataset.dialect if dataset.connection_id else None),
@@ -600,7 +599,7 @@ def build_file_scan_sql(*, storage_uri: str, file_config: dict[str, Any] | None 
 
 
 def build_binding_for_dataset(
-    dataset: DatasetRecord,
+    dataset: Any,
     *,
     table_key: str | None = None,
     logical_schema: str | None = None,

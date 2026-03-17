@@ -121,7 +121,7 @@ class Settings(BaseSettings):
     BACKEND_URL: str = "http://localhost:8000"
     FRONTEND_URL: str = "http://localhost:3000"
 
-    JWT_SECRET: str
+    JWT_SECRET: str = secrets.token_urlsafe(32)
     JWT_ALG: str = "HS256"
     JWT_EXPIRES_MIN: int = 60 * 24 * 30 # 30 days
     EDGE_RUNTIME_JWT_SECRET: str = ""
@@ -131,8 +131,8 @@ class Settings(BaseSettings):
     COOKIE_NAME: str = "langbridge_token"
     COOKIE_SECURE: bool = False  # set True in production with HTTPS
 
-    GITHUB_CLIENT_ID: str
-    GITHUB_CLIENT_SECRET: str
+    GITHUB_CLIENT_ID: str = ""
+    GITHUB_CLIENT_SECRET: str = ""
     GITHUB_SCOPE: str = "read:user user:email"
     GITHUB_AUTHORIZE_URL: str = "https://github.com/login/oauth/authorize"
     GITHUB_ACCESS_TOKEN_URL: str = "https://github.com/login/oauth/access_token"

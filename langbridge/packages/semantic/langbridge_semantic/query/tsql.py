@@ -2,7 +2,7 @@ import re
 from datetime import date, datetime
 from typing import Any, Optional, Tuple
 
-from sqlglot import exp
+from sqlglot import exp, parse_one
 
 
 NUMERIC_TYPES = {"integer", "int", "decimal", "numeric", "float", "double", "real"}
@@ -84,6 +84,34 @@ def date_trunc(granularity: str, col: exp.Expression, dialect: str = "tsql") -> 
         unit=u,
     )
 
+
+def _interval_literal(amount: int, unit: str) -> exp.Expression:
+    unit_sql = unit.upper()
+    if amount != 1:
+        unit_sql = f"{unit_sql}S"
+    return parse_one(f"INTERVAL '{amount} {unit_sql}'", read="postgres")
+
+
+def _shift_datetime(
+    *,
+    base: exp.Expression,
+    amount: int,
+    unit: str,
+    dialect: str,
+) -> exp.Expression:
+    dialect_key = (dialect or "tsql").lower()
+    if dialect_key in {"duckdb", "postgres", "postgresql"}:
+        interval = _interval_literal(abs(amount), unit)
+        if amount < 0:
+            return exp.Sub(this=base, expression=interval)
+        return exp.Add(this=base, expression=interval)
+
+    return exp.DateAdd(
+        this=base,
+        expression=exp.Literal.number(amount),
+        unit=exp.Var(this=unit),
+    )
+
 def parse_relative_date_range(
     range_str: str, dialect: str = "tsql"
 ) -> Optional[Tuple[exp.Expression, exp.Expression]]:
@@ -157,18 +185,69 @@ def parse_relative_date_range(
     match = _THIS_LAST_NEXT_RE.match(normalized)
     if match:
         direction, unit = match.groups()
+        if dialect_key in {"duckdb", "postgres", "postgresql"}:
+            start_of_period = date_trunc(unit, current_date, dialect=dialect)
+            if direction == "this":
+                return start_of_period, _shift_datetime(
+                    base=start_of_period,
+                    amount=1,
+                    unit=unit,
+                    dialect=dialect,
+                )
+            if direction == "last":
+                return (
+                    _shift_datetime(
+                        base=start_of_period,
+                        amount=-1,
+                        unit=unit,
+                        dialect=dialect,
+                    ),
+                    start_of_period,
+                )
+            next_start = _shift_datetime(
+                base=start_of_period,
+                amount=1,
+                unit=unit,
+                dialect=dialect,
+            )
+            return (
+                next_start,
+                _shift_datetime(
+                    base=start_of_period,
+                    amount=2,
+                    unit=unit,
+                    dialect=dialect,
+                ),
+            )
+
         unit_var = exp.Var(this=unit)
         base = exp.DateDiff(this=current_ts, expression=exp.Literal.number(0), unit=unit_var)
         if direction == "this":
             start = exp.DateAdd(this=exp.Literal.number(0), expression=base, unit=unit_var)
-            end = exp.DateAdd(this=exp.Literal.number(0), expression=exp.Add(this=base, expression=exp.Literal.number(1)), unit=unit_var)
+            end = exp.DateAdd(
+                this=exp.Literal.number(0),
+                expression=exp.Add(this=base, expression=exp.Literal.number(1)),
+                unit=unit_var,
+            )
             return start, end
         if direction == "last":
-            start = exp.DateAdd(this=exp.Literal.number(0), expression=exp.Sub(this=base, expression=exp.Literal.number(1)), unit=unit_var)
+            start = exp.DateAdd(
+                this=exp.Literal.number(0),
+                expression=exp.Sub(this=base, expression=exp.Literal.number(1)),
+                unit=unit_var,
+            )
             end = exp.DateAdd(this=exp.Literal.number(0), expression=base, unit=unit_var)
             return start, end
-        start = exp.DateAdd(this=exp.Literal.number(0), expression=exp.Add(this=base, expression=exp.Literal.number(1)), unit=unit_var)
-        end = exp.DateAdd(this=exp.Literal.number(0), expression=exp.Add(this=base, expression=exp.Literal.number(2)), unit=unit_var)
+        start = exp.DateAdd(
+            this=exp.Literal.number(0),
+            expression=exp.Add(this=base, expression=exp.Literal.number(1)),
+            unit=unit_var,
+        )
+        end = exp.DateAdd(
+            this=exp.Literal.number(0),
+            expression=exp.Add(this=base, expression=exp.Literal.number(2)),
+            unit=unit_var,
+        )
         return start, end
 
     return None

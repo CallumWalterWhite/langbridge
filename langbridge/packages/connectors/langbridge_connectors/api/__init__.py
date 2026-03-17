@@ -63,11 +63,6 @@ from .oracle import *  # required for subclass registration
 from .sqlite import *  # required for subclass registration
 from .faiss import *  # required for subclass registration
 from .qdrant import *  # required for subclass registration
-from .shopify import *  # required for plugin registration
-from .stripe import *  # required for plugin registration
-from .hubspot import *  # required for plugin registration
-from .google_analytics import *  # required for plugin registration
-from .salesforce import *  # required for plugin registration
 
 __all__ = [
     "BaseConnectorConfig",

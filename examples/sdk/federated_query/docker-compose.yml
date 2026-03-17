@@ -1,0 +1,40 @@
+services:
+  sales-db:
+    image: postgres:16-alpine
+    container_name: federated-sales-db
+    environment:
+      POSTGRES_USER: reporting_user
+      POSTGRES_PASSWORD: securepassword
+      POSTGRES_DB: sales_reporting
+    volumes:
+      - sales_pg_data:/var/lib/postgresql/data
+      - ./seeds/sales:/docker-entrypoint-initdb.d:ro
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U reporting_user -d sales_reporting"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  crm-db:
+    image: postgres:16-alpine
+    container_name: federated-crm-db
+    environment:
+      POSTGRES_USER: reporting_user
+      POSTGRES_PASSWORD: securepassword
+      POSTGRES_DB: crm_reporting
+    volumes:
+      - crm_pg_data:/var/lib/postgresql/data
+      - ./seeds/crm:/docker-entrypoint-initdb.d:ro
+    ports:
+      - "5433:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U reporting_user -d crm_reporting"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+volumes:
+  sales_pg_data:
+  crm_pg_data:
