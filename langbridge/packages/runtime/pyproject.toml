@@ -16,6 +16,8 @@ dependencies = [
   "langbridge-semantic==0.1.0",
   "langbridge-orchestrator==0.1.0",
   "langbridge-messaging==0.1.0",
+  "fastapi[standard]==0.117.1",
+  "uvicorn[standard]==0.32.0",
   "duckdb==1.2.1",
   "pyarrow==11.0.0",
   "faiss-cpu==1.8.0",

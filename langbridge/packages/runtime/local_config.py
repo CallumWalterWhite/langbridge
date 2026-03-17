@@ -12,6 +12,9 @@ from typing import Any, Mapping
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from langbridge.packages.common.langbridge_common.db.connector_sync import (
+    ConnectorSyncStateRecord,
+)
 from langbridge.packages.common.langbridge_common.contracts.semantic import (
     SemanticModelRecordResponse,
 )
@@ -23,6 +26,9 @@ from langbridge.packages.common.langbridge_common.db.dataset import (
     DatasetColumnRecord,
     DatasetPolicyRecord,
     DatasetRecord,
+)
+from langbridge.packages.common.langbridge_common.utils.connector_runtime import (
+    build_connector_runtime_payload,
 )
 from langbridge.packages.common.langbridge_common.db.threads import (
     ConversationMemoryItem,
@@ -38,6 +44,7 @@ from langbridge.packages.runtime.models import (
     ConnectionMetadata,
     ConnectionPolicy,
     ConnectorMetadata,
+    ConnectorSyncState,
     CreateAgentJobRequest,
     CreateSqlJobRequest,
     DatasetMetadata,
@@ -49,18 +56,27 @@ from langbridge.packages.runtime.models import (
 )
 from langbridge.packages.runtime.providers import (
     MemoryConnectorProvider,
-    MemoryDatasetProvider,
     MemorySemanticModelProvider,
-    MemorySyncStateProvider,
+    RepositoryDatasetMetadataProvider,
+    RepositorySyncStateProvider,
     SecretRegistryCredentialProvider,
 )
 from langbridge.packages.runtime.security import SecretProviderRegistry
 from langbridge.packages.runtime.services.agent_execution_service import AgentExecutionService
 from langbridge.packages.runtime.services.dataset_query_service import DatasetQueryService
+from langbridge.packages.runtime.services.dataset_sync_service import ConnectorSyncRuntime
 from langbridge.packages.runtime.services.runtime_host import (
     RuntimeHost,
     RuntimeProviders,
     RuntimeServices,
+)
+from langbridge.packages.connectors.langbridge_connectors.api import (
+    ApiConnectorFactory,
+    ApiResource,
+    ConnectorFamily,
+    ConnectorRuntimeType,
+    get_connector_config_factory,
+    get_connector_plugin,
 )
 from langbridge.packages.runtime.services.semantic_query_execution_service import (
     SemanticQueryExecutionService,
@@ -227,6 +243,10 @@ class _InMemoryDatasetRepository:
     def __init__(self, datasets: dict[uuid.UUID, DatasetRecord]) -> None:
         self._datasets = dict(datasets)
 
+    def add(self, instance: DatasetRecord) -> DatasetRecord:
+        self._datasets[instance.id] = instance
+        return instance
+
     async def get_by_id(self, id_: object) -> DatasetRecord | None:
         return self._datasets.get(id_)
 
@@ -382,6 +402,74 @@ class _InMemoryDatasetColumnRepository:
     async def list_for_dataset(self, *, dataset_id: uuid.UUID) -> list[DatasetColumnRecord]:
         return list(self._columns_by_dataset.get(dataset_id, []))
 
+    async def delete_for_dataset(self, *, dataset_id: uuid.UUID) -> None:
+        self._columns_by_dataset[dataset_id] = []
+
+    def add(self, instance: DatasetColumnRecord) -> DatasetColumnRecord:
+        self._columns_by_dataset.setdefault(instance.dataset_id, []).append(instance)
+        self._columns_by_dataset[instance.dataset_id].sort(
+            key=lambda column: int(column.ordinal_position or 0)
+        )
+        return instance
+
+
+class _InMemoryDatasetPolicyRepository:
+    def __init__(self, policies: dict[uuid.UUID, DatasetPolicyRecord] | None = None) -> None:
+        self._policies_by_dataset = dict(policies or {})
+
+    async def get_for_dataset(self, *, dataset_id: uuid.UUID) -> DatasetPolicyRecord | None:
+        return self._policies_by_dataset.get(dataset_id)
+
+    def add(self, instance: DatasetPolicyRecord) -> DatasetPolicyRecord:
+        self._policies_by_dataset[instance.dataset_id] = instance
+        return instance
+
+
+class _InMemoryConnectorSyncStateRepository:
+    def __init__(
+        self,
+        states: dict[tuple[uuid.UUID, uuid.UUID, str], ConnectorSyncStateRecord] | None = None,
+    ) -> None:
+        self._states = dict(states or {})
+
+    async def list_for_connection(
+        self,
+        *,
+        workspace_id: uuid.UUID,
+        connection_id: uuid.UUID,
+    ) -> list[ConnectorSyncStateRecord]:
+        items = [
+            state
+            for (state_workspace_id, state_connection_id, _), state in self._states.items()
+            if state_workspace_id == workspace_id and state_connection_id == connection_id
+        ]
+        items.sort(
+            key=lambda state: (
+                str(state.resource_name or "").lower(),
+                state.updated_at or datetime.min.replace(tzinfo=timezone.utc),
+            ),
+            reverse=False,
+        )
+        return items
+
+    async def get_for_resource(
+        self,
+        *,
+        workspace_id: uuid.UUID,
+        connection_id: uuid.UUID,
+        resource_name: str,
+    ) -> ConnectorSyncStateRecord | None:
+        return self._states.get((workspace_id, connection_id, str(resource_name or "").strip()))
+
+    def add(self, instance: ConnectorSyncStateRecord) -> ConnectorSyncStateRecord:
+        key = (
+            instance.workspace_id,
+            instance.connection_id,
+            str(instance.resource_name or "").strip(),
+        )
+        self._states[key] = instance
+        return instance
+
 
 class _InMemoryAgentRepository:
     def __init__(self, agents: dict[uuid.UUID, AgentDefinition]) -> None:
@@ -525,6 +613,11 @@ class _ConfiguredLocalRuntimeResources:
     agents: dict[str, LocalRuntimeAgentRecord]
     default_agent: LocalRuntimeAgentRecord | None
     default_semantic_model_name: str | None
+    dataset_repository: _InMemoryDatasetRepository
+    dataset_column_repository: _InMemoryDatasetColumnRepository
+    dataset_policy_repository: _InMemoryDatasetPolicyRepository
+    connector_sync_state_repository: _InMemoryConnectorSyncStateRepository
+    secret_provider_registry: SecretProviderRegistry
     thread_repository: _InMemoryThreadRepository
     thread_message_repository: _InMemoryThreadMessageRepository
 
@@ -625,6 +718,11 @@ class ConfiguredLocalRuntimeHost(RuntimeHost):
         agents: dict[str, LocalRuntimeAgentRecord],
         default_agent: LocalRuntimeAgentRecord | None,
         default_semantic_model_name: str | None,
+        dataset_repository: _InMemoryDatasetRepository,
+        dataset_column_repository: _InMemoryDatasetColumnRepository,
+        dataset_policy_repository: _InMemoryDatasetPolicyRepository,
+        connector_sync_state_repository: _InMemoryConnectorSyncStateRepository,
+        secret_provider_registry: SecretProviderRegistry,
         thread_repository: _InMemoryThreadRepository,
         thread_message_repository: _InMemoryThreadMessageRepository,
     ) -> None:
@@ -637,6 +735,12 @@ class ConfiguredLocalRuntimeHost(RuntimeHost):
         self._agents = agents
         self._default_agent = default_agent
         self._default_semantic_model_name = default_semantic_model_name
+        self._dataset_repository = dataset_repository
+        self._dataset_column_repository = dataset_column_repository
+        self._dataset_policy_repository = dataset_policy_repository
+        self._connector_sync_state_repository = connector_sync_state_repository
+        self._secret_provider_registry = secret_provider_registry
+        self._api_connector_factory = ApiConnectorFactory()
         self._thread_repository = thread_repository
         self._thread_message_repository = thread_message_repository
         self.context = context
@@ -653,17 +757,34 @@ class ConfiguredLocalRuntimeHost(RuntimeHost):
         return getattr(self._runtime_host, name)
 
     async def list_datasets(self) -> list[dict[str, Any]]:
-        return [
-            {
-                "id": record.id,
-                "name": record.name,
-                "label": record.label,
-                "description": record.description,
-                "connector": record.connector_name,
-                "semantic_model": record.semantic_model_name,
-            }
-            for record in self._datasets.values()
-        ]
+        records = await self._dataset_repository.list_for_workspace(
+            workspace_id=self.context.workspace_id,
+            project_id=None,
+            limit=1000,
+            offset=0,
+        )
+        items: list[dict[str, Any]] = []
+        for dataset in records:
+            configured_record = self._datasets_by_id.get(dataset.id)
+            connector_name = None
+            if dataset.connection_id is not None:
+                connector = next(
+                    (candidate for candidate in self._connectors.values() if candidate.id == dataset.connection_id),
+                    None,
+                )
+                connector_name = connector.name if connector is not None else None
+            items.append(
+                {
+                    "id": dataset.id,
+                    "name": dataset.name,
+                    "label": configured_record.label if configured_record is not None else dataset.name,
+                    "description": dataset.description,
+                    "connector": connector_name,
+                    "semantic_model": configured_record.semantic_model_name if configured_record is not None else None,
+                    "managed": "managed" in {str(tag).strip().lower() for tag in (dataset.tags_json or [])},
+                }
+            )
+        return items
 
     async def query_dataset(self, *, request) -> dict[str, Any]:
         payload = await self._runtime_host.query_dataset(request=request)
@@ -852,6 +973,200 @@ class ConfiguredLocalRuntimeHost(RuntimeHost):
             "result": response.get("result"),
             "visualization": response.get("visualization"),
             "error": response.get("error"),
+        }
+
+    async def list_connectors(self) -> list[dict[str, Any]]:
+        items: list[dict[str, Any]] = []
+        for connector in self._connectors.values():
+            plugin = self._get_connector_plugin(connector)
+            items.append(
+                {
+                    "id": connector.id,
+                    "name": connector.name,
+                    "description": connector.description,
+                    "connector_type": connector.connector_type,
+                    "supports_sync": self._connector_supports_sync(connector),
+                    "supported_resources": list(plugin.supported_resources) if plugin is not None else [],
+                    "sync_strategy": (
+                        plugin.sync_strategy.value
+                        if plugin is not None and plugin.sync_strategy is not None
+                        else None
+                    ),
+                    "managed": bool(connector.is_managed),
+                }
+            )
+        return items
+
+    async def list_sync_resources(
+        self,
+        *,
+        connector_name: str,
+    ) -> list[dict[str, Any]]:
+        connector = self._resolve_connector(connector_name)
+        api_connector = self._build_api_connector(connector)
+        await api_connector.test_connection()
+
+        states = await self._connector_sync_state_repository.list_for_connection(
+            workspace_id=self.context.workspace_id,
+            connection_id=connector.id,
+        )
+        states_by_resource = {
+            str(state.resource_name or "").strip(): state
+            for state in states
+        }
+        datasets = await self._dataset_repository.list_for_connection(
+            workspace_id=self.context.workspace_id,
+            connection_id=connector.id,
+            limit=1000,
+        )
+        dataset_bindings = self._datasets_for_resources(datasets)
+
+        items: list[dict[str, Any]] = []
+        for resource in await api_connector.discover_resources():
+            state = states_by_resource.get(resource.name)
+            bound_datasets = dataset_bindings.get(resource.name, [])
+            items.append(
+                {
+                    "name": resource.name,
+                    "label": resource.label,
+                    "primary_key": resource.primary_key,
+                    "parent_resource": resource.parent_resource,
+                    "cursor_field": resource.cursor_field,
+                    "incremental_cursor_field": resource.incremental_cursor_field,
+                    "supports_incremental": bool(resource.supports_incremental),
+                    "default_sync_mode": str(resource.default_sync_mode or "FULL_REFRESH"),
+                    "status": str(state.status) if state is not None else "never_synced",
+                    "last_cursor": state.last_cursor if state is not None else None,
+                    "last_sync_at": state.last_sync_at if state is not None else None,
+                    "dataset_ids": [dataset.id for dataset in bound_datasets],
+                    "dataset_names": [dataset.name for dataset in bound_datasets],
+                    "records_synced": int(state.records_synced or 0) if state is not None else 0,
+                    "bytes_synced": state.bytes_synced if state is not None else None,
+                }
+            )
+        return items
+
+    async def list_sync_states(
+        self,
+        *,
+        connector_name: str,
+    ) -> list[dict[str, Any]]:
+        connector = self._resolve_connector(connector_name)
+        states = await self._connector_sync_state_repository.list_for_connection(
+            workspace_id=self.context.workspace_id,
+            connection_id=connector.id,
+        )
+        datasets = await self._dataset_repository.list_for_connection(
+            workspace_id=self.context.workspace_id,
+            connection_id=connector.id,
+            limit=1000,
+        )
+        dataset_bindings = self._datasets_for_resources(datasets)
+        return [
+            {
+                "id": state.id,
+                "workspace_id": state.workspace_id,
+                "connection_id": state.connection_id,
+                "connector_name": connector.name,
+                "connector_type": state.connector_type,
+                "resource_name": state.resource_name,
+                "sync_mode": state.sync_mode,
+                "last_cursor": state.last_cursor,
+                "last_sync_at": state.last_sync_at,
+                "state": dict(state.state_json or {}),
+                "status": state.status,
+                "error_message": state.error_message,
+                "records_synced": int(state.records_synced or 0),
+                "bytes_synced": state.bytes_synced,
+                "dataset_ids": [dataset.id for dataset in dataset_bindings.get(state.resource_name, [])],
+                "dataset_names": [dataset.name for dataset in dataset_bindings.get(state.resource_name, [])],
+                "created_at": state.created_at,
+                "updated_at": state.updated_at,
+            }
+            for state in states
+        ]
+
+    async def sync_connector_resources(
+        self,
+        *,
+        connector_name: str,
+        resources: list[str],
+        sync_mode: str = "INCREMENTAL",
+        force_full_refresh: bool = False,
+    ) -> dict[str, Any]:
+        if self.services.dataset_sync is None:
+            raise RuntimeError("Dataset sync is not configured for this runtime host.")
+
+        connector = self._resolve_connector(connector_name)
+        connector_type = self._resolve_connector_runtime_type(connector)
+        api_connector = self._build_api_connector(connector)
+        await api_connector.test_connection()
+
+        discovered_resources = {
+            resource.name: resource
+            for resource in await api_connector.discover_resources()
+        }
+        normalized_resources = [
+            str(resource or "").strip()
+            for resource in (resources or [])
+            if str(resource or "").strip()
+        ]
+        if not normalized_resources:
+            raise ValueError("At least one resource must be supplied for connector sync.")
+        unknown_resources = [
+            resource_name
+            for resource_name in normalized_resources
+            if resource_name not in discovered_resources
+        ]
+        if unknown_resources:
+            raise ValueError(
+                f"Unsupported resource(s) requested for sync: {', '.join(sorted(unknown_resources))}."
+            )
+
+        normalized_sync_mode = self._normalize_sync_mode(sync_mode)
+        summaries: list[dict[str, Any]] = []
+        active_state: ConnectorSyncStateRecord | None = None
+        try:
+            for resource_name in normalized_resources:
+                active_state = await self.services.dataset_sync.get_or_create_state(
+                    workspace_id=self.context.workspace_id,
+                    connection_id=connector.id,
+                    connector_type=connector_type,
+                    resource_name=resource_name,
+                    sync_mode=normalized_sync_mode,
+                )
+                active_state.status = "running"
+                active_state.sync_mode = normalized_sync_mode
+                active_state.error_message = None
+                active_state.updated_at = datetime.now(timezone.utc)
+                summary = await self._runtime_host.sync_dataset(
+                    workspace_id=self.context.workspace_id,
+                    project_id=None,
+                    user_id=self.context.user_id,
+                    connection_id=connector.id,
+                    connector_record=connector,
+                    connector_type=connector_type,
+                    resource=discovered_resources[resource_name],
+                    api_connector=api_connector,
+                    state=active_state,
+                    sync_mode=("FULL_REFRESH" if force_full_refresh else normalized_sync_mode),
+                )
+                summaries.append(summary)
+        except Exception as exc:
+            if active_state is not None:
+                await self.services.dataset_sync.mark_failed(
+                    state=active_state,
+                    error_message=str(exc),
+                )
+            raise
+
+        return {
+            "status": "succeeded",
+            "connector_id": connector.id,
+            "connector_name": connector.name,
+            "sync_mode": "FULL_REFRESH" if force_full_refresh else normalized_sync_mode,
+            "resources": summaries,
+            "summary": f"Connector sync completed for {len(summaries)} resource(s).",
         }
 
     def _resolve_connector(self, connection_name: str | None) -> ConnectorMetadata:
@@ -1093,7 +1408,76 @@ class ConfiguredLocalRuntimeHost(RuntimeHost):
             record = self._datasets_by_id.get(dataset_uuid)
             if record is not None:
                 normalized["dataset_name"] = record.name
+            else:
+                dataset = self._dataset_repository._datasets.get(dataset_uuid)
+                if dataset is not None:
+                    normalized["dataset_name"] = dataset.name
         return normalized
+
+    def _get_connector_plugin(self, connector: ConnectorMetadata):
+        connector_type = self._resolve_connector_runtime_type(connector)
+        return get_connector_plugin(connector_type)
+
+    def _connector_supports_sync(self, connector: ConnectorMetadata) -> bool:
+        plugin = self._get_connector_plugin(connector)
+        return bool(
+            plugin is not None
+            and plugin.connector_family == ConnectorFamily.API
+            and plugin.api_connector_class is not None
+        )
+
+    def _resolve_connector_runtime_type(self, connector: ConnectorMetadata) -> ConnectorRuntimeType:
+        raw_type = str(connector.connector_type or "").strip().upper()
+        if not raw_type:
+            raise ValueError(f"Connector '{connector.name}' does not define a connector_type.")
+        return ConnectorRuntimeType(raw_type)
+
+    def _build_api_connector(self, connector: ConnectorMetadata):
+        if not self._connector_supports_sync(connector):
+            raise ValueError(f"Connector '{connector.name}' does not support runtime sync.")
+        connector_type = self._resolve_connector_runtime_type(connector)
+        runtime_payload = build_connector_runtime_payload(
+            config_json=connector.config,
+            connection_metadata=(
+                connector.connection_metadata.model_dump(mode="json")
+                if connector.connection_metadata is not None
+                else None
+            ),
+            secret_references={
+                key: value.model_dump(mode="json")
+                for key, value in (connector.secret_references or {}).items()
+            },
+            secret_resolver=self._secret_provider_registry.resolve,
+        )
+        config_factory = get_connector_config_factory(connector_type)
+        return self._api_connector_factory.create_api_connector(
+            connector_type,
+            config_factory.create(runtime_payload.get("config") or {}),
+            logger=logging.getLogger("langbridge.runtime.sync.local"),
+        )
+
+    @staticmethod
+    def _normalize_sync_mode(value: str | None) -> str:
+        normalized = str(value or "INCREMENTAL").strip().upper()
+        if normalized not in {"INCREMENTAL", "FULL_REFRESH"}:
+            raise ValueError("sync_mode must be either INCREMENTAL or FULL_REFRESH.")
+        return normalized
+
+    @staticmethod
+    def _datasets_for_resources(
+        datasets: list[DatasetRecord],
+    ) -> dict[str, list[DatasetRecord]]:
+        bindings: dict[str, list[DatasetRecord]] = {}
+        for dataset in datasets:
+            file_config = dict(dataset.file_config_json or {})
+            sync_meta = file_config.get("connector_sync")
+            if not isinstance(sync_meta, Mapping):
+                continue
+            resource_name = str(sync_meta.get("resource_name") or "").strip()
+            if not resource_name:
+                continue
+            bindings.setdefault(resource_name, []).append(dataset)
+        return bindings
 
     async def _infer_time_dimensions(
         self,
@@ -1226,6 +1610,11 @@ class ConfiguredLocalRuntimeHostFactory:
             agents=resources.agents,
             default_agent=resources.default_agent,
             default_semantic_model_name=resources.default_semantic_model_name,
+            dataset_repository=resources.dataset_repository,
+            dataset_column_repository=resources.dataset_column_repository,
+            dataset_policy_repository=resources.dataset_policy_repository,
+            connector_sync_state_repository=resources.connector_sync_state_repository,
+            secret_provider_registry=resources.secret_provider_registry,
             thread_repository=resources.thread_repository,
             thread_message_repository=resources.thread_message_repository,
         )
@@ -1271,6 +1660,19 @@ class ConfiguredLocalRuntimeHostFactory:
             semantic_models=semantic_models,
             llm_connections=llm_connections,
         )
+        (
+            dataset_repository_rows,
+            dataset_columns,
+            dataset_policies,
+        ) = ConfiguredLocalRuntimeHostFactory._build_dataset_repository_records(
+            datasets=dataset_models,
+            semantic_models=semantic_models,
+        )
+        dataset_repository = _InMemoryDatasetRepository(dataset_repository_rows)
+        dataset_column_repository = _InMemoryDatasetColumnRepository(dataset_columns)
+        dataset_policy_repository = _InMemoryDatasetPolicyRepository(dataset_policies)
+        connector_sync_state_repository = _InMemoryConnectorSyncStateRepository()
+        secret_provider_registry = SecretProviderRegistry()
         runtime_host, thread_repository, thread_message_repository = ConfiguredLocalRuntimeHostFactory._build_runtime_host(
             context=context,
             connectors=connector_models,
@@ -1278,6 +1680,11 @@ class ConfiguredLocalRuntimeHostFactory:
             semantic_models=semantic_models,
             llm_connections=llm_connections,
             agents=agents,
+            dataset_repository=dataset_repository,
+            dataset_column_repository=dataset_column_repository,
+            dataset_policy_repository=dataset_policy_repository,
+            connector_sync_state_repository=connector_sync_state_repository,
+            secret_provider_registry=secret_provider_registry,
         )
         default_agent = next((agent for agent in agents.values() if agent.config.default), None)
         default_semantic_model_name = next(
@@ -1294,6 +1701,11 @@ class ConfiguredLocalRuntimeHostFactory:
             agents=agents,
             default_agent=default_agent,
             default_semantic_model_name=default_semantic_model_name,
+            dataset_repository=dataset_repository,
+            dataset_column_repository=dataset_column_repository,
+            dataset_policy_repository=dataset_policy_repository,
+            connector_sync_state_repository=connector_sync_state_repository,
+            secret_provider_registry=secret_provider_registry,
             thread_repository=thread_repository,
             thread_message_repository=thread_message_repository,
         )
@@ -1677,9 +2089,14 @@ class ConfiguredLocalRuntimeHostFactory:
         *,
         datasets: dict[str, DatasetMetadata],
         semantic_models: dict[str, LocalRuntimeSemanticModelRecord],
-    ) -> tuple[dict[uuid.UUID, DatasetRecord], dict[uuid.UUID, list[DatasetColumnRecord]]]:
+    ) -> tuple[
+        dict[uuid.UUID, DatasetRecord],
+        dict[uuid.UUID, list[DatasetColumnRecord]],
+        dict[uuid.UUID, DatasetPolicyRecord],
+    ]:
         dataset_records: dict[uuid.UUID, DatasetRecord] = {}
         columns_by_dataset: dict[uuid.UUID, list[DatasetColumnRecord]] = {}
+        policies_by_dataset: dict[uuid.UUID, DatasetPolicyRecord] = {}
 
         for dataset in datasets.values():
             record = DatasetRecord(
@@ -1733,42 +2150,49 @@ class ConfiguredLocalRuntimeHostFactory:
                 updated_at=dataset.updated_at,
             )
             record.policy = policy_record
+            policies_by_dataset[dataset.id] = policy_record
 
             seen_columns: set[str] = set()
             dataset_columns: list[DatasetColumnRecord] = []
             ordinal = 0
-            for semantic_model in semantic_models.values():
-                semantic_dataset = semantic_model.semantic_model.datasets.get(dataset.name)
-                if semantic_dataset is None:
-                    continue
-                for field in list(semantic_dataset.dimensions or []) + list(semantic_dataset.measures or []):
-                    field_name = str(field.name).strip()
-                    if not field_name or field_name.lower() in seen_columns:
+            if str(dataset.source_kind or "").lower() != "file":
+                for semantic_model in semantic_models.values():
+                    semantic_dataset = semantic_model.semantic_model.datasets.get(dataset.name)
+                    if semantic_dataset is None:
                         continue
-                    seen_columns.add(field_name.lower())
-                    ordinal += 1
-                    dataset_columns.append(
-                        DatasetColumnRecord(
-                            id=_stable_uuid("dataset-column", f"{dataset.id}:{field_name}"),
-                            dataset_id=dataset.id,
-                            workspace_id=dataset.workspace_id,
-                            name=field_name,
-                            data_type=str(getattr(field, "type", None) or "string"),
-                            nullable=True,
-                            ordinal_position=ordinal,
-                            description=getattr(field, "description", None),
-                            is_allowed=True,
-                            is_computed=False,
-                            expression=getattr(field, "expression", None),
-                            created_at=dataset.created_at,
-                            updated_at=dataset.updated_at,
+                    for field in list(semantic_dataset.dimensions or []) + list(semantic_dataset.measures or []):
+                        field_name = str(field.name).strip()
+                        field_expression = str(getattr(field, "expression", None) or "").strip()
+                        if field_expression and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", field_expression):
+                            column_name = field_expression
+                        else:
+                            column_name = field_name
+                        if not column_name or column_name.lower() in seen_columns:
+                            continue
+                        seen_columns.add(column_name.lower())
+                        ordinal += 1
+                        dataset_columns.append(
+                            DatasetColumnRecord(
+                                id=_stable_uuid("dataset-column", f"{dataset.id}:{column_name}"),
+                                dataset_id=dataset.id,
+                                workspace_id=dataset.workspace_id,
+                                name=column_name,
+                                data_type=str(getattr(field, "type", None) or "string"),
+                                nullable=True,
+                                ordinal_position=ordinal,
+                                description=getattr(field, "description", None),
+                                is_allowed=True,
+                                is_computed=False,
+                                expression=field_expression or None,
+                                created_at=dataset.created_at,
+                                updated_at=dataset.updated_at,
+                            )
                         )
-                    )
             record.columns = dataset_columns
             dataset_records[dataset.id] = record
             columns_by_dataset[dataset.id] = dataset_columns
 
-        return dataset_records, columns_by_dataset
+        return dataset_records, columns_by_dataset, policies_by_dataset
 
     @staticmethod
     def _build_semantic_model_store_records(
@@ -1856,13 +2280,19 @@ class ConfiguredLocalRuntimeHostFactory:
         semantic_models: dict[str, LocalRuntimeSemanticModelRecord],
         llm_connections: dict[str, LocalRuntimeLLMConnectionRecord],
         agents: dict[str, LocalRuntimeAgentRecord],
+        dataset_repository: _InMemoryDatasetRepository,
+        dataset_column_repository: _InMemoryDatasetColumnRepository,
+        dataset_policy_repository: _InMemoryDatasetPolicyRepository,
+        connector_sync_state_repository: _InMemoryConnectorSyncStateRepository,
+        secret_provider_registry: SecretProviderRegistry,
     ) -> tuple[RuntimeHost, _InMemoryThreadRepository, _InMemoryThreadMessageRepository]:
-        secret_provider_registry = SecretProviderRegistry()
         connector_provider = MemoryConnectorProvider(
             {connector.id: connector for connector in connectors.values()}
         )
-        dataset_provider = MemoryDatasetProvider(
-            {dataset.id: dataset for dataset in datasets.values()}
+        dataset_provider = RepositoryDatasetMetadataProvider(
+            dataset_repository=dataset_repository,
+            dataset_column_repository=dataset_column_repository,
+            dataset_policy_repository=dataset_policy_repository,
         )
         semantic_model_provider = MemorySemanticModelProvider(
             {
@@ -1881,14 +2311,6 @@ class ConfiguredLocalRuntimeHostFactory:
                 for record in semantic_models.values()
             }
         )
-        dataset_repository_rows, dataset_columns = (
-            ConfiguredLocalRuntimeHostFactory._build_dataset_repository_records(
-                datasets=datasets,
-                semantic_models=semantic_models,
-            )
-        )
-        dataset_repository = _InMemoryDatasetRepository(dataset_repository_rows)
-        dataset_column_repository = _InMemoryDatasetColumnRepository(dataset_columns)
         semantic_model_store = _InMemorySemanticModelStore(
             ConfiguredLocalRuntimeHostFactory._build_semantic_model_store_records(
                 semantic_models=semantic_models,
@@ -1908,7 +2330,9 @@ class ConfiguredLocalRuntimeHostFactory:
             {record.id: record for record in llm_connections.values()},
             registry=secret_provider_registry,
         )
-        sync_state_provider = MemorySyncStateProvider()
+        sync_state_provider = RepositorySyncStateProvider(
+            connector_sync_state_repository=connector_sync_state_repository
+        )
         credential_provider = SecretRegistryCredentialProvider(registry=secret_provider_registry)
         federated_query_tool = FederatedQueryTool(
             connector_provider=connector_provider,
@@ -1918,7 +2342,7 @@ class ConfiguredLocalRuntimeHostFactory:
         semantic_query_service = (
             SemanticQueryExecutionService(
                 semantic_model_repository=None,
-                dataset_repository=None,
+                dataset_repository=dataset_repository,
                 federated_query_tool=federated_query_tool,
                 logger=logging.getLogger("langbridge.runtime.semantic.local"),
                 dataset_provider=dataset_provider,
@@ -1928,21 +2352,27 @@ class ConfiguredLocalRuntimeHostFactory:
             else None
         )
         dataset_query_service = DatasetQueryService(
-            dataset_repository=None,
-            dataset_column_repository=None,
-            dataset_policy_repository=None,
+            dataset_repository=dataset_repository,
+            dataset_column_repository=dataset_column_repository,
+            dataset_policy_repository=dataset_policy_repository,
             federated_query_tool=federated_query_tool,
             dataset_provider=dataset_provider,
         )
         sql_query_service = SqlQueryService(
             sql_job_result_artifact_repository=None,
             connector_repository=None,
-            dataset_repository=None,
+            dataset_repository=dataset_repository,
             connector_provider=connector_provider,
             dataset_provider=dataset_provider,
             credential_provider=credential_provider,
             secret_provider_registry=secret_provider_registry,
             federated_query_tool=federated_query_tool,
+        )
+        dataset_sync_service = ConnectorSyncRuntime(
+            connector_sync_state_repository=connector_sync_state_repository,
+            dataset_repository=dataset_repository,
+            dataset_column_repository=dataset_column_repository,
+            dataset_policy_repository=dataset_policy_repository,
         )
         agent_execution_service = (
             AgentExecutionService(
@@ -1973,6 +2403,7 @@ class ConfiguredLocalRuntimeHostFactory:
                 semantic_query=semantic_query_service,
                 sql_query=sql_query_service,
                 dataset_query=dataset_query_service,
+                dataset_sync=dataset_sync_service,
                 agent_execution=agent_execution_service,
             ),
         ), thread_repository, thread_message_repository

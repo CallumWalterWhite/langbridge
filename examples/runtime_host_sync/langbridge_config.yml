@@ -1,0 +1,21 @@
+version: 1
+
+runtime:
+  mode: local
+  metadata_store:
+    type: sqlite
+    path: .langbridge/metadata.db
+  execution:
+    engine: duckdb
+    duckdb:
+      path: .langbridge/duckdb/runtime.duckdb
+      temp_directory: .langbridge/tmp
+      threads: 4
+
+connectors:
+  - name: billing_demo
+    type: stripe
+    description: Self-hosted Stripe sync demo backed by the local mock API.
+    connection:
+      api_key: sk_test_local_demo
+      api_base_url: http://mock-stripe:12111

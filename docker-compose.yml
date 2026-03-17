@@ -1,4 +1,29 @@
 services:
+  runtime-host:
+    profiles:
+      - host
+    build:
+      context: .
+      dockerfile: langbridge/Dockerfile.host
+    command:
+      - serve
+      - --config
+      - /config/langbridge_config.yml
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8000"
+    environment:
+      OTEL_SDK_DISABLED: "true"
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./examples/sdk/semantic_query/langbridge_config.yml:/config/langbridge_config.yml:ro
+      - ./examples/sdk/semantic_query/example.db:/config/example.db
+      - runtime_host_state:/config/.langbridge
+    restart: unless-stopped
+
   worker:
     build:
       context: .
@@ -78,6 +103,7 @@ services:
     restart: unless-stopped
 
 volumes:
+  runtime_host_state:
   pg_data:
   redis_data:
   qdrant_data:

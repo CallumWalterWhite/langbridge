@@ -5,6 +5,7 @@ import inspect
 import threading
 import time
 import uuid
+from datetime import datetime
 from typing import TYPE_CHECKING, Any, Protocol
 
 from pydantic import Field
@@ -45,6 +46,13 @@ from langbridge.packages.runtime.models import (
     CreateSqlJobRequest,
     SqlWorkbenchMode,
 )
+from langbridge.packages.runtime.hosting.api_models import (
+    RuntimeConnectorListResponse,
+    RuntimeDatasetListResponse,
+    RuntimeSyncResourceListResponse,
+    RuntimeSyncResponse,
+    RuntimeSyncStateListResponse,
+)
 
 
 _TERMINAL_STATUSES = {"succeeded", "failed", "cancelled"}
@@ -65,6 +73,7 @@ class DatasetSummary(_AwaitableModel):
     description: str | None = None
     connector: str | None = None
     semantic_model: str | None = None
+    managed: bool = False
 
 
 class DatasetListResult(_AwaitableModel):
@@ -117,6 +126,91 @@ class SqlQueryResult(_AwaitableModel):
     error: dict[str, Any] | None = None
     query: str | None = None
     generated_sql: str | None = None
+
+
+class ConnectorSummary(_AwaitableModel):
+    id: uuid.UUID | None = None
+    name: str
+    description: str | None = None
+    connector_type: str | None = None
+    supports_sync: bool = False
+    supported_resources: list[str] = Field(default_factory=list)
+    sync_strategy: str | None = None
+    managed: bool = False
+
+
+class ConnectorListResult(_AwaitableModel):
+    items: list[ConnectorSummary] = Field(default_factory=list)
+    total: int = 0
+
+
+class SyncResourceResult(_AwaitableModel):
+    name: str
+    label: str | None = None
+    primary_key: str | None = None
+    parent_resource: str | None = None
+    cursor_field: str | None = None
+    incremental_cursor_field: str | None = None
+    supports_incremental: bool = False
+    default_sync_mode: str | None = None
+    status: str | None = None
+    last_cursor: str | None = None
+    last_sync_at: datetime | None = None
+    dataset_ids: list[uuid.UUID] = Field(default_factory=list)
+    dataset_names: list[str] = Field(default_factory=list)
+    records_synced: int = 0
+    bytes_synced: int | None = None
+
+
+class SyncResourceListResult(_AwaitableModel):
+    items: list[SyncResourceResult] = Field(default_factory=list)
+    total: int = 0
+
+
+class SyncStateResult(_AwaitableModel):
+    id: uuid.UUID | None = None
+    workspace_id: uuid.UUID | None = None
+    connection_id: uuid.UUID | None = None
+    connector_name: str | None = None
+    connector_type: str | None = None
+    resource_name: str
+    sync_mode: str | None = None
+    last_cursor: str | None = None
+    last_sync_at: datetime | None = None
+    state: dict[str, Any] = Field(default_factory=dict)
+    status: str | None = None
+    error_message: str | None = None
+    records_synced: int = 0
+    bytes_synced: int | None = None
+    dataset_ids: list[uuid.UUID] = Field(default_factory=list)
+    dataset_names: list[str] = Field(default_factory=list)
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+
+
+class SyncStateListResult(_AwaitableModel):
+    items: list[SyncStateResult] = Field(default_factory=list)
+    total: int = 0
+
+
+class SyncRunResourceResult(_AwaitableModel):
+    resource_name: str
+    sync_mode: str | None = None
+    records_synced: int = 0
+    bytes_synced: int | None = None
+    last_cursor: str | None = None
+    dataset_ids: list[uuid.UUID] = Field(default_factory=list)
+    dataset_names: list[str] = Field(default_factory=list)
+
+
+class SyncRunResult(_AwaitableModel):
+    status: str
+    connector_id: uuid.UUID | None = None
+    connector_name: str | None = None
+    sync_mode: str | None = None
+    resources: list[SyncRunResourceResult] = Field(default_factory=list)
+    summary: str | None = None
+    error: str | None = None
 
 
 class AgentAskResult(_AwaitableModel):
@@ -215,6 +309,31 @@ class _SdkAdapter(Protocol):
         poll_interval_s: float,
     ) -> AgentAskResult: ...
 
+    def list_connectors(self) -> ConnectorListResult: ...
+
+    def list_sync_resources(
+        self,
+        *,
+        connector_name: str,
+    ) -> SyncResourceListResult: ...
+
+    def list_sync_states(
+        self,
+        *,
+        connector_name: str,
+    ) -> SyncStateListResult: ...
+
+    def sync_connector(
+        self,
+        *,
+        connector_name: str,
+        resource_names: list[str],
+        sync_mode: str,
+        force_full_refresh: bool,
+        timeout_s: float,
+        poll_interval_s: float,
+    ) -> SyncRunResult: ...
+
     def close(self) -> None: ...
 
 
@@ -241,6 +360,8 @@ def _run_awaitable(awaitable: Any) -> Any:
     if "exc" in error:
         raise error["exc"]
     return result.get("value")
+
+
 def _coalesce_uuid(value: uuid.UUID | None, fallback: uuid.UUID | None, field_name: str) -> uuid.UUID:
     resolved = value or fallback
     if resolved is None:
@@ -287,7 +408,7 @@ def _status_value(value: Any) -> str:
     return str(raw).strip().lower()
 
 
-class RemoteApiAdapter(_SdkAdapter):
+class _BaseHttpApiAdapter:
     def __init__(
         self,
         *,
@@ -309,6 +430,284 @@ class RemoteApiAdapter(_SdkAdapter):
         if self._owns_client:
             self._client.close()
 
+    def _request(
+        self,
+        method: str,
+        path: str,
+        *,
+        params: dict[str, Any] | None = None,
+        json: dict[str, Any] | None = None,
+    ) -> Any:
+        response = self._client.request(
+            method,
+            path,
+            params=params,
+            json=json,
+            headers=self._headers,
+        )
+        response.raise_for_status()
+        if not response.content:
+            return None
+        return response.json()
+
+    def _request_optional(
+        self,
+        method: str,
+        path: str,
+        *,
+        params: dict[str, Any] | None = None,
+        json: dict[str, Any] | None = None,
+    ) -> Any | None:
+        try:
+            return self._request(method, path, params=params, json=json)
+        except Exception as exc:
+            response = getattr(exc, "response", None)
+            if getattr(response, "status_code", None) == 404:
+                return None
+            raise
+
+
+class RuntimeHostApiAdapter(_BaseHttpApiAdapter, _SdkAdapter):
+    def list_datasets(
+        self,
+        *,
+        workspace_id: uuid.UUID,
+        project_id: uuid.UUID | None,
+        search: str | None,
+    ) -> DatasetListResult:
+        payload = RuntimeDatasetListResponse.model_validate(
+            self._request(
+                "GET",
+                "/api/runtime/v1/datasets",
+            )
+        )
+        items = [
+            DatasetSummary.model_validate(item.model_dump(mode="json"))
+            for item in payload.items
+        ]
+        if search:
+            filtered = [
+                item
+                for item in items
+                if search.lower() in item.name.lower()
+                or search.lower() in str(item.label or "").lower()
+            ]
+            return DatasetListResult(items=filtered, total=len(filtered))
+        return DatasetListResult(items=items, total=payload.total)
+
+    def query_dataset(
+        self,
+        *,
+        dataset_id: uuid.UUID,
+        workspace_id: uuid.UUID,
+        project_id: uuid.UUID | None,
+        user_id: uuid.UUID | None,
+        limit: int | None,
+        filters: dict[str, Any] | None,
+        sort: list[dict[str, Any]] | None,
+        user_context: dict[str, Any] | None,
+        timeout_s: float,
+        poll_interval_s: float,
+    ) -> DatasetQueryResult:
+        payload = DatasetPreviewRequest(
+            workspace_id=workspace_id,
+            project_id=project_id,
+            limit=limit,
+            filters=filters or {},
+            sort=sort or [],
+            user_context=user_context or {},
+        ).model_dump(mode="json")
+        return DatasetQueryResult.model_validate(
+            self._request(
+                "POST",
+                f"/api/runtime/v1/datasets/{dataset_id}/preview",
+                json=payload,
+            )
+        )
+
+    def query_semantic(
+        self,
+        *,
+        semantic_models: list[str],
+        workspace_id: uuid.UUID,
+        project_id: uuid.UUID | None,
+        user_id: uuid.UUID | None,
+        measures: list[str] | None,
+        dimensions: list[str] | None,
+        filters: list[dict[str, Any]] | None,
+        time_dimensions: list[dict[str, Any]] | None,
+        limit: int | None,
+        order: dict[str, str] | list[dict[str, str]] | None,
+        timeout_s: float,
+        poll_interval_s: float,
+    ) -> SemanticQueryResult:
+        return SemanticQueryResult.model_validate(
+            self._request(
+                "POST",
+                "/api/runtime/v1/semantic/query",
+                json={
+                    "semantic_models": semantic_models,
+                    "workspace_id": str(workspace_id),
+                    **({"project_id": str(project_id)} if project_id else {}),
+                    **({"user_id": str(user_id)} if user_id else {}),
+                    "measures": measures or [],
+                    "dimensions": dimensions or [],
+                    "filters": filters or [],
+                    "time_dimensions": time_dimensions or [],
+                    "limit": limit,
+                    "order": order,
+                },
+            )
+        )
+
+    def query_sql(
+        self,
+        *,
+        workspace_id: uuid.UUID,
+        project_id: uuid.UUID | None,
+        user_id: uuid.UUID | None,
+        query: str,
+        connection_id: uuid.UUID | None,
+        connection_name: str | None,
+        selected_datasets: list[SqlSelectedDataset] | None,
+        query_dialect: SqlDialect | str,
+        params: dict[str, Any] | None,
+        requested_limit: int | None,
+        requested_timeout_seconds: int | None,
+        explain: bool,
+        timeout_s: float,
+        poll_interval_s: float,
+    ) -> SqlQueryResult:
+        normalized_datasets = _normalize_selected_datasets(selected_datasets)
+        return SqlQueryResult.model_validate(
+            self._request(
+                "POST",
+                "/api/runtime/v1/sql/query",
+                json={
+                    "workspace_id": str(workspace_id),
+                    **({"project_id": str(project_id)} if project_id else {}),
+                    **({"user_id": str(user_id)} if user_id else {}),
+                    "query": query,
+                    **({"connection_id": str(connection_id)} if connection_id else {}),
+                    **({"connection_name": connection_name} if connection_name else {}),
+                    "selected_datasets": [item.model_dump(mode="json") for item in normalized_datasets],
+                    "query_dialect": _coerce_sql_dialect(query_dialect).value,
+                    "params": params or {},
+                    "requested_limit": requested_limit,
+                    "requested_timeout_seconds": requested_timeout_seconds,
+                    "explain": explain,
+                },
+            )
+        )
+
+    def ask_agent(
+        self,
+        *,
+        organization_id: uuid.UUID,
+        project_id: uuid.UUID | None,
+        user_id: uuid.UUID | None,
+        message: str,
+        agent_id: uuid.UUID | None,
+        agent_name: str | None,
+        thread_id: uuid.UUID | None,
+        title: str | None,
+        metadata_json: dict[str, Any] | None,
+        timeout_s: float,
+        poll_interval_s: float,
+    ) -> AgentAskResult:
+        return AgentAskResult.model_validate(
+            self._request(
+                "POST",
+                "/api/runtime/v1/agents/ask",
+                json={
+                    "organization_id": str(organization_id),
+                    **({"project_id": str(project_id)} if project_id else {}),
+                    **({"user_id": str(user_id)} if user_id else {}),
+                    "message": message,
+                    **({"agent_id": str(agent_id)} if agent_id else {}),
+                    **({"agent_name": agent_name} if agent_name else {}),
+                    **({"thread_id": str(thread_id)} if thread_id else {}),
+                    **({"title": title} if title else {}),
+                    **({"metadata_json": metadata_json} if metadata_json else {}),
+                },
+            )
+        )
+
+    def list_connectors(self) -> ConnectorListResult:
+        payload = RuntimeConnectorListResponse.model_validate(
+            self._request("GET", "/api/runtime/v1/connectors")
+        )
+        return ConnectorListResult(
+            items=[
+                ConnectorSummary.model_validate(item.model_dump(mode="json"))
+                for item in payload.items
+            ],
+            total=payload.total,
+        )
+
+    def list_sync_resources(
+        self,
+        *,
+        connector_name: str,
+    ) -> SyncResourceListResult:
+        payload = RuntimeSyncResourceListResponse.model_validate(
+            self._request(
+                "GET",
+                f"/api/runtime/v1/connectors/{connector_name}/sync/resources",
+            )
+        )
+        return SyncResourceListResult(
+            items=[
+                SyncResourceResult.model_validate(item.model_dump(mode="json"))
+                for item in payload.items
+            ],
+            total=payload.total,
+        )
+
+    def list_sync_states(
+        self,
+        *,
+        connector_name: str,
+    ) -> SyncStateListResult:
+        payload = RuntimeSyncStateListResponse.model_validate(
+            self._request(
+                "GET",
+                f"/api/runtime/v1/connectors/{connector_name}/sync/states",
+            )
+        )
+        return SyncStateListResult(
+            items=[
+                SyncStateResult.model_validate(item.model_dump(mode="json"))
+                for item in payload.items
+            ],
+            total=payload.total,
+        )
+
+    def sync_connector(
+        self,
+        *,
+        connector_name: str,
+        resource_names: list[str],
+        sync_mode: str,
+        force_full_refresh: bool,
+        timeout_s: float,
+        poll_interval_s: float,
+    ) -> SyncRunResult:
+        payload = RuntimeSyncResponse.model_validate(
+            self._request(
+                "POST",
+                f"/api/runtime/v1/connectors/{connector_name}/sync",
+                json={
+                    "resource_names": list(resource_names or []),
+                    "sync_mode": str(sync_mode or "INCREMENTAL").strip().upper() or "INCREMENTAL",
+                    "force_full_refresh": bool(force_full_refresh),
+                },
+            )
+        )
+        return SyncRunResult.model_validate(payload.model_dump(mode="json"))
+
+
+class RemoteApiAdapter(_BaseHttpApiAdapter, _SdkAdapter):
     def list_datasets(
         self,
         *,
@@ -339,26 +738,6 @@ class RemoteApiAdapter(_SdkAdapter):
             ],
             total=payload.total,
         )
-
-    def _request(
-        self,
-        method: str,
-        path: str,
-        *,
-        params: dict[str, Any] | None = None,
-        json: dict[str, Any] | None = None,
-    ) -> Any:
-        response = self._client.request(
-            method,
-            path,
-            params=params,
-            json=json,
-            headers=self._headers,
-        )
-        response.raise_for_status()
-        if not response.content:
-            return None
-        return response.json()
 
     def query_dataset(
         self,
@@ -415,8 +794,9 @@ class RemoteApiAdapter(_SdkAdapter):
         timeout_s: float,
         poll_interval_s: float,
     ) -> SemanticQueryResult:
-        raise NotImplementedError(
-            "Semantic queries are not yet exposed by the remote API adapter."
+        raise ValueError(
+            "Cloud API semantic queries are not exposed through LangbridgeClient.for_remote_api(...). "
+            "Use LangbridgeClient.remote(...) against a runtime host, or LangbridgeClient.for_runtime_host(...)."
         )
 
     def query_sql(
@@ -561,6 +941,47 @@ class RemoteApiAdapter(_SdkAdapter):
             visualization=final_response.visualization if final_response else None,
             error=job.error,
             events=job.events,
+        )
+
+    def list_connectors(self) -> ConnectorListResult:
+        raise ValueError(
+            "Cloud API connector management is not exposed through LangbridgeClient.for_remote_api(...). "
+            "Use LangbridgeClient.remote(...) against a runtime host, or LangbridgeClient.for_runtime_host(...)."
+        )
+
+    def list_sync_resources(
+        self,
+        *,
+        connector_name: str,
+    ) -> SyncResourceListResult:
+        raise ValueError(
+            "Cloud API sync operations are not exposed through LangbridgeClient.for_remote_api(...). "
+            "Use LangbridgeClient.remote(...) against a runtime host, or LangbridgeClient.for_runtime_host(...)."
+        )
+
+    def list_sync_states(
+        self,
+        *,
+        connector_name: str,
+    ) -> SyncStateListResult:
+        raise ValueError(
+            "Cloud API sync operations are not exposed through LangbridgeClient.for_remote_api(...). "
+            "Use LangbridgeClient.remote(...) against a runtime host, or LangbridgeClient.for_runtime_host(...)."
+        )
+
+    def sync_connector(
+        self,
+        *,
+        connector_name: str,
+        resource_names: list[str],
+        sync_mode: str,
+        force_full_refresh: bool,
+        timeout_s: float,
+        poll_interval_s: float,
+    ) -> SyncRunResult:
+        raise ValueError(
+            "Cloud API sync operations are not exposed through LangbridgeClient.for_remote_api(...). "
+            "Use LangbridgeClient.remote(...) against a runtime host, or LangbridgeClient.for_runtime_host(...)."
         )
 
 
@@ -870,6 +1291,115 @@ class LocalRuntimeAdapter(_SdkAdapter):
             events=[],
         )
 
+    def list_connectors(self) -> ConnectorListResult:
+        list_method = getattr(self._runtime_host, "list_connectors", None)
+        if list_method is None:
+            raise ValueError("Local runtime host does not expose list_connectors().")
+        payload = _run_awaitable(list_method())
+        items = [ConnectorSummary.model_validate(item) for item in (payload or [])]
+        return ConnectorListResult(items=items, total=len(items))
+
+    def list_sync_resources(
+        self,
+        *,
+        connector_name: str,
+    ) -> SyncResourceListResult:
+        list_method = getattr(self._runtime_host, "list_sync_resources", None)
+        if list_method is None:
+            raise ValueError("Local runtime host does not expose list_sync_resources().")
+        payload = _run_awaitable(list_method(connector_name=connector_name))
+        items = [SyncResourceResult.model_validate(item) for item in (payload or [])]
+        return SyncResourceListResult(items=items, total=len(items))
+
+    def list_sync_states(
+        self,
+        *,
+        connector_name: str,
+    ) -> SyncStateListResult:
+        list_method = getattr(self._runtime_host, "list_sync_states", None)
+        if list_method is None:
+            raise ValueError("Local runtime host does not expose list_sync_states().")
+        payload = _run_awaitable(list_method(connector_name=connector_name))
+        items = [SyncStateResult.model_validate(item) for item in (payload or [])]
+        return SyncStateListResult(items=items, total=len(items))
+
+    def sync_connector(
+        self,
+        *,
+        connector_name: str,
+        resource_names: list[str],
+        sync_mode: str,
+        force_full_refresh: bool,
+        timeout_s: float,
+        poll_interval_s: float,
+    ) -> SyncRunResult:
+        sync_method = getattr(self._runtime_host, "sync_connector_resources", None)
+        if sync_method is None:
+            raise ValueError("Local runtime host does not expose sync_connector_resources().")
+        try:
+            payload = _run_awaitable(
+                sync_method(
+                    connector_name=connector_name,
+                    resources=list(resource_names or []),
+                    sync_mode=sync_mode,
+                    force_full_refresh=force_full_refresh,
+                )
+            )
+        except Exception as exc:
+            return SyncRunResult(
+                status="failed",
+                connector_name=connector_name,
+                sync_mode=str(sync_mode or "INCREMENTAL").strip().upper() or "INCREMENTAL",
+                error=str(exc),
+            )
+        return SyncRunResult.model_validate(payload)
+
+
+class _ConnectorClient:
+    def __init__(self, owner: "LangbridgeClient") -> None:
+        self._owner = owner
+
+    def list(self) -> ConnectorListResult:
+        return self._owner._adapter.list_connectors()
+
+
+class _SyncClient:
+    def __init__(self, owner: "LangbridgeClient") -> None:
+        self._owner = owner
+
+    def resources(
+        self,
+        *,
+        connector_name: str,
+    ) -> SyncResourceListResult:
+        return self._owner._adapter.list_sync_resources(connector_name=connector_name)
+
+    def states(
+        self,
+        *,
+        connector_name: str,
+    ) -> SyncStateListResult:
+        return self._owner._adapter.list_sync_states(connector_name=connector_name)
+
+    def run(
+        self,
+        *,
+        connector_name: str,
+        resource_names: list[str] | tuple[str, ...],
+        sync_mode: str = "INCREMENTAL",
+        force_full_refresh: bool = False,
+        timeout_s: float = 300.0,
+        poll_interval_s: float = 0.5,
+    ) -> SyncRunResult:
+        return self._owner._adapter.sync_connector(
+            connector_name=connector_name,
+            resource_names=[str(item) for item in resource_names],
+            sync_mode=sync_mode,
+            force_full_refresh=force_full_refresh,
+            timeout_s=timeout_s,
+            poll_interval_s=poll_interval_s,
+        )
+
 
 class _DatasetClient:
     def __init__(self, owner: "LangbridgeClient") -> None:
@@ -1082,10 +1612,21 @@ class LangbridgeClient:
         self.default_organization_id = default_organization_id
         self.default_project_id = default_project_id
         self.default_user_id = default_user_id
+        self.connectors = _ConnectorClient(self)
+        self.sync = _SyncClient(self)
         self.datasets = _DatasetClient(self)
         self.semantic = _SemanticQueryClient(self)
         self.sql = _SqlClient(self)
         self.agents = _AgentClient(self)
+
+    def close(self) -> None:
+        self._adapter.close()
+
+    def __enter__(self) -> "LangbridgeClient":
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> None:
+        self.close()
 
     @classmethod
     def remote(
@@ -1100,6 +1641,23 @@ class LangbridgeClient:
         default_project_id: uuid.UUID | None = None,
         default_user_id: uuid.UUID | None = None,
     ) -> "LangbridgeClient":
+        runtime_host_defaults = _discover_runtime_host_defaults(
+            base_url=base_url,
+            token=token,
+            timeout=timeout,
+            http_client=http_client,
+        )
+        if runtime_host_defaults:
+            return cls.for_runtime_host(
+                base_url=base_url,
+                token=token,
+                timeout=timeout,
+                http_client=http_client,
+                default_workspace_id=default_workspace_id or runtime_host_defaults.get("workspace_id"),
+                default_organization_id=default_organization_id or runtime_host_defaults.get("organization_id"),
+                default_project_id=default_project_id,
+                default_user_id=default_user_id or runtime_host_defaults.get("user_id"),
+            )
         return cls.for_remote_api(
             base_url=base_url,
             token=token,
@@ -1136,7 +1694,7 @@ class LangbridgeClient:
         return cls.for_local_runtime(
             runtime_host=runtime_host,
             default_workspace_id=runtime_host.context.workspace_id,
-            default_organization_id=runtime_host.context.workspace_id,
+            default_organization_id=runtime_host.context.tenant_id,
             default_project_id=project_id,
             default_user_id=runtime_host.context.user_id,
         )
@@ -1168,6 +1726,38 @@ class LangbridgeClient:
         )
 
     @classmethod
+    def for_runtime_host(
+        cls,
+        *,
+        base_url: str,
+        token: str | None = None,
+        timeout: float = 30.0,
+        http_client: httpx.Client | None = None,
+        default_workspace_id: uuid.UUID | None = None,
+        default_organization_id: uuid.UUID | None = None,
+        default_project_id: uuid.UUID | None = None,
+        default_user_id: uuid.UUID | None = None,
+    ) -> "LangbridgeClient":
+        discovered_defaults = _discover_runtime_host_defaults(
+            base_url=base_url,
+            token=token,
+            timeout=timeout,
+            http_client=http_client,
+        )
+        return cls(
+            adapter=RuntimeHostApiAdapter(
+                base_url=base_url,
+                token=token,
+                timeout=timeout,
+                client=http_client,
+            ),
+            default_workspace_id=default_workspace_id or discovered_defaults.get("workspace_id"),
+            default_organization_id=default_organization_id or discovered_defaults.get("organization_id"),
+            default_project_id=default_project_id,
+            default_user_id=default_user_id or discovered_defaults.get("user_id"),
+        )
+
+    @classmethod
     def for_local_runtime(
         cls,
         *,
@@ -1187,14 +1777,36 @@ class LangbridgeClient:
             default_user_id=default_user_id,
         )
 
-    def close(self) -> None:
-        self._adapter.close()
 
-    def __enter__(self) -> "LangbridgeClient":
-        return self
-
-    def __exit__(self, exc_type, exc, tb) -> None:
-        self.close()
+def _discover_runtime_host_defaults(
+    *,
+    base_url: str,
+    token: str | None,
+    timeout: float,
+    http_client: httpx.Client | None,
+) -> dict[str, uuid.UUID]:
+    if httpx is None and http_client is None:
+        return {}
+    headers = {"Authorization": f"Bearer {token}"} if token else {}
+    owns_client = http_client is None
+    client = http_client or httpx.Client(base_url=base_url.rstrip("/"), timeout=timeout, headers=headers)
+    try:
+        response = client.get("/api/runtime/v1/info", headers=headers if http_client is not None else None)
+        if response.status_code != 200:
+            return {}
+        payload = response.json()
+    except Exception:
+        return {}
+    finally:
+        if owns_client:
+            client.close()
+    defaults: dict[str, uuid.UUID] = {}
+    for key in ("workspace_id", "organization_id", "user_id"):
+        try:
+            defaults[key] = uuid.UUID(str(payload.get(key)))
+        except (TypeError, ValueError, AttributeError):
+            continue
+    return defaults
 
 
 __all__ = [
@@ -1205,6 +1817,7 @@ __all__ = [
     "LangbridgeClient",
     "LocalRuntimeAdapter",
     "RemoteApiAdapter",
+    "RuntimeHostApiAdapter",
     "SemanticQueryResult",
     "SqlQueryResult",
 ]

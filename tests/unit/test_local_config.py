@@ -8,6 +8,11 @@ from types import SimpleNamespace
 from langbridge.packages.common.langbridge_common.db.threads import Role
 from langbridge.packages.runtime.models import CreateDatasetPreviewJobRequest
 from langbridge.packages.runtime.local_config import build_configured_local_runtime
+from tests.unit._runtime_host_sync_helpers import (
+    mock_stripe_api,
+    runtime_storage_dirs,
+    write_sync_runtime_config,
+)
 
 
 def _write_config(directory: Path) -> Path:
@@ -74,6 +79,7 @@ def test_build_configured_local_runtime_wires_agent_execution() -> None:
         runtime = build_configured_local_runtime(config_path=config_path)
 
     assert runtime.services.agent_execution is not None
+    assert runtime.services.dataset_sync is not None
 
 
 def test_configured_local_runtime_ask_agent_uses_agent_execution() -> None:
@@ -165,11 +171,16 @@ semantic_models:
         runtime = build_configured_local_runtime(config_path=config_path)
 
         dataset_record = runtime._datasets["marketing_campaigns"]
-        dataset_model = runtime.providers.dataset_metadata._datasets[dataset_record.id]
+        dataset_model = asyncio.run(
+            runtime.providers.dataset_metadata.get_dataset(
+                workspace_id=runtime.context.workspace_id,
+                dataset_id=dataset_record.id,
+            )
+        )
         assert dataset_model.dataset_type == "FILE"
         assert dataset_model.storage_kind == "csv"
         assert dataset_model.storage_uri is not None
-        assert dataset_model.file_config_json == {"format": "csv", "header": True}
+        assert dataset_model.file_config == {"format": "csv", "header": True}
 
         payload = asyncio.run(
             runtime.query_dataset(
@@ -197,3 +208,43 @@ semantic_models:
                 "engagement_score": 77,
             },
         ]
+
+
+def test_configured_local_runtime_syncs_connector_resources(tmp_path: Path) -> None:
+    with mock_stripe_api() as api_base_url, runtime_storage_dirs(tmp_path):
+        config_path = write_sync_runtime_config(tmp_path, api_base_url=api_base_url)
+        runtime = build_configured_local_runtime(config_path=config_path)
+
+        connectors = asyncio.run(runtime.list_connectors())
+        assert connectors[0]["name"] == "billing_demo"
+        assert connectors[0]["supports_sync"] is True
+
+        resources = asyncio.run(runtime.list_sync_resources(connector_name="billing_demo"))
+        assert any(item["name"] == "customers" for item in resources)
+
+        sync_result = asyncio.run(
+            runtime.sync_connector_resources(
+                connector_name="billing_demo",
+                resources=["customers"],
+            )
+        )
+        assert sync_result["status"] == "succeeded"
+        assert sync_result["resources"][0]["resource_name"] == "customers"
+
+        datasets = asyncio.run(runtime.list_datasets())
+        assert len(datasets) == 1
+        synced_dataset_id = datasets[0]["id"]
+
+        preview = asyncio.run(
+            runtime.query_dataset(
+                request=CreateDatasetPreviewJobRequest(
+                    dataset_id=synced_dataset_id,
+                    workspace_id=runtime.context.workspace_id,
+                    user_id=runtime.context.user_id,
+                    requested_limit=10,
+                    enforced_limit=10,
+                )
+            )
+        )
+        assert preview["row_count_preview"] == 2
+        assert preview["rows"][0]["id"] == "cus_001"

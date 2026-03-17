@@ -44,6 +44,9 @@ dependencies = [
   "duckdb==1.2.1",
 ]
 
+[project.scripts]
+langbridge = "langbridge.packages.cli.main:main"
+
 [tool.setuptools.packages.find]
 where = ["langbridge"]
 exclude = ["venv*", "__pycache__*", "tests*"]

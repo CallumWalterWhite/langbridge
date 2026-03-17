@@ -8,6 +8,8 @@ __all__ = [
     "build_local_runtime",
     "build_hosted_runtime",
     "build_configured_local_runtime",
+    "create_runtime_api_app",
+    "run_runtime_api",
 ]
 
 
@@ -34,4 +36,11 @@ def __getattr__(name: str) -> Any:
         from langbridge.packages.runtime.local_config import build_configured_local_runtime
 
         return build_configured_local_runtime
+    if name in {"create_runtime_api_app", "run_runtime_api"}:
+        from langbridge.packages.runtime.hosting import create_runtime_api_app, run_runtime_api
+
+        return {
+            "create_runtime_api_app": create_runtime_api_app,
+            "run_runtime_api": run_runtime_api,
+        }[name]
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

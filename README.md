@@ -119,6 +119,24 @@ For local runtime development:
 python -m langbridge.apps.runtime_worker.main
 ```
 
+### Run The Runtime Host
+
+If you want to host the portable runtime as an HTTP API directly, use the CLI entrypoint:
+
+```bash
+langbridge serve --config /path/to/langbridge_config.yml --host 0.0.0.0 --port 8000
+```
+
+If you installed the package with `pip install langbridge`, the module entrypoint works too:
+
+```bash
+python -m langbridge serve --config /path/to/langbridge_config.yml --host 0.0.0.0 --port 8000
+```
+
+There is a Dockerized example in
+`examples/runtime_host/README.md` that mounts a runtime config into the container and
+starts the same host command.
+
 ### Run The Local Runtime Stack
 
 From this repository:
@@ -126,6 +144,34 @@ From this repository:
 ```bash
 docker compose up --build db redis worker
 ```
+
+### Run The Runtime Host Example
+
+Seed the shared configured-local example:
+
+```bash
+python examples/sdk/semantic_query/setup.py
+```
+
+Then either start the host with the CLI:
+
+```bash
+pip install -e .
+langbridge serve --config examples/sdk/semantic_query/langbridge_config.yml --host 127.0.0.1 --port 8000
+```
+
+Or start the same host with Docker:
+
+```bash
+docker compose --profile host up --build runtime-host
+```
+
+The runtime API docs are served at `http://127.0.0.1:8000/api/runtime/docs`. The full
+example walkthrough lives in `examples/runtime_host/README.md`.
+
+For a sync-focused self-hosted walkthrough, including connector discovery, hosted sync,
+sync state inspection, and previewing the managed dataset that gets materialized at
+runtime, use `examples/runtime_host_sync/README.md`.
 
 ## Development
 

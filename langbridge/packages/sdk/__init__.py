@@ -1,5 +1,7 @@
 from langbridge.packages.sdk.client import (
     AgentAskResult,
+    ConnectorListResult,
+    ConnectorSummary,
     DatasetListResult,
     DatasetQueryResult,
     DatasetSummary,
@@ -7,11 +9,18 @@ from langbridge.packages.sdk.client import (
     LocalRuntimeAdapter,
     RemoteApiAdapter,
     SemanticQueryResult,
+    SyncResourceListResult,
+    SyncResourceResult,
+    SyncRunResult,
+    SyncStateListResult,
+    SyncStateResult,
     SqlQueryResult,
 )
 
 __all__ = [
     "AgentAskResult",
+    "ConnectorListResult",
+    "ConnectorSummary",
     "DatasetListResult",
     "DatasetQueryResult",
     "DatasetSummary",
@@ -19,5 +28,10 @@ __all__ = [
     "LocalRuntimeAdapter",
     "RemoteApiAdapter",
     "SemanticQueryResult",
+    "SyncResourceListResult",
+    "SyncResourceResult",
+    "SyncRunResult",
+    "SyncStateListResult",
+    "SyncStateResult",
     "SqlQueryResult",
 ]

@@ -36,6 +36,7 @@ class _FakeRuntimeHost:
         self.execute_sql_calls: list[object] = []
         self.execute_sql_text_calls: list[dict[str, object]] = []
         self.query_semantic_calls: list[dict[str, object]] = []
+        self.sync_calls: list[dict[str, object]] = []
 
     async def query_dataset(self, *, request):
         return {
@@ -132,12 +133,87 @@ class _FakeRuntimeHost:
             }
         )
 
+    async def list_connectors(self):
+        return [
+            {
+                "id": uuid.uuid4(),
+                "name": "billing_demo",
+                "connector_type": "STRIPE",
+                "supports_sync": True,
+                "supported_resources": ["customers"],
+                "sync_strategy": "INCREMENTAL",
+                "managed": False,
+            }
+        ]
+
+    async def list_sync_resources(self, *, connector_name: str):
+        return [
+            {
+                "name": "customers",
+                "label": "Customers",
+                "supports_incremental": True,
+                "default_sync_mode": "INCREMENTAL",
+                "status": "never_synced",
+                "dataset_ids": [],
+                "dataset_names": [],
+                "records_synced": 0,
+            }
+        ]
+
+    async def list_sync_states(self, *, connector_name: str):
+        return [
+            {
+                "resource_name": "customers",
+                "status": "succeeded",
+                "sync_mode": "INCREMENTAL",
+                "dataset_ids": [],
+                "dataset_names": ["stripe_demo_customers"],
+                "records_synced": 2,
+                "state": {},
+            }
+        ]
+
+    async def sync_connector_resources(
+        self,
+        *,
+        connector_name: str,
+        resources: list[str],
+        sync_mode: str,
+        force_full_refresh: bool,
+    ):
+        self.sync_calls.append(
+            {
+                "connector_name": connector_name,
+                "resources": list(resources),
+                "sync_mode": sync_mode,
+                "force_full_refresh": force_full_refresh,
+            }
+        )
+        return {
+            "status": "succeeded",
+            "connector_name": connector_name,
+            "sync_mode": sync_mode,
+            "resources": [
+                {
+                    "resource_name": resource_name,
+                    "sync_mode": sync_mode,
+                    "records_synced": 2,
+                    "dataset_ids": [],
+                    "dataset_names": [f"{connector_name}_{resource_name}"],
+                }
+                for resource_name in resources
+            ],
+            "summary": f"Connector sync completed for {len(resources)} resource(s).",
+        }
+
 def test_remote_sdk_dataset_query_polls_preview_job() -> None:
     workspace_id = uuid.uuid4()
     dataset_id = uuid.uuid4()
     job_id = uuid.uuid4()
 
     def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.startswith("/api/runtime/v1/"):
+            return httpx.Response(404, json={"detail": "not found"})
         if request.method == "POST" and request.url.path == f"/api/v1/datasets/{dataset_id}/preview":
             return httpx.Response(
                 200,
@@ -221,6 +297,8 @@ def test_remote_sdk_list_datasets() -> None:
     )
 
     def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.startswith("/api/runtime/v1/"):
+            return httpx.Response(404, json={"detail": "not found"})
         if request.method == "GET" and request.url.path == "/api/v1/datasets":
             return httpx.Response(200, json=payload.model_dump(mode="json"))
         raise AssertionError(f"Unexpected request: {request.method} {request.url}")
@@ -275,6 +353,8 @@ def test_remote_sdk_sql_query_polls_job_and_fetches_results() -> None:
     )
 
     def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.startswith("/api/runtime/v1/"):
+            return httpx.Response(404, json={"detail": "not found"})
         if request.method == "POST" and request.url.path == "/api/v1/sql/execute":
             return httpx.Response(202, json={"sql_job_id": str(sql_job_id), "warnings": []})
         if request.method == "GET" and request.url.path == f"/api/v1/sql/jobs/{sql_job_id}":
@@ -314,6 +394,8 @@ def test_remote_sdk_agents_ask_creates_thread_and_polls_job() -> None:
     )
 
     def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.startswith("/api/runtime/v1/"):
+            return httpx.Response(404, json={"detail": "not found"})
         if request.method == "POST" and request.url.path == f"/api/v1/thread/{organization_id}/":
             return httpx.Response(
                 201,
@@ -453,6 +535,41 @@ def test_local_sdk_agents_ask_uses_runtime_host() -> None:
     assert result.summary is not None
     assert result.thread_id is not None
     assert result.job_id is not None
+
+
+def test_local_sdk_sync_clients_use_runtime_host() -> None:
+    user_id = uuid.uuid4()
+    runtime_host = _FakeRuntimeHost(user_id=user_id)
+    client = LangbridgeClient.for_local_runtime(
+        runtime_host=runtime_host,
+        default_workspace_id=runtime_host.context.workspace_id,
+        default_user_id=user_id,
+    )
+
+    connectors = client.connectors.list()
+    resources = client.sync.resources(connector_name="billing_demo")
+    states = client.sync.states(connector_name="billing_demo")
+    run = client.sync.run(
+        connector_name="billing_demo",
+        resource_names=["customers"],
+    )
+
+    assert connectors.total == 1
+    assert connectors.items[0].name == "billing_demo"
+    assert resources.total == 1
+    assert resources.items[0].name == "customers"
+    assert states.total == 1
+    assert states.items[0].dataset_names == ["stripe_demo_customers"]
+    assert run.status == "succeeded"
+    assert run.resources[0].dataset_names == ["billing_demo_customers"]
+    assert runtime_host.sync_calls == [
+        {
+            "connector_name": "billing_demo",
+            "resources": ["customers"],
+            "sync_mode": "INCREMENTAL",
+            "force_full_refresh": False,
+        }
+    ]
 
 
 def test_local_sdk_from_config_supports_async_usage(tmp_path: Path) -> None:
