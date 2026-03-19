@@ -38,14 +38,14 @@ dependencies = [
   "mcp==1.17.0",
   "pandas==2.3.3",
   "numpy==1.26.4",
-  "faiss-cpu==1.8.0",
+  "faiss-cpu==1.13.2",
   "qdrant-client==1.9.1",
   "pyarrow==19.0.1",
   "duckdb==1.2.1",
 ]
 
 [project.scripts]
-langbridge = "langbridge.packages.cli.main:main"
+langbridge = "langbridge.cli.main:main"
 
 [tool.setuptools.packages.find]
 where = ["langbridge"]

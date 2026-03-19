@@ -4,7 +4,7 @@ Official connector implementations stay in the separate ``langbridge-connectors`
 package and register themselves through this core surface.
 """
 
-from langbridge.packages.connectors.langbridge_connectors.api.config import (
+from connectors.api.config import (
     BaseConnectorConfig,
     BaseConnectorConfigFactory,
     BaseConnectorConfigSchemaFactory,
@@ -18,7 +18,7 @@ from langbridge.packages.connectors.langbridge_connectors.api.config import (
     get_connector_config_factory,
     get_connector_config_schema_factory,
 )
-from langbridge.packages.connectors.langbridge_connectors.api.connector import (
+from connectors.api.connector import (
     ApiConnector,
     ApiExtractResult,
     ApiResource,
@@ -38,7 +38,7 @@ from langbridge.packages.connectors.langbridge_connectors.api.connector import (
     VectorType,
     run_sync,
 )
-from langbridge.packages.connectors.langbridge_connectors.api.registry import (
+from connectors.api.registry import (
     ApiConnectorFactory,
     ConnectorInstanceRegistry,
     ConnectorPlugin,

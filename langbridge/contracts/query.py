@@ -1,7 +1,15 @@
-from langbridge.contracts._reexport import reexport_public_api
+from typing import Any
 
-globals().update(
-    reexport_public_api("langbridge.packages.common.langbridge_common.contracts.query", __name__)
-)
+from langbridge.contracts.base import _Base
 
-__all__ = [name for name in globals() if not name.startswith("_")]
+
+class ModelSearchRequest(_Base):
+    fieldReference: str
+    operator: str
+    value: Any
+
+class ModelSearchCollectionRequest(_Base):
+    filters: list[ModelSearchRequest]
+    modelReference: str
+    limit: int
+    offset: int

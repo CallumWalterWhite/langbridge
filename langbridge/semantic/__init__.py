@@ -1,7 +1,33 @@
-from langbridge.contracts._reexport import reexport_public_api
-
-globals().update(
-    reexport_public_api("langbridge.packages.semantic.langbridge_semantic", __name__)
+from .model import (
+    SemanticModel,
+    Dataset,
+    Table,
+    Dimension,
+    Measure,
+    DatasetFilter,
+    TableFilter,
+    Relationship,
+    Metric,
+)
+from .unified_query import (
+    TenantAwareQueryContext,
+    UnifiedSourceModel,
+    apply_tenant_aware_context,
+    build_unified_semantic_model,
 )
 
-__all__ = [name for name in globals() if not name.startswith("_")]
+__all__ = [
+    "SemanticModel",
+    "Dataset",
+    "Table",
+    "Dimension",
+    "Measure",
+    "DatasetFilter",
+    "TableFilter",
+    "Relationship",
+    "Metric",
+    "TenantAwareQueryContext",
+    "UnifiedSourceModel",
+    "apply_tenant_aware_context",
+    "build_unified_semantic_model",
+]

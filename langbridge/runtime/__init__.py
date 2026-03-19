@@ -13,15 +13,15 @@ __all__ = [
 
 def __getattr__(name: str) -> Any:
     if name == "RuntimeContext":
-        from langbridge.packages.runtime.context import RuntimeContext
+        from runtime.context import RuntimeContext
 
         return RuntimeContext
     if name == "RuntimeHost":
-        from langbridge.packages.runtime.services.runtime_host import RuntimeHost
+        from runtime.services.runtime_host import RuntimeHost
 
         return RuntimeHost
     if name in {"build_local_runtime", "build_hosted_runtime"}:
-        from langbridge.packages.runtime.registry.bootstrap import (
+        from runtime.registry.bootstrap import (
             build_hosted_runtime,
             build_local_runtime,
         )
@@ -31,7 +31,7 @@ def __getattr__(name: str) -> Any:
             "build_hosted_runtime": build_hosted_runtime,
         }[name]
     if name == "build_configured_local_runtime":
-        from langbridge.packages.runtime.local_config import build_configured_local_runtime
+        from runtime.local_config import build_configured_local_runtime
 
         return build_configured_local_runtime
     if name in {"create_runtime_api_app", "run_runtime_api"}:
