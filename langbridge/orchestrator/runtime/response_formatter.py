@@ -8,14 +8,14 @@ from typing import Any
 
 from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
 
-from orchestrator.definitions import (
+from langbridge.orchestrator.definitions import (
     GuardrailConfig,
     OutputFormat,
     OutputSchema,
     PromptContract,
     ResponseMode,
 )
-from orchestrator.llm.provider import LLMProvider
+from langbridge.orchestrator.llm.provider import LLMProvider
 
 
 @dataclass(slots=True, frozen=True)

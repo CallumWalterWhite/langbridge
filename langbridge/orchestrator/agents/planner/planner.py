@@ -3,7 +3,7 @@ import logging
 import re
 from typing import Any, List, Optional
 
-from orchestrator.llm.provider import LLMProvider
+from langbridge.orchestrator.llm.provider import LLMProvider
 
 from .models import AgentName, Plan, PlanStep, PlannerRequest, RouteDecision, RouteName, RouteSignals
 from .policies import PolicyNotes, check_policies

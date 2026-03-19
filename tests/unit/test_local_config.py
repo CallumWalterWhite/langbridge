@@ -5,11 +5,11 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 
-from langbridge.packages.runtime.models import (
+from langbridge.runtime.models import (
     CreateDatasetPreviewJobRequest,
     RuntimeMessageRole,
 )
-from langbridge.packages.runtime.local_config import build_configured_local_runtime
+from langbridge.runtime.local_config import build_configured_local_runtime
 from tests.unit._runtime_host_sync_helpers import (
     mock_stripe_api,
     runtime_storage_dirs,

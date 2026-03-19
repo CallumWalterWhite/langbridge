@@ -5,11 +5,11 @@ import uuid
 import pytest
 from pydantic import ValidationError
 
-from langbridge.packages.runtime.embeddings import (
+from langbridge.runtime.embeddings import (
     DEFAULT_OPENAI_EMBED_MODEL,
     EmbeddingProvider,
 )
-from langbridge.packages.runtime.models import (
+from langbridge.runtime.models import (
     CreateConnectorSyncJobRequest,
     CreateSemanticQueryJobRequest,
     CreateDatasetBulkCreateJobRequest,

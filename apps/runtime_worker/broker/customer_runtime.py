@@ -18,12 +18,12 @@ from langbridge.contracts.runtime import (
     RuntimeRegistrationRequest,
     RuntimeRegistrationResponse,
 )
-from langbridge.packages.messaging.langbridge_messaging.broker.base import (
+from ..messaging.broker.base import (
     MessageBroker,
     MessageReceipt,
     ReceivedMessage,
 )
-from langbridge.packages.messaging.langbridge_messaging.contracts.messages import MessageEnvelope
+from ..messaging.contracts.messages import MessageEnvelope
 
 
 class CustomerRuntimeBroker(MessageBroker):

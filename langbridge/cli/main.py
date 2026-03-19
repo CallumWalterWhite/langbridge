@@ -11,8 +11,8 @@ from typing import Any
 
 import httpx
 
-from client import LangbridgeClient
-from runtime import run_runtime_api
+from langbridge.client import LangbridgeClient
+from langbridge.runtime import run_runtime_api
 
 
 def main(argv: list[str] | None = None) -> int:

@@ -9,39 +9,39 @@ from typing import Any
 
 import yaml
 
-from runtime.services.dataset_execution import (
+from langbridge.runtime.services.dataset_execution import (
     DatasetExecutionResolver,
     build_binding_for_dataset,
     synthetic_file_connector_id,
 )
-from runtime.models import (
+from langbridge.runtime.models import (
     SemanticQueryResponse,
     UnifiedSemanticSourceModelRequest,
     UnifiedSemanticQueryResponse,
 )
-from runtime.errors import BusinessValidationError
-from connectors.api import (
+from langbridge.runtime.errors import BusinessValidationError
+from langbridge.connectors.base import (
     ConnectorRuntimeTypeSqlDialectMap,
     SqlConnector,
     SqlConnectorFactory,
     get_connector_config_factory,
 )
-from connectors.api.config import ConnectorRuntimeType
-from runtime.execution.federated_query_tool import FederatedQueryTool
-from runtime.ports import DatasetCatalogStore
-from runtime.providers import (
+from langbridge.connectors.base.config import ConnectorRuntimeType
+from langbridge.runtime.execution.federated_query_tool import FederatedQueryTool
+from langbridge.runtime.ports import DatasetCatalogStore
+from langbridge.runtime.providers import (
     DatasetMetadataProvider,
     SemanticModelMetadataProvider,
 )
-from runtime.settings import runtime_settings as settings
-from semantic.loader import (
+from langbridge.runtime.settings import runtime_settings as settings
+from langbridge.semantic.loader import (
     SemanticModelError,
     load_semantic_model,
     load_unified_semantic_model,
 )
-from semantic.model import SemanticModel
-from semantic.query import SemanticQuery, SemanticQueryEngine
-from semantic.unified_query import (
+from langbridge.semantic.model import SemanticModel
+from langbridge.semantic.query import SemanticQuery, SemanticQueryEngine
+from langbridge.semantic.unified_query import (
     TenantAwareQueryContext,
     UnifiedSourceModel,
     apply_tenant_aware_context,
@@ -577,7 +577,7 @@ class SemanticQueryExecutionService:
         source_semantic_model: SemanticModel,
         table_connector_map: Mapping[str, uuid.UUID],
     ) -> dict[str, Any]:
-        from federation.models import (
+        from langbridge.federation.models import (
             FederationWorkflow,
             VirtualDataset,
             VirtualTableBinding,

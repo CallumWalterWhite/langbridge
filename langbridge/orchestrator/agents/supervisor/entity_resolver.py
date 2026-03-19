@@ -4,7 +4,7 @@ import logging
 import re
 from typing import Any, Dict, Optional
 
-from orchestrator.llm.provider import LLMProvider
+from langbridge.orchestrator.llm.provider import LLMProvider
 
 from .schemas import ClassifiedQuestion, ResolvedEntities
 

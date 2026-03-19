@@ -1,112 +1,91 @@
-from .config import (
-    BaseConnectorConfig,
-    BaseConnectorConfigFactory,
-    BaseConnectorConfigSchemaFactory,
-    ConnectorAuthFieldSchema,
-    ConnectorConfigEntrySchema,
-    ConnectorConfigSchema,
-    ConnectorFamily,
-    ConnectorPluginMetadata,
-    get_connector_config_factory,
-    get_connector_config_schema_factory,
-    ConnectorRuntimeType,
-    ConnectorSyncStrategy,
-)
-from .metadata import (
-    BaseMetadataExtractor,
-    ColumnMetadata,
-    TableMetadata,
-    ForeignKeyMetadata,
-    get_metadata_extractor,
-    build_connector_config
-)
-from .connector import (
-    ConnectorError,
-    AuthError,
-    ApiConnector,
-    ApiExtractResult,
-    ApiResource,
-    ApiSyncResult,
-    SqlDialetcs,
-    VectorDBType,
-    Connector,
-    ConnectorType,
-    SqlConnector,
-    VecotorDBConnector,
-    ManagedVectorDB,
-    QueryResult,
-    ConnectorRuntimeTypeSqlDialectMap,
-    ConnectorRuntimeTypeVectorDBMap,
-    run_sync
-)
-from .registry import (
-    ApiConnectorFactory,
-    ConnectorInstanceRegistry,
-    ConnectorPlugin,
-    SqlConnectorFactory,
-    VectorDBConnectorFactory,
-    ensure_builtin_plugins_loaded,
-    get_connector_plugin,
-    list_connector_plugins,
-    register_connector_plugin,
+"""Compatibility namespace for legacy connector imports."""
+
+from __future__ import annotations
+
+from importlib import import_module
+from typing import Any
+
+_EXPORTS = {
+    "langbridge.connectors.base.config": (
+        "BaseConnectorConfig",
+        "BaseConnectorConfigFactory",
+        "BaseConnectorConfigSchemaFactory",
+        "ConnectorAuthFieldSchema",
+        "ConnectorConfigEntrySchema",
+        "ConnectorConfigSchema",
+        "ConnectorFamily",
+        "ConnectorPluginMetadata",
+        "get_connector_config_factory",
+        "get_connector_config_schema_factory",
+        "ConnectorRuntimeType",
+        "ConnectorSyncStrategy",
+    ),
+    "langbridge.connectors.base.metadata": (
+        "BaseMetadataExtractor",
+        "ColumnMetadata",
+        "TableMetadata",
+        "ForeignKeyMetadata",
+        "get_metadata_extractor",
+        "build_connector_config",
+    ),
+    "langbridge.connectors.base.connector": (
+        "ConnectorError",
+        "AuthError",
+        "ApiConnector",
+        "ApiExtractResult",
+        "ApiResource",
+        "ApiSyncResult",
+        "SqlDialetcs",
+        "VectorDBType",
+        "Connector",
+        "ConnectorType",
+        "SqlConnector",
+        "VecotorDBConnector",
+        "ManagedVectorDB",
+        "NoSqlConnector",
+        "NoSqlQueryResult",
+        "QueryResult",
+        "ConnectorRuntimeTypeSqlDialectMap",
+        "ConnectorRuntimeTypeVectorDBMap",
+        "run_sync",
+    ),
+    "langbridge.connectors.base.registry": (
+        "ApiConnectorFactory",
+        "ConnectorInstanceRegistry",
+        "ConnectorPlugin",
+        "ConnectorPluginRegistry",
+        "NoSqlConnectorFactory",
+        "SqlConnectorFactory",
+        "VectorDBConnectorFactory",
+        "ensure_builtin_connectors_loaded",
+        "ensure_builtin_plugins_loaded",
+        "get_connector_plugin",
+        "list_connector_plugins",
+        "register_connector_plugin",
+    ),
+}
+
+_MODULE_EXPORTS = {
+    "_http_api_connector": "langbridge.connectors.base.http",
+}
+
+__all__ = [name for names in _EXPORTS.values() for name in names] + list(
+    _MODULE_EXPORTS
 )
 
-from .snowflake import *  # required for subclass registration
-from .postgres import *  # required for subclass registration
-from .mysql import *  # required for subclass registration
-from .mariadb import *  # required for subclass registration
-from .mongodb import *  # required for subclass registration
-from .redshift import *  # required for subclass registration
-from .bigquery import *  # required for subclass registration
-from .sqlserver import *  # required for subclass registration
-from .oracle import *  # required for subclass registration
-from .sqlite import *  # required for subclass registration
-from .faiss import *  # required for subclass registration
-from .qdrant import *  # required for subclass registration
 
-__all__ = [
-    "BaseConnectorConfig",
-    "BaseConnectorConfigFactory",
-    "BaseConnectorConfigSchemaFactory",
-    "ConnectorAuthFieldSchema",
-    "ConnectorConfigEntrySchema",
-    "ConnectorConfigSchema",
-    "ConnectorFamily",
-    "ConnectorPluginMetadata",
-    "ConnectorRuntimeType",
-    "ConnectorSyncStrategy",
-    "ConnectorRuntimeTypeSqlDialectMap",
-    "ConnectorRuntimeTypeVectorDBMap",
-    "get_connector_config_factory",
-    "get_connector_config_schema_factory",
-    "BaseMetadataExtractor",
-    "ColumnMetadata",
-    "TableMetadata",
-    "ForeignKeyMetadata",
-    "get_metadata_extractor",
-    "build_connector_config",
-    "ConnectorError",
-    "ConnectorType",
-    "AuthError",
-    "ApiConnector",
-    "ApiExtractResult",
-    "ApiResource",
-    "ApiSyncResult",
-    "SqlDialetcs",
-    "VectorDBType",
-    "Connector",
-    "SqlConnector",
-    "VecotorDBConnector",
-    "ManagedVectorDB",
-    "QueryResult",
-    "run_sync",
-    "ApiConnectorFactory",
-    "ConnectorInstanceRegistry",
-    "ConnectorPlugin",
-    "SqlConnectorFactory",
-    "VectorDBConnectorFactory",
-    "ensure_builtin_plugins_loaded",
-    "get_connector_plugin",
-    "list_connector_plugins",
-    "register_connector_plugin",
-]
+def __getattr__(name: str) -> Any:
+    module_name = _MODULE_EXPORTS.get(name)
+    if module_name is not None:
+        module = import_module(module_name)
+        globals()[name] = module
+        return module
+
+    for module_name, exports in _EXPORTS.items():
+        if name not in exports:
+            continue
+        module = import_module(module_name)
+        value = getattr(module, name)
+        globals()[name] = value
+        return value
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

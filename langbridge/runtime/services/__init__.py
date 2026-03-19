@@ -28,7 +28,7 @@ def __getattr__(name: str) -> Any:
         "build_file_scan_sql",
         "synthetic_file_connector_id",
     }:
-        from runtime.services.dataset_execution import (
+        from langbridge.runtime.services.dataset_execution import (
             DatasetExecutionResolver,
             build_binding_for_dataset,
             build_file_scan_sql,
@@ -43,7 +43,7 @@ def __getattr__(name: str) -> Any:
         }
         return values[name]
     if name in {"AgentExecutionResult", "AgentExecutionService"}:
-        from runtime.services.agent_execution_service import (
+        from langbridge.runtime.services.agent_execution_service import (
             AgentExecutionResult,
             AgentExecutionService,
         )
@@ -53,13 +53,13 @@ def __getattr__(name: str) -> Any:
             "AgentExecutionService": AgentExecutionService,
         }[name]
     if name == "DatasetQueryService":
-        from runtime.services.dataset_query_service import (
+        from langbridge.runtime.services.dataset_query_service import (
             DatasetQueryService,
         )
 
         return DatasetQueryService
     if name in {"ConnectorSyncRuntime", "DatasetSyncService", "MaterializedDatasetResult"}:
-        from runtime.services.dataset_sync_service import (
+        from langbridge.runtime.services.dataset_sync_service import (
             ConnectorSyncRuntime,
             DatasetSyncService,
             MaterializedDatasetResult,
@@ -71,7 +71,7 @@ def __getattr__(name: str) -> Any:
             "MaterializedDatasetResult": MaterializedDatasetResult,
         }[name]
     if name in {"RuntimeHost", "RuntimeProviders", "RuntimeServices"}:
-        from runtime.services.runtime_host import (
+        from langbridge.runtime.services.runtime_host import (
             RuntimeHost,
             RuntimeProviders,
             RuntimeServices,
@@ -83,13 +83,13 @@ def __getattr__(name: str) -> Any:
             "RuntimeServices": RuntimeServices,
         }[name]
     if name == "SemanticQueryExecutionService":
-        from runtime.services.semantic_query_execution_service import (
+        from langbridge.runtime.services.semantic_query_execution_service import (
             SemanticQueryExecutionService,
         )
 
         return SemanticQueryExecutionService
     if name == "SqlQueryService":
-        from runtime.services.sql_query_service import SqlQueryService
+        from langbridge.runtime.services.sql_query_service import SqlQueryService
 
         return SqlQueryService
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

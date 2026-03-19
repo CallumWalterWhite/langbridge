@@ -7,17 +7,17 @@ from typing import Any
 
 from fastapi import FastAPI, HTTPException
 
-from runtime.local_config import (
+from langbridge.runtime.local_config import (
     ConfiguredLocalRuntimeHost,
     build_configured_local_runtime,
 )
-from runtime.models.jobs import (
+from langbridge.runtime.models.jobs import (
     CreateDatasetPreviewJobRequest,
     CreateSqlJobRequest,
     SqlWorkbenchMode,
 )
-from runtime.services.runtime_host import RuntimeHost
-from runtime.hosting.api_models import (
+from langbridge.runtime.services.runtime_host import RuntimeHost
+from langbridge.runtime.hosting.api_models import (
     RuntimeAgentAskRequest,
     RuntimeAgentAskResponse,
     RuntimeConnectorListResponse,

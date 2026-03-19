@@ -5,8 +5,8 @@ from dataclasses import dataclass
 from typing import Mapping, Sequence
 from uuid import UUID
 
-from semantic.model import Metric, Relationship, SemanticModel
-from semantic.unified_model import UnifiedSemanticRelationship
+from langbridge.semantic.model import Metric, Relationship, SemanticModel
+from langbridge.semantic.unified_model import UnifiedSemanticRelationship
 
 
 @dataclass(frozen=True)

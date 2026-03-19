@@ -1,8 +1,8 @@
 from typing import List, Sequence, Type
 
 from ..ioc import DependencyResolver
-from langbridge.packages.messaging.langbridge_messaging.contracts import MessageEnvelope
-from langbridge.packages.messaging.langbridge_messaging.handler import BaseMessageHandler
+from ..messaging.contracts import MessageEnvelope
+from ..messaging.handler import BaseMessageHandler
 
 
 class WorkerMessageDispatcher:

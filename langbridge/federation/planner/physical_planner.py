@@ -3,8 +3,8 @@
 import hashlib
 import json
 
-from federation.models.plans import PhysicalPlan, StageDefinition, StageType
-from federation.planner.optimizer import OptimizedPlan
+from langbridge.federation.models.plans import PhysicalPlan, StageDefinition, StageType
+from langbridge.federation.planner.optimizer import OptimizedPlan
 
 
 class PhysicalPlanner:

@@ -6,9 +6,9 @@ from typing import Any
 
 import yaml
 
-from semantic.errors import SemanticModelError
-from semantic.model import Metric, Relationship, SemanticModel
-from semantic.unified_model import (
+from langbridge.semantic.errors import SemanticModelError
+from langbridge.semantic.model import Metric, Relationship, SemanticModel
+from langbridge.semantic.unified_model import (
     UnifiedSemanticModel,
     UnifiedSemanticModelSource,
     UnifiedSemanticRelationship,

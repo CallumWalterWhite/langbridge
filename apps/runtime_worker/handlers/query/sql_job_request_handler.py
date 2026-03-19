@@ -3,42 +3,42 @@ from datetime import datetime, timezone
 
 from pydantic import ValidationError
 
-from langbridge.packages.runtime.adapters import (
+from langbridge.runtime.persistence import (
     RepositoryDatasetCatalogStore,
     RepositorySqlJobArtifactStore,
     RepositorySqlJobStore,
-    to_runtime_sql_job,
 )
-from langbridge.packages.runtime.models import (
+from langbridge.runtime.persistence.mappers import from_sql_job_record
+from langbridge.runtime.models import (
     CreateSqlJobRequest,
     SqlJob,
 )
-from langbridge.packages.runtime.errors import BusinessValidationError
-from langbridge.packages.common.langbridge_common.repositories.connector_repository import (
+from langbridge.runtime.errors import BusinessValidationError
+from langbridge.runtime.persistence.repositories.connector_repository import (
     ConnectorRepository,
 )
-from langbridge.packages.common.langbridge_common.repositories.dataset_repository import (
+from langbridge.runtime.persistence.repositories.dataset_repository import (
     DatasetRepository,
 )
-from langbridge.packages.common.langbridge_common.repositories.sql_repository import (
+from langbridge.runtime.persistence.repositories.sql_repository import (
     SqlJobRepository,
     SqlJobResultArtifactRepository,
 )
-from langbridge.packages.messaging.langbridge_messaging.contracts.base import MessageType
-from langbridge.packages.messaging.langbridge_messaging.contracts.jobs.sql_job import (
+from ...messaging.contracts.base import MessageType
+from ...messaging.contracts.jobs.sql_job import (
     SqlJobRequestMessage,
 )
-from langbridge.packages.messaging.langbridge_messaging.handler import BaseMessageHandler
-from langbridge.packages.runtime.context import RuntimeContext
-from langbridge.packages.runtime.execution import FederatedQueryTool
-from langbridge.packages.runtime.providers import RepositoryConnectorMetadataProvider
-from langbridge.packages.runtime.services.runtime_host import (
+from ...messaging.handler import BaseMessageHandler
+from langbridge.runtime.context import RuntimeContext
+from langbridge.runtime.execution import FederatedQueryTool
+from langbridge.runtime.providers import RepositoryConnectorMetadataProvider
+from langbridge.runtime.services.runtime_host import (
     RuntimeHost,
     RuntimeProviders,
     RuntimeServices,
 )
-from langbridge.packages.runtime.security import SecretProviderRegistry
-from langbridge.packages.runtime.services.sql_query_service import SqlQueryService
+from langbridge.runtime.security import SecretProviderRegistry
+from langbridge.runtime.services.sql_query_service import SqlQueryService
 
 
 class SqlJobRequestHandler(BaseMessageHandler):
@@ -80,7 +80,7 @@ class SqlJobRequestHandler(BaseMessageHandler):
         )
         if legacy_job is None:
             raise BusinessValidationError("SQL job not found.")
-        job: SqlJob | None = to_runtime_sql_job(legacy_job)
+        job: SqlJob | None = from_sql_job_record(legacy_job)
         if job is None:
             raise BusinessValidationError("SQL job could not be loaded.")
 

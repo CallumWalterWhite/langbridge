@@ -18,7 +18,7 @@ try:  # pragma: no cover - optional dependency for environments that do not exec
 except Exception:  # pragma: no cover
     httpx = None  # type: ignore
 
-from orchestrator.llm.provider import LLMProvider
+from langbridge.orchestrator.llm.provider import LLMProvider
 
 DEFAULT_MAX_RESULTS = 6
 MAX_RESULTS_CAP = 20

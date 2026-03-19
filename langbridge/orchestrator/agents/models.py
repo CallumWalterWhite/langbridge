@@ -1,9 +1,9 @@
 from dataclasses import dataclass, field
 from typing import Any, Dict, Optional
 
-from orchestrator.agents.deep_research.agent import DeepResearchResult
-from orchestrator.agents.web_search.agent import WebSearchResult
-from orchestrator.tools.sql_analyst.interfaces import AnalystQueryResponse
+from langbridge.orchestrator.agents.deep_research.agent import DeepResearchResult
+from langbridge.orchestrator.agents.web_search.agent import WebSearchResult
+from langbridge.orchestrator.tools.sql_analyst.interfaces import AnalystQueryResponse
 
 
 @dataclass

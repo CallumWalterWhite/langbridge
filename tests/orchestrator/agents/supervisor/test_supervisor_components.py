@@ -22,13 +22,13 @@ PACKAGE_ROOT = REPO_ROOT
 if str(PACKAGE_ROOT) not in sys.path:
     sys.path.insert(0, str(PACKAGE_ROOT))
 
-from langbridge.packages.orchestrator.langbridge_orchestrator.agents.supervisor.clarification_manager import (  # noqa: E402
+from langbridge.orchestrator.agents.supervisor.clarification_manager import (  # noqa: E402
     ClarificationManager,
 )
-from langbridge.packages.orchestrator.langbridge_orchestrator.agents.supervisor.entity_resolver import (  # noqa: E402
+from langbridge.orchestrator.agents.supervisor.entity_resolver import (  # noqa: E402
     EntityResolver,
 )
-from langbridge.packages.orchestrator.langbridge_orchestrator.agents.supervisor.question_classifier import (  # noqa: E402
+from langbridge.orchestrator.agents.supervisor.question_classifier import (  # noqa: E402
     QuestionClassifier,
 )
 

@@ -1,23 +1,23 @@
-from runtime.providers.control_plane import (
+from langbridge.runtime.providers.control_plane import (
     ControlPlaneApiClient,
     ControlPlaneApiDatasetProvider,
     ControlPlaneApiConnectorProvider,
     ControlPlaneApiSemanticModelProvider,
     ControlPlaneApiSyncStateProvider,
 )
-from runtime.providers.caching import (
+from langbridge.runtime.providers.caching import (
     CachedConnectorMetadataProvider,
     CachedDatasetMetadataProvider,
     CachedSemanticModelMetadataProvider,
 )
-from runtime.providers.memory import (
+from langbridge.runtime.providers.memory import (
     MemoryConnectorProvider,
     MemoryDatasetProvider,
     MemorySemanticModelProvider,
     MemorySqlJobResultArtifactProvider,
     MemorySyncStateProvider,
 )
-from runtime.providers.protocols import (
+from langbridge.runtime.providers.protocols import (
     ConnectorMetadataProvider,
     CredentialProvider,
     DatasetMetadataProvider,
@@ -25,7 +25,7 @@ from runtime.providers.protocols import (
     SqlJobResultArtifactProvider,
     SyncStateProvider,
 )
-from runtime.providers.repository import (
+from langbridge.runtime.providers.repository import (
     RepositoryConnectorMetadataProvider,
     RepositoryDatasetMetadataProvider,
     RepositorySemanticModelMetadataProvider,
@@ -33,7 +33,7 @@ from runtime.providers.repository import (
     SecretRegistryCredentialProvider,
     SqlArtifactRepository,
 )
-from runtime.providers.sqlite import (
+from langbridge.runtime.providers.sqlite import (
     SqliteConnectorProvider,
     SqliteDatasetProvider,
     SqliteSemanticModelProvider,

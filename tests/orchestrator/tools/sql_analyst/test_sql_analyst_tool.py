@@ -4,14 +4,14 @@ from typing import Any
 
 sys.path.append(str(pathlib.Path(__file__).resolve().parents[5] / "langbridge" / "langbridge"))
 
-from langbridge.packages.orchestrator.langbridge_orchestrator.tools.sql_analyst.interfaces import (
+from langbridge.orchestrator.tools.sql_analyst.interfaces import (
     AnalyticalColumn,
     AnalyticalContext,
     AnalyticalDatasetBinding,
     AnalystQueryRequest,
     QueryResult,
 )
-from langbridge.packages.orchestrator.langbridge_orchestrator.tools.sql_analyst.tool import SqlAnalystTool
+from langbridge.orchestrator.tools.sql_analyst.tool import SqlAnalystTool
 
 
 class DummyLLM:

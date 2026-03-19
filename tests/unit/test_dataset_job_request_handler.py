@@ -6,24 +6,24 @@ from typing import Any
 
 import pytest
 
-from langbridge.apps.runtime_worker.handlers.query.dataset_job_request_handler import (
+from apps.runtime_worker.handlers.query.dataset_job_request_handler import (
     DatasetJobRequestHandler,
 )
-from langbridge.packages.common.langbridge_common.config import settings
-from langbridge.packages.runtime.models import (
+from apps.runtime_worker.messaging.contracts.jobs.dataset_job import (
+    DatasetJobRequestMessage,
+)
+from langbridge.config import settings
+from langbridge.runtime.models import (
     CreateDatasetBulkCreateJobRequest,
     CreateDatasetPreviewJobRequest,
 )
 from langbridge.contracts.jobs.type import JobType
-from langbridge.packages.common.langbridge_common.db.dataset import (
+from langbridge.runtime.persistence.db.dataset import (
     DatasetColumnRecord,
     DatasetPolicyRecord,
     DatasetRecord,
 )
-from langbridge.packages.common.langbridge_common.db.job import JobRecord, JobStatus
-from langbridge.packages.messaging.langbridge_messaging.contracts.jobs.dataset_job import (
-    DatasetJobRequestMessage,
-)
+from langbridge.runtime.persistence.db.job import JobRecord, JobStatus
 
 
 @pytest.fixture

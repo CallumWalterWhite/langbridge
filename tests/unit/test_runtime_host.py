@@ -4,9 +4,9 @@ import uuid
 
 import pytest
 
-from langbridge.packages.runtime import RuntimeContext
-from langbridge.packages.runtime.registry.bootstrap import build_hosted_runtime
-from langbridge.packages.runtime.services.runtime_host import (
+from langbridge.runtime import RuntimeContext
+from langbridge.runtime.bootstrap import build_hosted_runtime
+from langbridge.runtime.services.runtime_host import (
     RuntimeHost,
     RuntimeProviders,
     RuntimeServices,

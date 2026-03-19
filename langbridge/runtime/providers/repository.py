@@ -2,30 +2,30 @@ from __future__ import annotations
 
 from typing import Any
 
-from runtime.repositories.connector_repository import (
+from langbridge.runtime.persistence.mappers import (
+    from_connector_record,
+    from_semantic_model_record,
+    from_sql_job_result_artifact_record,
+    to_secret_reference,
+    to_sql_job_result_artifact_record,
+)
+from langbridge.runtime.persistence.repositories.connector_repository import (
     ConnectorRepository,
 )
-from runtime.repositories.semantic_model_repository import (
+from langbridge.runtime.persistence.repositories.semantic_model_repository import (
     SemanticModelRepository,
 )
-from runtime.repositories.sql_repository import (
+from langbridge.runtime.persistence.repositories.sql_repository import (
     SqlJobResultArtifactRepository,
 )
-from runtime.adapters import (
-    to_legacy_sql_job_result_artifact,
-    to_runtime_connector,
-    to_runtime_secret_reference,
-    to_runtime_semantic_model,
-    to_runtime_sql_job_result_artifact,
-)
-from runtime.models import SqlJobResultArtifact
-from runtime.ports import (
+from langbridge.runtime.models import SqlJobResultArtifact
+from langbridge.runtime.ports import (
     ConnectorSyncStateStore,
     DatasetCatalogStore,
     DatasetColumnStore,
     DatasetPolicyStore,
 )
-from runtime.providers.protocols import (
+from langbridge.runtime.providers.protocols import (
     ConnectorMetadataProvider,
     CredentialProvider,
     DatasetMetadataProvider,
@@ -33,7 +33,7 @@ from runtime.providers.protocols import (
     SqlJobResultArtifactProvider,
     SyncStateProvider,
 )
-from runtime.security import SecretProviderRegistry
+from langbridge.runtime.security import SecretProviderRegistry
 
 
 class RepositoryDatasetMetadataProvider(DatasetMetadataProvider):
@@ -77,7 +77,7 @@ class RepositoryConnectorMetadataProvider(ConnectorMetadataProvider):
 
     async def get_connector(self, connector_id) -> Any | None:
         connector = await self._connector_repository.get_by_id(connector_id)
-        return to_runtime_connector(connector)
+        return from_connector_record(connector)
 
 
 class RepositorySemanticModelMetadataProvider(SemanticModelMetadataProvider):
@@ -89,7 +89,7 @@ class RepositorySemanticModelMetadataProvider(SemanticModelMetadataProvider):
             model_id=semantic_model_id,
             organization_id=organization_id,
         )
-        return to_runtime_semantic_model(semantic_model)
+        return from_semantic_model_record(semantic_model)
 
 
 class RepositorySyncStateProvider(SyncStateProvider):
@@ -125,9 +125,9 @@ class SqlArtifactRepository(SqlJobResultArtifactProvider):
         elif not isinstance(artifact, SqlJobResultArtifact):
             artifact = SqlJobResultArtifact.model_validate(artifact)
         record = self._sql_job_result_artifact_repository.add(
-            to_legacy_sql_job_result_artifact(artifact)
+            to_sql_job_result_artifact_record(artifact)
         )
-        return to_runtime_sql_job_result_artifact(record)
+        return from_sql_job_result_artifact_record(record)
 
     async def list_sql_job_result_artifacts(self, **kwargs: Any) -> list[Any]:
         sql_job_id = kwargs.get("sql_job_id")
@@ -139,7 +139,7 @@ class SqlArtifactRepository(SqlJobResultArtifactProvider):
         return [
             artifact
             for item in artifacts
-            if (artifact := to_runtime_sql_job_result_artifact(item)) is not None
+            if (artifact := from_sql_job_result_artifact_record(item)) is not None
         ]
 
 
@@ -148,4 +148,4 @@ class SecretRegistryCredentialProvider(CredentialProvider):
         self._registry = registry or SecretProviderRegistry()
 
     def resolve_secret(self, reference) -> str:
-        return self._registry.resolve(to_runtime_secret_reference(reference))
+        return self._registry.resolve(to_secret_reference(reference))

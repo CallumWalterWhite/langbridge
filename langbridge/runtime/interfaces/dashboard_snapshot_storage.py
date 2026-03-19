@@ -1,41 +1,15 @@
-from typing import Any, Protocol
-from uuid import UUID
+"""Compatibility wrapper for dashboard snapshot storage protocols."""
 
-
-class IDashboardSnapshotReader(Protocol):
-    async def read_snapshot(
-        self,
-        *,
-        organization_id: UUID,
-        dashboard_id: UUID,
-        snapshot_reference: str,
-    ) -> dict[str, Any] | None: ...
-
-
-class IDashboardSnapshotWriter(Protocol):
-    async def write_snapshot(
-        self,
-        *,
-        organization_id: UUID,
-        dashboard_id: UUID,
-        data: dict[str, Any],
-    ) -> str: ...
-
-
-class IDashboardSnapshotDeleter(Protocol):
-    async def delete_snapshot(
-        self,
-        *,
-        organization_id: UUID,
-        dashboard_id: UUID,
-        snapshot_reference: str,
-    ) -> None: ...
-
-
-class IDashboardSnapshotStorage(
-    IDashboardSnapshotReader,
-    IDashboardSnapshotWriter,
+from langbridge.runtime.ports import (  # noqa: F401
     IDashboardSnapshotDeleter,
-    Protocol,
-):
-    """Composite protocol for dashboard snapshot backends."""
+    IDashboardSnapshotReader,
+    IDashboardSnapshotStorage,
+    IDashboardSnapshotWriter,
+)
+
+__all__ = [
+    "IDashboardSnapshotDeleter",
+    "IDashboardSnapshotReader",
+    "IDashboardSnapshotStorage",
+    "IDashboardSnapshotWriter",
+]

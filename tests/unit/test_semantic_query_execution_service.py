@@ -10,16 +10,16 @@ from typing import Any
 
 import pytest
 
-from langbridge.packages.runtime.services.semantic_query_execution_service import (
+from langbridge.runtime.services.semantic_query_execution_service import (
     SemanticQueryExecutionService,
     _normalize_unified_relationship_payload,
 )
-from langbridge.packages.runtime.models import (
+from langbridge.runtime.models import (
     UnifiedSemanticRelationshipRequest,
 )
-from langbridge.packages.runtime.errors import BusinessValidationError
-from langbridge.packages.semantic.langbridge_semantic.model import Dimension, SemanticModel, Table
-from langbridge.packages.semantic.langbridge_semantic.query import SemanticQuery
+from langbridge.runtime.errors import BusinessValidationError
+from langbridge.semantic.model import Dimension, SemanticModel, Table
+from langbridge.semantic.query import SemanticQuery
 
 
 @pytest.fixture

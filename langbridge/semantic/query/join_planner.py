@@ -2,8 +2,8 @@ from collections import deque
 from dataclasses import dataclass
 from typing import Dict, Iterable, List, Optional, Set, Tuple
 
-from semantic.errors import JoinPathError
-from semantic.model import Relationship
+from langbridge.semantic.errors import JoinPathError
+from langbridge.semantic.model import Relationship
 
 
 @dataclass(frozen=True)

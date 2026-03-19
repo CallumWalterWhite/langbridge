@@ -6,8 +6,8 @@ from pathlib import Path
 from fastapi.testclient import TestClient
 
 from langbridge import LangbridgeClient
-from langbridge.packages.runtime import build_configured_local_runtime
-from langbridge.packages.runtime.hosting import create_runtime_api_app
+from langbridge.runtime import build_configured_local_runtime
+from langbridge.runtime.hosting import create_runtime_api_app
 from tests.unit._runtime_host_sync_helpers import (
     mock_stripe_api,
     runtime_storage_dirs,

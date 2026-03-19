@@ -12,16 +12,16 @@ from datetime import datetime, timezone
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 from urllib.parse import urlparse
 
-from runtime.events import (
+from langbridge.runtime.events import (
     AgentEventVisibility,
     AgentEventEmitter,
 )
-from orchestrator.agents.web_search import (
+from langbridge.orchestrator.agents.web_search import (
     WebSearchAgent,
     WebSearchResult,
     WebSearchResultItem,
 )
-from orchestrator.llm.provider import LLMProvider
+from langbridge.orchestrator.llm.provider import LLMProvider
 
 from .schemas import EvidenceItem, ResearchFinding, ResearchPlan, ResearchReport, ResearchState
 

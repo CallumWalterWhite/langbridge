@@ -11,7 +11,7 @@ This page is a short index for runtime development.
 
 ## Quick Commands
 
-- Install runtime dependencies: `pip install -r langbridge/requirements.txt`
+- Install runtime dependencies: `pip install -r requirements.txt`
 - Run the worker: `python -m langbridge.apps.runtime_worker.main`
 - Run unit tests: `pytest -q tests/unit`
 - Start the local runtime stack: `docker compose up --build db redis worker`

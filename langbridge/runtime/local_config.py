@@ -10,12 +10,12 @@ from typing import Any, Mapping
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from runtime.utils.connector_runtime import (
+from langbridge.runtime.utils.connector_runtime import (
     build_connector_runtime_payload,
 )
-from runtime.context import RuntimeContext
-from runtime.execution import FederatedQueryTool
-from runtime.models import (
+from langbridge.runtime.context import RuntimeContext
+from langbridge.runtime.execution import FederatedQueryTool
+from langbridge.runtime.models import (
     ConnectionMetadata,
     ConnectionPolicy,
     ConnectorMetadata,
@@ -40,23 +40,23 @@ from runtime.models import (
     SecretReference,
     SqlWorkbenchMode,
 )
-from runtime.providers import (
+from langbridge.runtime.providers import (
     MemoryConnectorProvider,
     MemorySemanticModelProvider,
     RepositoryDatasetMetadataProvider,
     RepositorySyncStateProvider,
     SecretRegistryCredentialProvider,
 )
-from runtime.security import SecretProviderRegistry
-from runtime.services.agent_execution_service import AgentExecutionService
-from runtime.services.dataset_query_service import DatasetQueryService
-from runtime.services.dataset_sync_service import ConnectorSyncRuntime
-from runtime.services.runtime_host import (
+from langbridge.runtime.security import SecretProviderRegistry
+from langbridge.runtime.services.agent_execution_service import AgentExecutionService
+from langbridge.runtime.services.dataset_query_service import DatasetQueryService
+from langbridge.runtime.services.dataset_sync_service import ConnectorSyncRuntime
+from langbridge.runtime.services.runtime_host import (
     RuntimeHost,
     RuntimeProviders,
     RuntimeServices,
 )
-from connectors.api import (
+from langbridge.connectors.base import (
     ApiConnectorFactory,
     ApiResource,
     ConnectorFamily,
@@ -64,13 +64,13 @@ from connectors.api import (
     get_connector_config_factory,
     get_connector_plugin,
 )
-from runtime.services.semantic_query_execution_service import (
+from langbridge.runtime.services.semantic_query_execution_service import (
     SemanticQueryExecutionService,
 )
-from runtime.services.sql_query_service import SqlQueryService
-from runtime.settings import runtime_settings as settings
-from semantic.model import SemanticModel
-from semantic.query import SemanticQuery
+from langbridge.runtime.services.sql_query_service import SqlQueryService
+from langbridge.runtime.settings import runtime_settings as settings
+from langbridge.semantic.model import SemanticModel
+from langbridge.semantic.query import SemanticQuery
 
 
 class LocalRuntimeConnectorConfig(BaseModel):

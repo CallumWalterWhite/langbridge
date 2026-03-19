@@ -4,14 +4,14 @@ import uuid
 
 import pytest
 
-from langbridge.apps.runtime_worker.handlers.jobs.connector_sync_job_request_handler import (
+from apps.runtime_worker.handlers.jobs.connector_sync_job_request_handler import (
     ConnectorSyncJobRequestHandler,
 )
-from langbridge.contracts.jobs.type import JobType
-from langbridge.packages.messaging.langbridge_messaging.contracts.jobs.connector_job import (
+from apps.runtime_worker.messaging.contracts.jobs.connector_job import (
     ConnectorSyncJobRequestMessage,
 )
-from langbridge.packages.runtime.errors import BusinessValidationError
+from langbridge.contracts.jobs.type import JobType
+from langbridge.runtime.errors import BusinessValidationError
 
 
 def test_parse_request_accepts_runtime_connector_sync_shape() -> None:

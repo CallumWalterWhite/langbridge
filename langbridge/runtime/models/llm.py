@@ -7,7 +7,7 @@ from typing import Any
 
 from pydantic import Field
 
-from runtime.models.base import RuntimeModel
+from langbridge.runtime.models.base import RuntimeModel
 
 
 class LLMProvider(str, Enum):

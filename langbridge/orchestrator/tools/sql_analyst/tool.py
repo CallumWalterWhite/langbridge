@@ -15,13 +15,13 @@ from typing import Any, Dict, List, Optional, Sequence
 import sqlglot
 from sqlglot import exp
 
-from runtime.embeddings import EmbeddingProvider
-from runtime.events import (
+from langbridge.runtime.embeddings import EmbeddingProvider
+from langbridge.runtime.events import (
     AgentEventVisibility,
     AgentEventEmitter,
 )
-from orchestrator.llm.provider import LLMProvider
-from runtime.utils.sql import enforce_preview_limit
+from langbridge.orchestrator.llm.provider import LLMProvider
+from langbridge.runtime.utils.sql import enforce_preview_limit
 from .interfaces import (
     AnalyticalContext,
     AnalyticalField,

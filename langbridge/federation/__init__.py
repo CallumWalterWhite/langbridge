@@ -1,13 +1,16 @@
-﻿from federation.service import FederatedQueryService
-from federation.models.smq import SMQFilter, SMQOrderItem, SMQQuery, SMQTimeDimension
-from federation.models.virtual_dataset import (
+from __future__ import annotations
+
+from typing import Any
+
+from langbridge.federation.models.smq import SMQFilter, SMQOrderItem, SMQQuery, SMQTimeDimension
+from langbridge.federation.models.virtual_dataset import (
     FederationWorkflow,
     TableStatistics,
     VirtualDataset,
     VirtualRelationship,
     VirtualTableBinding,
 )
-from federation.models.plans import (
+from langbridge.federation.models.plans import (
     ExecutionSummary,
     FederatedExplainPlan,
     LogicalPlan,
@@ -32,3 +35,11 @@ __all__ = [
     "PhysicalPlan",
     "ResultHandle",
 ]
+
+
+def __getattr__(name: str) -> Any:
+    if name == "FederatedQueryService":
+        from langbridge.federation.service import FederatedQueryService
+
+        return FederatedQueryService
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

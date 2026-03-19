@@ -8,7 +8,7 @@ import pyarrow as pa
 import pyarrow.ipc as ipc
 import pyarrow.parquet as pq
 
-from federation.models.plans import StageArtifact
+from langbridge.federation.models.plans import StageArtifact
 
 
 class ArtifactStore:

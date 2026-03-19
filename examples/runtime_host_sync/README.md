@@ -13,7 +13,7 @@ python -m langbridge serve --config /example/langbridge_config.yml --host 0.0.0.
 
 ## What This Example Starts
 
-- `runtime-host`: the existing self-hosted runtime host image from `langbridge/Dockerfile.host`
+- `runtime-host`: the existing self-hosted runtime host image from `Dockerfile.host`
 - `mock-stripe`: a local HTTP API that exposes `/v1/account` and `/v1/customers`
 
 ## Files In This Folder

@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-from langbridge.packages.orchestrator.langbridge_orchestrator.llm.provider.llm_tester import (
+from langbridge.orchestrator.llm.provider.llm_tester import (
     LLMConnectionTester,
 )
-from langbridge.packages.runtime.models import LLMProvider
+from langbridge.runtime.models import LLMProvider
 
 
 def test_llm_connection_tester_accepts_runtime_provider_enum(monkeypatch) -> None:

@@ -4,16 +4,16 @@ import uuid
 
 import pytest
 
-from langbridge.packages.orchestrator.langbridge_orchestrator.tools.semantic_query_builder import (
+from langbridge.orchestrator.tools.semantic_query_builder import (
     QueryBuilderCopilotRequest,
     SemanticQueryBuilderCopilotTool,
 )
-from langbridge.packages.runtime.models import (
+from langbridge.runtime.models import (
     SemanticQueryMetaResponse,
     SemanticQueryRequest,
     SemanticQueryResponse,
 )
-from langbridge.packages.semantic.langbridge_semantic.query import SemanticQuery
+from langbridge.semantic.query import SemanticQuery
 
 
 @pytest.fixture

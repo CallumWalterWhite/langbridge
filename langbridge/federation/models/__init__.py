@@ -1,4 +1,4 @@
-﻿from federation.models.plans import (
+from langbridge.federation.models.plans import (
     ExecutionSummary,
     FederatedExplainPlan,
     JoinRef,
@@ -14,8 +14,8 @@
     StageType,
     TableRef,
 )
-from federation.models.smq import SMQFilter, SMQOrderItem, SMQQuery, SMQTimeDimension
-from federation.models.virtual_dataset import (
+from langbridge.federation.models.smq import SMQFilter, SMQOrderItem, SMQQuery, SMQTimeDimension
+from langbridge.federation.models.virtual_dataset import (
     DatasetExecutionDescriptor,
     FederationWorkflow,
     TableStatistics,

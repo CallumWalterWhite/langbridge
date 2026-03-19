@@ -6,17 +6,17 @@ from types import SimpleNamespace
 
 import pytest
 
-from langbridge.packages.runtime.adapters import (
-    to_runtime_connector,
-    to_runtime_dataset,
-    to_runtime_sql_job,
+from langbridge.runtime.persistence.mappers import (
+    from_connector_record,
+    from_dataset_record,
+    from_sql_job_record,
 )
-from langbridge.packages.runtime.models import ConnectorSyncState
-from langbridge.packages.runtime.providers.memory import (
+from langbridge.runtime.models import ConnectorSyncState
+from langbridge.runtime.providers.memory import (
     MemoryDatasetProvider,
     MemorySyncStateProvider,
 )
-from langbridge.packages.runtime.utils import build_connector_runtime_payload
+from langbridge.runtime.utils import build_connector_runtime_payload
 
 
 @pytest.fixture
@@ -24,7 +24,7 @@ def anyio_backend():
     return "asyncio"
 
 
-def test_to_runtime_connector_maps_legacy_connector_shape() -> None:
+def test_from_connector_record_maps_legacy_connector_shape() -> None:
     org_id = uuid.uuid4()
     project_id = uuid.uuid4()
     connector_id = uuid.uuid4()
@@ -54,7 +54,7 @@ def test_to_runtime_connector_maps_legacy_connector_shape() -> None:
         projects=[SimpleNamespace(id=project_id)],
     )
 
-    connector = to_runtime_connector(legacy_connector)
+    connector = from_connector_record(legacy_connector)
 
     assert connector is not None
     assert connector.id == connector_id
@@ -90,7 +90,7 @@ def test_build_connector_runtime_payload_uses_runtime_secret_references() -> Non
     assert payload["config"]["password"] == "resolved:DB_PASSWORD"
 
 
-def test_to_runtime_dataset_maps_legacy_dataset_shape() -> None:
+def test_from_dataset_record_maps_legacy_dataset_shape() -> None:
     dataset_id = uuid.uuid4()
     workspace_id = uuid.uuid4()
     created_at = datetime.now(timezone.utc)
@@ -153,7 +153,7 @@ def test_to_runtime_dataset_maps_legacy_dataset_shape() -> None:
         updated_at=created_at,
     )
 
-    dataset = to_runtime_dataset(legacy_dataset)
+    dataset = from_dataset_record(legacy_dataset)
 
     assert dataset is not None
     assert dataset.id == dataset_id
@@ -165,7 +165,7 @@ def test_to_runtime_dataset_maps_legacy_dataset_shape() -> None:
     assert dataset.policy.redaction_rules_json == {"email": "mask"}
 
 
-def test_to_runtime_sql_job_maps_legacy_sql_job_shape() -> None:
+def test_from_sql_job_record_maps_legacy_sql_job_shape() -> None:
     workspace_id = uuid.uuid4()
     user_id = uuid.uuid4()
     connection_id = uuid.uuid4()
@@ -208,7 +208,7 @@ def test_to_runtime_sql_job_maps_legacy_sql_job_shape() -> None:
         updated_at=created_at,
     )
 
-    job = to_runtime_sql_job(legacy_job)
+    job = from_sql_job_record(legacy_job)
 
     assert job is not None
     assert job.workspace_id == workspace_id
@@ -226,7 +226,7 @@ async def test_memory_providers_support_ephemeral_runtime_access_patterns() -> N
     dataset_id = uuid.uuid4()
     state_id = uuid.uuid4()
     connection_id = uuid.uuid4()
-    dataset = to_runtime_dataset(
+    dataset = from_dataset_record(
         SimpleNamespace(
             id=dataset_id,
             workspace_id=workspace_id,

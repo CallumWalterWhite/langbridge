@@ -7,8 +7,8 @@ from typing import Any, Literal
 
 from pydantic import Field, model_validator
 
-from runtime.models.base import RuntimeRequestModel
-from runtime.models.semantic import (
+from langbridge.runtime.models.base import RuntimeRequestModel
+from langbridge.runtime.models.semantic import (
     UnifiedSemanticMetricRequest,
     UnifiedSemanticRelationshipRequest,
     UnifiedSemanticSourceModelRequest,

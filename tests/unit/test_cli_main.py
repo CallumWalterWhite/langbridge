@@ -4,7 +4,7 @@ import json
 import sqlite3
 from pathlib import Path
 
-from langbridge.packages.cli.main import main
+from langbridge.cli.main import main
 from tests.unit._runtime_host_sync_helpers import (
     mock_stripe_api,
     runtime_storage_dirs,
@@ -109,7 +109,7 @@ def test_cli_serve_delegates_to_runtime_api(tmp_path: Path, monkeypatch) -> None
         captured["port"] = port
         captured["reload"] = reload
 
-    monkeypatch.setattr("langbridge.packages.cli.main.run_runtime_api", fake_run_runtime_api)
+    monkeypatch.setattr("langbridge.cli.main.run_runtime_api", fake_run_runtime_api)
 
     exit_code = main(
         [

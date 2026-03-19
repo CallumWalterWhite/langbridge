@@ -7,14 +7,14 @@ from typing import Any
 import pytest
 
 from langbridge.contracts.semantic import SemanticModelRecordResponse
-from langbridge.packages.common.langbridge_common.db.dataset import DatasetColumnRecord, DatasetRecord
-from langbridge.packages.orchestrator.langbridge_orchestrator.runtime.agent_orchestrator_factory import (
+from langbridge.runtime.persistence.db.dataset import DatasetColumnRecord, DatasetRecord
+from langbridge.orchestrator.runtime.agent_orchestrator_factory import (
     AgentOrchestratorFactory,
     AgentToolConfig,
     AnalystBinding,
 )
-from langbridge.packages.orchestrator.langbridge_orchestrator.tools.sql_analyst.interfaces import AnalystQueryRequest
-from langbridge.packages.semantic.langbridge_semantic.model import Dimension, SemanticModel, Table
+from langbridge.orchestrator.tools.sql_analyst.interfaces import AnalystQueryRequest
+from langbridge.semantic.model import Dimension, SemanticModel, Table
 
 
 class _StaticLLM:

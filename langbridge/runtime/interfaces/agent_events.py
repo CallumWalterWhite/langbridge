@@ -1,21 +1,6 @@
-from __future__ import annotations
+"""Compatibility wrapper for agent event protocols."""
 
-from enum import Enum
-from typing import Any, Protocol
+from langbridge.runtime.events import AgentEventEmitter as IAgentEventEmitter
+from langbridge.runtime.events import AgentEventVisibility
 
-
-class AgentEventVisibility(str, Enum):
-    public = "public"
-    internal = "internal"
-
-
-class IAgentEventEmitter(Protocol):
-    async def emit(
-        self,
-        *,
-        event_type: str,
-        message: str,
-        visibility: AgentEventVisibility = AgentEventVisibility.internal,
-        source: str | None = None,
-        details: dict[str, Any] | None = None,
-    ) -> None: ...
+__all__ = ["AgentEventVisibility", "IAgentEventEmitter"]

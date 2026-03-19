@@ -4,13 +4,13 @@ import uuid
 
 import pytest
 
-from langbridge.packages.runtime.models import ConnectorMetadata
-from langbridge.packages.runtime.execution.federated_query_tool import (
+from langbridge.runtime.models import ConnectorMetadata
+from langbridge.runtime.execution.federated_query_tool import (
     FederatedQueryTool,
 )
-from langbridge.packages.runtime.providers import MemoryConnectorProvider
-from langbridge.packages.federation.connectors import DuckDbFileRemoteSource
-from langbridge.packages.federation.models import (
+from langbridge.runtime.providers import MemoryConnectorProvider
+from langbridge.federation.connectors import DuckDbFileRemoteSource
+from langbridge.federation.models import (
     DatasetExecutionDescriptor,
     FederationWorkflow,
     VirtualDataset,

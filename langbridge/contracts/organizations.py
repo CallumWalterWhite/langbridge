@@ -3,7 +3,7 @@ from typing import List
 
 from pydantic import ConfigDict, Field
 
-from db.auth import InviteStatus
+from langbridge.runtime.persistence.db.auth import InviteStatus
 from .base import _Base
 
 

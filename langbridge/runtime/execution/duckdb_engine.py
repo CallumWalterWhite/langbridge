@@ -4,7 +4,7 @@ from typing import Any
 
 import duckdb
 
-from runtime.execution.engine import ExecutionEngine, ExecutionResult
+from langbridge.runtime.execution.engine import ExecutionEngine, ExecutionResult
 
 
 class DuckDbExecutionEngine(ExecutionEngine):

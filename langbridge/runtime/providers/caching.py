@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 from typing import Any
 
-from runtime.providers.protocols import (
+from langbridge.runtime.providers.protocols import (
     ConnectorMetadataProvider,
     DatasetMetadataProvider,
     SemanticModelMetadataProvider,

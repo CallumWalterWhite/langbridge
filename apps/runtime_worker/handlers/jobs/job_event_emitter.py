@@ -3,21 +3,22 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from langbridge.packages.common.langbridge_common.db.job import (
+from langbridge.runtime.persistence.db.job import (
     JobEventRecord,
     JobEventVisibility as JobEventRecordVisibility,
     JobRecord,
 )
-from langbridge.packages.runtime.events import (
+from langbridge.runtime.events import (
     AgentEventVisibility,
     AgentEventEmitter,
 )
-from langbridge.packages.common.langbridge_common.repositories.job_repository import JobRepository
-from langbridge.packages.messaging.langbridge_messaging.broker.base import MessageBroker
-from langbridge.packages.messaging.langbridge_messaging.broker.redis import RedisStreams
-from langbridge.packages.messaging.langbridge_messaging.contracts import MessageHeaders
-from langbridge.packages.messaging.langbridge_messaging.contracts.messages import MessageEnvelope
-from langbridge.packages.messaging.langbridge_messaging.contracts.jobs.event import JobEventMessage
+from langbridge.runtime.persistence.repositories.job_repository import JobRepository
+
+from ...messaging.broker.base import MessageBroker
+from ...messaging.broker.redis import RedisStreams
+from ...messaging.contracts import MessageHeaders
+from ...messaging.contracts.messages import MessageEnvelope
+from ...messaging.contracts.jobs.event import JobEventMessage
 
 class SqlJobEventEmitter(AgentEventEmitter):
     """Persists agent/tool events onto a job record for user progress + auditing."""

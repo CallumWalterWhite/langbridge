@@ -11,8 +11,8 @@ PACKAGE_ROOT = REPO_ROOT
 if str(PACKAGE_ROOT) not in sys.path:
     sys.path.insert(0, str(PACKAGE_ROOT))
 
-from langbridge.packages.common.langbridge_common.db.job import JobStatus  # noqa: E402
-from langbridge.packages.runtime.services.dataset_query_service import (  # noqa: E402
+from langbridge.runtime.persistence.db.job import JobStatus  # noqa: E402
+from langbridge.runtime.services.dataset_query_service import (  # noqa: E402
     DatasetQueryService,
 )
 

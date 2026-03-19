@@ -3,22 +3,22 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from runtime.context import RuntimeContext
-from runtime.execution import FederatedQueryTool
-from runtime.providers import (
+from langbridge.runtime.context import RuntimeContext
+from langbridge.runtime.execution import FederatedQueryTool
+from langbridge.runtime.providers import (
     ConnectorMetadataProvider,
     CredentialProvider,
     DatasetMetadataProvider,
     SemanticModelMetadataProvider,
     SyncStateProvider,
 )
-from runtime.services.agent_execution_service import AgentExecutionService
-from runtime.services.dataset_query_service import DatasetQueryService
-from runtime.services.dataset_sync_service import ConnectorSyncRuntime
-from runtime.services.semantic_query_execution_service import (
+from langbridge.runtime.services.agent_execution_service import AgentExecutionService
+from langbridge.runtime.services.dataset_query_service import DatasetQueryService
+from langbridge.runtime.services.dataset_sync_service import ConnectorSyncRuntime
+from langbridge.runtime.services.semantic_query_execution_service import (
     SemanticQueryExecutionService,
 )
-from runtime.services.sql_query_service import SqlQueryService
+from langbridge.runtime.services.sql_query_service import SqlQueryService
 
 
 @dataclass(slots=True)

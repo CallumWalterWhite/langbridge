@@ -7,16 +7,16 @@ from typing import Any
 import duckdb
 import pyarrow as pa
 
-from federation.utils import (
+from langbridge.federation.utils import (
     resolve_local_storage_path,
 )
-from federation.connectors.base import (
+from langbridge.federation.connectors.base import (
     RemoteExecutionResult,
     RemoteSource,
     SourceCapabilities,
 )
-from federation.models.plans import SourceSubplan
-from federation.models.virtual_dataset import (
+from langbridge.federation.models.plans import SourceSubplan
+from langbridge.federation.models.virtual_dataset import (
     TableStatistics,
     VirtualTableBinding,
 )

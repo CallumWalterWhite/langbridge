@@ -9,16 +9,16 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Dict, Optional, Sequence
 
-from runtime.events import (
+from langbridge.runtime.events import (
     AgentEventVisibility,
     AgentEventEmitter,
 )
-from orchestrator.agents.models import PlanExecutionArtifacts
-from orchestrator.agents.reasoning.agent import ReasoningAgent, ReasoningDecision
-from orchestrator.agents.analyst import AnalystAgent
-from orchestrator.agents.bi_copilot import BICopilotAgent
-from orchestrator.agents.deep_research import DeepResearchAgent, DeepResearchResult
-from orchestrator.agents.planner import (
+from langbridge.orchestrator.agents.models import PlanExecutionArtifacts
+from langbridge.orchestrator.agents.reasoning.agent import ReasoningAgent, ReasoningDecision
+from langbridge.orchestrator.agents.analyst import AnalystAgent
+from langbridge.orchestrator.agents.bi_copilot import BICopilotAgent
+from langbridge.orchestrator.agents.deep_research import DeepResearchAgent, DeepResearchResult
+from langbridge.orchestrator.agents.planner import (
     AgentName,
     Plan,
     PlanStep,
@@ -27,29 +27,29 @@ from orchestrator.agents.planner import (
     PlanningConstraints,
     RouteName,
 )
-from orchestrator.agents.supervisor.clarification_manager import (
+from langbridge.orchestrator.agents.supervisor.clarification_manager import (
     ClarificationManager,
 )
-from orchestrator.agents.supervisor.entity_resolver import (
+from langbridge.orchestrator.agents.supervisor.entity_resolver import (
     EntityResolver,
 )
-from orchestrator.agents.supervisor.question_classifier import (
+from langbridge.orchestrator.agents.supervisor.question_classifier import (
     QuestionClassifier,
 )
-from orchestrator.agents.supervisor.schemas import (
+from langbridge.orchestrator.agents.supervisor.schemas import (
     ClarificationDecision,
     ClarificationState,
     ClassifiedQuestion,
     ResolvedEntities,
 )
-from orchestrator.llm.provider import LLMProvider
-from orchestrator.agents.visual import VisualAgent
-from orchestrator.agents.web_search import WebSearchAgent, WebSearchResult
-from orchestrator.tools.semantic_query_builder import (
+from langbridge.orchestrator.llm.provider import LLMProvider
+from langbridge.orchestrator.agents.visual import VisualAgent
+from langbridge.orchestrator.agents.web_search import WebSearchAgent, WebSearchResult
+from langbridge.orchestrator.tools.semantic_query_builder import (
     QueryBuilderCopilotRequest,
     QueryBuilderCopilotResponse,
 )
-from orchestrator.tools.sql_analyst.interfaces import AnalystQueryResponse
+from langbridge.orchestrator.tools.sql_analyst.interfaces import AnalystQueryResponse
 
 
 @dataclass

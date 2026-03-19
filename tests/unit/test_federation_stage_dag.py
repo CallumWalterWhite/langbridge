@@ -2,9 +2,9 @@
 
 import uuid
 
-from langbridge.packages.federation.models import FederationWorkflow, VirtualDataset, VirtualTableBinding
-from langbridge.packages.federation.models.plans import StageType
-from langbridge.packages.federation.planner import FederatedPlanner
+from langbridge.federation.models import FederationWorkflow, VirtualDataset, VirtualTableBinding
+from langbridge.federation.models.plans import StageType
+from langbridge.federation.planner import FederatedPlanner
 
 
 def _workflow() -> FederationWorkflow:

@@ -3,7 +3,9 @@ from __future__ import annotations
 import uuid
 from typing import Any, Protocol
 
-from runtime.models import (
+from langbridge.contracts.connectors import ConnectorDTO
+from langbridge.contracts.semantic import SemanticModelRecordResponse
+from langbridge.runtime.models import (
     ConnectorMetadata,
     ConnectorSyncState,
     RuntimeConversationMemoryItem,
@@ -22,6 +24,68 @@ from runtime.models import (
     SqlJob,
     SqlJobResultArtifact,
 )
+
+
+class IConnectorStore(Protocol):
+    async def get_by_name(self, name: str) -> ConnectorDTO | None: ...
+
+    async def get_by_id(self, connector_id: uuid.UUID) -> ConnectorDTO | None: ...
+
+    async def get_by_ids(
+        self,
+        connector_ids: list[uuid.UUID],
+    ) -> list[ConnectorDTO]: ...
+
+
+class ISemanticModelStore(Protocol):
+    async def get_by_id(
+        self,
+        model_id: uuid.UUID,
+    ) -> SemanticModelRecordResponse | None: ...
+
+    async def get_by_ids(
+        self,
+        model_ids: list[uuid.UUID],
+    ) -> list[SemanticModelRecordResponse]: ...
+
+
+class IDashboardSnapshotReader(Protocol):
+    async def read_snapshot(
+        self,
+        *,
+        organization_id: uuid.UUID,
+        dashboard_id: uuid.UUID,
+        snapshot_reference: str,
+    ) -> dict[str, Any] | None: ...
+
+
+class IDashboardSnapshotWriter(Protocol):
+    async def write_snapshot(
+        self,
+        *,
+        organization_id: uuid.UUID,
+        dashboard_id: uuid.UUID,
+        data: dict[str, Any],
+    ) -> str: ...
+
+
+class IDashboardSnapshotDeleter(Protocol):
+    async def delete_snapshot(
+        self,
+        *,
+        organization_id: uuid.UUID,
+        dashboard_id: uuid.UUID,
+        snapshot_reference: str,
+    ) -> None: ...
+
+
+class IDashboardSnapshotStorage(
+    IDashboardSnapshotReader,
+    IDashboardSnapshotWriter,
+    IDashboardSnapshotDeleter,
+    Protocol,
+):
+    """Composite protocol for dashboard snapshot backends."""
 
 
 class DatasetMetadataProvider(Protocol):
@@ -295,6 +359,12 @@ class MutableJobHandle(Protocol):
 __all__ = [
     "AgentDefinitionStore",
     "ConnectorMetadataProvider",
+    "IConnectorStore",
+    "IDashboardSnapshotDeleter",
+    "IDashboardSnapshotReader",
+    "IDashboardSnapshotStorage",
+    "IDashboardSnapshotWriter",
+    "ISemanticModelStore",
     "ConnectorSyncStateStore",
     "ConversationMemoryStore",
     "CredentialProvider",

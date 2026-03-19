@@ -7,7 +7,7 @@ from typing import Any, List, Literal, Protocol, Sequence
 
 from pydantic import BaseModel, Field
 
-from semantic.model import SemanticModel
+from langbridge.semantic.model import SemanticModel
 
 
 class ConnectorQueryResult(Protocol):

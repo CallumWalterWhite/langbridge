@@ -4,92 +4,73 @@ Official connector implementations stay in the separate ``langbridge-connectors`
 package and register themselves through this core surface.
 """
 
-from connectors.api.config import (
-    BaseConnectorConfig,
-    BaseConnectorConfigFactory,
-    BaseConnectorConfigSchemaFactory,
-    ConnectorAuthFieldSchema,
-    ConnectorConfigEntrySchema,
-    ConnectorConfigSchema,
-    ConnectorFamily,
-    ConnectorPluginMetadata,
-    ConnectorRuntimeType,
-    ConnectorSyncStrategy,
-    get_connector_config_factory,
-    get_connector_config_schema_factory,
-)
-from connectors.api.connector import (
-    ApiConnector,
-    ApiExtractResult,
-    ApiResource,
-    ApiSyncResult,
-    AuthError,
-    Connector,
-    ConnectorError,
-    ConnectorRuntimeTypeSqlDialectMap,
-    ConnectorRuntimeTypeVectorDBMap,
-    ConnectorType,
-    ManagedVectorDB,
-    QueryResult,
-    SqlConnector,
-    SqlDialetcs,
-    VecotorDBConnector,
-    VectorDBType,
-    VectorType,
-    run_sync,
-)
-from connectors.api.registry import (
-    ApiConnectorFactory,
-    ConnectorInstanceRegistry,
-    ConnectorPlugin,
-    ConnectorPluginRegistry,
-    SqlConnectorFactory,
-    VectorDBConnectorFactory,
-    ensure_builtin_plugins_loaded,
-    get_connector_plugin,
-    list_connector_plugins,
-    register_connector_plugin,
-)
+from __future__ import annotations
 
-__all__ = [
-    "ApiConnector",
-    "ApiConnectorFactory",
-    "ApiExtractResult",
-    "ApiResource",
-    "ApiSyncResult",
-    "AuthError",
-    "BaseConnectorConfig",
-    "BaseConnectorConfigFactory",
-    "BaseConnectorConfigSchemaFactory",
-    "Connector",
-    "ConnectorAuthFieldSchema",
-    "ConnectorConfigEntrySchema",
-    "ConnectorConfigSchema",
-    "ConnectorError",
-    "ConnectorFamily",
-    "ConnectorInstanceRegistry",
-    "ConnectorPlugin",
-    "ConnectorPluginMetadata",
-    "ConnectorPluginRegistry",
-    "ConnectorRuntimeType",
-    "ConnectorRuntimeTypeSqlDialectMap",
-    "ConnectorRuntimeTypeVectorDBMap",
-    "ConnectorSyncStrategy",
-    "ConnectorType",
-    "ManagedVectorDB",
-    "QueryResult",
-    "SqlConnector",
-    "SqlConnectorFactory",
-    "SqlDialetcs",
-    "VecotorDBConnector",
-    "VectorDBConnectorFactory",
-    "VectorDBType",
-    "VectorType",
-    "ensure_builtin_plugins_loaded",
-    "get_connector_config_factory",
-    "get_connector_config_schema_factory",
-    "get_connector_plugin",
-    "list_connector_plugins",
-    "register_connector_plugin",
-    "run_sync",
-]
+from importlib import import_module
+from typing import Any
+
+_EXPORTS = {
+    "langbridge.connectors.base.config": (
+        "BaseConnectorConfig",
+        "BaseConnectorConfigFactory",
+        "BaseConnectorConfigSchemaFactory",
+        "ConnectorAuthFieldSchema",
+        "ConnectorConfigEntrySchema",
+        "ConnectorConfigSchema",
+        "ConnectorFamily",
+        "ConnectorPluginMetadata",
+        "ConnectorRuntimeType",
+        "ConnectorSyncStrategy",
+        "get_connector_config_factory",
+        "get_connector_config_schema_factory",
+    ),
+    "langbridge.connectors.base.connector": (
+        "ApiConnector",
+        "ApiExtractResult",
+        "ApiResource",
+        "ApiSyncResult",
+        "AuthError",
+        "Connector",
+        "ConnectorError",
+        "ConnectorRuntimeTypeSqlDialectMap",
+        "ConnectorRuntimeTypeVectorDBMap",
+        "ConnectorType",
+        "ManagedVectorDB",
+        "NoSqlConnector",
+        "NoSqlQueryResult",
+        "QueryResult",
+        "SqlConnector",
+        "SqlDialetcs",
+        "VecotorDBConnector",
+        "VectorDBType",
+        "VectorType",
+        "run_sync",
+    ),
+    "langbridge.connectors.base.registry": (
+        "ApiConnectorFactory",
+        "ConnectorInstanceRegistry",
+        "ConnectorPlugin",
+        "ConnectorPluginRegistry",
+        "NoSqlConnectorFactory",
+        "SqlConnectorFactory",
+        "VectorDBConnectorFactory",
+        "ensure_builtin_connectors_loaded",
+        "ensure_builtin_plugins_loaded",
+        "get_connector_plugin",
+        "list_connector_plugins",
+        "register_connector_plugin",
+    ),
+}
+
+__all__ = [name for names in _EXPORTS.values() for name in names]
+
+
+def __getattr__(name: str) -> Any:
+    for module_name, exports in _EXPORTS.items():
+        if name not in exports:
+            continue
+        module = import_module(module_name)
+        value = getattr(module, name)
+        globals()[name] = value
+        return value
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

@@ -1,4 +1,4 @@
-from langbridge.packages.sdk.client import (
+from langbridge.client import (
     AgentAskResult,
     ConnectorListResult,
     ConnectorSummary,

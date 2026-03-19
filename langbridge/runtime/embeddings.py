@@ -6,7 +6,7 @@ from typing import Any, Iterable, List, Sequence
 
 from openai import AzureOpenAI, OpenAI, OpenAIError  # type: ignore[import-untyped]
 
-from runtime.models import LLMProvider
+from langbridge.runtime.models import LLMProvider
 
 DEFAULT_OPENAI_EMBED_MODEL = "text-embedding-3-small"
 DEFAULT_AZURE_API_VERSION = "2024-05-01-preview"

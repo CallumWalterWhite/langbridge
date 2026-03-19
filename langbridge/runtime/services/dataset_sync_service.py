@@ -11,22 +11,22 @@ from typing import Any
 import pyarrow as pa
 import pyarrow.parquet as pq
 
-from runtime.utils.lineage import (
+from langbridge.runtime.utils.lineage import (
     LineageEdgeType,
     LineageNodeType,
     build_api_resource_id,
     build_file_resource_id,
     stable_payload_hash,
 )
-from runtime.utils.datasets import (
+from langbridge.runtime.utils.datasets import (
     build_dataset_execution_capabilities,
     build_dataset_relation_identity,
     resolve_dataset_source_kind,
     resolve_dataset_storage_kind,
 )
-from connectors.api import ApiResource
-from connectors.api.config import ConnectorRuntimeType
-from runtime.models import (
+from langbridge.connectors.base import ApiResource
+from langbridge.connectors.base.config import ConnectorRuntimeType
+from langbridge.runtime.models import (
     ConnectorSyncState,
     DatasetColumnMetadata,
     DatasetMetadata,
@@ -34,7 +34,7 @@ from runtime.models import (
     DatasetRevision,
     LineageEdge,
 )
-from runtime.ports import (
+from langbridge.runtime.ports import (
     ConnectorSyncStateStore,
     DatasetCatalogStore,
     DatasetColumnStore,
@@ -42,7 +42,7 @@ from runtime.ports import (
     DatasetRevisionStore,
     LineageEdgeStore,
 )
-from runtime.settings import runtime_settings as settings
+from langbridge.runtime.settings import runtime_settings as settings
 
 _RESOURCE_SANITIZER = re.compile(r"[^0-9A-Za-z_]+")
 _SYNC_MODE_INCREMENTAL = "INCREMENTAL"

@@ -5,10 +5,10 @@ from types import SimpleNamespace
 
 import pytest
 
-from langbridge.apps.runtime_worker.handlers.query.semantic_query_request_handler import (
+from apps.runtime_worker.handlers.query.semantic_query_request_handler import (
     SemanticQueryRequestHandler,
 )
-from langbridge.packages.runtime.models import ConnectorMetadata, SecretReference
+from langbridge.runtime.models import ConnectorMetadata, SecretReference
 
 
 class _FakeMessageBroker:
@@ -72,4 +72,3 @@ def test_resolve_connector_config_accepts_runtime_connector_metadata(monkeypatch
     assert resolved["config"]["database"] == "analytics"
     assert resolved["config"]["sslmode"] == "require"
     assert resolved["config"]["password"] == "secret"
-

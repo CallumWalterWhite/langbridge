@@ -4,8 +4,8 @@ from dataclasses import dataclass
 
 import pyarrow as pa
 
-from federation.models.plans import SourceSubplan
-from federation.models.virtual_dataset import TableStatistics, VirtualTableBinding
+from langbridge.federation.models.plans import SourceSubplan
+from langbridge.federation.models.virtual_dataset import TableStatistics, VirtualTableBinding
 
 
 @dataclass(slots=True)

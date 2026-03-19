@@ -7,8 +7,8 @@ from typing import Any
 
 from pydantic import Field
 
-from runtime.models.base import RuntimeModel
-from runtime.models.llm import LLMConnectionSecret
+from langbridge.runtime.models.base import RuntimeModel
+from langbridge.runtime.models.llm import LLMConnectionSecret
 
 
 class RuntimeAgentDefinition(RuntimeModel):

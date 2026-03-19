@@ -5,7 +5,7 @@ import uuid
 from pathlib import Path
 from typing import Any, Mapping
 
-from runtime.models import (
+from langbridge.runtime.models import (
     DatasetExecutionCapabilities,
     DatasetRelationIdentity,
     DatasetSourceKind,

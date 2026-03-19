@@ -4,7 +4,7 @@ from typing import Any
 
 import httpx
 
-from runtime.models import (
+from langbridge.runtime.models import (
     ConnectorMetadata,
     ConnectorSyncState,
     DatasetColumnMetadata,
@@ -12,7 +12,7 @@ from runtime.models import (
     DatasetPolicyMetadata,
     SemanticModelMetadata,
 )
-from runtime.providers.protocols import (
+from langbridge.runtime.providers.protocols import (
     ConnectorMetadataProvider,
     DatasetMetadataProvider,
     SemanticModelMetadataProvider,

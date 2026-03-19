@@ -2,17 +2,17 @@ import asyncio
 
 import pytest
 
-from langbridge.apps.runtime_worker import main as worker_main
-from langbridge.packages.messaging.langbridge_messaging.broker.base import (
+from apps.runtime_worker import main as worker_main
+from apps.runtime_worker.messaging.broker.base import (
     MessageReceipt,
     ReceivedMessage,
 )
-from langbridge.packages.messaging.langbridge_messaging.contracts.base import (
+from apps.runtime_worker.messaging.contracts.base import (
     BaseMessagePayload,
     MessageType,
     register_payload,
 )
-from langbridge.packages.messaging.langbridge_messaging.contracts.messages import (
+from apps.runtime_worker.messaging.contracts.messages import (
     MessageEnvelope,
 )
 

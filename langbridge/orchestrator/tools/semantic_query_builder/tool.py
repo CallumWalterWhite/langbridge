@@ -10,14 +10,14 @@ from dataclasses import dataclass
 from typing import Dict, Optional, Protocol, Tuple
 from uuid import UUID
 
-from runtime.models import (
+from langbridge.runtime.models import (
     SemanticQueryMetaResponse,
     SemanticQueryRequest,
     SemanticQueryResponse,
 )
-from orchestrator.llm.provider import LLMProvider
-from runtime.errors import BusinessValidationError
-from semantic.query import SemanticQuery
+from langbridge.orchestrator.llm.provider import LLMProvider
+from langbridge.runtime.errors import BusinessValidationError
+from langbridge.semantic.query import SemanticQuery
 
 from .schemas import (
     QueryBuilderCopilotRequest,

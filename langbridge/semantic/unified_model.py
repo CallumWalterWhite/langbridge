@@ -6,7 +6,7 @@ from uuid import UUID
 import yaml
 from pydantic import BaseModel, ConfigDict, field_validator, model_validator
 
-from semantic.model import Metric
+from langbridge.semantic.model import Metric
 
 
 class UnifiedSemanticModelSource(BaseModel):

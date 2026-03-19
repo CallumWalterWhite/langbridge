@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import logging
 import math
@@ -6,10 +6,10 @@ from typing import Any
 
 import pyarrow as pa
 
-from connectors.api.connector import QueryResult, SqlConnector
-from federation.connectors.base import RemoteExecutionResult, RemoteSource, SourceCapabilities
-from federation.models.plans import SourceSubplan
-from federation.models.virtual_dataset import TableStatistics, VirtualTableBinding
+from langbridge.connectors.base.connector import QueryResult, SqlConnector
+from langbridge.federation.connectors.base import RemoteExecutionResult, RemoteSource, SourceCapabilities
+from langbridge.federation.models.plans import SourceSubplan
+from langbridge.federation.models.virtual_dataset import TableStatistics, VirtualTableBinding
 
 
 def _rows_to_arrow(result: QueryResult) -> pa.Table:

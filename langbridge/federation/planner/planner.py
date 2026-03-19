@@ -2,15 +2,15 @@
 
 from dataclasses import dataclass
 
-from federation.models.plans import LogicalPlan, PhysicalPlan, QueryType
-from federation.models.smq import SMQQuery
-from federation.models.virtual_dataset import FederationWorkflow, TableStatistics
-from federation.planner.optimizer import FederatedOptimizer
-from federation.planner.parser import logical_plan_from_sql
-from federation.planner.physical_planner import PhysicalPlanner
-from federation.planner.smq_compiler import SMQCompiler
-from federation.planner.stats import StatsStore
-from semantic.model import SemanticModel
+from langbridge.federation.models.plans import LogicalPlan, PhysicalPlan, QueryType
+from langbridge.federation.models.smq import SMQQuery
+from langbridge.federation.models.virtual_dataset import FederationWorkflow, TableStatistics
+from langbridge.federation.planner.optimizer import FederatedOptimizer
+from langbridge.federation.planner.parser import logical_plan_from_sql
+from langbridge.federation.planner.physical_planner import PhysicalPlanner
+from langbridge.federation.planner.smq_compiler import SMQCompiler
+from langbridge.federation.planner.stats import StatsStore
+from langbridge.semantic.model import SemanticModel
 
 
 @dataclass(slots=True)

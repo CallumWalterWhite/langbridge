@@ -6,23 +6,23 @@ from types import SimpleNamespace
 
 import pytest
 
-from langbridge.apps.runtime_worker.handlers.query.sql_job_request_handler import (
+from apps.runtime_worker.handlers.query.sql_job_request_handler import (
     SqlJobRequestHandler,
+)
+from apps.runtime_worker.messaging.contracts.jobs.sql_job import (
+    SqlJobRequestMessage,
 )
 from langbridge.contracts.connectors import (
     ConnectionPolicy,
     ConnectorResponse,
 )
-from langbridge.packages.runtime.models import (
+from langbridge.runtime.models import (
     CreateSqlJobRequest,
 )
 from langbridge.contracts.jobs.type import JobType
-from langbridge.packages.common.langbridge_common.db.dataset import DatasetRecord
-from langbridge.packages.common.langbridge_common.db.sql import SqlJobRecord
-from langbridge.packages.connectors.langbridge_connectors.api.connector import QueryResult
-from langbridge.packages.messaging.langbridge_messaging.contracts.jobs.sql_job import (
-    SqlJobRequestMessage,
-)
+from langbridge.runtime.persistence.db.dataset import DatasetRecord
+from langbridge.runtime.persistence.db.sql import SqlJobRecord
+from langbridge.connectors.base.connector import QueryResult
 
 
 @pytest.fixture

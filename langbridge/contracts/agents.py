@@ -4,7 +4,7 @@ from typing import Any, Optional
 from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from .base import _Base
-from orchestrator.definitions import AgentDefinitionModel
+from langbridge.orchestrator.definitions import AgentDefinitionModel
 
 class AgentDefinitionBase(_Base):
     name: str = Field(..., description="Name of the agent")

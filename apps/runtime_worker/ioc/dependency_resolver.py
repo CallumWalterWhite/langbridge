@@ -4,7 +4,7 @@ import inspect
 from typing import Type
 
 from dependency_injector import providers
-from langbridge.packages.messaging.langbridge_messaging.handler import BaseMessageHandler
+from ..messaging.handler import BaseMessageHandler
 
 from .container import WorkerContainer
 

@@ -4,7 +4,7 @@ services:
       - host
     build:
       context: .
-      dockerfile: langbridge/Dockerfile.host
+      dockerfile: Dockerfile.host
     command:
       - serve
       - --config
@@ -27,7 +27,7 @@ services:
   worker:
     build:
       context: .
-      dockerfile: langbridge/Dockerfile.worker
+      dockerfile: Dockerfile.worker
     container_name: langbridge-runtime
     environment:
       ENVIRONMENT: self_hosted

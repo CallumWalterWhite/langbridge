@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from typing import Optional
 
-from orchestrator.tools.semantic_query_builder import (
+from langbridge.orchestrator.tools.semantic_query_builder import (
     QueryBuilderCopilotRequest,
     QueryBuilderCopilotResponse,
     SemanticQueryBuilderCopilotTool,

@@ -5,9 +5,9 @@ from typing import Any
 
 import pyarrow as pa
 
-from federation.connectors import RemoteSource
-from federation.executor import ArtifactStore, LocalStageDispatcher, StageExecutor, StageScheduler
-from federation.models import (
+from langbridge.federation.connectors import RemoteSource
+from langbridge.federation.executor import ArtifactStore, LocalStageDispatcher, StageExecutor, StageScheduler
+from langbridge.federation.models import (
     FederatedExplainPlan,
     FederationWorkflow,
     QueryType,
@@ -15,8 +15,8 @@ from federation.models import (
     SMQQuery,
     TableStatistics,
 )
-from federation.planner import FederatedPlanner
-from semantic.model import SemanticModel
+from langbridge.federation.planner import FederatedPlanner
+from langbridge.semantic.model import SemanticModel
 
 
 class FederatedQueryService:

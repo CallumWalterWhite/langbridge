@@ -4,9 +4,9 @@ from pathlib import Path
 
 import pytest
 
-from langbridge.packages.federation.connectors.file import DuckDbFileRemoteSource
-from langbridge.packages.federation.models.plans import SourceSubplan
-from langbridge.packages.federation.models.virtual_dataset import VirtualTableBinding
+from langbridge.federation.connectors.file import DuckDbFileRemoteSource
+from langbridge.federation.models.plans import SourceSubplan
+from langbridge.federation.models.virtual_dataset import VirtualTableBinding
 
 
 @pytest.fixture

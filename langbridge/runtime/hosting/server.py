@@ -5,7 +5,7 @@ from pathlib import Path
 
 import uvicorn
 
-from runtime.hosting.app import (
+from langbridge.runtime.hosting.app import (
     _CONFIG_PATH_ENV,
     create_runtime_api_app,
 )

@@ -3,8 +3,8 @@ import json
 import logging
 from typing import Any, Dict, Optional
 
-from orchestrator.agents.planner.models import RouteName
-from orchestrator.llm.provider import LLMProvider
+from langbridge.orchestrator.agents.planner.models import RouteName
+from langbridge.orchestrator.llm.provider import LLMProvider
 
 from .schemas import ClassifiedQuestion
 

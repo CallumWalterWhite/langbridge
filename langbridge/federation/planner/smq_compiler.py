@@ -1,8 +1,8 @@
 ﻿from __future__ import annotations
 
-from federation.models.smq import SMQQuery
-from semantic.model import SemanticModel
-from semantic.query import SemanticQuery, SemanticQueryEngine
+from langbridge.federation.models.smq import SMQQuery
+from langbridge.semantic.model import SemanticModel
+from langbridge.semantic.query import SemanticQuery, SemanticQueryEngine
 
 
 class SMQCompiler:

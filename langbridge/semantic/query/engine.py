@@ -5,7 +5,7 @@ from typing import Any, Callable, Iterable, List, Sequence
 import sqlglot
 from sqlglot import exp
 
-from semantic.model import SemanticModel
+from langbridge.semantic.model import SemanticModel
 from .query_model import SemanticQuery
 from .resolver import MetricRef, SemanticModelResolver
 from .translator import TsqlSemanticTranslator

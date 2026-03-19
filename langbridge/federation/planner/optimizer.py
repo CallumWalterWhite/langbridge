@@ -5,11 +5,11 @@ from dataclasses import dataclass
 import sqlglot
 from sqlglot import exp
 
-from federation.utils import enforce_preview_limit
-from federation.connectors import estimate_bytes
-from federation.models.plans import JoinStrategy, LogicalPlan, SourceSubplan
-from federation.models.virtual_dataset import TableStatistics, VirtualDataset
-from federation.planner.parser import (
+from langbridge.federation.utils import enforce_preview_limit
+from langbridge.federation.connectors import estimate_bytes
+from langbridge.federation.models.plans import JoinStrategy, LogicalPlan, SourceSubplan
+from langbridge.federation.models.virtual_dataset import TableStatistics, VirtualDataset
+from langbridge.federation.planner.parser import (
     extract_required_columns,
     predicate_aliases,
     rewrite_tables_to_stage_sql,

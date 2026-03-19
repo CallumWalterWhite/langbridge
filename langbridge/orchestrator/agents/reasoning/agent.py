@@ -4,15 +4,15 @@ import re
 from dataclasses import dataclass
 from typing import Any, Dict, Optional, Sequence
 
-from orchestrator.agents.models import PlanExecutionArtifacts
-from orchestrator.llm.provider import LLMProvider
-from orchestrator.agents.deep_research import DeepResearchResult
-from orchestrator.agents.planner import (
+from langbridge.orchestrator.agents.models import PlanExecutionArtifacts
+from langbridge.orchestrator.llm.provider import LLMProvider
+from langbridge.orchestrator.agents.deep_research import DeepResearchResult
+from langbridge.orchestrator.agents.planner import (
     AgentName,
     Plan,
     RouteName,
 )
-from orchestrator.agents.planner.router import _extract_signals
+from langbridge.orchestrator.agents.planner.router import _extract_signals
 
 @dataclass
 class ReasoningDecision:

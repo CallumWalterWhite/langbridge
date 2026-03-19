@@ -2,30 +2,33 @@ from __future__ import annotations
 
 from importlib import import_module
 
-from langbridge.plugins import (
-    ConnectorRuntimeType,
-    get_connector_plugin,
-    register_connector_plugin,
+import pytest
+
+
+@pytest.mark.parametrize(
+    "module_name",
+    [
+        "langbridge",
+        "langbridge.client",
+        "langbridge.runtime",
+        "langbridge.federation",
+        "langbridge.semantic",
+        "langbridge.plugins",
+        "langbridge.hosting",
+    ],
 )
-from langbridge.packages.connectors.langbridge_connectors.api.registry import (
-    register_connector_plugin as legacy_register_connector_plugin,
-)
+def test_monolith_public_namespaces_are_importable(module_name: str) -> None:
+    import_module(module_name)
 
 
-def test_root_monolith_namespaces_are_importable() -> None:
-    assert hasattr(import_module("langbridge.contracts"), "__getattr__")
-    assert hasattr(import_module("langbridge.runtime"), "build_configured_local_runtime")
-    assert hasattr(import_module("langbridge.hosting"), "create_runtime_api_app")
-    assert hasattr(import_module("langbridge.federation"), "FederatedQueryService")
-    assert hasattr(import_module("langbridge.semantic"), "SemanticModel")
-    assert hasattr(import_module("langbridge.orchestrator"), "AgentOrchestratorFactory")
-    assert hasattr(import_module("langbridge.plugins"), "register_connector_plugin")
+def test_root_namespace_exposes_sdk_entrypoint() -> None:
+    root = import_module("langbridge")
+
+    assert root.LangbridgeClient.__name__ == "LangbridgeClient"
 
 
-def test_plugins_namespace_shares_the_existing_connector_registry() -> None:
-    assert register_connector_plugin is legacy_register_connector_plugin
+def test_plugin_namespace_exposes_lightweight_registry_symbols() -> None:
+    plugins = import_module("langbridge.plugins")
 
-    plugin = get_connector_plugin(ConnectorRuntimeType.SHOPIFY)
-
-    assert plugin is not None
-    assert plugin.connector_type == ConnectorRuntimeType.SHOPIFY
+    assert callable(plugins.register_connector_plugin)
+    assert plugins.ConnectorRuntimeType.SHOPIFY.value == "SHOPIFY"

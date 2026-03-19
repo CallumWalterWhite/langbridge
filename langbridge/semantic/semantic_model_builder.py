@@ -5,17 +5,17 @@ from collections import defaultdict
 from typing import Dict, List, Optional, Protocol, Tuple
 from uuid import UUID
 
-from connectors.api import (
+from langbridge.connectors.base import (
     ConnectorRuntimeType,
     TableMetadata,
     ColumnMetadata,
     ForeignKeyMetadata,
     SqlConnector,
 )
-from semantic.model import MeasureAggregation
-from semantic import Dimension, Measure, Relationship, SemanticModel, Table
-from semantic.loader import load_semantic_model
-from contracts.connectors import ConnectorResponse
+from langbridge.semantic.model import MeasureAggregation
+from langbridge.semantic import Dimension, Measure, Relationship, SemanticModel, Table
+from langbridge.semantic.loader import load_semantic_model
+from langbridge.contracts.connectors import ConnectorResponse
 
 logger = logging.getLogger(__name__)
 

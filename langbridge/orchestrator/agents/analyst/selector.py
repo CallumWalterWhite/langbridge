@@ -9,9 +9,9 @@ import re
 from dataclasses import dataclass
 from typing import Sequence
 
-from orchestrator.llm.provider import LLMProvider
-from orchestrator.tools.sql_analyst.interfaces import AnalystQueryRequest
-from orchestrator.tools.sql_analyst.tool import SqlAnalystTool
+from langbridge.orchestrator.llm.provider import LLMProvider
+from langbridge.orchestrator.tools.sql_analyst.interfaces import AnalystQueryRequest
+from langbridge.orchestrator.tools.sql_analyst.tool import SqlAnalystTool
 
 TOKEN_RE = re.compile(r"\b\w+\b")
 

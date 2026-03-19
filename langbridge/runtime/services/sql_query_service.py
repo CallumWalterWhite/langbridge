@@ -6,16 +6,16 @@ from typing import Any, Awaitable, Callable
 
 import sqlglot
 from sqlglot import exp
-from runtime.models import (
+from langbridge.runtime.models import (
     CreateSqlJobRequest,
     SqlJob,
     SqlJobResultArtifact,
 )
-from runtime.errors import BusinessValidationError
-from runtime.utils.datasets import (
+from langbridge.runtime.errors import BusinessValidationError
+from langbridge.runtime.utils.datasets import (
     dataset_supports_structured_federation,
 )
-from runtime.utils.sql import (
+from langbridge.runtime.utils.sql import (
     apply_result_redaction,
     enforce_preview_limit,
     enforce_read_only_sql,
@@ -25,28 +25,28 @@ from runtime.utils.sql import (
     sanitize_sql_error_message,
     transpile_sql,
 )
-from connectors.api import (
+from langbridge.connectors.base import (
     ConnectorRuntimeTypeSqlDialectMap,
     SqlConnectorFactory,
     get_connector_config_factory,
 )
-from connectors.api.config import ConnectorRuntimeType
-from federation.models import FederationWorkflow, VirtualDataset, VirtualTableBinding
-from runtime.execution import FederatedQueryTool
-from runtime.ports import (
+from langbridge.connectors.base.config import ConnectorRuntimeType
+from langbridge.federation.models import FederationWorkflow, VirtualDataset, VirtualTableBinding
+from langbridge.runtime.execution import FederatedQueryTool
+from langbridge.runtime.ports import (
     DatasetCatalogStore,
     SqlJobArtifactStore,
 )
-from runtime.providers import (
+from langbridge.runtime.providers import (
     ConnectorMetadataProvider,
     CredentialProvider,
     DatasetMetadataProvider,
     SecretRegistryCredentialProvider,
 )
-from runtime.models import ConnectorMetadata
-from runtime.security import SecretProviderRegistry
-from runtime.services.dataset_execution import DatasetExecutionResolver
-from runtime.settings import runtime_settings as settings
+from langbridge.runtime.models import ConnectorMetadata
+from langbridge.runtime.security import SecretProviderRegistry
+from langbridge.runtime.services.dataset_execution import DatasetExecutionResolver
+from langbridge.runtime.settings import runtime_settings as settings
 
 RewriteExpression = Callable[[sqlglot.Expression], sqlglot.Expression]
 CreateSqlConnector = Callable[..., Awaitable[Any]]

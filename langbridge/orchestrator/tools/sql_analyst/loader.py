@@ -1,8 +1,8 @@
 """
 Utility functions for loading semantic models from YAML definitions.
 """
-from semantic import SemanticModel
-from semantic.loader import SemanticModelError, load_semantic_model
+from langbridge.semantic import SemanticModel
+from langbridge.semantic.loader import SemanticModelError, load_semantic_model
 
 
 class SemanticModelLoadError(RuntimeError):

@@ -4,8 +4,8 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field
 
-from runtime.models import SemanticQueryResponse
-from semantic.query import SemanticQuery
+from langbridge.runtime.models import SemanticQueryResponse
+from langbridge.semantic.query import SemanticQuery
 
 
 class QueryBuilderContext(BaseModel):

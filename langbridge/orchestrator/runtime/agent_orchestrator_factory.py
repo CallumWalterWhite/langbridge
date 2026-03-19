@@ -5,31 +5,31 @@ from typing import Any, Dict, Optional
 
 import yaml
 
-from runtime.embeddings import EmbeddingProvider
-from errors import BusinessValidationError
-from runtime.events import AgentEventEmitter
-from runtime.models import DatasetMetadata, SemanticModelMetadata
-from runtime.ports import (
+from langbridge.runtime.embeddings import EmbeddingProvider
+from langbridge.errors import BusinessValidationError
+from langbridge.runtime.events import AgentEventEmitter
+from langbridge.runtime.models import DatasetMetadata, SemanticModelMetadata
+from langbridge.runtime.ports import (
     DatasetCatalogStore,
     DatasetColumnStore,
     SemanticModelStore,
 )
-from runtime.services.dataset_execution import DatasetExecutionResolver
-from orchestrator.agents.analyst import AnalystAgent
-from orchestrator.agents.deep_research import DeepResearchAgent
-from orchestrator.agents.planner import (
+from langbridge.runtime.services.dataset_execution import DatasetExecutionResolver
+from langbridge.orchestrator.agents.analyst import AnalystAgent
+from langbridge.orchestrator.agents.deep_research import DeepResearchAgent
+from langbridge.orchestrator.agents.planner import (
     PlanningAgent,
     PlanningConstraints,
 )
-from orchestrator.agents.reasoning.agent import ReasoningAgent
-from orchestrator.agents.supervisor import SupervisorOrchestrator
-from orchestrator.agents.visual import VisualAgent
-from orchestrator.agents.web_search import WebSearchAgent
-from orchestrator.definitions import AgentDefinitionModel, ExecutionMode
-from orchestrator.definitions.model import ToolType
-from orchestrator.llm.provider import LLMProvider
-from orchestrator.tools.sql_analyst import SqlAnalystTool
-from orchestrator.tools.sql_analyst.interfaces import (
+from langbridge.orchestrator.agents.reasoning.agent import ReasoningAgent
+from langbridge.orchestrator.agents.supervisor import SupervisorOrchestrator
+from langbridge.orchestrator.agents.visual import VisualAgent
+from langbridge.orchestrator.agents.web_search import WebSearchAgent
+from langbridge.orchestrator.definitions import AgentDefinitionModel, ExecutionMode
+from langbridge.orchestrator.definitions.model import ToolType
+from langbridge.orchestrator.llm.provider import LLMProvider
+from langbridge.orchestrator.tools.sql_analyst import SqlAnalystTool
+from langbridge.orchestrator.tools.sql_analyst.interfaces import (
     AnalyticalColumn,
     AnalyticalContext,
     AnalyticalDatasetBinding,
@@ -37,10 +37,10 @@ from orchestrator.tools.sql_analyst.interfaces import (
     AnalyticalMetric,
     QueryResult,
 )
-from config import settings
-from federation.models import FederationWorkflow, VirtualDataset
-from semantic.loader import load_semantic_model
-from semantic.model import Dimension, Measure, Metric, SemanticModel, Table
+from langbridge.config import settings
+from langbridge.federation.models import FederationWorkflow, VirtualDataset
+from langbridge.semantic.loader import load_semantic_model
+from langbridge.semantic.model import Dimension, Measure, Metric, SemanticModel, Table
 
 
 

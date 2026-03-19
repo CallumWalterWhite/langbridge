@@ -13,8 +13,8 @@ from typing import Any
 import sqlglot
 from sqlglot import exp
 
-from runtime.execution import DuckDbExecutionEngine, ExecutionEngine, FederatedQueryTool
-from runtime.models import (
+from langbridge.runtime.execution import DuckDbExecutionEngine, ExecutionEngine, FederatedQueryTool
+from langbridge.runtime.models import (
     CreateDatasetBulkCreateJobRequest,
     CreateDatasetCsvIngestJobRequest,
     CreateDatasetPreviewJobRequest,
@@ -27,7 +27,7 @@ from runtime.models import (
     RuntimeJob,
     RuntimeJobStatus,
 )
-from runtime.ports import (
+from langbridge.runtime.ports import (
     DatasetCatalogStore,
     DatasetColumnStore,
     DatasetPolicyStore,
@@ -35,25 +35,25 @@ from runtime.ports import (
     LineageEdgeStore,
     MutableJobHandle,
 )
-from runtime.providers import DatasetMetadataProvider
-from runtime.services.dataset_execution import (
+from langbridge.runtime.providers import DatasetMetadataProvider
+from langbridge.runtime.services.dataset_execution import (
     DatasetExecutionResolver,
     build_file_scan_sql,
 )
-from runtime.errors import BusinessValidationError
-from runtime.utils.lineage import (
+from langbridge.runtime.errors import BusinessValidationError
+from langbridge.runtime.utils.lineage import (
     LineageEdgeType,
     LineageNodeType,
     build_file_resource_id,
     build_source_table_resource_id,
     stable_payload_hash,
 )
-from runtime.utils.sql import (
+from langbridge.runtime.utils.sql import (
     apply_result_redaction,
     render_sql_with_params,
     sanitize_sql_error_message,
 )
-from runtime.settings import runtime_settings as settings
+from langbridge.runtime.settings import runtime_settings as settings
 
 
 _DEFAULT_PROFILE_COLUMN_LIMIT = 5

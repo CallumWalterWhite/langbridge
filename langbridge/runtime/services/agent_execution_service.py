@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Optional
 
-from runtime.models import (
+from langbridge.runtime.models import (
     CreateAgentJobRequest,
     LLMConnectionSecret,
     RuntimeAgentDefinition,
@@ -15,13 +15,13 @@ from runtime.models import (
     RuntimeThreadMessage,
     RuntimeThreadState,
 )
-from runtime.embeddings import (
+from langbridge.runtime.embeddings import (
     EmbeddingProvider,
     EmbeddingProviderError,
 )
-from runtime.errors import BusinessValidationError
-from runtime.events import AgentEventEmitter
-from runtime.ports import (
+from langbridge.runtime.errors import BusinessValidationError
+from langbridge.runtime.events import AgentEventEmitter
+from langbridge.runtime.ports import (
     AgentDefinitionStore,
     ConversationMemoryStore,
     DatasetCatalogStore,
@@ -31,16 +31,16 @@ from runtime.ports import (
     ThreadMessageStore,
     ThreadStore,
 )
-from orchestrator.agents.supervisor import (
+from langbridge.orchestrator.agents.supervisor import (
     MemoryManager,
 )
-from orchestrator.definitions import (
+from langbridge.orchestrator.definitions import (
     AgentDefinitionModel,
 )
-from orchestrator.llm.provider import (
+from langbridge.orchestrator.llm.provider import (
     create_provider,
 )
-from orchestrator.runtime import (
+from langbridge.orchestrator.runtime import (
     AgentOrchestratorFactory,
 )
 from ..execution.federated_query_tool import FederatedQueryTool

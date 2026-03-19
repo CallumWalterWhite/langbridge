@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from typing import Any, Callable
 
-from runtime.models import SecretReference
+from langbridge.runtime.models import SecretReference
 
 SecretResolver = Callable[[SecretReference], str]
 

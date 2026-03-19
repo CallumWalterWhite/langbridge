@@ -1,8 +1,8 @@
-from runtime.utils.connector_runtime import (
+from langbridge.runtime.utils.connector_runtime import (
     build_connector_runtime_payload,
     parse_connector_payload,
 )
-from runtime.utils.datasets import (
+from langbridge.runtime.utils.datasets import (
     build_dataset_execution_capabilities,
     build_dataset_relation_identity,
     dataset_supports_structured_federation,
@@ -12,7 +12,7 @@ from runtime.utils.datasets import (
     resolve_dataset_source_kind,
     resolve_dataset_storage_kind,
 )
-from runtime.utils.lineage import (
+from langbridge.runtime.utils.lineage import (
     LineageEdgeType,
     LineageNodeType,
     build_api_resource_id,
@@ -20,7 +20,7 @@ from runtime.utils.lineage import (
     build_source_table_resource_id,
     stable_payload_hash,
 )
-from runtime.utils.sql import (
+from langbridge.runtime.utils.sql import (
     apply_result_redaction,
     enforce_preview_limit,
     enforce_read_only_sql,
@@ -30,7 +30,7 @@ from runtime.utils.sql import (
     sanitize_sql_error_message,
     transpile_sql,
 )
-from runtime.utils.storage_uri import (
+from langbridge.runtime.utils.storage_uri import (
     path_to_storage_uri,
     resolve_local_storage_path,
 )

@@ -9,10 +9,10 @@ PACKAGE_ROOT = REPO_ROOT
 if str(PACKAGE_ROOT) not in sys.path:
     sys.path.insert(0, str(PACKAGE_ROOT))
 
-from langbridge.packages.runtime.services.agent_execution_service import (  # noqa: E402
+from langbridge.runtime.services.agent_execution_service import (  # noqa: E402
     AgentExecutionService,
 )
-from langbridge.packages.runtime.models import RuntimeThreadState  # noqa: E402
+from langbridge.runtime.models import RuntimeThreadState  # noqa: E402
 
 
 def test_build_planning_context_ignores_inactive_clarification_state() -> None:

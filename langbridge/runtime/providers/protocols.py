@@ -1,4 +1,4 @@
-from runtime.ports import (
+from langbridge.runtime.ports import (
     ConnectorMetadataProvider,
     CredentialProvider,
     DatasetMetadataProvider,

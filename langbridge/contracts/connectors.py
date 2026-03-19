@@ -8,7 +8,7 @@ from uuid import UUID
 
 from pydantic import Field, model_validator
 
-from db.connector import Connector
+from langbridge.runtime.persistence.db.connector import Connector
 
 from .base import _Base
 

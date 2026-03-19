@@ -1,6 +1,3 @@
-from .config import MongoDBConnectorConfigFactory, MongoDBConnectorConfigSchemaFactory
+"""Compatibility shim for the legacy MongoDB connector package."""
 
-__all__ = [
-    "MongoDBConnectorConfigFactory",
-    "MongoDBConnectorConfigSchemaFactory",
-]
+from langbridge.connectors.nosql.mongodb import *  # noqa: F401,F403

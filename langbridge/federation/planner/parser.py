@@ -7,8 +7,8 @@ import sqlglot
 from sqlglot import exp
 import re
 
-from federation.models.plans import JoinRef, LogicalPlan, QueryType, TableRef
-from federation.models.virtual_dataset import VirtualDataset, VirtualTableBinding
+from langbridge.federation.models.plans import JoinRef, LogicalPlan, QueryType, TableRef
+from langbridge.federation.models.virtual_dataset import VirtualDataset, VirtualTableBinding
 
 
 class QueryParsingError(ValueError):

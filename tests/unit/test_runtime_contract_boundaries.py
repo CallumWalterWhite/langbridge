@@ -5,72 +5,39 @@ import tokenize
 
 from langbridge.contracts.base import _Base
 from langbridge.contracts.datasets import DatasetListResponse
+from langbridge.contracts.jobs import (
+    CreateDatasetPreviewJobRequest as PackageCreateDatasetPreviewJobRequest,
+    CreateSemanticQueryJobRequest as PackageCreateSemanticQueryJobRequest,
+    CreateSqlJobRequest as PackageCreateSqlJobRequest,
+)
 from langbridge.contracts.jobs.agent_job import AgentJobStateResponse
 from langbridge.contracts.jobs.dataset_job import CreateDatasetPreviewJobRequest
 from langbridge.contracts.jobs.semantic_query_job import CreateSemanticQueryJobRequest
 from langbridge.contracts.jobs.sql_job import CreateSqlJobRequest
 from langbridge.contracts.llm_connections import LLMProvider
+from langbridge.contracts.semantic import (
+    SemanticQueryMetaResponse as PackageSemanticQueryMetaResponse,
+    SemanticQueryRequest as PackageSemanticQueryRequest,
+)
 from langbridge.contracts.semantic.semantic_query import (
     SemanticQueryMetaResponse,
     SemanticQueryRequest,
 )
 from langbridge.contracts.sql import SqlExecuteRequest
 from langbridge.contracts.threads import ThreadResponse
-from langbridge.packages.contracts.datasets import (
-    DatasetListResponse as LegacyPackageDatasetListResponse,
-)
-from langbridge.packages.contracts.jobs.dataset_job import (
-    CreateDatasetPreviewJobRequest as LegacyPackageCreateDatasetPreviewJobRequest,
-)
-from langbridge.packages.contracts.jobs.semantic_query_job import (
-    CreateSemanticQueryJobRequest as LegacyPackageCreateSemanticQueryJobRequest,
-)
-from langbridge.packages.contracts.jobs.sql_job import (
-    CreateSqlJobRequest as LegacyPackageCreateSqlJobRequest,
-)
-from langbridge.packages.contracts.semantic.semantic_query import (
-    SemanticQueryMetaResponse as LegacyPackageSemanticQueryMetaResponse,
-    SemanticQueryRequest as LegacyPackageSemanticQueryRequest,
-)
-from langbridge.packages.contracts.sql import SqlExecuteRequest as LegacyPackageSqlExecuteRequest
-from langbridge.packages.contracts.threads import ThreadResponse as LegacyPackageThreadResponse
-from langbridge.packages.common.langbridge_common.contracts.datasets import (
-    DatasetListResponse as LegacyCommonDatasetListResponse,
-)
-from langbridge.packages.common.langbridge_common.contracts.jobs import (
-    CreateDatasetPreviewJobRequest as LegacyCommonCreateDatasetPreviewJobRequestFromPackage,
-    CreateSemanticQueryJobRequest as LegacyCommonCreateSemanticQueryJobRequestFromPackage,
-    CreateSqlJobRequest as LegacyCommonCreateSqlJobRequestFromPackage,
-)
-from langbridge.packages.common.langbridge_common.contracts.jobs.semantic_query_job import (
-    CreateSemanticQueryJobRequest as LegacyCommonCreateSemanticQueryJobRequest,
-)
-from langbridge.packages.common.langbridge_common.contracts.semantic import (
-    SemanticQueryMetaResponse as LegacyCommonSemanticQueryMetaResponseFromPackage,
-    SemanticQueryRequest as LegacyCommonSemanticQueryRequestFromPackage,
-)
-from langbridge.packages.common.langbridge_common.contracts.sql import (
-    SqlExecuteRequest as LegacyCommonSqlExecuteRequest,
-)
-from langbridge.packages.common.langbridge_common.contracts.threads import (
-    ThreadResponse as LegacyCommonThreadResponse,
-)
 
 
-def test_core_runtime_services_do_not_import_common_utils_or_errors() -> None:
+def test_core_runtime_services_do_not_import_removed_top_level_utils_or_errors() -> None:
     repo_root = Path(__file__).resolve().parents[2]
     runtime_files = [
-        repo_root / "langbridge/packages/runtime/services/sql_query_service.py",
-        repo_root / "langbridge/packages/runtime/services/semantic_query_execution_service.py",
-        repo_root / "langbridge/packages/runtime/services/dataset_query_service.py",
-        repo_root / "langbridge/packages/runtime/services/dataset_sync_service.py",
-        repo_root / "langbridge/packages/runtime/services/agent_execution_service.py",
-        repo_root / "langbridge/packages/runtime/execution/federated_query_tool.py",
+        repo_root / "langbridge/runtime/services/sql_query_service.py",
+        repo_root / "langbridge/runtime/services/semantic_query_execution_service.py",
+        repo_root / "langbridge/runtime/services/dataset_query_service.py",
+        repo_root / "langbridge/runtime/services/dataset_sync_service.py",
+        repo_root / "langbridge/runtime/services/agent_execution_service.py",
+        repo_root / "langbridge/runtime/execution/federated_query_tool.py",
     ]
-    forbidden_imports = (
-        "langbridge.packages.common.langbridge_common.utils",
-        "langbridge.packages.common.langbridge_common.errors",
-    )
+    forbidden_imports = ("langbridge.utils", "langbridge.errors")
 
     for path in runtime_files:
         source = path.read_text(encoding="utf-8")
@@ -86,10 +53,7 @@ def test_selected_contract_modules_are_owned_by_root_langbridge_contracts_namesp
     assert LLMProvider.__module__ == "langbridge.contracts.llm_connections"
     assert AgentJobStateResponse.__module__ == "langbridge.contracts.jobs.agent_job"
     assert CreateSqlJobRequest.__module__ == "langbridge.contracts.jobs.sql_job"
-    assert (
-        CreateDatasetPreviewJobRequest.__module__
-        == "langbridge.contracts.jobs.dataset_job"
-    )
+    assert CreateDatasetPreviewJobRequest.__module__ == "langbridge.contracts.jobs.dataset_job"
     assert SemanticQueryRequest.__module__ == "langbridge.contracts.semantic.semantic_query"
     assert SemanticQueryMetaResponse.__module__ == "langbridge.contracts.semantic.semantic_query"
     assert (
@@ -98,58 +62,15 @@ def test_selected_contract_modules_are_owned_by_root_langbridge_contracts_namesp
     )
 
 
-def test_package_contract_compatibility_imports_resolve_to_root_langbridge_contracts_modules() -> None:
-    assert LegacyPackageDatasetListResponse is DatasetListResponse
-    assert LegacyPackageSqlExecuteRequest is SqlExecuteRequest
-    assert LegacyPackageThreadResponse is ThreadResponse
-    assert (
-        LegacyPackageCreateSqlJobRequest is CreateSqlJobRequest
-    )
-    assert (
-        LegacyPackageCreateDatasetPreviewJobRequest is CreateDatasetPreviewJobRequest
-    )
-    assert (
-        LegacyPackageCreateSemanticQueryJobRequest is CreateSemanticQueryJobRequest
-    )
-    assert (
-        LegacyPackageSemanticQueryRequest is SemanticQueryRequest
-    )
-    assert (
-        LegacyPackageSemanticQueryMetaResponse is SemanticQueryMetaResponse
-    )
+def test_contract_package_exports_resolve_to_canonical_modules() -> None:
+    assert PackageCreateSqlJobRequest is CreateSqlJobRequest
+    assert PackageCreateDatasetPreviewJobRequest is CreateDatasetPreviewJobRequest
+    assert PackageCreateSemanticQueryJobRequest is CreateSemanticQueryJobRequest
+    assert PackageSemanticQueryRequest is SemanticQueryRequest
+    assert PackageSemanticQueryMetaResponse is SemanticQueryMetaResponse
 
 
-def test_common_contract_compatibility_imports_resolve_to_root_langbridge_contracts_modules() -> None:
-    assert LegacyCommonDatasetListResponse.__module__ == "langbridge.contracts.datasets"
-    assert LegacyCommonSqlExecuteRequest.__module__ == "langbridge.contracts.sql"
-    assert LegacyCommonThreadResponse.__module__ == "langbridge.contracts.threads"
-    assert (
-        LegacyCommonCreateSemanticQueryJobRequest.__module__
-        == "langbridge.contracts.jobs.semantic_query_job"
-    )
-    assert (
-        LegacyCommonCreateSqlJobRequestFromPackage.__module__
-        == "langbridge.contracts.jobs.sql_job"
-    )
-    assert (
-        LegacyCommonCreateDatasetPreviewJobRequestFromPackage.__module__
-        == "langbridge.contracts.jobs.dataset_job"
-    )
-    assert (
-        LegacyCommonCreateSemanticQueryJobRequestFromPackage.__module__
-        == "langbridge.contracts.jobs.semantic_query_job"
-    )
-    assert (
-        LegacyCommonSemanticQueryRequestFromPackage.__module__
-        == "langbridge.contracts.semantic.semantic_query"
-    )
-    assert (
-        LegacyCommonSemanticQueryMetaResponseFromPackage.__module__
-        == "langbridge.contracts.semantic.semantic_query"
-    )
-
-
-def test_owned_contract_areas_prefer_root_langbridge_contracts_imports() -> None:
+def test_repo_does_not_import_removed_package_contract_aliases() -> None:
     repo_root = Path(__file__).resolve().parents[2]
     forbidden_imports = (
         "langbridge.packages.contracts.base",
@@ -163,26 +84,10 @@ def test_owned_contract_areas_prefer_root_langbridge_contracts_imports() -> None
         "langbridge.packages.contracts.jobs.sql_job",
         "langbridge.packages.contracts.jobs.dataset_job",
         "langbridge.packages.contracts.jobs.semantic_query_job",
-        "langbridge.packages.common.langbridge_common.contracts.base",
-        "langbridge.packages.common.langbridge_common.contracts.llm_connections",
-        "langbridge.packages.common.langbridge_common.contracts.datasets",
-        "langbridge.packages.common.langbridge_common.contracts.sql",
-        "langbridge.packages.common.langbridge_common.contracts.threads",
-        "langbridge.packages.common.langbridge_common.contracts.semantic.semantic_query",
-        "langbridge.packages.common.langbridge_common.contracts.jobs.type",
-        "langbridge.packages.common.langbridge_common.contracts.jobs.agent_job",
-        "langbridge.packages.common.langbridge_common.contracts.jobs.sql_job",
-        "langbridge.packages.common.langbridge_common.contracts.jobs.dataset_job",
-        "langbridge.packages.common.langbridge_common.contracts.jobs.semantic_query_job",
     )
-    allowed_paths = {
-        repo_root / "langbridge/packages/contracts",
-        repo_root / "langbridge/packages/common/langbridge_common/contracts",
-        repo_root / "tests/unit/test_runtime_contract_boundaries.py",
-    }
 
     for path in repo_root.rglob("*.py"):
-        if any(str(path).startswith(str(allowed)) for allowed in allowed_paths):
+        if path == Path(__file__).resolve():
             continue
         with tokenize.open(path) as handle:
             source = handle.read()

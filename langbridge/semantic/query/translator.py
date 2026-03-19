@@ -6,10 +6,10 @@ from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 import sqlglot
 from sqlglot import exp
 
-from semantic.errors import SemanticModelError, SemanticQueryError
+from langbridge.semantic.errors import SemanticModelError, SemanticQueryError
 from .join_planner import JoinPlanner
-from semantic.model import SemanticModel
-from semantic.loader import load_semantic_model
+from langbridge.semantic.model import SemanticModel
+from langbridge.semantic.loader import load_semantic_model
 from .query_model import FilterItem, SemanticQuery
 from .resolver import DimensionRef, MeasureRef, MetricRef, SemanticModelResolver, SegmentRef
 from .tsql import DATE_TYPES, build_date_range_condition, date_trunc, format_literal

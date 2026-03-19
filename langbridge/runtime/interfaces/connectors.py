@@ -1,8 +1,5 @@
-from typing import Protocol
-import uuid
-from langbridge.contracts.connectors import ConnectorDTO
+"""Compatibility wrapper for connector store protocols."""
 
-class IConnectorStore(Protocol):
-    async def get_by_name(self, name: str) -> ConnectorDTO | None: ...
-    async def get_by_id(self, connector_id: uuid.UUID) -> ConnectorDTO | None: ...
-    async def get_by_ids(self, connector_ids: list[uuid.UUID]) -> list[ConnectorDTO]: ...
+from langbridge.runtime.ports import IConnectorStore  # noqa: F401
+
+__all__ = ["IConnectorStore"]

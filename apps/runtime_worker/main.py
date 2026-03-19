@@ -7,11 +7,10 @@ from typing import Sequence
 from dependency_injector import providers
 from redis.exceptions import RedisError
 
-from langbridge.packages.common.langbridge_common.db.session_context import reset_session, set_session
-from langbridge.packages.messaging.langbridge_messaging.contracts.messages import (
+from langbridge.runtime.persistence.db.session_context import reset_session, set_session
+from .messaging.contracts.messages import (
     MessageEnvelope,
 )
-from langbridge.packages.common.langbridge_common.monitoring import start_metrics_server
 from .broker.customer_runtime import CustomerRuntimeBroker
 from .handlers import WorkerMessageDispatcher
 from .ioc import create_container, DependencyResolver
@@ -40,7 +39,7 @@ async def run_worker(poll_interval: float = 2.0) -> None:
     use_database_session = execution_mode not in {"customer_runtime", "customer-runtime", "edge"}
 
     container = create_container()
-    container.wire(packages=["langbridge.apps.runtime_worker"])
+    container.wire(packages=["apps.runtime_worker"])
     dependency_resolver = DependencyResolver(container)
     worker_dispatcher = WorkerMessageDispatcher(dependency_resolver=dependency_resolver)
 
@@ -219,7 +218,6 @@ def _run_once() -> None:
     )
     poll_interval = float(os.environ.get("WORKER_POLL_INTERVAL", "2.0"))
     metrics_port = int(os.environ.get("WORKER_METRICS_PORT", "9101"))
-    start_metrics_server(metrics_port)
     asyncio.run(run_worker(poll_interval=poll_interval))
 
 

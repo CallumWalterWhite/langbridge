@@ -10,64 +10,64 @@ import sqlglot
 from pydantic import ValidationError
 
 from ..jobs.job_event_emitter import BrokerJobEventEmitter
-from langbridge.packages.common.langbridge_common.config import settings
-from langbridge.packages.common.langbridge_common.db.job import JobRecord, JobStatus
-from langbridge.packages.runtime.events import (
+from langbridge.config import settings
+from langbridge.runtime.persistence.db.job import JobRecord, JobStatus
+from langbridge.runtime.events import (
     AgentEventVisibility,
 )
-from langbridge.packages.runtime.errors import BusinessValidationError
-from langbridge.packages.common.langbridge_common.repositories.connector_repository import (
+from langbridge.runtime.errors import BusinessValidationError
+from langbridge.runtime.persistence.repositories.connector_repository import (
     ConnectorRepository,
 )
-from langbridge.packages.common.langbridge_common.repositories.dataset_repository import (
+from langbridge.runtime.persistence.repositories.dataset_repository import (
     DatasetColumnRepository,
     DatasetRepository,
 )
-from langbridge.packages.common.langbridge_common.repositories.job_repository import JobRepository
-from langbridge.packages.common.langbridge_common.repositories.semantic_model_repository import (
+from langbridge.runtime.persistence.repositories.job_repository import JobRepository
+from langbridge.runtime.persistence.repositories.semantic_model_repository import (
     SemanticModelRepository,
 )
-from langbridge.packages.runtime.utils.sql import (
+from langbridge.runtime.utils.sql import (
     normalize_sql_dialect,
     transpile_sql,
 )
-from langbridge.packages.connectors.langbridge_connectors.api import (
+from langbridge.connectors.base import (
     SqlConnector,
     SqlConnectorFactory,
 )
-from langbridge.packages.connectors.langbridge_connectors.api.config import ConnectorRuntimeType
-from langbridge.packages.messaging.langbridge_messaging.broker.base import MessageBroker
-from langbridge.packages.messaging.langbridge_messaging.broker.redis import RedisStreams
-from langbridge.packages.messaging.langbridge_messaging.contracts.base import MessageType
-from langbridge.packages.messaging.langbridge_messaging.contracts.jobs.event import JobEventMessage
-from langbridge.packages.messaging.langbridge_messaging.contracts.messages import (
+from langbridge.connectors.base.config import ConnectorRuntimeType
+from ...messaging.broker.base import MessageBroker
+from ...messaging.broker.redis import RedisStreams
+from ...messaging.contracts.base import MessageType
+from ...messaging.contracts.jobs.event import JobEventMessage
+from ...messaging.contracts.messages import (
     MessageEnvelope,
     MessageHeaders,
 )
-from langbridge.packages.messaging.langbridge_messaging.contracts.jobs.semantic_query import (
+from ...messaging.contracts.jobs.semantic_query import (
     SemanticQueryRequestMessage,
 )
-from langbridge.packages.messaging.langbridge_messaging.handler import BaseMessageHandler
-from langbridge.packages.runtime.adapters import RepositoryDatasetCatalogStore
-from langbridge.packages.runtime.execution import FederatedQueryTool
-from langbridge.packages.runtime.models import (
+from ...messaging.handler import BaseMessageHandler
+from langbridge.runtime.persistence import RepositoryDatasetCatalogStore
+from langbridge.runtime.execution import FederatedQueryTool
+from langbridge.runtime.models import (
     ConnectorMetadata,
     CreateSemanticQueryJobRequest,
     SemanticQueryResponse,
     UnifiedSemanticQueryResponse,
 )
-from langbridge.packages.runtime.providers import RepositorySemanticModelMetadataProvider
-from langbridge.packages.runtime.security import SecretProviderRegistry
-from langbridge.packages.runtime.services.dataset_execution import DatasetExecutionResolver
-from langbridge.packages.runtime.services.semantic_query_execution_service import (
+from langbridge.runtime.providers import RepositorySemanticModelMetadataProvider
+from langbridge.runtime.security import SecretProviderRegistry
+from langbridge.runtime.services.dataset_execution import DatasetExecutionResolver
+from langbridge.runtime.services.semantic_query_execution_service import (
     SemanticQueryExecutionService,
 )
-from langbridge.packages.semantic.langbridge_semantic.loader import (
+from langbridge.semantic.loader import (
     SemanticModelError,
     load_semantic_model,
 )
-from langbridge.packages.semantic.langbridge_semantic.model import SemanticModel
-from langbridge.packages.semantic.langbridge_semantic.query import SemanticQuery, SemanticQueryEngine
+from langbridge.semantic.model import SemanticModel
+from langbridge.semantic.query import SemanticQuery, SemanticQueryEngine
 
 
 class SemanticQueryRequestHandler(BaseMessageHandler):

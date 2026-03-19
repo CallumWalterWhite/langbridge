@@ -8,8 +8,8 @@ from typing import Any, Dict, Iterable, Literal, Mapping, Optional
 
 from pydantic import BaseModel, Field
 
-from orchestrator.llm.provider import LLMProvider
-from semantic.loader import SemanticModelError, load_semantic_model
+from langbridge.orchestrator.llm.provider import LLMProvider
+from langbridge.semantic.loader import SemanticModelError, load_semantic_model
 
 
 class SemanticBuilderExample(BaseModel):

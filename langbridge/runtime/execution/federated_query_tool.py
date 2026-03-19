@@ -1,29 +1,29 @@
-﻿import logging
+import logging
 from typing import Any
 from uuid import UUID
 
 from pydantic import BaseModel
 
-from connectors.api import (
+from langbridge.connectors.base import (
     ConnectorRuntimeTypeSqlDialectMap,
     SqlConnectorFactory,
     get_connector_config_factory,
 )
-from connectors.api.config import ConnectorRuntimeType
-from connectors.api.connector import SqlConnector, SqlDialetcs
-from federation.connectors import DuckDbFileRemoteSource, RemoteSource, SqlConnectorRemoteSource
-from federation.executor import ArtifactStore
-from federation.models import FederationWorkflow, SMQQuery
-from federation.service import FederatedQueryService
-from runtime.providers import (
+from langbridge.connectors.base.config import ConnectorRuntimeType
+from langbridge.connectors.base.connector import SqlConnector, SqlDialetcs
+from langbridge.federation.connectors import DuckDbFileRemoteSource, RemoteSource, SqlConnectorRemoteSource
+from langbridge.federation.executor import ArtifactStore
+from langbridge.federation.models import FederationWorkflow, SMQQuery
+from langbridge.federation.service import FederatedQueryService
+from langbridge.runtime.providers import (
     ConnectorMetadataProvider,
     CredentialProvider,
     SecretRegistryCredentialProvider,
 )
-from runtime.models import ConnectorMetadata
-from runtime.security.secrets import SecretProviderRegistry
-from runtime.settings import runtime_settings as settings
-from semantic.loader import load_semantic_model
+from langbridge.runtime.models import ConnectorMetadata
+from langbridge.runtime.security.secrets import SecretProviderRegistry
+from langbridge.runtime.settings import runtime_settings as settings
+from langbridge.semantic.loader import load_semantic_model
 
 
 _DIALECT_MAP: dict[SqlDialetcs, str] = {

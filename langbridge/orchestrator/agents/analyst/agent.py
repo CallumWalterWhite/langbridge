@@ -8,12 +8,12 @@ import asyncio
 import logging
 from typing import Any, Optional, Sequence
 
-from orchestrator.llm.provider import LLMProvider
-from orchestrator.tools.sql_analyst.interfaces import (
+from langbridge.orchestrator.llm.provider import LLMProvider
+from langbridge.orchestrator.tools.sql_analyst.interfaces import (
     AnalystQueryRequest,
     AnalystQueryResponse,
 )
-from orchestrator.tools.sql_analyst.tool import SqlAnalystTool
+from langbridge.orchestrator.tools.sql_analyst.tool import SqlAnalystTool
 from .selector import AnalyticalContextSelector
 
 

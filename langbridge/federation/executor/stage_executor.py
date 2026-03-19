@@ -6,9 +6,9 @@ from dataclasses import dataclass
 import duckdb
 import pyarrow as pa
 
-from federation.connectors import RemoteSource
-from federation.executor.artifact_store import ArtifactStore
-from federation.models.plans import StageArtifact, StageDefinition, StageMetrics, StageType
+from langbridge.federation.connectors import RemoteSource
+from langbridge.federation.executor.artifact_store import ArtifactStore
+from langbridge.federation.models.plans import StageArtifact, StageDefinition, StageMetrics, StageType
 
 
 @dataclass(slots=True)

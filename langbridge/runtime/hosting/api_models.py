@@ -6,8 +6,8 @@ from typing import Any
 
 from pydantic import Field, model_validator
 
-from runtime.models.base import RuntimeModel, RuntimeRequestModel
-from runtime.models.jobs import SqlSelectedDataset
+from langbridge.runtime.models.base import RuntimeModel, RuntimeRequestModel
+from langbridge.runtime.models.jobs import SqlSelectedDataset
 
 
 class RuntimeInfoResponse(RuntimeModel):

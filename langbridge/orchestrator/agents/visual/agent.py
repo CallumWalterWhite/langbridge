@@ -10,7 +10,7 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence, Union
 
 import pandas as pd
 
-from orchestrator.llm.provider import LLMProvider
+from langbridge.orchestrator.llm.provider import LLMProvider
 
 TabularInput = Union[Dict[str, Any], List[Dict[str, Any]], "pd.DataFrame"]  # type: ignore[name-defined]
 

@@ -4,7 +4,7 @@
 Langbridge is the runtime-focused repository in a two-repo split. Hosted cloud surfaces now live in `../langbridge-cloud/apps` (`api`, `worker`, `web`). Runtime-owned code lives in `langbridge/packages` plus thin runtime assembly apps under `langbridge/apps` such as `runtime_worker`. Core tests are grouped in `tests/` (connectors, orchestrator, unit), while module-specific fixtures may live in `langbridge/tests`. Docs and semantic/runtime references stay in `docs/`.
 
 ## Build, Test, and Development Commands
-- `python -m venv .venv && ./.venv/Scripts/activate && pip install -r langbridge/requirements.txt` installs backend deps (use `source .venv/bin/activate` on macOS/Linux).
+- `python -m venv .venv && ./.venv/Scripts/activate && pip install -r requirements.txt` installs backend deps (use `source .venv/bin/activate` on macOS/Linux).
 - Control-plane API development now lives in `../langbridge-cloud/apps/api`; start it from that repo for API work.
 - `python -m langbridge.apps.runtime_worker.main` runs the portable runtime worker assembly; use `../langbridge-cloud/apps/worker` for hosted orchestration worker work.
 - `cd ../langbridge-cloud/apps/web && npm install && npm run dev` runs the Next.js dev server; `npm run build && npm run start` serves the production bundle.

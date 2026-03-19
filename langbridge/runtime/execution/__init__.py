@@ -13,14 +13,14 @@ __all__ = [
 
 def __getattr__(name: str) -> Any:
     if name in {"ExecutionEngine", "ExecutionResult"}:
-        from runtime.execution.engine import ExecutionEngine, ExecutionResult
+        from langbridge.runtime.execution.engine import ExecutionEngine, ExecutionResult
 
         return {
             "ExecutionEngine": ExecutionEngine,
             "ExecutionResult": ExecutionResult,
         }[name]
     if name in {"FederatedQueryExecutor", "FederatedQueryTool"}:
-        from runtime.execution.federated_query_tool import (
+        from langbridge.runtime.execution.federated_query_tool import (
             FederatedQueryExecutor,
             FederatedQueryTool,
         )
@@ -30,7 +30,7 @@ def __getattr__(name: str) -> Any:
             "FederatedQueryTool": FederatedQueryTool,
         }[name]
     if name == "DuckDbExecutionEngine":
-        from runtime.execution.duckdb_engine import DuckDbExecutionEngine
+        from langbridge.runtime.execution.duckdb_engine import DuckDbExecutionEngine
 
         return DuckDbExecutionEngine
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

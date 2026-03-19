@@ -1,14 +1,14 @@
 import uuid
 
-from langbridge.packages.semantic.langbridge_semantic.model import (
+from langbridge.semantic.model import (
     Dimension,
     Measure,
     Relationship,
     SemanticModel,
     Table,
 )
-from langbridge.packages.semantic.langbridge_semantic.query import SemanticQuery, SemanticQueryEngine
-from langbridge.packages.semantic.langbridge_semantic.unified_query import (
+from langbridge.semantic.query import SemanticQuery, SemanticQueryEngine
+from langbridge.semantic.unified_query import (
     TenantAwareQueryContext,
     UnifiedSourceModel,
     apply_tenant_aware_context,

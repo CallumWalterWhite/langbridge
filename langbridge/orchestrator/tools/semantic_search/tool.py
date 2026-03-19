@@ -2,8 +2,8 @@
 import json
 import logging
 from typing import Any, Optional
-from connectors.api import ManagedVectorDB
-from orchestrator.llm.provider.base import LLMProvider
+from langbridge.connectors.base import ManagedVectorDB
+from langbridge.orchestrator.llm.provider.base import LLMProvider
 from .interfaces import (
     SemanticSearchResult,
     SemanticSearchResultCollection,

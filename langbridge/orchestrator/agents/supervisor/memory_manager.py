@@ -7,14 +7,14 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any, Iterable, Optional, Sequence
 
-from runtime.models import (
+from langbridge.runtime.models import (
     RuntimeMessageRole,
     RuntimeThreadMessage,
 )
-from runtime.embeddings import EmbeddingProvider
-from runtime.ports import ConversationMemoryStore
-from connectors.api.connector import ManagedVectorDB, VectorDBType
-from connectors.api.registry import VectorDBConnectorFactory
+from langbridge.runtime.embeddings import EmbeddingProvider
+from langbridge.runtime.ports import ConversationMemoryStore
+from langbridge.connectors.base.connector import ManagedVectorDB, VectorDBType
+from langbridge.connectors.base.registry import VectorDBConnectorFactory
 
 from .schemas import MemoryItem, MemoryRetrievalResult
 

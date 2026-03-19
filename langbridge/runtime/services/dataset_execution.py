@@ -5,10 +5,10 @@ import uuid
 from collections.abc import Mapping
 from typing import Any
 
-from runtime.errors import BusinessValidationError
-from runtime.ports import DatasetCatalogStore
-from runtime.providers import DatasetMetadataProvider
-from runtime.utils.datasets import (
+from langbridge.runtime.errors import BusinessValidationError
+from langbridge.runtime.ports import DatasetCatalogStore
+from langbridge.runtime.providers import DatasetMetadataProvider
+from langbridge.runtime.utils.datasets import (
     build_dataset_execution_capabilities,
     build_dataset_relation_identity,
     derive_legacy_dataset_type,
@@ -16,17 +16,17 @@ from runtime.utils.datasets import (
     resolve_dataset_source_kind,
     resolve_dataset_storage_kind,
 )
-from runtime.utils.sql import enforce_read_only_sql
-from runtime.utils.storage_uri import resolve_local_storage_path
-from federation.models import (
+from langbridge.runtime.utils.sql import enforce_read_only_sql
+from langbridge.runtime.utils.storage_uri import resolve_local_storage_path
+from langbridge.federation.models import (
     DatasetExecutionDescriptor,
     FederationWorkflow,
     VirtualDataset,
     VirtualRelationship,
     VirtualTableBinding,
 )
-from semantic.model import Dataset as SemanticDataset, SemanticModel
-from runtime.settings import runtime_settings as settings
+from langbridge.semantic.model import Dataset as SemanticDataset, SemanticModel
+from langbridge.runtime.settings import runtime_settings as settings
 
 
 class DatasetExecutionResolver:

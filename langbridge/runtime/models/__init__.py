@@ -1,4 +1,4 @@
-from runtime.models.agent_runtime import (
+from langbridge.runtime.models.agent_runtime import (
     RuntimeConversationMemoryCategory,
     RuntimeConversationMemoryItem,
     RuntimeAgentDefinition,
@@ -7,13 +7,13 @@ from runtime.models.agent_runtime import (
     RuntimeThreadMessage,
     RuntimeThreadState,
 )
-from runtime.models.catalog import (
+from langbridge.runtime.models.catalog import (
     DatasetRevision,
     LineageEdge,
     RuntimeJob,
     RuntimeJobStatus,
 )
-from runtime.models.metadata import (
+from langbridge.runtime.models.metadata import (
     ConnectionMetadata,
     ConnectionPolicy,
     ConnectorMetadata,
@@ -27,7 +27,7 @@ from runtime.models.metadata import (
     DatasetStorageKind,
     SemanticModelMetadata,
 )
-from runtime.models.jobs import (
+from langbridge.runtime.models.jobs import (
     CreateAgentJobRequest,
     CreateConnectorSyncJobRequest,
     CreateDatasetBulkCreateJobRequest,
@@ -43,11 +43,11 @@ from runtime.models.jobs import (
     SqlSelectedDataset,
     SqlWorkbenchMode,
 )
-from runtime.models.llm import (
+from langbridge.runtime.models.llm import (
     LLMConnectionSecret,
     LLMProvider,
 )
-from runtime.models.semantic import (
+from langbridge.runtime.models.semantic import (
     SemanticQueryMetaResponse,
     SemanticQueryRequest,
     SemanticQueryResponse,
@@ -56,7 +56,7 @@ from runtime.models.semantic import (
     UnifiedSemanticRelationshipRequest,
     UnifiedSemanticSourceModelRequest,
 )
-from runtime.models.state import (
+from langbridge.runtime.models.state import (
     ConnectorSyncState,
     SqlJob,
     SqlJobResultArtifact,

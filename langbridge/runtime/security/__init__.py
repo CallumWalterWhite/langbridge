@@ -1,4 +1,4 @@
-from runtime.security.secrets import (
+from langbridge.runtime.security.secrets import (
     EnvSecretProvider,
     KubernetesSecretProvider,
     SecretProvider,

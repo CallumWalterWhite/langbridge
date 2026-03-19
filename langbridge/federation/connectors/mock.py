@@ -4,9 +4,9 @@ import time
 
 import pyarrow as pa
 
-from federation.connectors.base import RemoteExecutionResult, RemoteSource, SourceCapabilities
-from federation.models.plans import SourceSubplan
-from federation.models.virtual_dataset import TableStatistics, VirtualTableBinding
+from langbridge.federation.connectors.base import RemoteExecutionResult, RemoteSource, SourceCapabilities
+from langbridge.federation.models.plans import SourceSubplan
+from langbridge.federation.models.virtual_dataset import TableStatistics, VirtualTableBinding
 
 
 class MockArrowRemoteSource(RemoteSource):

@@ -3,8 +3,8 @@ import re
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Set, Tuple
 
-from semantic.errors import SemanticModelError
-from semantic.model import (
+from langbridge.semantic.errors import SemanticModelError
+from langbridge.semantic.model import (
     DatasetFilter,
     Dimension,
     Measure,

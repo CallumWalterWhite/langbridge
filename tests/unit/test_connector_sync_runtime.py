@@ -9,31 +9,31 @@ import httpx
 import pyarrow.parquet as pq
 import pytest
 
-from langbridge.packages.runtime.services.dataset_sync_service import ConnectorSyncRuntime
-from langbridge.packages.common.langbridge_common.config import settings
+from langbridge.runtime.services.dataset_sync_service import ConnectorSyncRuntime
+from langbridge.config import settings
 from langbridge.contracts.connectors import (
     ConnectorSyncMode,
     ConnectorSyncStatus,
 )
-from langbridge.packages.common.langbridge_common.db.connector_sync import ConnectorSyncStateRecord
-from langbridge.packages.common.langbridge_common.db.dataset import (
+from langbridge.runtime.persistence.db.connector_sync import ConnectorSyncStateRecord
+from langbridge.runtime.persistence.db.dataset import (
     DatasetColumnRecord,
     DatasetPolicyRecord,
     DatasetRecord,
     DatasetRevisionRecord,
 )
-from langbridge.packages.common.langbridge_common.db.lineage import LineageEdgeRecord
-from langbridge.packages.common.langbridge_common.db import agent as _db_agent  # noqa: F401
-from langbridge.packages.common.langbridge_common.db import semantic as _db_semantic  # noqa: F401
-from langbridge.packages.connectors.langbridge_connectors.api.connector import (
+from langbridge.runtime.persistence.db.lineage import LineageEdgeRecord
+from langbridge.runtime.persistence.db import agent as _db_agent  # noqa: F401
+from langbridge.runtime.persistence.db import semantic as _db_semantic  # noqa: F401
+from langbridge.connectors.base.connector import (
     ApiExtractResult,
     ApiResource,
 )
-from langbridge.packages.connectors.langbridge_connectors.api.config import ConnectorRuntimeType
-from langbridge.packages.connectors.langbridge_connectors.api.shopify.config import (
+from langbridge.connectors.base.config import ConnectorRuntimeType
+from langbridge.connectors.saas.shopify.config import (
     ShopifyConnectorConfig,
 )
-from langbridge.packages.connectors.langbridge_connectors.api.shopify.connector import (
+from langbridge.connectors.saas.shopify.connector import (
     ShopifyApiConnector,
 )
 

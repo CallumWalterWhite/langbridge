@@ -7,19 +7,19 @@ project_root = pathlib.Path(__file__).resolve().parents[2]
 if str(project_root) not in sys.path:
     sys.path.append(str(project_root))
 
-from langbridge.packages.orchestrator.langbridge_orchestrator.definitions import (  # noqa: E402
+from langbridge.orchestrator.definitions import (  # noqa: E402
     GuardrailConfig,
     OutputFormat,
     OutputSchema,
     PromptContract,
     ResponseMode,
 )
-from langbridge.packages.orchestrator.langbridge_orchestrator.llm.provider import (  # noqa: E402
+from langbridge.orchestrator.llm.provider import (  # noqa: E402
     LLMConnectionConfig,
     LLMProvider,
     LLMProviderName,
 )
-from langbridge.packages.orchestrator.langbridge_orchestrator.runtime.response_formatter import (  # noqa: E402
+from langbridge.orchestrator.runtime.response_formatter import (  # noqa: E402
     ResponseFormatter,
     ResponsePresentation,
 )

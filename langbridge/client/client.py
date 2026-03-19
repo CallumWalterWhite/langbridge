@@ -18,17 +18,17 @@ else:  # pragma: no cover - exercised indirectly in local-only environments
     except ModuleNotFoundError:  # pragma: no cover - depends on install extras
         httpx = None
 
-from contracts.base import _Base
-from contracts.datasets import (
+from langbridge.contracts.base import _Base
+from langbridge.contracts.datasets import (
     DatasetListResponse,
     DatasetPreviewColumn,
     DatasetPreviewRequest,
 )
-from contracts.jobs.agent_job import (
+from langbridge.contracts.jobs.agent_job import (
     AgentJobStateResponse,
     JobEventResponse,
 )
-from contracts.sql import (
+from langbridge.contracts.sql import (
     SqlColumnMetadata,
     SqlDialect,
     SqlExecuteRequest,
@@ -36,17 +36,17 @@ from contracts.sql import (
     SqlJobResultsResponse,
     SqlSelectedDataset,
 )
-from contracts.threads import (
+from langbridge.contracts.threads import (
     ThreadChatRequest,
     ThreadCreateRequest,
     ThreadResponse,
 )
-from runtime.models import (
+from langbridge.runtime.models import (
     CreateDatasetPreviewJobRequest,
     CreateSqlJobRequest,
     SqlWorkbenchMode,
 )
-from runtime.hosting.api_models import (
+from langbridge.runtime.hosting.api_models import (
     RuntimeConnectorListResponse,
     RuntimeDatasetListResponse,
     RuntimeSyncResourceListResponse,
@@ -1681,7 +1681,7 @@ class LangbridgeClient:
         request_id: str | None = None,
         roles: list[str] | tuple[str, ...] | None = None,
     ) -> "LangbridgeClient":
-        from runtime import build_configured_local_runtime
+        from langbridge.runtime import build_configured_local_runtime
 
         runtime_host = build_configured_local_runtime(
             config_path=config_path,

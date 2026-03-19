@@ -5,8 +5,8 @@ import time
 from dataclasses import dataclass
 from typing import Awaitable, Callable
 
-from federation.executor.stage_executor import StageExecutionContext, StageExecutor
-from federation.models.plans import ExecutionSummary, PhysicalPlan, StageArtifact, StageDefinition, StageMetrics
+from langbridge.federation.executor.stage_executor import StageExecutionContext, StageExecutor
+from langbridge.federation.models.plans import ExecutionSummary, PhysicalPlan, StageArtifact, StageDefinition, StageMetrics
 
 
 class StageDispatcher:

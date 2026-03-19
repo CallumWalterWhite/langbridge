@@ -1,4 +1,4 @@
-from runtime.providers.repository import (
+from langbridge.runtime.providers.repository import (
     RepositoryConnectorMetadataProvider,
     RepositoryDatasetMetadataProvider,
     RepositorySemanticModelMetadataProvider,

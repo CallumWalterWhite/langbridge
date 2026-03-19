@@ -55,7 +55,7 @@ python examples/sdk/semantic_query/setup.py
 docker compose --profile host up --build runtime-host
 ```
 
-That profile uses `langbridge/Dockerfile.host` plus the existing
+That profile uses `Dockerfile.host` plus the existing
 `examples/sdk/semantic_query/` config and database. The host stays portable and
 config-driven; it does not require Postgres or Redis for this example.
 

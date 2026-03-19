@@ -2,7 +2,7 @@
 
 from collections import defaultdict
 
-from federation.models.virtual_dataset import TableStatistics
+from langbridge.federation.models.virtual_dataset import TableStatistics
 
 
 class StatsStore:

@@ -7,7 +7,7 @@ from typing import Any, Literal
 
 from pydantic import Field
 
-from runtime.models.base import RuntimeModel
+from langbridge.runtime.models.base import RuntimeModel
 
 
 class SecretReference(RuntimeModel):

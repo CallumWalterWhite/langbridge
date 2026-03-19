@@ -3,46 +3,46 @@ from datetime import datetime, timezone
 
 from pydantic import ValidationError
 
-from langbridge.packages.common.langbridge_common.db.job import (
+from langbridge.runtime.persistence.db.job import (
     JobEventRecord,
     JobEventVisibility,
     JobStatus,
 )
-from langbridge.packages.common.langbridge_common.repositories.connector_repository import (
+from langbridge.runtime.persistence.repositories.connector_repository import (
     ConnectorRepository,
 )
-from langbridge.packages.common.langbridge_common.repositories.connector_sync_repository import (
+from langbridge.runtime.persistence.repositories.connector_sync_repository import (
     ConnectorSyncStateRepository,
 )
-from langbridge.packages.common.langbridge_common.repositories.dataset_repository import (
+from langbridge.runtime.persistence.repositories.dataset_repository import (
     DatasetColumnRepository,
     DatasetPolicyRepository,
     DatasetRepository,
     DatasetRevisionRepository,
 )
-from langbridge.packages.common.langbridge_common.repositories.job_repository import JobRepository
-from langbridge.packages.common.langbridge_common.repositories.lineage_repository import (
+from langbridge.runtime.persistence.repositories.job_repository import JobRepository
+from langbridge.runtime.persistence.repositories.lineage_repository import (
     LineageEdgeRepository,
 )
-from langbridge.packages.runtime.errors import BusinessValidationError
-from langbridge.packages.runtime.models import CreateConnectorSyncJobRequest
-from langbridge.packages.runtime.utils.connector_runtime import (
+from langbridge.runtime.errors import BusinessValidationError
+from langbridge.runtime.models import CreateConnectorSyncJobRequest
+from langbridge.runtime.utils.connector_runtime import (
     build_connector_runtime_payload,
 )
-from langbridge.packages.connectors.langbridge_connectors.api import (
+from langbridge.connectors.base import (
     ApiConnectorFactory,
     get_connector_config_factory,
 )
-from langbridge.packages.connectors.langbridge_connectors.api.config import ConnectorRuntimeType
-from langbridge.packages.messaging.langbridge_messaging.contracts.base import MessageType
-from langbridge.packages.messaging.langbridge_messaging.contracts.jobs.connector_job import (
+from langbridge.connectors.base.config import ConnectorRuntimeType
+from ...messaging.contracts.base import MessageType
+from ...messaging.contracts.jobs.connector_job import (
     ConnectorSyncJobRequestMessage,
 )
-from langbridge.packages.messaging.langbridge_messaging.handler import BaseMessageHandler
-from langbridge.packages.runtime.context import RuntimeContext
-from langbridge.packages.runtime.security import SecretProviderRegistry
-from langbridge.packages.runtime.services import ConnectorSyncRuntime
-from langbridge.packages.runtime.services.runtime_host import (
+from ...messaging.handler import BaseMessageHandler
+from langbridge.runtime.context import RuntimeContext
+from langbridge.runtime.security import SecretProviderRegistry
+from langbridge.runtime.services import ConnectorSyncRuntime
+from langbridge.runtime.services.runtime_host import (
     RuntimeHost,
     RuntimeProviders,
     RuntimeServices,

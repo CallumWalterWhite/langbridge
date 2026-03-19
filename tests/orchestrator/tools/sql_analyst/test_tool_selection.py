@@ -4,14 +4,14 @@ import uuid
 
 sys.path.append(str(pathlib.Path(__file__).resolve().parents[5] / "langbridge" / "langbridge"))
 
-from langbridge.packages.orchestrator.langbridge_orchestrator.agents.analyst.agent import AnalystAgent
-from langbridge.packages.orchestrator.langbridge_orchestrator.tools.sql_analyst.interfaces import (
+from langbridge.orchestrator.agents.analyst.agent import AnalystAgent
+from langbridge.orchestrator.tools.sql_analyst.interfaces import (
     AnalyticalColumn,
     AnalyticalContext,
     AnalyticalDatasetBinding,
     AnalyticalMetric,
 )
-from langbridge.packages.orchestrator.langbridge_orchestrator.tools.sql_analyst.tool import SqlAnalystTool
+from langbridge.orchestrator.tools.sql_analyst.tool import SqlAnalystTool
 
 
 class StaticLLM:
@@ -36,7 +36,7 @@ class FakeFederatedExecutor:
         max_rows: int | None = None,
     ):
         self.calls.append({"sql": sql, "dialect": dialect, "max_rows": max_rows})
-        from langbridge.packages.orchestrator.langbridge_orchestrator.tools.sql_analyst.interfaces import QueryResult
+        from langbridge.orchestrator.tools.sql_analyst.interfaces import QueryResult
 
         return QueryResult(
             columns=["value"],
