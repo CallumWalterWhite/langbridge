@@ -11,7 +11,7 @@ from connectors.api.connector import ManagedVectorDB, VectorDBType
 from connectors.api.connector import run_sync
 from errors.connector_errors import ConnectorError
 from .config import FaissConnectorConfig
-from logging.logger import get_root_logger
+from langbridge.logging.logger import get_root_logger
 
 try: 
     import faiss 

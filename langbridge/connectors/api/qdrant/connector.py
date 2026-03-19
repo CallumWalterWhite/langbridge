@@ -7,7 +7,7 @@ from typing import Any, Dict, List, Optional, Sequence
 
 from connectors.api.connector import ManagedVectorDB, VectorDBType, run_sync
 from errors.connector_errors import ConnectorError
-from logging.logger import get_root_logger
+from langbridge.logging.logger import get_root_logger
 from .config import QdrantConnectorConfig, _parse_bool
 
 try:

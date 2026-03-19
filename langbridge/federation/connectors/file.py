@@ -7,7 +7,7 @@ from typing import Any
 import duckdb
 import pyarrow as pa
 
-from utils.storage_uri import (
+from federation.utils import (
     resolve_local_storage_path,
 )
 from federation.connectors.base import (

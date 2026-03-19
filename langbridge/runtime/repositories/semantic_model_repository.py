@@ -8,8 +8,8 @@ from langbridge.contracts.semantic import (
     SemanticModelRecordResponse,
 )
 from db.semantic import SemanticModelEntry, SemanticVectorStoreEntry
-from db.interfaces.semantic_models import (
-    ISemanticModelStore,
+from runtime.interfaces import (
+    ISemanticModelStore
 )
 from .base import AsyncBaseRepository
 

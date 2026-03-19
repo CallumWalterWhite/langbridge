@@ -1,6 +1,6 @@
 from typing import Protocol
 import uuid
-from ..contracts.connectors import ConnectorDTO
+from langbridge.contracts.connectors import ConnectorDTO
 
 class IConnectorStore(Protocol):
     async def get_by_name(self, name: str) -> ConnectorDTO | None: ...

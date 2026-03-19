@@ -1,7 +1,7 @@
 from typing import Protocol
 import uuid
 
-from ..contracts.semantic import SemanticModelRecordResponse
+from langbridge.contracts.semantic import SemanticModelRecordResponse
 
 
 class ISemanticModelStore(Protocol):

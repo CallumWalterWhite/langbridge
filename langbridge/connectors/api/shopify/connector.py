@@ -15,7 +15,7 @@ from connectors.api.connector import (
     ApiResource,
 )
 
-from common.config import settings
+from config import settings
 from .config import SHOPIFY_SUPPORTED_RESOURCES, ShopifyConnectorConfig
 
 

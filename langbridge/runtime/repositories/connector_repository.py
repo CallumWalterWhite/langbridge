@@ -8,7 +8,7 @@ from sqlalchemy.orm import selectinload
 
 from contracts.connectors import ConnectionMetadata, ConnectionPolicy, ConnectorDTO, SecretReference
 from db.connector import Connector
-from interfaces.connectors import IConnectorStore
+from runtime.interfaces.connectors import IConnectorStore
 from .base import AsyncBaseRepository
 
 

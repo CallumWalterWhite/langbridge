@@ -11,7 +11,7 @@ from db.threads import (
     ConversationMemoryItem,
     MemoryCategory,
 )
-from repositories.base import AsyncBaseRepository
+from .base import AsyncBaseRepository
 
 
 class ConversationMemoryRepository(AsyncBaseRepository[ConversationMemoryItem]):

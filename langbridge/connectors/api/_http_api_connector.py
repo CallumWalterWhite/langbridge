@@ -8,7 +8,7 @@ from urllib.parse import parse_qs, urlparse
 
 import httpx
 
-from common.config import settings
+from config import settings
 from errors.connector_errors import (
     AuthError,
     ConnectorError,

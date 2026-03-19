@@ -5,7 +5,7 @@ from dataclasses import dataclass
 import sqlglot
 from sqlglot import exp
 
-from utils.sql import enforce_preview_limit
+from federation.utils import enforce_preview_limit
 from federation.connectors import estimate_bytes
 from federation.models.plans import JoinStrategy, LogicalPlan, SourceSubplan
 from federation.models.virtual_dataset import TableStatistics, VirtualDataset

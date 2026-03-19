@@ -157,7 +157,7 @@ FORBIDDEN_KEYWORDS = (
     "replace",
 )
 
-from logging.logger import get_root_logger
+from langbridge.logging.logger import get_root_logger
 root_logger = get_root_logger()
 
 def ensure_select_statement(sql: str) -> None:
