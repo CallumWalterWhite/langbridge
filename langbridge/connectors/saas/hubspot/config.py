@@ -61,9 +61,6 @@ class HubSpotConnectorConfigSchemaFactory(BaseConnectorConfigSchemaFactory):
             name="HubSpot",
             description="Connect to HubSpot CRM resources and ingest them as datasets.",
             version="0.1.0",
-            label="HubSpot",
-            icon="hubspot.png",
-            connector_type="api",
             config=[
                 ConnectorConfigEntrySchema(
                     field="service_key",

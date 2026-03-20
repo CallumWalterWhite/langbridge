@@ -55,9 +55,6 @@ class StripeConnectorConfigSchemaFactory(BaseConnectorConfigSchemaFactory):
             name="Stripe",
             description="Connect to Stripe resources and ingest them as datasets.",
             version="0.1.0",
-            label="Stripe",
-            icon="stripe.png",
-            connector_type="api",
             config=[
                 ConnectorConfigEntrySchema(
                     field="api_key",

@@ -62,9 +62,6 @@ class QdrantConnectorConfigSchemaFactory(BaseConnectorConfigSchemaFactory):
             name="Qdrant",
             description="Qdrant Connector (Qdrant)",
             version="1.0",
-            label="Qdrant",
-            icon="Qdrant.png",
-            connector_type=ConnectorRuntimeType.QDRANT.value,
             config=[
                 ConnectorConfigEntrySchema(
                     field="host",

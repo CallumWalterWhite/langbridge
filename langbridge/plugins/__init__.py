@@ -4,8 +4,6 @@ Official connector implementations stay in the separate ``langbridge-connectors`
 package and register themselves through this core surface.
 """
 
-from __future__ import annotations
-
 from importlib import import_module
 from typing import Any
 
@@ -21,8 +19,6 @@ _EXPORTS = {
         "ConnectorPluginMetadata",
         "ConnectorRuntimeType",
         "ConnectorSyncStrategy",
-        "get_connector_config_factory",
-        "get_connector_config_schema_factory",
     ),
     "langbridge.connectors.base.connector": (
         "ApiConnector",
@@ -46,7 +42,7 @@ _EXPORTS = {
         "VectorType",
         "run_sync",
     ),
-    "langbridge.connectors.base.registry": (
+    "langbridge.plugins.connectors": (
         "ApiConnectorFactory",
         "ConnectorInstanceRegistry",
         "ConnectorPlugin",
@@ -56,6 +52,8 @@ _EXPORTS = {
         "VectorDBConnectorFactory",
         "ensure_builtin_connectors_loaded",
         "ensure_builtin_plugins_loaded",
+        "get_connector_config_factory",
+        "get_connector_config_schema_factory",
         "get_connector_plugin",
         "list_connector_plugins",
         "register_connector_plugin",

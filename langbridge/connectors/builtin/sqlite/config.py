@@ -35,9 +35,6 @@ class SqliteConnectorConfigSchemaFactory(BaseConnectorConfigSchemaFactory):
             name="Sqlite",
             description="Sqlite Connector (SQLite)",
             version="1.0",
-            label="SQLite",
-            icon="sqlite.png",
-            connector_type=ConnectorRuntimeType.SQLITE.value,
             config=[
                 ConnectorConfigEntrySchema(field="location", label="Location", description="Sqlite Location", type="string", required=True)
             ]

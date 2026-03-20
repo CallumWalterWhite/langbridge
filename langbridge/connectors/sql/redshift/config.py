@@ -35,9 +35,6 @@ class RedshiftConnectorConfigSchemaFactory(BaseConnectorConfigSchemaFactory):
             name="Amazon Redshift",
             description="Connect to an Amazon Redshift cluster.",
             version="1.0.0",
-            label="Redshift",
-            icon="redshift.png",
-            connector_type="database",
             config=[
                 ConnectorConfigEntrySchema(
                     field="host",

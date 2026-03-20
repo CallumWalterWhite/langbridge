@@ -1,18 +1,17 @@
-class ConnectorError(RuntimeError):
-    """Base error for connector issues."""
+class ConnectorError(Exception):
+    """Base exception for connector failures."""
 
 
 class AuthError(ConnectorError):
-    """Raised when authentication fails."""
-
-
-class PermissionError(ConnectorError):
-    """Raised when permissions are insufficient to run a query."""
-
-
-class TimeoutError(ConnectorError):
-    """Raised when a query times out."""
+    """Raised when connector authentication fails."""
 
 
 class QueryValidationError(ConnectorError):
-    """Raised when an invalid or unsafe query is detected."""
+    """Raised when a query fails runtime validation."""
+
+
+__all__ = [
+    "AuthError",
+    "ConnectorError",
+    "QueryValidationError",
+]

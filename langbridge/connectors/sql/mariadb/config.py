@@ -34,9 +34,6 @@ class MariaDBConnectorConfigSchemaFactory(BaseConnectorConfigSchemaFactory):
             name="MariaDB",
             description="Connect to a MariaDB database.",
             version="1.0.0",
-            label="MariaDB",
-            icon="mysql.png",
-            connector_type="database",
             config=[
                 ConnectorConfigEntrySchema(
                     field="host",

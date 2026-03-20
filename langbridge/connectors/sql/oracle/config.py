@@ -34,9 +34,6 @@ class OracleConnectorConfigSchemaFactory(BaseConnectorConfigSchemaFactory):
             name="Oracle Database",
             description="Connect to an Oracle database using a service name.",
             version="1.0.0",
-            label="Oracle",
-            icon="oracle.png",
-            connector_type="database",
             config=[
                 ConnectorConfigEntrySchema(
                     field="host",

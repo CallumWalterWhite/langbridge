@@ -9,8 +9,8 @@ from .config import (
     BaseConnectorConfig,
     BaseConnectorConfigFactory,
     ConnectorType,
-    get_connector_config_factory,
 )
+from langbridge.plugins import get_connector_config_factory
 
 logger = logging.getLogger(__name__)
 

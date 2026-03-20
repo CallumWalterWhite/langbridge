@@ -93,31 +93,3 @@ class BaseConnectorConfigSchemaFactory(ABC):
     @classmethod
     def create(cls, config: dict) -> ConnectorConfigSchema:
         return ConnectorConfigSchema(**config)
-
-def get_connector_config_factory(type_s: ConnectorType) -> Type[BaseConnectorConfigFactory]:
-    from .registry import ensure_builtin_connectors_loaded, get_connector_plugin
-
-    ensure_builtin_connectors_loaded()
-    plugin = get_connector_plugin(type_s)
-    if plugin is not None and plugin.config_factory is not None:
-        return plugin.config_factory
-
-    subclasses = BaseConnectorConfigFactory.__subclasses__()
-    for subclass in subclasses:
-        if subclass.type.value == type_s.value:
-            return subclass
-    raise ValueError(f"No factory found for type: {type_s}")
-
-def get_connector_config_schema_factory(type_s: ConnectorRuntimeType) -> Type[BaseConnectorConfigSchemaFactory]:
-    from .registry import ensure_builtin_connectors_loaded, get_connector_plugin
-
-    ensure_builtin_connectors_loaded()
-    plugin = get_connector_plugin(type_s)
-    if plugin is not None and plugin.config_schema_factory is not None:
-        return plugin.config_schema_factory
-
-    subclasses = BaseConnectorConfigSchemaFactory.__subclasses__()
-    for subclass in subclasses:
-        if subclass.type.value == type_s.value:
-            return subclass
-    raise ValueError(f"No schema factory found for type: {type_s}")

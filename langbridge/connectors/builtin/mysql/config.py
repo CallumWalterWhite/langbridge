@@ -34,9 +34,6 @@ class MySQLConnectorConfigSchemaFactory(BaseConnectorConfigSchemaFactory):
             name="MySQL",
             description="Connect to a MySQL-compatible database.",
             version="1.0.0",
-            label="MySQL",
-            icon="mysql.png",
-            connector_type="database",
             config=[
                 ConnectorConfigEntrySchema(
                     field="host",

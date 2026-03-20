@@ -1,18 +1,11 @@
 [build-system]
-requires = ["setuptools>=68", "wheel"]
+requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "langbridge-sdk"
+name = "langbridge-connectors-snowflake"
 version = "0.1.0"
-description = "Langbridge SDK"
-readme = "README.md"
-requires-python = ">=3.10"
-dependencies = [
-  "httpx>=0.27,<1",
-  "langbridge==0.1.0"
-]
+dependencies = ["langbridge"]
 
-[tool.setuptools.packages.find]
-where = ["../../.."]
-include = ["packages.sdk*"]
+[project.entry-points."langbridge.plugin.connectors"]
+snowflake = "langbridge_connectors_snowflake.snowflake_connector:SnowflakeConnector"

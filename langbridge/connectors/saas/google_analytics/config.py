@@ -62,9 +62,6 @@ class GoogleAnalyticsConnectorConfigSchemaFactory(BaseConnectorConfigSchemaFacto
             name="Google Analytics",
             description="Connect to Google Analytics reporting resources and ingest them as datasets.",
             version="0.1.0",
-            label="Google Analytics",
-            icon="google-analytics.png",
-            connector_type="api",
             config=[
                 ConnectorConfigEntrySchema(
                     field="property_id",

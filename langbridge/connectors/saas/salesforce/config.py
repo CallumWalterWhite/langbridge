@@ -72,9 +72,6 @@ class SalesforceConnectorConfigSchemaFactory(BaseConnectorConfigSchemaFactory):
             name="Salesforce",
             description="Connect to Salesforce objects and ingest them as datasets.",
             version="0.1.0",
-            label="Salesforce",
-            icon="salesforce.png",
-            connector_type="api",
             config=[
                 ConnectorConfigEntrySchema(
                     field="instance_url",

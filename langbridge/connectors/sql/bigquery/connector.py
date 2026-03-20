@@ -6,7 +6,7 @@ from typing import Any, Dict, Optional
 from langbridge.connectors.base import SqlDialetcs
 from langbridge.connectors.base.connector import SqlConnector
 from langbridge.connectors.base.metadata import ColumnMetadata, ForeignKeyMetadata, TableMetadata
-from langbridge.errors.connector_errors import ConnectorError
+from connectors.base.error import ConnectorError
 
 from .config import BigQueryConnectorConfig
 

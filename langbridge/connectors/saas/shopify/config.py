@@ -45,9 +45,6 @@ class ShopifyConnectorConfigSchemaFactory(BaseConnectorConfigSchemaFactory):
             name="Shopify",
             description="Connect to Shopify Admin API resources and ingest them as datasets.",
             version="0.1.0",
-            label="Shopify",
-            icon="shopify.png",
-            connector_type="api",
             config=[        
                 ConnectorConfigEntrySchema(
                     field="shop_domain",

@@ -35,9 +35,6 @@ class SQLServerConnectorConfigSchemaFactory(BaseConnectorConfigSchemaFactory):
             name="SQL Server",
             description="Connect to a Microsoft SQL Server instance.",
             version="1.0.0",
-            label="SQL Server",
-            icon="sqlserver.png",
-            connector_type="database",
             config=[
                 ConnectorConfigEntrySchema(
                     field="host",

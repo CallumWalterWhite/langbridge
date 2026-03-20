@@ -15,8 +15,6 @@ _EXPORTS = {
         "ConnectorPluginMetadata",
         "ConnectorRuntimeType",
         "ConnectorSyncStrategy",
-        "get_connector_config_factory",
-        "get_connector_config_schema_factory",
     ),
     "langbridge.connectors.base.metadata": (
         "BaseMetadataExtractor",
@@ -44,11 +42,12 @@ _EXPORTS = {
         "SqlConnector",
         "SqlDialetcs",
         "VecotorDBConnector",
+        "ConnectorError",
         "VectorDBType",
         "VectorType",
         "run_sync",
     ),
-    "langbridge.connectors.base.registry": (
+    "langbridge.plugins.connectors": (
         "ApiConnectorFactory",
         "ConnectorInstanceRegistry",
         "ConnectorPlugin",
@@ -58,6 +57,8 @@ _EXPORTS = {
         "VectorDBConnectorFactory",
         "ensure_builtin_connectors_loaded",
         "ensure_builtin_plugins_loaded",
+        "get_connector_config_factory",
+        "get_connector_config_schema_factory",
         "get_connector_plugin",
         "list_connector_plugins",
         "register_connector_plugin",

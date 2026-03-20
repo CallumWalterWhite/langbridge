@@ -34,9 +34,6 @@ class PostgresConnectorConfigSchemaFactory(BaseConnectorConfigSchemaFactory):
             name="PostgreSQL",
             description="Connect to a PostgreSQL-compatible database.",
             version="1.0.0",
-            label="PostgreSQL",
-            icon="postgres.png",
-            connector_type="database",
             config=[
                 ConnectorConfigEntrySchema(
                     field="host",

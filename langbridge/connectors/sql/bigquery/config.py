@@ -32,9 +32,6 @@ class BigQueryConnectorConfigSchemaFactory(BaseConnectorConfigSchemaFactory):
             name="Google BigQuery",
             description="Connect to a Google BigQuery project using a service account.",
             version="1.0.0",
-            label="BigQuery",
-            icon="bigquery.png",
-            connector_type="database",
             config=[
                 ConnectorConfigEntrySchema(
                     field="project_id",

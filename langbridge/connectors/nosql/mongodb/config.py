@@ -33,9 +33,6 @@ class MongoDBConnectorConfigSchemaFactory(BaseConnectorConfigSchemaFactory):
             name="MongoDB",
             description="Connect to a MongoDB cluster using a standard connection string.",
             version="1.0.0",
-            label="MongoDB",
-            icon="mongodb.png",
-            connector_type="database",
             config=[
                 ConnectorConfigEntrySchema(
                     field="connection_uri",

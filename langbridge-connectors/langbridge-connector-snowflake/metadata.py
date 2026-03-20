@@ -8,7 +8,7 @@ from langbridge.connectors.base.metadata import (
     ColumnMetadata, 
     TableMetadata
 )
-from langbridge.errors.application_errors import BusinessValidationError
+from langbridge.connectors.base.error import ConnectorError
 
 from .config import SnowflakeConnectorConfig
 
@@ -19,7 +19,7 @@ class SnowflakeMetadataExtractor(BaseMetadataExtractor):
 
     def fetch_metadata(self, config: BaseConnectorConfig) -> List[TableMetadata]:
         if not isinstance(config, SnowflakeConnectorConfig):
-            raise BusinessValidationError("Invalid Snowflake configuration provided.")
+            raise ConnectorError(f"Invalid config type: expected SnowflakeConnectorConfig, got {type(config).__name__}")
 
         try:
             conn = connect(
@@ -32,7 +32,7 @@ class SnowflakeMetadataExtractor(BaseMetadataExtractor):
                 role=config.role,
             )
         except (ProgrammingError, OperationalError, DatabaseError) as exc:
-            raise BusinessValidationError(f"Unable to connect to Snowflake: {exc}") from exc
+            raise ConnectorError(f"Unable to connect to Snowflake: {exc}") from exc
 
         tables: Dict[tuple[str, str], List[ColumnMetadata]] = {}
         cursor = conn.cursor()

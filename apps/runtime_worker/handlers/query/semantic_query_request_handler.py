@@ -10,7 +10,6 @@ import sqlglot
 from pydantic import ValidationError
 
 from ..jobs.job_event_emitter import BrokerJobEventEmitter
-from langbridge.config import settings
 from langbridge.runtime.persistence.db.job import JobRecord, JobStatus
 from langbridge.runtime.events import (
     AgentEventVisibility,
