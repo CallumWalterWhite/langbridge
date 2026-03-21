@@ -6,11 +6,6 @@ This repository owns the portable execution layer: local and self-hosted runtime
 hosting, workspace-scoped runtime identity, connectors, datasets, semantic query,
 federated query, and agent-oriented execution primitives.
 
-`langbridge-cloud` is the separate cloud and control-plane product. It owns the
-hosted product surfaces, control-plane APIs, web UI, and cloud orchestration
-experience. This repository should only describe that boundary, not duplicate the
-cloud implementation.
-
 ## What Lives Here
 
 Langbridge is a Python monolith package with internal modules under the
@@ -32,9 +27,6 @@ Supporting runtime assembly and packaging code lives in:
 - `packages/sdk`: packaging for the separate `langbridge-sdk` distribution
 - `docs/`: architecture, deployment, and development docs
 - `examples/`: runnable self-hosted and SDK examples
-
-The old `langbridge.packages.*` architecture is no longer the repo story and
-should not be used as the primary mental model.
 
 ## Runtime Model
 
@@ -144,21 +136,3 @@ Start with:
 - `docs/deployment/self-hosted.md`
 - `docs/development/local-dev.md`
 
-## Runtime / Cloud Boundary
-
-Use this repo for:
-
-- runtime execution, hosting, and runtime contracts
-- runtime-owned connectors, federation, semantic, datasets, and orchestration
-- self-hosted and embedded runtime product surfaces
-
-Use `../langbridge-cloud` for:
-
-- hosted control-plane API work
-- hosted worker orchestration
-- web product surfaces
-- cloud migrations and cloud-only operational tooling
-
-## License
-
-See `LICENSE`.
