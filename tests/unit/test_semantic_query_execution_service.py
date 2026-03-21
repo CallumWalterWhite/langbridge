@@ -10,18 +10,16 @@ from typing import Any
 
 import pytest
 
-from langbridge.packages.runtime.services.semantic_query_execution_service import (
+from langbridge.runtime.services.semantic_query_execution_service import (
     SemanticQueryExecutionService,
     _normalize_unified_relationship_payload,
 )
-from langbridge.packages.common.langbridge_common.contracts.semantic import (
+from langbridge.runtime.models import (
     UnifiedSemanticRelationshipRequest,
 )
-from langbridge.packages.common.langbridge_common.errors.application_errors import (
-    BusinessValidationError,
-)
-from langbridge.packages.semantic.langbridge_semantic.model import Dimension, SemanticModel, Table
-from langbridge.packages.semantic.langbridge_semantic.query import SemanticQuery
+from langbridge.runtime.errors import BusinessValidationError
+from langbridge.semantic.model import Dimension, SemanticModel, Table
+from langbridge.semantic.query import SemanticQuery
 
 
 @pytest.fixture
@@ -187,12 +185,17 @@ def test_to_semantic_filters_normalizes_iso_dot_date_range_for_date_member() -> 
     ]
 
 
-class _FakeSemanticModelRepository:
+class _FakeSemanticModelProvider:
     def __init__(self, models: dict[uuid.UUID, _ModelRecord]) -> None:
         self._models = models
 
-    async def get_for_scope(self, *, model_id: uuid.UUID, organization_id: uuid.UUID) -> _ModelRecord | None:
-        return self._models.get(model_id)
+    async def get_semantic_model(
+        self,
+        *,
+        workspace_id: uuid.UUID,
+        semantic_model_id: uuid.UUID,
+    ) -> _ModelRecord | None:
+        return self._models.get(semantic_model_id)
 
 
 class _FakeFederatedQueryTool:
@@ -236,7 +239,6 @@ def _dataset_stub(
     return SimpleNamespace(
         id=dataset_id,
         workspace_id=workspace_id,
-        project_id=None,
         connection_id=connection_id,
         created_by=None,
         updated_by=None,
@@ -273,7 +275,7 @@ def _dataset_stub(
 async def test_execute_unified_query_routes_through_federated_tool() -> None:
     pytest.importorskip("pyarrow")
 
-    organization_id = uuid.uuid4()
+    workspace_id = uuid.uuid4()
     model_id = uuid.uuid4()
     connector_id = uuid.uuid4()
     dataset_id = uuid.uuid4()
@@ -289,7 +291,7 @@ async def test_execute_unified_query_routes_through_federated_tool() -> None:
             )
         },
     )
-    repo = _FakeSemanticModelRepository(
+    provider = _FakeSemanticModelProvider(
         {
             model_id: _ModelRecord(
                 id=model_id,
@@ -301,12 +303,11 @@ async def test_execute_unified_query_routes_through_federated_tool() -> None:
     )
     tool = _FakeFederatedQueryTool(rows=[{"orders__id": 1}])
     service = SemanticQueryExecutionService(
-        semantic_model_repository=repo,
         dataset_repository=_FakeDatasetRepository(
             {
                 dataset_id: _dataset_stub(
                     dataset_id=dataset_id,
-                    workspace_id=organization_id,
+                    workspace_id=workspace_id,
                     connection_id=connector_id,
                     name="orders_table",
                     dataset_type="TABLE",
@@ -323,11 +324,11 @@ async def test_execute_unified_query_routes_through_federated_tool() -> None:
         ),
         federated_query_tool=tool,
         logger=logging.getLogger(__name__),
+        semantic_model_provider=provider,
     )
 
     result = await service.execute_unified_query(
-        organization_id=organization_id,
-        project_id=None,
+        workspace_id=workspace_id,
         semantic_query=SemanticQuery(dimensions=["Orders__orders.id"], limit=10),
         semantic_model_ids=[model_id],
         relationships=None,
@@ -344,7 +345,7 @@ async def test_execute_unified_query_routes_through_federated_tool() -> None:
 async def test_execute_unified_query_resolves_dataset_backed_tables_per_table() -> None:
     pytest.importorskip("pyarrow")
 
-    organization_id = uuid.uuid4()
+    workspace_id = uuid.uuid4()
     model_id = uuid.uuid4()
     legacy_connector_id = uuid.uuid4()
     warehouse_connector_id = uuid.uuid4()
@@ -368,7 +369,7 @@ async def test_execute_unified_query_resolves_dataset_backed_tables_per_table() 
             ),
         },
     )
-    repo = _FakeSemanticModelRepository(
+    provider = _FakeSemanticModelProvider(
         {
             model_id: _ModelRecord(
                 id=model_id,
@@ -383,7 +384,7 @@ async def test_execute_unified_query_resolves_dataset_backed_tables_per_table() 
         {
             file_dataset_id: _dataset_stub(
                 dataset_id=file_dataset_id,
-                workspace_id=organization_id,
+                workspace_id=workspace_id,
                 connection_id=None,
                 name="orders_file",
                 dataset_type="FILE",
@@ -395,7 +396,7 @@ async def test_execute_unified_query_resolves_dataset_backed_tables_per_table() 
             ),
             table_dataset_id: _dataset_stub(
                 dataset_id=table_dataset_id,
-                workspace_id=organization_id,
+                workspace_id=workspace_id,
                 connection_id=warehouse_connector_id,
                 name="inventory_table",
                 dataset_type="TABLE",
@@ -412,15 +413,14 @@ async def test_execute_unified_query_resolves_dataset_backed_tables_per_table() 
     )
     tool = _FakeFederatedQueryTool(rows=[{"orders__id": 1}])
     service = SemanticQueryExecutionService(
-        semantic_model_repository=repo,
         dataset_repository=dataset_repo,
         federated_query_tool=tool,
         logger=logging.getLogger(__name__),
+        semantic_model_provider=provider,
     )
 
     result = await service.execute_unified_query(
-        organization_id=organization_id,
-        project_id=None,
+        workspace_id=workspace_id,
         semantic_query=SemanticQuery(dimensions=["Inventory__orders.id"], limit=10),
         semantic_model_ids=[model_id],
         relationships=None,
@@ -433,10 +433,6 @@ async def test_execute_unified_query_resolves_dataset_backed_tables_per_table() 
     inventory_binding = workflow["dataset"]["tables"]["Inventory__inventory"]
     assert orders_binding["metadata"]["source_kind"] == "file"
     assert inventory_binding["connector_id"] == str(warehouse_connector_id)
-
-
-
-
 
 
 

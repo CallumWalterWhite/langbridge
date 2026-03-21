@@ -4,11 +4,13 @@ import uuid
 
 import pytest
 
-from langbridge.packages.runtime.execution.federated_query_tool import (
+from langbridge.runtime.models import ConnectorMetadata
+from langbridge.runtime.execution.federated_query_tool import (
     FederatedQueryTool,
 )
-from langbridge.packages.federation.connectors import DuckDbFileRemoteSource
-from langbridge.packages.federation.models import (
+from langbridge.runtime.providers import MemoryConnectorProvider
+from langbridge.federation.connectors import DuckDbFileRemoteSource
+from langbridge.federation.models import (
     DatasetExecutionDescriptor,
     FederationWorkflow,
     VirtualDataset,
@@ -19,11 +21,6 @@ from langbridge.packages.federation.models import (
 @pytest.fixture
 def anyio_backend():
     return "asyncio"
-
-
-class _UnusedConnectorRepository:
-    async def get_by_id(self, connector_id):
-        return None
 
 
 @pytest.mark.anyio
@@ -52,7 +49,7 @@ async def test_build_sources_uses_file_bindings_for_file_backed_workflow() -> No
             relationships=[],
         ),
     )
-    tool = FederatedQueryTool(connector_repository=_UnusedConnectorRepository())
+    tool = FederatedQueryTool(connector_provider=MemoryConnectorProvider())
 
     sources = await tool._build_sources(workflow)
 
@@ -92,9 +89,90 @@ async def test_build_sources_uses_descriptor_for_saas_parquet_dataset() -> None:
             relationships=[],
         ),
     )
-    tool = FederatedQueryTool(connector_repository=_UnusedConnectorRepository())
+    tool = FederatedQueryTool(connector_provider=MemoryConnectorProvider())
 
     sources = await tool._build_sources(workflow)
 
     assert "file_source_shop_orders" in sources
     assert isinstance(sources["file_source_shop_orders"], DuckDbFileRemoteSource)
+
+
+@pytest.mark.anyio
+async def test_build_sources_rejects_non_sql_connector_metadata() -> None:
+    workspace_id = str(uuid.uuid4())
+    connector_id = uuid.uuid4()
+    workflow = FederationWorkflow(
+        id="workflow_non_sql_connector_test",
+        workspace_id=workspace_id,
+        dataset=VirtualDataset(
+            id="dataset_non_sql_connector_test",
+            name="Shopify Orders",
+            workspace_id=workspace_id,
+            tables={
+                "orders": VirtualTableBinding(
+                    table_key="orders",
+                    source_id="shopify_source",
+                    connector_id=connector_id,
+                    table="orders",
+                    metadata={},
+                )
+            },
+            relationships=[],
+        ),
+    )
+    tool = FederatedQueryTool(
+        connector_provider=MemoryConnectorProvider(
+            {
+                connector_id: ConnectorMetadata(
+                    id=connector_id,
+                    name="shopify",
+                    connector_type="SHOPIFY",
+                    config={},
+                )
+            }
+        )
+    )
+
+    with pytest.raises(ValueError, match="does not support SQL federation"):
+        await tool._build_sources(workflow)
+
+
+@pytest.mark.anyio
+async def test_build_sources_requires_connector_in_same_workspace() -> None:
+    workspace_id = str(uuid.uuid4())
+    connector_id = uuid.uuid4()
+    workflow = FederationWorkflow(
+        id="workflow_workspace_scoped_connector_test",
+        workspace_id=workspace_id,
+        dataset=VirtualDataset(
+            id="dataset_workspace_scoped_connector_test",
+            name="Orders",
+            workspace_id=workspace_id,
+            tables={
+                "orders": VirtualTableBinding(
+                    table_key="orders",
+                    source_id="warehouse_source",
+                    connector_id=connector_id,
+                    table="orders",
+                    metadata={},
+                )
+            },
+            relationships=[],
+        ),
+    )
+    tool = FederatedQueryTool(
+        connector_provider=MemoryConnectorProvider(
+            {
+                connector_id: ConnectorMetadata(
+                    id=connector_id,
+                    name="warehouse",
+                    connector_type="POSTGRES",
+                    workspace_id=uuid.uuid4(),
+                    config={"config": {"database": "analytics"}},
+                )
+            }
+        )
+    )
+
+    with pytest.raises(ValueError, match="not found"):
+        await tool._build_sources(workflow)

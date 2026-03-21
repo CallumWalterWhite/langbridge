@@ -10,36 +10,36 @@ import pytest
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 
-from langbridge.packages.common.langbridge_common.config import settings
-from langbridge.packages.connectors.langbridge_connectors.api.google_analytics.config import (
+from langbridge.config import settings
+from langbridge.connectors.saas.google_analytics.config import (
     GoogleAnalyticsConnectorConfig,
 )
-from langbridge.packages.connectors.langbridge_connectors.api.google_analytics.connector import (
+from langbridge.connectors.saas.google_analytics.connector import (
     GoogleAnalyticsApiConnector,
 )
-from langbridge.packages.connectors.langbridge_connectors.api import _http_api_connector as http_api_connector_module
-from langbridge.packages.connectors.langbridge_connectors.api.hubspot.config import (
+from langbridge.connectors.base import http as http_api_connector_module
+from langbridge.connectors.saas.hubspot.config import (
     HubSpotConnectorConfig,
 )
-from langbridge.packages.connectors.langbridge_connectors.api.hubspot.connector import (
+from langbridge.connectors.saas.hubspot.connector import (
     HubSpotApiConnector,
 )
-from langbridge.packages.connectors.langbridge_connectors.api.salesforce.config import (
+from langbridge.connectors.saas.salesforce.config import (
     SalesforceConnectorConfig,
 )
-from langbridge.packages.connectors.langbridge_connectors.api.salesforce.connector import (
+from langbridge.connectors.saas.salesforce.connector import (
     SalesforceApiConnector,
 )
-from langbridge.packages.connectors.langbridge_connectors.api.shopify.config import (
+from langbridge.connectors.saas.shopify.config import (
     ShopifyConnectorConfig,
 )
-from langbridge.packages.connectors.langbridge_connectors.api.shopify.connector import (
+from langbridge.connectors.saas.shopify.connector import (
     ShopifyApiConnector,
 )
-from langbridge.packages.connectors.langbridge_connectors.api.stripe.config import (
+from langbridge.connectors.saas.stripe.config import (
     StripeConnectorConfig,
 )
-from langbridge.packages.connectors.langbridge_connectors.api.stripe.connector import (
+from langbridge.connectors.saas.stripe.connector import (
     StripeApiConnector,
 )
 

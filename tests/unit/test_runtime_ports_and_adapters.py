@@ -6,15 +6,17 @@ from types import SimpleNamespace
 
 import pytest
 
-from langbridge.packages.runtime.adapters import (
-    to_runtime_connector,
-    to_runtime_dataset,
+from langbridge.runtime.persistence.mappers import (
+    from_connector_record,
+    from_dataset_record,
+    from_sql_job_record,
 )
-from langbridge.packages.runtime.models import ConnectorSyncState
-from langbridge.packages.runtime.providers.memory import (
+from langbridge.runtime.models import ConnectorSyncState
+from langbridge.runtime.providers.memory import (
     MemoryDatasetProvider,
     MemorySyncStateProvider,
 )
+from langbridge.runtime.utils import build_connector_runtime_payload
 
 
 @pytest.fixture
@@ -22,12 +24,12 @@ def anyio_backend():
     return "asyncio"
 
 
-def test_to_runtime_connector_maps_legacy_connector_shape() -> None:
-    org_id = uuid.uuid4()
-    project_id = uuid.uuid4()
+def test_from_connector_record_maps_runtime_connector_shape() -> None:
+    workspace_id = uuid.uuid4()
     connector_id = uuid.uuid4()
-    legacy_connector = SimpleNamespace(
+    connector_record = SimpleNamespace(
         id=connector_id,
+        workspace_id=workspace_id,
         name="warehouse",
         description="Primary warehouse",
         connector_type="POSTGRES",
@@ -48,16 +50,13 @@ def test_to_runtime_connector_maps_legacy_connector_shape() -> None:
             "allowed_tables": ["orders"],
         },
         is_managed=False,
-        organizations=[SimpleNamespace(id=org_id)],
-        projects=[SimpleNamespace(id=project_id)],
     )
 
-    connector = to_runtime_connector(legacy_connector)
+    connector = from_connector_record(connector_record)
 
     assert connector is not None
     assert connector.id == connector_id
-    assert connector.organization_id == org_id
-    assert connector.project_id == project_id
+    assert connector.workspace_id == workspace_id
     assert connector.config == {"config": {"host": "db.internal", "database": "analytics"}}
     assert connector.connection_metadata is not None
     assert connector.connection_metadata.host == "db.internal"
@@ -66,14 +65,35 @@ def test_to_runtime_connector_maps_legacy_connector_shape() -> None:
     assert connector.connection_policy.allowed_schemas == ["public"]
 
 
-def test_to_runtime_dataset_maps_legacy_dataset_shape() -> None:
+def test_build_connector_runtime_payload_uses_runtime_secret_references() -> None:
+    payload = build_connector_runtime_payload(
+        config_json='{"config": {"database": "analytics"}}',
+        connection_metadata={
+            "host": "db.internal",
+            "extra": {"sslmode": "require"},
+        },
+        secret_references={
+            "password": {
+                "provider_type": "env",
+                "identifier": "DB_PASSWORD",
+            }
+        },
+        secret_resolver=lambda ref: f"resolved:{ref.identifier}",
+    )
+
+    assert payload["config"]["database"] == "analytics"
+    assert payload["config"]["host"] == "db.internal"
+    assert payload["config"]["sslmode"] == "require"
+    assert payload["config"]["password"] == "resolved:DB_PASSWORD"
+
+
+def test_from_dataset_record_maps_legacy_dataset_shape() -> None:
     dataset_id = uuid.uuid4()
     workspace_id = uuid.uuid4()
     created_at = datetime.now(timezone.utc)
     legacy_dataset = SimpleNamespace(
         id=dataset_id,
         workspace_id=workspace_id,
-        project_id=None,
         connection_id=uuid.uuid4(),
         created_by=uuid.uuid4(),
         updated_by=None,
@@ -122,14 +142,14 @@ def test_to_runtime_dataset_maps_legacy_dataset_shape() -> None:
             max_rows_preview=100,
             max_export_rows=1000,
             redaction_rules_json={"email": "mask"},
-            row_filters_json=["tenant_id = current_tenant()"],
+            row_filters_json=["region = current_region()"],
             allow_dml=False,
         ),
         created_at=created_at,
         updated_at=created_at,
     )
 
-    dataset = to_runtime_dataset(legacy_dataset)
+    dataset = from_dataset_record(legacy_dataset)
 
     assert dataset is not None
     assert dataset.id == dataset_id
@@ -141,17 +161,70 @@ def test_to_runtime_dataset_maps_legacy_dataset_shape() -> None:
     assert dataset.policy.redaction_rules_json == {"email": "mask"}
 
 
+def test_from_sql_job_record_maps_legacy_sql_job_shape() -> None:
+    workspace_id = uuid.uuid4()
+    actor_id = uuid.uuid4()
+    connection_id = uuid.uuid4()
+    created_at = datetime.now(timezone.utc)
+    legacy_job = SimpleNamespace(
+        id=uuid.uuid4(),
+        workspace_id=workspace_id,
+        actor_id=actor_id,
+        connection_id=connection_id,
+        workbench_mode="dataset",
+        selected_datasets_json=[{"dataset_id": str(uuid.uuid4()), "alias": "orders"}],
+        execution_mode="single",
+        status="queued",
+        query_text="SELECT 1",
+        query_hash="hash-123",
+        query_params_json={"limit": 1},
+        requested_limit=10,
+        enforced_limit=10,
+        requested_timeout_seconds=15,
+        enforced_timeout_seconds=15,
+        is_explain=False,
+        is_federated=False,
+        correlation_id="corr-1",
+        policy_snapshot_json={"allow_dml": False},
+        result_columns_json=[{"name": "id", "type": "integer"}],
+        result_rows_json=[{"id": 1}],
+        row_count_preview=1,
+        total_rows_estimate=None,
+        bytes_scanned=128,
+        duration_ms=25,
+        result_cursor="0",
+        redaction_applied=False,
+        error_json=None,
+        warning_json=None,
+        stats_json={"rows_returned": 1},
+        created_at=created_at,
+        started_at=created_at,
+        finished_at=created_at,
+        updated_at=created_at,
+    )
+
+    job = from_sql_job_record(legacy_job)
+
+    assert job is not None
+    assert job.workspace_id == workspace_id
+    assert job.actor_id == actor_id
+    assert job.connection_id == connection_id
+    assert job.query_text == "SELECT 1"
+    assert job.query_params_json == {"limit": 1}
+    assert job.result_rows_json == [{"id": 1}]
+    assert job.stats_json == {"rows_returned": 1}
+
+
 @pytest.mark.anyio
 async def test_memory_providers_support_ephemeral_runtime_access_patterns() -> None:
     workspace_id = uuid.uuid4()
     dataset_id = uuid.uuid4()
     state_id = uuid.uuid4()
     connection_id = uuid.uuid4()
-    dataset = to_runtime_dataset(
+    dataset = from_dataset_record(
         SimpleNamespace(
             id=dataset_id,
             workspace_id=workspace_id,
-            project_id=None,
             connection_id=None,
             created_by=None,
             updated_by=None,

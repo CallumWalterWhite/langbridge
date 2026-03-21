@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from langbridge.packages.orchestrator.langbridge_orchestrator.tools.sql_analyst.interfaces import (
+from langbridge.orchestrator.tools.sql_analyst.interfaces import (
     AnalyticalColumn,
     AnalyticalContext,
     AnalyticalDatasetBinding,
@@ -11,10 +11,10 @@ from langbridge.packages.orchestrator.langbridge_orchestrator.tools.sql_analyst.
     AnalystQueryRequest,
     QueryResult,
 )
-from langbridge.packages.orchestrator.langbridge_orchestrator.tools.sql_analyst.tool import (
+from langbridge.orchestrator.tools.sql_analyst.tool import (
     SqlAnalystTool,
 )
-from langbridge.packages.semantic.langbridge_semantic.model import Dataset, Dimension, Measure, SemanticModel
+from langbridge.semantic.model import Dataset, Dimension, Measure, SemanticModel
 
 
 class _StaticLLM:

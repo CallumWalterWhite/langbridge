@@ -7,7 +7,7 @@ project_root = pathlib.Path(__file__).resolve().parents[2]
 if str(project_root) not in sys.path:
     sys.path.append(str(project_root))
 
-from langbridge.packages.orchestrator.langbridge_orchestrator.definitions.factory import (  # noqa: E402
+from langbridge.orchestrator.definitions.factory import (  # noqa: E402
     AgentDefinitionFactory,
 )
 

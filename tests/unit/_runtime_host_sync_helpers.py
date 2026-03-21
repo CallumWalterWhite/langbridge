@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Iterator
 from urllib.parse import parse_qs, urlparse
 
-from langbridge.packages.runtime.settings import runtime_settings
+from langbridge.runtime.settings import runtime_settings
 
 
 _CUSTOMERS = [

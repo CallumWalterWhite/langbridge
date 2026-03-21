@@ -2,14 +2,14 @@ from __future__ import annotations
 
 import pytest
 
-from langbridge.packages.common.langbridge_common.errors.connector_errors import ConnectorError
-from langbridge.packages.connectors.langbridge_connectors.api.postgres.config import (
+from langbridge.errors.connector_errors import ConnectorError
+from langbridge.connectors.builtin.postgres.config import (
     PostgresConnectorConfig,
 )
-from langbridge.packages.connectors.langbridge_connectors.api.postgres.connector import (
+from langbridge.connectors.builtin.postgres.connector import (
     PostgresConnector,
 )
-from langbridge.packages.connectors.langbridge_connectors.api.postgres import connector as postgres_connector_module
+from langbridge.connectors.builtin.postgres import connector as postgres_connector_module
 
 
 @pytest.fixture

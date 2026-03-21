@@ -5,10 +5,10 @@ import uuid
 import pyarrow as pa
 import pytest
 
-from langbridge.packages.federation.connectors import MockArrowRemoteSource
-from langbridge.packages.federation.executor import ArtifactStore
-from langbridge.packages.federation.models import FederationWorkflow, VirtualDataset, VirtualTableBinding
-from langbridge.packages.federation.service import FederatedQueryService
+from langbridge.federation.connectors import MockArrowRemoteSource
+from langbridge.federation.executor import ArtifactStore
+from langbridge.federation.models import FederationWorkflow, VirtualDataset, VirtualTableBinding
+from langbridge.federation.service import FederatedQueryService
 
 
 @pytest.fixture

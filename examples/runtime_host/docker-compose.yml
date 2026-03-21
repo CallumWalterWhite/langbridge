@@ -2,7 +2,7 @@ services:
   runtime-host:
     build:
       context: ../..
-      dockerfile: langbridge/Dockerfile.host
+      dockerfile: Dockerfile.host
     container_name: langbridge-runtime-host
     command:
       - serve

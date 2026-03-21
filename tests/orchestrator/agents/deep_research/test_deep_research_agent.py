@@ -24,15 +24,15 @@ PACKAGE_ROOT = REPO_ROOT
 if str(PACKAGE_ROOT) not in sys.path:
     sys.path.insert(0, str(PACKAGE_ROOT))
 
-from langbridge.packages.orchestrator.langbridge_orchestrator.agents.deep_research import (  # noqa: E402
+from langbridge.orchestrator.agents.deep_research import (  # noqa: E402
     DeepResearchAgent,
 )
-from langbridge.packages.orchestrator.langbridge_orchestrator.agents.deep_research.schemas import (  # noqa: E402
+from langbridge.orchestrator.agents.deep_research.schemas import (  # noqa: E402
     EvidenceItem,
     ResearchPlan,
     ResearchState,
 )
-from langbridge.packages.orchestrator.langbridge_orchestrator.agents.web_search import (  # noqa: E402
+from langbridge.orchestrator.agents.web_search import (  # noqa: E402
     WebSearchAgent,
     WebSearchResultItem,
 )

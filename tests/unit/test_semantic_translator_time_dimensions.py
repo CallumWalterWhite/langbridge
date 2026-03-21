@@ -1,5 +1,5 @@
-from langbridge.packages.semantic.langbridge_semantic.model import Dimension, Measure, SemanticModel, Table
-from langbridge.packages.semantic.langbridge_semantic.query import SemanticQuery, SemanticQueryEngine
+from langbridge.semantic.model import Dimension, Measure, SemanticModel, Table
+from langbridge.semantic.query import SemanticQuery, SemanticQueryEngine
 
 
 def _build_orders_model() -> SemanticModel:

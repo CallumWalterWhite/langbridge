@@ -2,10 +2,10 @@
 
 import uuid
 
-from langbridge.packages.federation.models import FederationWorkflow, SMQQuery, VirtualDataset, VirtualRelationship, VirtualTableBinding
-from langbridge.packages.federation.models.plans import QueryType
-from langbridge.packages.federation.planner import FederatedPlanner
-from langbridge.packages.semantic.langbridge_semantic.model import Dimension, Measure, Relationship, SemanticModel, Table
+from langbridge.federation.models import FederationWorkflow, SMQQuery, VirtualDataset, VirtualRelationship, VirtualTableBinding
+from langbridge.federation.models.plans import QueryType
+from langbridge.federation.planner import FederatedPlanner
+from langbridge.semantic.model import Dimension, Measure, Relationship, SemanticModel, Table
 
 
 def _build_semantic_model() -> SemanticModel:

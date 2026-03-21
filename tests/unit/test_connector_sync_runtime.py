@@ -9,31 +9,31 @@ import httpx
 import pyarrow.parquet as pq
 import pytest
 
-from langbridge.packages.runtime.services.dataset_sync_service import ConnectorSyncRuntime
-from langbridge.packages.common.langbridge_common.config import settings
-from langbridge.packages.common.langbridge_common.contracts.connectors import (
+from langbridge.runtime.services.dataset_sync_service import ConnectorSyncRuntime
+from langbridge.config import settings
+from langbridge.contracts.connectors import (
     ConnectorSyncMode,
     ConnectorSyncStatus,
 )
-from langbridge.packages.common.langbridge_common.db.connector_sync import ConnectorSyncStateRecord
-from langbridge.packages.common.langbridge_common.db.dataset import (
+from langbridge.runtime.persistence.db.connector_sync import ConnectorSyncStateRecord
+from langbridge.runtime.persistence.db.dataset import (
     DatasetColumnRecord,
     DatasetPolicyRecord,
     DatasetRecord,
     DatasetRevisionRecord,
 )
-from langbridge.packages.common.langbridge_common.db.lineage import LineageEdgeRecord
-from langbridge.packages.common.langbridge_common.db import agent as _db_agent  # noqa: F401
-from langbridge.packages.common.langbridge_common.db import semantic as _db_semantic  # noqa: F401
-from langbridge.packages.connectors.langbridge_connectors.api.connector import (
+from langbridge.runtime.persistence.db.lineage import LineageEdgeRecord
+from langbridge.runtime.persistence.db import agent as _db_agent  # noqa: F401
+from langbridge.runtime.persistence.db import semantic as _db_semantic  # noqa: F401
+from langbridge.connectors.base.connector import (
     ApiExtractResult,
     ApiResource,
 )
-from langbridge.packages.connectors.langbridge_connectors.api.config import ConnectorRuntimeType
-from langbridge.packages.connectors.langbridge_connectors.api.shopify.config import (
+from langbridge.connectors.base.config import ConnectorRuntimeType
+from langbridge.connectors.saas.shopify.config import (
     ShopifyConnectorConfig,
 )
-from langbridge.packages.connectors.langbridge_connectors.api.shopify.connector import (
+from langbridge.connectors.saas.shopify.connector import (
     ShopifyApiConnector,
 )
 
@@ -54,6 +54,10 @@ class _FakeConnectorSyncStateRepository:
 
     def add(self, state: ConnectorSyncStateRecord) -> None:
         self.items[(state.workspace_id, state.connection_id, state.resource_name)] = state
+
+    async def save(self, state: ConnectorSyncStateRecord) -> ConnectorSyncStateRecord:
+        self.add(state)
+        return state
 
     async def get_for_resource(
         self,
@@ -83,6 +87,10 @@ class _FakeDatasetRepository:
 
     def add(self, dataset: DatasetRecord) -> None:
         self.items[dataset.id] = dataset
+
+    async def save(self, dataset: DatasetRecord) -> DatasetRecord:
+        self.add(dataset)
+        return dataset
 
     async def find_file_dataset_for_connection(
         self,
@@ -143,6 +151,10 @@ class _FakeDatasetPolicyRepository:
 
     def add(self, policy: DatasetPolicyRecord) -> None:
         self.by_dataset[policy.dataset_id] = policy
+
+    async def save(self, policy: DatasetPolicyRecord) -> DatasetPolicyRecord:
+        self.add(policy)
+        return policy
 
     async def get_for_dataset(self, *, dataset_id: uuid.UUID) -> DatasetPolicyRecord | None:
         return self.by_dataset.get(dataset_id)
@@ -289,8 +301,7 @@ async def test_connector_sync_runtime_materializes_parent_child_datasets_and_per
     runtime, _, dataset_repository, dataset_revision_repository, lineage_edge_repository = _build_runtime()
 
     workspace_id = uuid.uuid4()
-    project_id = uuid.uuid4()
-    user_id = uuid.uuid4()
+    actor_id = uuid.uuid4()
     connection_id = uuid.uuid4()
     connector_record = _FakeConnectorRecord(name="Shopify storefront")
 
@@ -328,8 +339,7 @@ async def test_connector_sync_runtime_materializes_parent_child_datasets_and_per
 
     summary = await runtime.sync_resource(
         workspace_id=workspace_id,
-        project_id=project_id,
-        user_id=user_id,
+        actor_id=actor_id,
         connection_id=connection_id,
         connector_record=connector_record,
         connector_type=ConnectorRuntimeType.SHOPIFY,
@@ -411,8 +421,7 @@ async def test_connector_sync_runtime_incremental_second_sync_only_upserts_new_r
     )
     await runtime.sync_resource(
         workspace_id=workspace_id,
-        project_id=None,
-        user_id=uuid.uuid4(),
+        actor_id=uuid.uuid4(),
         connection_id=connection_id,
         connector_record=_FakeConnectorRecord(name="Shopify"),
         connector_type=ConnectorRuntimeType.SHOPIFY,
@@ -435,8 +444,7 @@ async def test_connector_sync_runtime_incremental_second_sync_only_upserts_new_r
     )
     await runtime.sync_resource(
         workspace_id=workspace_id,
-        project_id=None,
-        user_id=uuid.uuid4(),
+        actor_id=uuid.uuid4(),
         connection_id=connection_id,
         connector_record=_FakeConnectorRecord(name="Shopify"),
         connector_type=ConnectorRuntimeType.SHOPIFY,
@@ -489,8 +497,7 @@ async def test_connector_sync_runtime_falls_back_to_full_refresh_for_non_increme
     )
     await runtime.sync_resource(
         workspace_id=workspace_id,
-        project_id=None,
-        user_id=uuid.uuid4(),
+        actor_id=uuid.uuid4(),
         connection_id=connection_id,
         connector_record=_FakeConnectorRecord(name="Analytics"),
         connector_type=ConnectorRuntimeType.GOOGLE_ANALYTICS,
@@ -513,8 +520,7 @@ async def test_connector_sync_runtime_falls_back_to_full_refresh_for_non_increme
     )
     await runtime.sync_resource(
         workspace_id=workspace_id,
-        project_id=None,
-        user_id=uuid.uuid4(),
+        actor_id=uuid.uuid4(),
         connection_id=connection_id,
         connector_record=_FakeConnectorRecord(name="Analytics"),
         connector_type=ConnectorRuntimeType.GOOGLE_ANALYTICS,
@@ -569,8 +575,7 @@ async def test_connector_sync_runtime_failure_does_not_advance_checkpoint_state(
     )
     await runtime.sync_resource(
         workspace_id=workspace_id,
-        project_id=None,
-        user_id=uuid.uuid4(),
+        actor_id=uuid.uuid4(),
         connection_id=connection_id,
         connector_record=_FakeConnectorRecord(name="Shopify"),
         connector_type=ConnectorRuntimeType.SHOPIFY,
@@ -584,8 +589,7 @@ async def test_connector_sync_runtime_failure_does_not_advance_checkpoint_state(
     with pytest.raises(RuntimeError):
         await runtime.sync_resource(
             workspace_id=workspace_id,
-            project_id=None,
-            user_id=uuid.uuid4(),
+            actor_id=uuid.uuid4(),
             connection_id=connection_id,
             connector_record=_FakeConnectorRecord(name="Shopify"),
             connector_type=ConnectorRuntimeType.SHOPIFY,
@@ -613,7 +617,7 @@ async def test_shopify_connector_sync_runtime_full_then_incremental_with_mocked_
 
     workspace_id = uuid.uuid4()
     connection_id = uuid.uuid4()
-    user_id = uuid.uuid4()
+    actor_id = uuid.uuid4()
     state = await runtime.get_or_create_state(
         workspace_id=workspace_id,
         connection_id=connection_id,
@@ -674,8 +678,7 @@ async def test_shopify_connector_sync_runtime_full_then_incremental_with_mocked_
 
     await runtime.sync_resource(
         workspace_id=workspace_id,
-        project_id=None,
-        user_id=user_id,
+        actor_id=actor_id,
         connection_id=connection_id,
         connector_record=_FakeConnectorRecord(name="Shopify"),
         connector_type=ConnectorRuntimeType.SHOPIFY,
@@ -686,8 +689,7 @@ async def test_shopify_connector_sync_runtime_full_then_incremental_with_mocked_
     )
     await runtime.sync_resource(
         workspace_id=workspace_id,
-        project_id=None,
-        user_id=user_id,
+        actor_id=actor_id,
         connection_id=connection_id,
         connector_record=_FakeConnectorRecord(name="Shopify"),
         connector_type=ConnectorRuntimeType.SHOPIFY,

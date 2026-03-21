@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from langbridge.packages.cli.main import main
+from langbridge.cli.main import main
 
 
 if __name__ == "__main__":

@@ -27,7 +27,6 @@ dependencies = [
   "authlib==1.3.1",
   "psycopg[binary]==3.2.3",
   "itsdangerous==2.2.0",
-  "snowflake-connector-python==3.18.0",
   "cryptography==46.0.0",
   "sqlglot==27.25.2",
   "openai==2.2.0",
@@ -38,15 +37,16 @@ dependencies = [
   "mcp==1.17.0",
   "pandas==2.3.3",
   "numpy==1.26.4",
-  "faiss-cpu==1.8.0",
+  "faiss-cpu==1.13.2",
   "qdrant-client==1.9.1",
   "pyarrow==19.0.1",
   "duckdb==1.2.1",
 ]
 
 [project.scripts]
-langbridge = "langbridge.packages.cli.main:main"
+langbridge = "langbridge.cli.main:main"
 
 [tool.setuptools.packages.find]
-where = ["langbridge"]
+where = ["."]
+include = ["langbridge*"]
 exclude = ["venv*", "__pycache__*", "tests*"]

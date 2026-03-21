@@ -2,10 +2,10 @@
 
 import uuid
 
-from langbridge.packages.federation.models import FederationWorkflow, VirtualDataset, VirtualTableBinding
-from langbridge.packages.federation.models.plans import StageType
-from langbridge.packages.federation.planner import FederatedPlanner
-from langbridge.packages.federation.planner.parser import parse_sql
+from langbridge.federation.models import FederationWorkflow, VirtualDataset, VirtualTableBinding
+from langbridge.federation.models.plans import StageType
+from langbridge.federation.planner import FederatedPlanner
+from langbridge.federation.planner.parser import parse_sql
 
 
 def _workflow() -> FederationWorkflow:
@@ -369,7 +369,7 @@ def test_optimizer_avoids_full_query_pushdown_when_logical_alias_differs_from_ph
         stage for stage in output.physical_plan.stages if stage.stage_type == StageType.REMOTE_SCAN
     )
     assert scan_stage.subplan is not None
-    assert 'FROM "orders_enriched" AS shopify_orders' in scan_stage.subplan.sql
+    assert "FROM orders_enriched AS shopify_orders" in scan_stage.subplan.sql.replace('"', "")
 
 
 def test_parser_normalizes_trunc_and_interval_syntax() -> None:

@@ -2,9 +2,9 @@
 
 import uuid
 
-from langbridge.packages.federation.models import VirtualDataset, VirtualTableBinding
-from langbridge.packages.federation.models.plans import QueryType
-from langbridge.packages.federation.planner.parser import logical_plan_from_sql
+from langbridge.federation.models import VirtualDataset, VirtualTableBinding
+from langbridge.federation.models.plans import QueryType
+from langbridge.federation.planner.parser import logical_plan_from_sql
 
 
 def test_parser_resolves_duplicate_schema_table_using_catalog() -> None:

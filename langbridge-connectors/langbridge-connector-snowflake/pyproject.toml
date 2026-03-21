@@ -1,0 +1,17 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "langbridge-connectors-snowflake"
+version = "0.1.0"
+dependencies = ["langbridge", "snowflake-connector-python"]
+
+[project.entry-points."langbridge.connectors"]
+snowflake = "langbridge_connector_snowflake:get_connector_plugin"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]

@@ -5,9 +5,11 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 
-from langbridge.packages.common.langbridge_common.db.threads import Role
-from langbridge.packages.runtime.models import CreateDatasetPreviewJobRequest
-from langbridge.packages.runtime.local_config import build_configured_local_runtime
+from langbridge.runtime.models import (
+    CreateDatasetPreviewJobRequest,
+    RuntimeMessageRole,
+)
+from langbridge.runtime.local_config import build_configured_local_runtime
 from tests.unit._runtime_host_sync_helpers import (
     mock_stripe_api,
     runtime_storage_dirs,
@@ -108,7 +110,7 @@ def test_configured_local_runtime_ask_agent_uses_agent_execution() -> None:
     assert payload["thread_id"] == request.thread_id
     assert request.agent_definition_id == next(iter(runtime._agents.values())).id
     assert len(runtime._thread_message_repository.items) == 1
-    assert runtime._thread_message_repository.items[0].role == Role.user
+    assert runtime._thread_message_repository.items[0].role == RuntimeMessageRole.user
 
 
 def test_build_configured_local_runtime_supports_file_backed_datasets() -> None:
@@ -187,7 +189,7 @@ semantic_models:
                 request=CreateDatasetPreviewJobRequest(
                     dataset_id=dataset_record.id,
                     workspace_id=runtime.context.workspace_id,
-                    user_id=runtime.context.user_id,
+                    actor_id=runtime.context.actor_id,
                     requested_limit=5,
                     enforced_limit=5,
                 )
@@ -240,7 +242,7 @@ def test_configured_local_runtime_syncs_connector_resources(tmp_path: Path) -> N
                 request=CreateDatasetPreviewJobRequest(
                     dataset_id=synced_dataset_id,
                     workspace_id=runtime.context.workspace_id,
-                    user_id=runtime.context.user_id,
+                    actor_id=runtime.context.actor_id,
                     requested_limit=10,
                     enforced_limit=10,
                 )
