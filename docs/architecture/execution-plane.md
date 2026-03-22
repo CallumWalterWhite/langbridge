@@ -34,7 +34,7 @@ runtime-owned execution primitives.
 
 - Embedded runtime: `LangbridgeClient.local(...)` or direct runtime composition
 - Self-hosted runtime host: `langbridge serve --config ...`
-- Queued worker: `python -m langbridge.apps.runtime_worker.main`
+- Queued worker: `python -m apps.runtime_worker.main`
 - Hybrid runtime: runtime executes in customer infrastructure while integrating with a separate control layer
 
 The current HTTP host only serves configured local runtimes in this release.

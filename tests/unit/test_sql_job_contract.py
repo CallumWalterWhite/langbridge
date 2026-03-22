@@ -3,10 +3,11 @@ import uuid
 import pytest
 from pydantic import ValidationError
 
-from langbridge.contracts.jobs.sql_job import (
+from langbridge.runtime.hosting.api_models import RuntimeSqlQueryRequest
+from langbridge.runtime.models.jobs import (
     CreateSqlJobRequest,
+    SqlWorkbenchMode,
 )
-from langbridge.contracts.sql import SqlExecuteRequest
 
 
 def test_sql_job_contract_requires_connection_for_single_mode() -> None:
@@ -68,30 +69,41 @@ def test_sql_job_contract_accepts_dataset_backed_federated_execution() -> None:
     ]
 
 
-def test_sql_execute_request_requires_connection_when_not_federated() -> None:
-    with pytest.raises(ValidationError):
-        SqlExecuteRequest(
-            workspace_id=uuid.uuid4(),
-            query="SELECT 1",
-            federated=False,
-        )
+def test_runtime_sql_query_request_accepts_direct_sql_payload() -> None:
+    payload = RuntimeSqlQueryRequest(
+        query="SELECT 1",
+        connection_id=uuid.uuid4(),
+        query_dialect="postgres",
+    )
+
+    assert payload.query == "SELECT 1"
+    assert payload.query_dialect == "postgres"
 
 
-def test_sql_execute_request_rejects_unsupported_query_dialect() -> None:
+def test_runtime_sql_job_defaults_to_direct_sql_workbench_mode() -> None:
+    payload = CreateSqlJobRequest(
+        sql_job_id=uuid.uuid4(),
+        workspace_id=uuid.uuid4(),
+        actor_id=uuid.uuid4(),
+        execution_mode="single",
+        connection_id=uuid.uuid4(),
+        query="SELECT 1",
+        enforced_limit=100,
+        enforced_timeout_seconds=30,
+    )
+
+    assert payload.workbench_mode == SqlWorkbenchMode.direct_sql
+
+
+def test_runtime_sql_job_rejects_blank_query() -> None:
     with pytest.raises(ValidationError):
-        SqlExecuteRequest(
+        CreateSqlJobRequest(
+            sql_job_id=uuid.uuid4(),
             workspace_id=uuid.uuid4(),
+            actor_id=uuid.uuid4(),
+            execution_mode="single",
             connection_id=uuid.uuid4(),
-            query="SELECT 1",
-            query_dialect="unsupported",
-            federated=False,
-        )
-
-
-def test_sql_execute_request_requires_federated_datasets() -> None:
-    with pytest.raises(ValidationError):
-        SqlExecuteRequest(
-            workspace_id=uuid.uuid4(),
-            federated=True,
-            query="SELECT * FROM shop.orders",
+            query="   ",
+            enforced_limit=100,
+            enforced_timeout_seconds=30,
         )

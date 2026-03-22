@@ -14,10 +14,10 @@ from langbridge.runtime.services.semantic_query_execution_service import (
     SemanticQueryExecutionService,
     _normalize_unified_relationship_payload,
 )
+from langbridge.runtime.services.errors import ExecutionValidationError
 from langbridge.runtime.models import (
     UnifiedSemanticRelationshipRequest,
 )
-from langbridge.runtime.errors import BusinessValidationError
 from langbridge.semantic.model import Dimension, SemanticModel, Table
 from langbridge.semantic.query import SemanticQuery
 
@@ -79,7 +79,7 @@ def test_parse_unified_model_config_from_record_requires_source_models_metadata(
     payload = {"version": "1.0", "semantic_models": [{"version": "1.0", "tables": {}}]}
     record = _ModelRecord(id=uuid.uuid4(), content_json=json.dumps(payload))
 
-    with pytest.raises(BusinessValidationError, match="source_models"):
+    with pytest.raises(ExecutionValidationError, match="source_models"):
         SemanticQueryExecutionService.parse_unified_model_config_from_record(record)
 
 

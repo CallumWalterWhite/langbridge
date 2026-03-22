@@ -267,3 +267,5 @@ faiss_data/
 # Experimental workspace
 experimental/
 debug/
+
+node_modules/

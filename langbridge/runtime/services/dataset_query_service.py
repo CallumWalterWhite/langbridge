@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import enum
 import hashlib
 import json
@@ -12,6 +10,7 @@ from typing import Any
 
 import sqlglot
 from sqlglot import exp
+from .errors import ExecutionValidationError
 
 from langbridge.runtime.execution import DuckDbExecutionEngine, ExecutionEngine, FederatedQueryTool
 from langbridge.runtime.models import (
@@ -40,7 +39,6 @@ from langbridge.runtime.services.dataset_execution import (
     DatasetExecutionResolver,
     build_file_scan_sql,
 )
-from langbridge.runtime.errors import BusinessValidationError
 from langbridge.runtime.utils.lineage import (
     LineageEdgeType,
     LineageNodeType,
@@ -111,11 +109,11 @@ class DatasetQueryService:
             return await self._run_profile(request)
         if isinstance(request, CreateDatasetCsvIngestJobRequest):
             if self._dataset_repository is None or self._dataset_column_repository is None:
-                raise BusinessValidationError("CSV ingest requires mutable dataset repositories.")
+                raise ExecutionValidationError("CSV ingest requires mutable dataset repositories.")
             return await self._run_csv_ingest(request)
         if isinstance(request, CreateDatasetBulkCreateJobRequest):
             if self._dataset_repository is None or self._dataset_column_repository is None:
-                raise BusinessValidationError("Bulk dataset creation requires mutable dataset repositories.")
+                raise ExecutionValidationError("Bulk dataset creation requires mutable dataset repositories.")
             transient_job = RuntimeJob(
                 id=uuid.uuid4(),
                 workspace_id=str(request.workspace_id),
@@ -131,7 +129,7 @@ class DatasetQueryService:
                 updated_at=datetime.now(timezone.utc),
             )
             return await self._run_bulk_create(request, transient_job)
-        raise BusinessValidationError(
+        raise ExecutionValidationError(
             f"Unsupported dataset execution request '{type(request).__name__}'."
         )
 
@@ -142,7 +140,7 @@ class DatasetQueryService:
         request: DatasetExecutionRequest,
     ) -> None:
         if self._federated_query_tool is None:
-            raise BusinessValidationError("Federated query tool is not configured on this worker.")
+            raise ExecutionValidationError("Federated query tool is not configured on this worker.")
 
         try:
             if isinstance(request, CreateDatasetPreviewJobRequest):
@@ -161,7 +159,7 @@ class DatasetQueryService:
                     f"{result.get('reused_count', 0)} reused."
                 )
             else:
-                raise BusinessValidationError(
+                raise ExecutionValidationError(
                     f"Unsupported dataset execution request '{type(request).__name__}'."
                 )
 
@@ -328,11 +326,11 @@ class DatasetQueryService:
             workspace_id=request.workspace_id,
         )
         if str(dataset.dataset_type or "").upper() != "FILE":
-            raise BusinessValidationError("CSV ingest requires a FILE dataset.")
+            raise ExecutionValidationError("CSV ingest requires a FILE dataset.")
 
         storage_uri = (request.storage_uri or dataset.storage_uri or "").strip()
         if not storage_uri:
-            raise BusinessValidationError("CSV ingest dataset is missing storage_uri.")
+            raise ExecutionValidationError("CSV ingest dataset is missing storage_uri.")
 
         file_config = dict(dataset.file_config_json or {})
         file_format = str(
@@ -341,7 +339,7 @@ class DatasetQueryService:
             or "csv"
         ).strip().lower()
         if file_format != "csv":
-            raise BusinessValidationError("CSV ingest only supports csv source files.")
+            raise ExecutionValidationError("CSV ingest only supports csv source files.")
 
         source_sql = build_file_scan_sql(storage_uri=storage_uri, file_config=file_config)
         parquet_file = (
@@ -745,7 +743,7 @@ class DatasetQueryService:
         else:
             dataset = None
         if dataset is None:
-            raise BusinessValidationError("Dataset not found.")
+            raise ExecutionValidationError("Dataset not found.")
         if self._dataset_column_repository is not None:
             columns = await self._dataset_column_repository.list_for_dataset(dataset_id=dataset.id)
         elif self._dataset_provider is not None:
@@ -1226,7 +1224,7 @@ class DatasetQueryService:
             try:
                 expressions.append(sqlglot.parse_one(rendered, read=dialect))
             except sqlglot.ParseError as exc:
-                raise BusinessValidationError(f"Invalid row filter policy expression: {exc}") from exc
+                raise ExecutionValidationError(f"Invalid row filter policy expression: {exc}") from exc
         return expressions
 
     def _build_count_sql(

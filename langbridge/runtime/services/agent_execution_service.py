@@ -4,6 +4,8 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Optional
 
+from .errors import ExecutionValidationError
+
 from langbridge.runtime.models import (
     CreateAgentJobRequest,
     LLMConnectionSecret,
@@ -17,7 +19,6 @@ from langbridge.runtime.embeddings import (
     EmbeddingProvider,
     EmbeddingProviderError,
 )
-from langbridge.runtime.errors import BusinessValidationError
 from langbridge.runtime.events import AgentEventEmitter
 from langbridge.runtime.ports import (
     AgentDefinitionStore,
@@ -162,11 +163,11 @@ class AgentExecutionService:
     ) -> tuple[RuntimeThread, RuntimeThreadMessage, list[RuntimeThreadMessage]]:
         thread = await self._thread_repository.get_by_id(thread_id)
         if thread is None:
-            raise BusinessValidationError(f"Thread with ID {thread_id} does not exist.")
+            raise ExecutionValidationError(f"Thread with ID {thread_id} does not exist.")
 
         messages = await self._thread_message_repository.list_for_thread(thread.id)
         if not messages:
-            raise BusinessValidationError(f"Thread {thread.id} has no messages to process.")
+            raise ExecutionValidationError(f"Thread {thread.id} has no messages to process.")
 
         last_message: RuntimeThreadMessage | None = None
         if thread.last_message_id is not None:
@@ -180,7 +181,7 @@ class AgentExecutionService:
                 msg for msg in messages if self._role_value(msg.role) == RuntimeMessageRole.user.value
             ]
             if not user_messages:
-                raise BusinessValidationError(f"Thread {thread.id} does not contain a user message.")
+                raise ExecutionValidationError(f"Thread {thread.id} does not contain a user message.")
             last_message = user_messages[-1]
 
         return thread, last_message, messages
@@ -256,7 +257,7 @@ class AgentExecutionService:
     ) -> tuple[RuntimeAgentDefinition, AgentDefinitionModel]:
         agent_definition = await self._agent_definition_repository.get_by_id(agent_definition_id)
         if agent_definition is None:
-            raise BusinessValidationError(
+            raise ExecutionValidationError(
                 f"Agent definition with ID {agent_definition_id} does not exist."
             )
         return agent_definition, AgentDefinitionModel.model_validate(agent_definition.definition)
@@ -264,7 +265,7 @@ class AgentExecutionService:
     async def _get_llm_connection(self, llm_connection_id: uuid.UUID) -> LLMConnectionSecret:
         llm_connection = await self._llm_repository.get_by_id(llm_connection_id)
         if llm_connection is None:
-            raise BusinessValidationError(
+            raise ExecutionValidationError(
                 f"LLM connection with ID {llm_connection_id} does not exist."
             )
         return llm_connection
@@ -297,7 +298,7 @@ class AgentExecutionService:
                 value = content.get(key)
                 if isinstance(value, str) and value.strip():
                     return value.strip()
-        raise BusinessValidationError(f"Thread message {message.id} does not contain user text.")
+        raise ExecutionValidationError(f"Thread message {message.id} does not contain user text.")
 
     def _record_assistant_message(
         self,

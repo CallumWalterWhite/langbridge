@@ -19,7 +19,8 @@ Install dependencies:
 ```bash
 python -m venv .venv
 source .venv/bin/activate
-pip install -r requirements.txt
+pip install -r requirements/dev.txt
+pip install -e .
 ```
 
 Run the runtime host:
@@ -28,10 +29,18 @@ Run the runtime host:
 langbridge serve --config examples/runtime_host/langbridge_config.yml --host 127.0.0.1 --port 8000
 ```
 
+Build the runtime-owned UI bundle:
+
+```bash
+cd apps/runtime_ui
+npm install
+npm run build
+```
+
 Run the queued worker:
 
 ```bash
-python -m langbridge.apps.runtime_worker.main
+python -m apps.runtime_worker.main
 ```
 
 Run tests:

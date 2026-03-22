@@ -2,9 +2,10 @@ from __future__ import annotations
 
 from typing import Any, Mapping
 
-from langbridge.errors.connector_errors import (
+from langbridge.connectors.base.errors import (
     AuthError,
     ConnectorError,
+    ConnectionError,
 )
 from langbridge.connectors.base.http import (
     ApiResourceDefinition,
@@ -134,6 +135,8 @@ class SalesforceApiConnector(HttpApiConnector):
             path="",
         ),
     }
+
+    config: SalesforceConnectorConfig
 
     def __init__(self, config: SalesforceConnectorConfig, logger=None, **kwargs: Any) -> None:
         super().__init__(config=config, logger=logger, **kwargs)

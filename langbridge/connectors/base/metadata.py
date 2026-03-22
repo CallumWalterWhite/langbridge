@@ -3,7 +3,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import List, Type
 
-from langbridge.errors.application_errors import BusinessValidationError
+from .errors import ConnectorTypeError
 
 from .config import (
     BaseConnectorConfig,
@@ -69,7 +69,7 @@ def get_metadata_extractor(connector_type: ConnectorType) -> BaseMetadataExtract
     for subclass in BaseMetadataExtractor.__subclasses__():
         if subclass.type == connector_type:
             return subclass()
-    raise BusinessValidationError(f"No metadata extractor found for connector type '{connector_type.value}'.")
+    raise ConnectorTypeError(f"No metadata extractor found for connector type '{connector_type.value}'.")
 
 def build_connector_config(connector_type: ConnectorType, config_payload: dict) -> BaseConnectorConfig:
     factory: Type[BaseConnectorConfigFactory] = get_connector_config_factory(connector_type)

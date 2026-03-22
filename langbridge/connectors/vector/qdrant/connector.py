@@ -6,7 +6,7 @@ import os
 from typing import Any, Dict, List, Optional, Sequence
 
 from langbridge.connectors.base.connector import ManagedVectorDB, VectorDBType, run_sync
-from langbridge.errors.connector_errors import ConnectorError
+from langbridge.connectors.base.errors import ConnectorError
 from langbridge.runtime.logger import get_root_logger
 from .config import QdrantConnectorConfig, _parse_bool
 

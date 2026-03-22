@@ -9,7 +9,7 @@ import numpy as np
 
 from langbridge.connectors.base.connector import ManagedVectorDB, VectorDBType
 from langbridge.connectors.base.connector import run_sync
-from langbridge.errors.connector_errors import ConnectorError
+from langbridge.connectors.base.errors import ConnectorError
 from .config import FaissConnectorConfig
 from langbridge.runtime.logger import get_root_logger
 

@@ -6,7 +6,7 @@
 python -m venv .venv
 source .venv/bin/activate  # macOS/Linux
 # .\.venv\Scripts\activate  # Windows PowerShell
-pip install -r requirements.txt
+pip install -r requirements/dev.txt
 pip install -e .
 ```
 
@@ -25,6 +25,28 @@ langbridge serve --config examples/runtime_host/langbridge_config.yml --host 127
 ```
 
 The runtime docs will be available at `http://127.0.0.1:8000/api/runtime/docs`.
+
+## Runtime UI Development
+
+Run the runtime host with the UI feature enabled:
+
+```bash
+langbridge serve --config examples/runtime_host/langbridge_config.yml --features ui
+```
+
+Then start the React app from `apps/runtime_ui`:
+
+```bash
+cd apps/runtime_ui
+npm install
+npm run dev
+```
+
+Build the production assets back into `langbridge/ui/static` with:
+
+```bash
+npm run build
+```
 
 ## Containerized Local Runtime
 

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from langbridge.errors.connector_errors import ConnectorError
+from langbridge.connectors.base.errors import ConnectorError
 from langbridge.connectors.builtin.postgres.config import (
     PostgresConnectorConfig,
 )

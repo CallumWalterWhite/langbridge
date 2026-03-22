@@ -8,6 +8,7 @@ from datetime import datetime
 from typing import Any
 
 import yaml
+from .errors import ExecutionValidationError
 
 from langbridge.runtime.services.dataset_execution import (
     DatasetExecutionResolver,
@@ -19,7 +20,6 @@ from langbridge.runtime.models import (
     UnifiedSemanticSourceModelRequest,
     UnifiedSemanticQueryResponse,
 )
-from langbridge.runtime.errors import BusinessValidationError
 from langbridge.connectors.base import (
     ConnectorRuntimeTypeSqlDialectMap,
     SqlConnector,
@@ -124,7 +124,7 @@ class SemanticQueryExecutionService:
     ) -> SqlConnector:
         dialect = ConnectorRuntimeTypeSqlDialectMap.get(connector_type)
         if dialect is None:
-            raise BusinessValidationError(
+            raise ExecutionValidationError(
                 f"Connector type {connector_type.value} does not support SQL operations."
             )
         config_factory = get_connector_config_factory(connector_type)
@@ -314,7 +314,7 @@ class SemanticQueryExecutionService:
         metrics: Mapping[str, Any] | None = None,
     ) -> UnifiedQueryExecutionResult:
         if self._federated_query_tool is None:
-            raise BusinessValidationError("Federated query tool is not configured on this worker.")
+            raise ExecutionValidationError("Federated query tool is not configured on this worker.")
 
         semantic_model, table_connector_map = await self._build_unified_model_and_map(
             workspace_id=workspace_id,
@@ -342,7 +342,7 @@ class SemanticQueryExecutionService:
                 dialect="tsql",
             )
         except Exception as exc:
-            raise BusinessValidationError(f"Semantic query translation failed: {exc}") from exc
+            raise ExecutionValidationError(f"Semantic query translation failed: {exc}") from exc
 
         workflow_payload = await self._build_federation_workflow_payload(
             workspace_id=workspace_id,
@@ -361,7 +361,7 @@ class SemanticQueryExecutionService:
         execution = await self._federated_query_tool.execute_federated_query(tool_payload)
         data_payload = execution.get("rows", [])
         if not isinstance(data_payload, list):
-            raise BusinessValidationError("Federated query execution returned an invalid row payload.")
+            raise ExecutionValidationError("Federated query execution returned an invalid row payload.")
 
         response = UnifiedSemanticQueryResponse(
             id=uuid.uuid4(),
@@ -382,14 +382,14 @@ class SemanticQueryExecutionService:
         semantic_query: SemanticQuery,
     ) -> StandardQueryExecutionResult:
         if self._federated_query_tool is None:
-            raise BusinessValidationError("Federated query tool is not configured on this worker.")
+            raise ExecutionValidationError("Federated query tool is not configured on this worker.")
 
         semantic_model_record = await self._get_semantic_model_record(
             workspace_id=workspace_id,
             semantic_model_id=semantic_model_id,
         )
         if semantic_model_record is None:
-            raise BusinessValidationError("Semantic model not found.")
+            raise ExecutionValidationError("Semantic model not found.")
 
         semantic_model = self.load_model_payload(semantic_model_record.content_yaml)
         raw_payload = self._parse_model_payload_from_record(semantic_model_record) or {}
@@ -413,7 +413,7 @@ class SemanticQueryExecutionService:
                 dialect=workflow_dialect,
             )
         except Exception as exc:
-            raise BusinessValidationError(f"Semantic query translation failed: {exc}") from exc
+            raise ExecutionValidationError(f"Semantic query translation failed: {exc}") from exc
 
         execution = await self._federated_query_tool.execute_federated_query(
             {
@@ -426,7 +426,7 @@ class SemanticQueryExecutionService:
         )
         rows_payload = execution.get("rows", [])
         if not isinstance(rows_payload, list):
-            raise BusinessValidationError("Dataset-backed semantic query returned an invalid row payload.")
+            raise ExecutionValidationError("Dataset-backed semantic query returned an invalid row payload.")
 
         response = SemanticQueryResponse(
             id=uuid.uuid4(),
@@ -461,7 +461,7 @@ class SemanticQueryExecutionService:
                 semantic_model_id=semantic_model_id,
             )
             if semantic_model_record is None:
-                raise BusinessValidationError(
+                raise ExecutionValidationError(
                     f"Semantic model '{semantic_model_id}' not found for unified query."
                 )
             semantic_model = self.load_model_payload(semantic_model_record.content_yaml)
@@ -511,13 +511,13 @@ class SemanticQueryExecutionService:
                     or semantic_dataset.dataset_id
                 )
                 if not dataset_ref:
-                    raise BusinessValidationError(
+                    raise ExecutionValidationError(
                         f"Unified semantic model dataset '{dataset_key}' must define dataset_id for federated execution."
                     )
                 try:
                     dataset_id = uuid.UUID(str(dataset_ref))
                 except (TypeError, ValueError) as exc:
-                    raise BusinessValidationError(
+                    raise ExecutionValidationError(
                         f"Unified semantic model dataset '{dataset_key}' contains an invalid dataset_id."
                     ) from exc
                 dataset = await self._get_dataset_record(
@@ -525,7 +525,7 @@ class SemanticQueryExecutionService:
                     dataset_id=dataset_id,
                 )
                 if dataset is None:
-                    raise BusinessValidationError(
+                    raise ExecutionValidationError(
                         f"Dataset '{dataset_id}' referenced by unified semantic dataset '{dataset_key}' was not found."
                     )
                 dataset_type = str(dataset.dataset_type or "").upper()
@@ -534,7 +534,7 @@ class SemanticQueryExecutionService:
                 elif dataset.connection_id is not None:
                     table_connector_map[materialized_dataset_key] = dataset.connection_id
                 else:
-                    raise BusinessValidationError(
+                    raise ExecutionValidationError(
                         f"Dataset '{dataset.id}' referenced by unified semantic dataset '{dataset_key}' has no execution binding."
                     )
 
@@ -561,7 +561,7 @@ class SemanticQueryExecutionService:
             )
             return semantic_model, table_connector_map
         except (SemanticModelError, ValueError) as exc:
-            raise BusinessValidationError(
+            raise ExecutionValidationError(
                 f"Unified semantic model failed validation: {exc}"
             ) from exc
 
@@ -587,13 +587,13 @@ class SemanticQueryExecutionService:
             source_dataset = source_semantic_model.datasets.get(dataset_key, semantic_dataset)
             dataset_ref = source_dataset.dataset_id
             if not dataset_ref:
-                raise BusinessValidationError(
+                raise ExecutionValidationError(
                     f"Unified semantic model dataset '{dataset_key}' must define dataset_id for federated execution."
                 )
             try:
                 referenced_dataset_id = uuid.UUID(str(dataset_ref))
             except (TypeError, ValueError) as exc:
-                raise BusinessValidationError(
+                raise ExecutionValidationError(
                     f"Unified semantic model dataset '{dataset_key}' has an invalid dataset_id."
                 ) from exc
             dataset = await self._get_dataset_record(
@@ -601,7 +601,7 @@ class SemanticQueryExecutionService:
                 dataset_id=referenced_dataset_id,
             )
             if dataset is None:
-                raise BusinessValidationError(
+                raise ExecutionValidationError(
                     f"Dataset '{referenced_dataset_id}' referenced by unified semantic dataset '{dataset_key}' was not found."
                 )
             binding, _ = build_binding_for_dataset(
@@ -653,7 +653,7 @@ class SemanticQueryExecutionService:
                 workspace_id=workspace_id,
                 semantic_model_id=semantic_model_id,
             )
-        raise BusinessValidationError(
+        raise ExecutionValidationError(
             "Semantic model metadata provider is required for semantic query execution."
         )
 
@@ -669,7 +669,7 @@ class SemanticQueryExecutionService:
                 dataset_id=dataset_id,
             )
         if self._dataset_repository is None:
-            raise BusinessValidationError("Dataset repository is required for semantic query execution.")
+            raise ExecutionValidationError("Dataset repository is required for semantic query execution.")
         return await self._dataset_repository.get_for_workspace(
             dataset_id=dataset_id,
             workspace_id=workspace_id,
@@ -692,7 +692,7 @@ class SemanticQueryExecutionService:
             seen.add(model_id)
             ordered_unique.append(model_id)
         if not ordered_unique:
-            raise BusinessValidationError(
+            raise ExecutionValidationError(
                 "semantic_model_ids must include at least one model id."
             )
         return ordered_unique
@@ -718,7 +718,7 @@ class SemanticQueryExecutionService:
         try:
             return load_semantic_model(content_yaml)
         except SemanticModelError as exc:
-            raise BusinessValidationError(
+            raise ExecutionValidationError(
                 f"Semantic model failed validation: {exc}"
             ) from exc
 
@@ -731,14 +731,14 @@ class SemanticQueryExecutionService:
         source_models_raw = payload.get("source_models") or payload.get("sourceModels")
         if not isinstance(source_models_raw, list):
             if isinstance(payload.get("semantic_models"), list):
-                raise BusinessValidationError(
+                raise ExecutionValidationError(
                     "Unified semantic model is missing source_models metadata required for execution."
                 )
             return None
         try:
             unified_model = load_unified_semantic_model(payload)
         except SemanticModelError as exc:
-            raise BusinessValidationError(
+            raise ExecutionValidationError(
                 f"Unified semantic model failed validation: {exc}"
             ) from exc
 
@@ -747,7 +747,7 @@ class SemanticQueryExecutionService:
             for source_model in unified_model.source_models
         ]
         if not semantic_model_ids:
-            raise BusinessValidationError(
+            raise ExecutionValidationError(
                 "Unified semantic model is missing source model ids."
             )
 

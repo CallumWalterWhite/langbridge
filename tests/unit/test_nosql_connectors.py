@@ -19,6 +19,11 @@ from langbridge.connectors.nosql.mongodb import (
 )
 
 
+@pytest.fixture
+def anyio_backend() -> str:
+    return "asyncio"
+
+
 class _Cursor:
     def __init__(self, documents: list[dict[str, object]]) -> None:
         self._documents = documents

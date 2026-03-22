@@ -4,7 +4,7 @@ from typing import Any, Mapping, Sequence
 
 from langbridge.connectors.base.config import ConnectorRuntimeType
 from langbridge.connectors.base.connector import NoSqlConnector, run_sync
-from langbridge.errors.connector_errors import ConnectorError
+from langbridge.connectors.base.errors import ConnectorError
 
 from .config import MongoDBConnectorConfig
 

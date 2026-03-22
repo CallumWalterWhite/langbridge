@@ -1,12 +1,14 @@
-from __future__ import annotations
-
 import os
 import uuid
+from collections.abc import Iterable
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, Request
 
+from langbridge.mcp import DEFAULT_MCP_MOUNT_PATH, build_runtime_mcp_server
+from langbridge.ui import register_runtime_ui
 from langbridge.runtime.hosting.auth import RuntimeAuthConfig, RuntimeAuthResolver
 from langbridge.runtime.local_config import (
     ConfiguredLocalRuntimeHost,
@@ -37,6 +39,7 @@ from langbridge.runtime.hosting.api_models import (
 )
 
 _CONFIG_PATH_ENV = "LANGBRIDGE_RUNTIME_CONFIG_PATH"
+_FEATURES_ENV = "LANGBRIDGE_RUNTIME_FEATURES"
 
 
 def create_runtime_api_app(
@@ -44,24 +47,47 @@ def create_runtime_api_app(
     config_path: str | Path | None = None,
     runtime_host: ConfiguredLocalRuntimeHost | None = None,
     auth_config: RuntimeAuthConfig | None = None,
+    features: Iterable[str] | None = None,
 ) -> FastAPI:
     host = runtime_host
     if host is None:
         if config_path is None:
             raise ValueError("config_path is required when runtime_host is not supplied.")
         host = build_configured_local_runtime(config_path=str(config_path))
+    enabled_features = _normalize_runtime_features(features)
+    mcp_enabled = "mcp" in enabled_features
+    ui_enabled = "ui" in enabled_features
+    auth_resolver = RuntimeAuthResolver(
+        config=auth_config or RuntimeAuthConfig.from_env(),
+        default_context=host.context,
+    )
+    mcp_server = None
+    mcp_app = None
+    if mcp_enabled:
+        mcp_server, mcp_app = build_runtime_mcp_server(
+            runtime_host=host,
+            auth_resolver=auth_resolver,
+            mount_path=DEFAULT_MCP_MOUNT_PATH,
+        )
+
+    @asynccontextmanager
+    async def lifespan(_: FastAPI):
+        if mcp_server is None:
+            yield
+            return
+        async with mcp_server.session_manager.run():
+            yield
 
     app = FastAPI(
         title="Langbridge Runtime Host",
         version="0.1.0",
         docs_url="/api/runtime/docs",
         openapi_url="/api/runtime/openapi.json",
+        lifespan=lifespan,
     )
     app.state.runtime_host = host
-    app.state.runtime_auth = RuntimeAuthResolver(
-        config=auth_config or RuntimeAuthConfig.from_env(),
-        default_context=host.context,
-    )
+    app.state.runtime_features = enabled_features
+    app.state.runtime_auth = auth_resolver
 
     @app.get("/api/runtime/v1/health")
     async def health() -> dict[str, str]:
@@ -88,6 +114,10 @@ def create_runtime_api_app(
                     "sync.run",
                 ]
             )
+        if ui_enabled:
+            capabilities.append("ui")
+        if mcp_enabled:
+            capabilities.append("mcp")
         return RuntimeInfoResponse(
             runtime_mode="configured_local",
             config_path=str(configured_host._config_path),
@@ -133,6 +163,7 @@ def create_runtime_api_app(
                 status="failed",
                 error=str(exc),
             )
+        
         return RuntimeDatasetPreviewResponse(
             dataset_id=dataset_id,
             dataset_name=payload.get("dataset_name"),
@@ -284,6 +315,55 @@ def create_runtime_api_app(
             )
         return RuntimeSyncResponse.model_validate(payload)
 
+    if ui_enabled:
+        @app.get("/api/runtime/ui/v1/summary")
+        async def runtime_ui_summary(request: Request) -> dict[str, Any]:
+            configured_host = await _resolve_request_host(request)
+            connector_items = await configured_host.list_connectors()
+            dataset_items = await configured_host.list_datasets()
+            return {
+                "health": {"status": "ok"},
+                "features": list(enabled_features),
+                "runtime": {
+                    "mode": "configured_local",
+                    "workspace_id": str(configured_host.context.workspace_id),
+                    "actor_id": str(configured_host.context.actor_id) if configured_host.context.actor_id else None,
+                    "default_semantic_model": configured_host._default_semantic_model_name,
+                    "default_agent": (
+                        configured_host._default_agent.config.name if configured_host._default_agent else None
+                    ),
+                },
+                "counts": {
+                    "datasets": len(dataset_items),
+                    "connectors": len(connector_items),
+                },
+                "datasets": [
+                    {
+                        "id": _stringify_optional_uuid(item.get("id")),
+                        "name": item.get("name"),
+                        "connector": item.get("connector"),
+                        "semantic_model": item.get("semantic_model"),
+                        "managed": bool(item.get("managed")),
+                    }
+                    for item in dataset_items[:8]
+                ],
+                "connectors": [
+                    {
+                        "id": _stringify_optional_uuid(item.get("id")),
+                        "name": item.get("name"),
+                        "connector_type": item.get("connector_type"),
+                        "supports_sync": bool(item.get("supports_sync")),
+                        "managed": bool(item.get("managed")),
+                    }
+                    for item in connector_items[:8]
+                ],
+            }
+
+        register_runtime_ui(app)
+
+    if mcp_enabled and mcp_app is not None:
+        app.mount(DEFAULT_MCP_MOUNT_PATH, mcp_app)
+
     return app
 
 
@@ -291,7 +371,10 @@ def create_runtime_api_app_from_env() -> FastAPI:
     config_path = os.getenv(_CONFIG_PATH_ENV)
     if not config_path:
         raise RuntimeError(f"{_CONFIG_PATH_ENV} must be set before starting the runtime host.")
-    return create_runtime_api_app(config_path=config_path)
+    return create_runtime_api_app(
+        config_path=config_path,
+        features=_parse_runtime_features_env(os.getenv(_FEATURES_ENV)),
+    )
 
 
 def _require_configured_host(runtime_host: RuntimeHost) -> ConfiguredLocalRuntimeHost:
@@ -431,3 +514,22 @@ async def _execute_runtime_sql(
         query=request.query,
         generated_sql=payload.get("generated_sql"),
     )
+
+
+def _parse_runtime_features_env(value: str | None) -> tuple[str, ...]:
+    return _normalize_runtime_features(str(value or "").split(","))
+
+
+def _normalize_runtime_features(features: Iterable[str] | None) -> tuple[str, ...]:
+    normalized: list[str] = []
+    for raw_feature in features or ():
+        feature = str(raw_feature or "").strip().lower()
+        if feature and feature not in normalized:
+            normalized.append(feature)
+    return tuple(normalized)
+
+
+def _stringify_optional_uuid(value: Any) -> str | None:
+    if value is None:
+        return None
+    return str(value)

@@ -6,7 +6,7 @@ from typing import Any, Dict, Optional
 import yaml
 
 from langbridge.runtime.embeddings import EmbeddingProvider
-from langbridge.errors import BusinessValidationError
+from langbridge.orchestrator.errors import AgentError
 from langbridge.runtime.events import AgentEventEmitter
 from langbridge.runtime.models import DatasetMetadata, SemanticModelMetadata
 from langbridge.runtime.ports import (
@@ -98,7 +98,7 @@ class _FederatedSqlExecutor:
         )
         rows_payload = execution.get("rows", [])
         if not isinstance(rows_payload, list):
-            raise BusinessValidationError("Federated SQL execution returned an invalid rows payload.")
+            raise AgentError("Federated SQL execution returned an invalid rows payload.")
 
         columns_payload = execution.get("columns", [])
         if isinstance(columns_payload, list) and columns_payload:
@@ -457,7 +457,7 @@ class AgentOrchestratorFactory:
         for dataset in datasets:
             sql_alias = str(dataset.sql_alias or "").strip().lower()
             if not sql_alias:
-                raise BusinessValidationError(f"Dataset '{dataset.name}' is missing a sql_alias.")
+                raise AgentError(f"Dataset '{dataset.name}' is missing a sql_alias.")
             binding, dialect = self._dataset_execution_resolver._build_binding_from_dataset_record(
                 dataset=dataset,
                 table_key=sql_alias,
@@ -540,12 +540,12 @@ class AgentOrchestratorFactory:
 
     async def _load_datasets(self, dataset_ids: list[uuid.UUID]) -> list[DatasetMetadata]:
         if self._dataset_repository is None:
-            raise BusinessValidationError("Dataset repository is required for dataset-backed analysis.")
+            raise AgentError("Dataset repository is required for dataset-backed analysis.")
         ordered: list[DatasetMetadata] = []
         for dataset_id in dataset_ids:
             dataset = await self._dataset_repository.get_by_id(dataset_id)
             if dataset is None:
-                raise BusinessValidationError(f"Dataset '{dataset_id}' was not found.")
+                raise AgentError(f"Dataset '{dataset_id}' was not found.")
             ordered.append(dataset)
         return ordered
 

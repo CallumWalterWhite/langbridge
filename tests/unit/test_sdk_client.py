@@ -11,20 +11,16 @@ from pathlib import Path
 
 import httpx
 
-from langbridge.contracts.jobs.agent_job import (
+from langbridge import LangbridgeClient
+from langbridge.client.client import (
     AgentJobStateResponse,
     JobFinalResponse,
-)
-from langbridge.contracts.datasets import DatasetListResponse
-from langbridge.contracts.sql import (
     SqlJobResultsResponse,
-    SqlJobStatus,
     SqlJobResponse,
-    SqlWorkbenchMode,
-    SqlExecutionMode,
+    ThreadResponse,
 )
-from langbridge.contracts.threads import ThreadResponse
-from langbridge import LangbridgeClient
+from langbridge.runtime.hosting.api_models import RuntimeDatasetListResponse
+from langbridge.runtime.models import SqlWorkbenchMode
 
 
 class _FakeRuntimeHost:
@@ -261,7 +257,7 @@ def test_remote_sdk_list_datasets() -> None:
     workspace_id = uuid.uuid4()
     dataset_id = uuid.uuid4()
 
-    payload = DatasetListResponse.model_validate(
+    payload = RuntimeDatasetListResponse.model_validate(
         {
             "items": [
                 {
@@ -329,8 +325,8 @@ def test_remote_sdk_sql_query_polls_job_and_fetches_results() -> None:
         workbench_mode=SqlWorkbenchMode.direct_sql,
         connection_id=uuid.uuid4(),
         selected_datasets=[],
-        execution_mode=SqlExecutionMode.single,
-        status=SqlJobStatus.succeeded,
+        execution_mode="single",
+        status="succeeded",
         query="select 7 as value",
         query_hash="hash",
         enforced_limit=100,
@@ -345,7 +341,7 @@ def test_remote_sdk_sql_query_polls_job_and_fetches_results() -> None:
     )
     results_response = SqlJobResultsResponse(
         sql_job_id=sql_job_id,
-        status=SqlJobStatus.succeeded,
+        status="succeeded",
         columns=[{"name": "value", "type": "integer"}],
         rows=[{"value": 7}],
         row_count_preview=1,

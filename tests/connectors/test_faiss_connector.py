@@ -10,7 +10,7 @@ sys.path.append(str(pathlib.Path(__file__).resolve().parents[2]))
 
 from langbridge.connectors.vector.faiss.config import FaissConnectorConfig  # noqa: E402
 from langbridge.connectors.vector.faiss.connector import FaissConnector  # noqa: E402
-from langbridge.errors.connector_errors import ConnectorError  # noqa: E402
+from langbridge.connectors.base.errors import ConnectorError  # noqa: E402
 
 
 def test_faiss_connector_upsert_and_search(tmp_path):

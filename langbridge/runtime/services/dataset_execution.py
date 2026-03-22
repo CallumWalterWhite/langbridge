@@ -5,7 +5,7 @@ import uuid
 from collections.abc import Mapping
 from typing import Any
 
-from langbridge.runtime.errors import BusinessValidationError
+from .errors import ExecutionRuntimeError
 from langbridge.runtime.models.metadata import DatasetMetadata
 from langbridge.runtime.ports import DatasetCatalogStore
 from langbridge.runtime.providers import DatasetMetadataProvider
@@ -62,7 +62,7 @@ class DatasetExecutionResolver:
             workflow, default_table_key, dialect = await self._build_federated_dataset_workflow(dataset=dataset)
             return workflow, default_table_key, dialect
 
-        raise BusinessValidationError(
+        raise ExecutionValidationError(
             f"Dataset type '{dataset.dataset_type}' is not executable in this runtime yet."
         )
 
@@ -89,7 +89,7 @@ class DatasetExecutionResolver:
                 raw_dataset=raw_dataset,
             )
             if dataset_ref is None:
-                raise BusinessValidationError(
+                raise ExecutionValidationError(
                     f"Semantic dataset '{dataset_key}' must declare dataset_id for federated execution."
                 )
             dataset = await self._load_dataset(
@@ -154,7 +154,7 @@ class DatasetExecutionResolver:
 
         if dataset_type == "TABLE":
             if dataset.connection_id is None:
-                raise BusinessValidationError("Executable TABLE datasets require a connection_id.")
+                raise ExecutionValidationError("Executable TABLE datasets require a connection_id.")
             physical_table = dataset.table_name or logical_table
             binding = VirtualTableBinding(
                 table_key=resolved_table_key,
@@ -176,10 +176,10 @@ class DatasetExecutionResolver:
 
         if dataset_type == "SQL":
             if dataset.connection_id is None:
-                raise BusinessValidationError("Executable SQL datasets require a connection_id.")
+                raise ExecutionValidationError("Executable SQL datasets require a connection_id.")
             sql_text = (dataset.sql_text or "").strip()
             if not sql_text:
-                raise BusinessValidationError("SQL dataset is missing sql_text.")
+                raise ExecutionValidationError("SQL dataset is missing sql_text.")
             enforce_read_only_sql(sql_text, allow_dml=False, dialect=dialect)
             binding = VirtualTableBinding(
                 table_key=resolved_table_key,
@@ -223,7 +223,7 @@ class DatasetExecutionResolver:
             )
             return binding, "duckdb"
 
-        raise BusinessValidationError(
+        raise ExecutionValidationError(
             f"Dataset type '{dataset.dataset_type}' is not supported for semantic or dataset execution."
         )
 
@@ -233,7 +233,7 @@ class DatasetExecutionResolver:
         dataset: DatasetMetadata,
     ) -> tuple[FederationWorkflow, str, str]:
         if self._dataset_provider is None and self._dataset_repository is None:
-            raise BusinessValidationError(
+            raise ExecutionValidationError(
                 "Dataset metadata provider is required for federated dataset execution."
             )
 
@@ -283,7 +283,7 @@ class DatasetExecutionResolver:
             dialects.append(dialect)
 
         if not table_bindings:
-            raise BusinessValidationError(
+            raise ExecutionValidationError(
                 f"Federated dataset '{dataset.id}' has no executable child dataset bindings."
             )
 
@@ -323,11 +323,11 @@ class DatasetExecutionResolver:
                 workspace_id=workspace_id,
             )
         else:
-            raise BusinessValidationError(
+            raise ExecutionValidationError(
                 "Dataset metadata provider is required for dataset-backed execution."
             )
         if dataset is None:
-            raise BusinessValidationError(
+            raise ExecutionValidationError(
                 f"Dataset '{dataset_id}' referenced by table '{table_key}' was not found."
             )
         return dataset
@@ -379,7 +379,7 @@ class DatasetExecutionResolver:
             or str(file_config.get("storage_uri") or file_config.get("uri") or file_config.get("path") or "").strip()
         )
         if not storage_uri:
-            raise BusinessValidationError(f"FILE dataset '{dataset.id}' is missing storage_uri.")
+            raise ExecutionValidationError(f"FILE dataset '{dataset.id}' is missing storage_uri.")
         return storage_uri
 
     @staticmethod
@@ -393,7 +393,7 @@ class DatasetExecutionResolver:
             return "parquet"
         if lowered_uri.endswith(".csv"):
             return "csv"
-        raise BusinessValidationError(
+        raise ExecutionValidationError(
             f"FILE dataset '{dataset.id}' must declare a supported file format (csv or parquet)."
         )
 
@@ -511,7 +511,7 @@ class DatasetExecutionResolver:
         try:
             return uuid.UUID(str(value))
         except (TypeError, ValueError) as exc:
-            raise BusinessValidationError(f"Invalid UUID for {context}.") from exc
+            raise ExecutionValidationError(f"Invalid UUID for {context}.") from exc
 
     @staticmethod
     def _string_or_none(value: Any) -> str | None:

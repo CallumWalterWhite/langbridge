@@ -8,7 +8,6 @@ from langbridge.connectors.base.metadata import (
     ColumnMetadata, 
     TableMetadata
 )
-from langbridge.errors.application_errors import BusinessValidationError
 
 from .config import SqliteConnectorConfig
 
@@ -21,7 +20,7 @@ class SqliteMetadataExtractor(BaseMetadataExtractor):
         try:
             conn = connect(config.location)
         except (ProgrammingError, OperationalError, DatabaseError) as exc:
-            raise BusinessValidationError(f"Unable to connect to Sqlite: {exc}") from exc
+            raise ConnectionError(f"Unable to connect to Sqlite: {exc}") from exc
 
         cursor = conn.cursor()
         cursor.execute("PRAGMA foreign_keys=ON")

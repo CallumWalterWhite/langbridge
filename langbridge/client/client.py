@@ -6,6 +6,7 @@ import threading
 import time
 import uuid
 from datetime import datetime
+from enum import Enum
 from typing import TYPE_CHECKING, Any, Protocol
 
 from pydantic import Field
@@ -18,37 +19,22 @@ else:  # pragma: no cover - exercised indirectly in local-only environments
     except ModuleNotFoundError:  # pragma: no cover - depends on install extras
         httpx = None
 
-from langbridge.contracts.base import _Base
-from langbridge.contracts.datasets import (
-    DatasetListResponse,
-    DatasetPreviewColumn,
-    DatasetPreviewRequest,
-)
-from langbridge.contracts.jobs.agent_job import (
-    AgentJobStateResponse,
-    JobEventResponse,
-)
-from langbridge.contracts.sql import (
-    SqlColumnMetadata,
-    SqlDialect,
-    SqlExecuteRequest,
-    SqlJobResponse,
-    SqlJobResultsResponse,
-    SqlSelectedDataset,
-)
-from langbridge.contracts.threads import (
-    ThreadChatRequest,
-    ThreadCreateRequest,
-    ThreadResponse,
-)
 from langbridge.runtime.models import (
     CreateDatasetPreviewJobRequest,
     CreateSqlJobRequest,
+    SqlSelectedDataset,
     SqlWorkbenchMode,
 )
+from langbridge.runtime.models.base import RuntimeModel, RuntimeRequestModel
 from langbridge.runtime.hosting.api_models import (
+    RuntimeAgentAskResponse,
     RuntimeConnectorListResponse,
     RuntimeDatasetListResponse,
+    RuntimeDatasetPreviewRequest,
+    RuntimeDatasetPreviewResponse,
+    RuntimeSemanticQueryResponse,
+    RuntimeSqlQueryRequest,
+    RuntimeSqlQueryResponse,
     RuntimeSyncResourceListResponse,
     RuntimeSyncResponse,
     RuntimeSyncStateListResponse,
@@ -58,7 +44,122 @@ from langbridge.runtime.hosting.api_models import (
 _TERMINAL_STATUSES = {"succeeded", "failed", "cancelled"}
 
 
-class _AwaitableModel(_Base):
+class SqlDialect(str, Enum):
+    tsql = "tsql"
+    postgres = "postgres"
+    mysql = "mysql"
+    snowflake = "snowflake"
+    redshift = "redshift"
+    bigquery = "bigquery"
+    oracle = "oracle"
+    sqlite = "sqlite"
+
+
+class DatasetPreviewColumn(RuntimeModel):
+    name: str
+    data_type: str | None = None
+
+
+class SqlColumnMetadata(RuntimeModel):
+    name: str
+    type: str | None = None
+
+
+class JobEventResponse(RuntimeModel):
+    id: uuid.UUID | None = None
+    event_type: str | None = None
+    visibility: str | None = None
+    message: str | None = None
+    source: str | None = None
+    details: dict[str, Any] = Field(default_factory=dict)
+    created_at: datetime | None = None
+
+
+class JobFinalResponse(RuntimeModel):
+    result: Any | None = None
+    visualization: Any | None = None
+    summary: str | None = None
+
+
+class AgentJobStateResponse(RuntimeModel):
+    id: uuid.UUID
+    job_type: str
+    status: str
+    progress: int
+    error: dict[str, Any] | None = None
+    created_at: datetime | None = None
+    started_at: datetime | None = None
+    finished_at: datetime | None = None
+    events: list[JobEventResponse] = Field(default_factory=list)
+    final_response: JobFinalResponse | None = None
+    thinking_breakdown: dict[str, Any] | None = None
+    has_internal_events: bool = False
+
+
+class ThreadResponse(RuntimeModel):
+    id: uuid.UUID | None = None
+    workspace_id: uuid.UUID | None = None
+    title: str | None = None
+    status: str = "active"
+    metadata_json: dict[str, Any] | None = None
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+
+
+class ThreadCreateRequest(RuntimeRequestModel):
+    workspace_id: uuid.UUID | None = None
+    title: str | None = None
+    metadata_json: dict[str, Any] | None = None
+
+
+class ThreadChatRequest(RuntimeRequestModel):
+    message: str
+    agent_id: uuid.UUID
+
+
+class SqlJobResponse(RuntimeModel):
+    id: uuid.UUID
+    workspace_id: uuid.UUID
+    actor_id: uuid.UUID
+    workbench_mode: str = SqlWorkbenchMode.dataset
+    connection_id: uuid.UUID | None = None
+    selected_datasets: list[SqlSelectedDataset] = Field(default_factory=list)
+    execution_mode: str
+    status: str
+    query: str
+    query_hash: str
+    is_explain: bool = False
+    is_federated: bool = False
+    requested_limit: int | None = None
+    enforced_limit: int
+    requested_timeout_seconds: int | None = None
+    enforced_timeout_seconds: int
+    row_count_preview: int = 0
+    total_rows_estimate: int | None = None
+    bytes_scanned: int | None = None
+    duration_ms: int | None = None
+    redaction_applied: bool = False
+    warning: dict[str, Any] | None = None
+    error: dict[str, Any] | None = None
+    correlation_id: str | None = None
+    created_at: datetime
+    started_at: datetime | None = None
+    finished_at: datetime | None = None
+    artifacts: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class SqlJobResultsResponse(RuntimeModel):
+    sql_job_id: uuid.UUID
+    status: str
+    columns: list[SqlColumnMetadata] = Field(default_factory=list)
+    rows: list[dict[str, Any]] = Field(default_factory=list)
+    row_count_preview: int = 0
+    total_rows_estimate: int | None = None
+    next_cursor: str | None = None
+    artifacts: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class _AwaitableModel(RuntimeModel):
     def __await__(self):
         async def _resolve() -> "_AwaitableModel":
             return self
@@ -603,7 +704,7 @@ class RuntimeHostApiAdapter(_BaseHttpApiAdapter, _SdkAdapter):
         timeout_s: float,
         poll_interval_s: float,
     ) -> AgentAskResult:
-        return AgentAskResult.model_validate(
+        payload = RuntimeAgentAskResponse.model_validate(
             self._request(
                 "POST",
                 "/api/runtime/v1/agents/ask",
@@ -617,6 +718,7 @@ class RuntimeHostApiAdapter(_BaseHttpApiAdapter, _SdkAdapter):
                 },
             )
         )
+        return AgentAskResult.model_validate(payload.model_dump(mode="json"))
 
     def list_connectors(self) -> ConnectorListResult:
         payload = RuntimeConnectorListResponse.model_validate(
@@ -699,7 +801,7 @@ class RemoteApiAdapter(_BaseHttpApiAdapter, _SdkAdapter):
         workspace_id: uuid.UUID,
         search: str | None,
     ) -> DatasetListResult:
-        payload = DatasetListResponse.model_validate(
+        payload = RuntimeDatasetListResponse.model_validate(
             self._request(
                 "GET",
                 "/api/v1/datasets",
@@ -735,21 +837,25 @@ class RemoteApiAdapter(_BaseHttpApiAdapter, _SdkAdapter):
         timeout_s: float,
         poll_interval_s: float,
     ) -> DatasetQueryResult:
-        payload = DatasetPreviewRequest(
+        payload = RuntimeDatasetPreviewRequest(
             workspace_id=workspace_id,
             limit=limit,
             filters=filters or {},
             sort=sort or [],
             user_context=user_context or {},
         ).model_dump(mode="json")
-        initial = DatasetQueryResult.model_validate(
-            self._request("POST", f"/api/v1/datasets/{dataset_id}/preview", json=payload)
+        initial = RuntimeDatasetPreviewResponse.model_validate(
+            self._request(
+                "POST",
+                f"/api/v1/datasets/{dataset_id}/preview",
+                json=payload,
+            )
         )
         if initial.job_id is None:
-            return initial
+            return DatasetQueryResult.model_validate(initial.model_dump(mode="json"))
 
-        def _fetch() -> DatasetQueryResult:
-            return DatasetQueryResult.model_validate(
+        def _fetch() -> RuntimeDatasetPreviewResponse:
+            return RuntimeDatasetPreviewResponse.model_validate(
                 self._request(
                     "GET",
                     f"/api/v1/datasets/{dataset_id}/preview/jobs/{initial.job_id}",
@@ -757,7 +863,8 @@ class RemoteApiAdapter(_BaseHttpApiAdapter, _SdkAdapter):
                 )
             )
 
-        return _wait_for_terminal(_fetch, timeout_s=timeout_s, poll_interval_s=poll_interval_s)
+        result = _wait_for_terminal(_fetch, timeout_s=timeout_s, poll_interval_s=poll_interval_s)
+        return DatasetQueryResult.model_validate(result.model_dump(mode="json"))
 
     def query_semantic(
         self,
@@ -800,12 +907,12 @@ class RemoteApiAdapter(_BaseHttpApiAdapter, _SdkAdapter):
         workbench_mode = (
             SqlWorkbenchMode.dataset if normalized_datasets else SqlWorkbenchMode.direct_sql
         )
-        execute_request = SqlExecuteRequest(
+        execute_request = RuntimeSqlQueryRequest(
             workspace_id=workspace_id,
             workbench_mode=workbench_mode,
             connection_id=connection_id,
             query=query,
-            query_dialect=_coerce_sql_dialect(query_dialect),
+            query_dialect=_coerce_sql_dialect(query_dialect).value,
             params=params or {},
             requested_limit=requested_limit,
             requested_timeout_seconds=requested_timeout_seconds,

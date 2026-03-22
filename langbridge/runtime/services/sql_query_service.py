@@ -11,7 +11,7 @@ from langbridge.runtime.models import (
     SqlJob,
     SqlJobResultArtifact,
 )
-from langbridge.runtime.errors import BusinessValidationError
+from .errors import ExecutionValidationError
 from langbridge.runtime.utils.datasets import (
     dataset_supports_structured_federation,
 )
@@ -106,7 +106,7 @@ class SqlQueryService:
             message = None
             if isinstance(runtime_job.error_json, dict):
                 message = runtime_job.error_json.get("message")
-            raise BusinessValidationError(str(message or "SQL execution failed."))
+            raise ExecutionValidationError(str(message or "SQL execution failed."))
         return self._result_payload(runtime_job)
 
     async def execute_job(
@@ -150,16 +150,16 @@ class SqlQueryService:
         resolve_connector_config: ResolveConnectorConfig,
     ) -> None:
         if request.connection_id is None:
-            raise BusinessValidationError("connection_id is required for single datasource SQL jobs.")
+            raise ExecutionValidationError("connection_id is required for single datasource SQL jobs.")
 
         connector_response = await self._get_connector_response(
             connection_id=request.connection_id,
             workspace_id=request.workspace_id,
         )
         if connector_response is None:
-            raise BusinessValidationError("SQL connector not found.")
+            raise ExecutionValidationError("SQL connector not found.")
         if connector_response.connector_type is None:
-            raise BusinessValidationError("Connector type is missing.")
+            raise ExecutionValidationError("Connector type is missing.")
 
         connector_type = ConnectorRuntimeType(connector_response.connector_type.upper())
         connector_sqlglot_dialect = self._sqlglot_dialect_for_connector(connector_type)
@@ -255,9 +255,9 @@ class SqlQueryService:
         request: CreateSqlJobRequest,
     ) -> None:
         if not settings.SQL_FEDERATION_ENABLED or not request.allow_federation:
-            raise BusinessValidationError("Federated SQL execution is disabled.")
+            raise ExecutionValidationError("Federated SQL execution is disabled.")
         if self._federated_query_tool is None:
-            raise BusinessValidationError("Federated query tool is not configured on this worker.")
+            raise ExecutionValidationError("Federated query tool is not configured on this worker.")
 
         source_sqlglot_dialect = normalize_sql_dialect(request.query_dialect, default="tsql")
         rendered_query = render_sql_with_params(request.query, request.params)
@@ -364,7 +364,7 @@ class SqlQueryService:
                 for table in expression.find_all(sqlglot.exp.Table)
             ]
         except sqlglot.ParseError as exc:
-            raise BusinessValidationError(f"EXPLAIN parse failed: {exc}") from exc
+            raise ExecutionValidationError(f"EXPLAIN parse failed: {exc}") from exc
 
         now = datetime.now(timezone.utc)
         job.status = "succeeded"
@@ -404,7 +404,7 @@ class SqlQueryService:
     ):
         dialect = ConnectorRuntimeTypeSqlDialectMap.get(connector_type)
         if dialect is None:
-            raise BusinessValidationError(
+            raise ExecutionValidationError(
                 f"Connector type {connector_type.value} does not support SQL execution."
             )
         config_factory = get_connector_config_factory(connector_type)
@@ -428,7 +428,7 @@ class SqlQueryService:
                 workspace_id=workspace_id,
                 connector_id=connection_id,
             )
-        raise BusinessValidationError("Connector metadata provider is required for SQL execution.")
+        raise ExecutionValidationError("Connector metadata provider is required for SQL execution.")
 
     def _resolve_connector_config(self, connector: ConnectorMetadata) -> dict[str, Any]:
         resolved_payload = dict(connector.config or {})
@@ -448,7 +448,7 @@ class SqlQueryService:
             try:
                 runtime_config[secret_name] = self._credential_provider.resolve_secret(secret_ref)
             except Exception as exc:  # pragma: no cover
-                raise BusinessValidationError(
+                raise ExecutionValidationError(
                     f"Unable to resolve connector secret '{secret_name}'."
                 ) from exc
 
@@ -546,7 +546,7 @@ class SqlQueryService:
         datasets_by_id = {dataset.id: dataset for dataset in datasets}
         for dataset_id, selection in dataset_map.items():
             if dataset_id not in datasets_by_id:
-                raise BusinessValidationError(
+                raise ExecutionValidationError(
                     f"Federated dataset '{selection.get('legacy_alias') or selection.get('sql_alias') or dataset_id}' references unknown dataset '{dataset_id}'."
                 )
 
@@ -590,7 +590,7 @@ class SqlQueryService:
             try:
                 dataset_id = uuid.UUID(str(raw_dataset_id))
             except (TypeError, ValueError) as exc:
-                raise BusinessValidationError(
+                raise ExecutionValidationError(
                     "Federated dataset entry has an invalid dataset id."
                 ) from exc
             legacy_alias = str(item.get("alias") or "").strip() or None
@@ -599,7 +599,7 @@ class SqlQueryService:
             if existing is not None:
                 existing_sql_alias = str(existing.get("sql_alias") or "").strip().lower() or None
                 if existing_sql_alias and sql_alias and existing_sql_alias != sql_alias:
-                    raise BusinessValidationError(
+                    raise ExecutionValidationError(
                         f"Federated dataset '{dataset_id}' maps to multiple SQL aliases."
                     )
             dataset_map[dataset_id] = {
@@ -609,7 +609,7 @@ class SqlQueryService:
             }
 
         if not dataset_map:
-            raise BusinessValidationError(
+            raise ExecutionValidationError(
                 "federated_datasets must include at least one dataset mapping."
             )
         return dataset_map
@@ -629,12 +629,12 @@ class SqlQueryService:
                 storage_kind=descriptor.storage_kind,
                 capabilities=descriptor.execution_capabilities,
             ):
-                raise BusinessValidationError(
+                raise ExecutionValidationError(
                     f"Dataset '{dataset.name}' does not support federated structured execution."
                 )
             sql_alias = str(getattr(dataset, "sql_alias", None) or selection.get("sql_alias") or "").strip().lower()
             if not sql_alias:
-                raise BusinessValidationError(
+                raise ExecutionValidationError(
                     f"Dataset '{dataset.name}' is missing a SQL alias."
                 )
             binding, _dialect = self._dataset_execution_resolver._build_binding_from_dataset_record(
@@ -682,7 +682,7 @@ class SqlQueryService:
                 workspace_id=workspace_id,
                 dataset_ids=dataset_ids,
             )
-        raise BusinessValidationError("Dataset metadata provider is required for dataset-backed federated SQL.")
+        raise ExecutionValidationError("Dataset metadata provider is required for dataset-backed federated SQL.")
 
     @staticmethod
     def _result_payload(job: SqlJob) -> dict[str, Any]:
@@ -773,7 +773,7 @@ class SqlQueryService:
         if rows_payload is None:
             return []
         if not isinstance(rows_payload, list):
-            raise BusinessValidationError("Federated SQL execution returned an invalid rows payload.")
+            raise ExecutionValidationError("Federated SQL execution returned an invalid rows payload.")
 
         columns_payload = execution.get("columns") if isinstance(execution, dict) else []
         columns: list[str] = []

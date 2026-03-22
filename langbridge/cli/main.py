@@ -43,6 +43,11 @@ def _build_parser() -> argparse.ArgumentParser:
     serve.add_argument("--config", required=True, help="Path to langbridge_config.yml")
     serve.add_argument("--host", default="127.0.0.1", help="Bind host")
     serve.add_argument("--port", type=int, default=8000, help="Bind port")
+    serve.add_argument(
+        "--features",
+        default="",
+        help="Comma-separated runtime features to enable. Currently supported: mcp, ui",
+    )
     serve.add_argument("--reload", action="store_true", help="Enable auto reload")
     serve.set_defaults(handler=_handle_serve)
 
@@ -163,6 +168,7 @@ def _handle_serve(args: argparse.Namespace) -> int:
         config_path=args.config,
         host=args.host,
         port=args.port,
+        features=_parse_feature_flags(args.features),
         reload=bool(args.reload),
     )
     return 0
@@ -353,6 +359,21 @@ def _parse_semantic_filter(value: str) -> dict[str, Any]:
         "operator": operator.strip(),
         "values": values,
     }
+
+
+def _parse_feature_flags(value: str | None) -> list[str]:
+    supported = {"mcp", "ui"}
+    normalized: list[str] = []
+    for raw_feature in str(value or "").split(","):
+        feature = raw_feature.strip().lower()
+        if not feature:
+            continue
+        if feature not in supported:
+            supported_values = ", ".join(sorted(supported))
+            raise ValueError(f"Unsupported serve feature '{feature}'. Supported values: {supported_values}.")
+        if feature not in normalized:
+            normalized.append(feature)
+    return normalized
 
 
 def _uuid_or_none(value: Any) -> uuid.UUID | None:

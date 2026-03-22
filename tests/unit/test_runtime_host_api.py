@@ -2,11 +2,16 @@ from __future__ import annotations
 
 import sqlite3
 import uuid
+from contextlib import asynccontextmanager
 from pathlib import Path
 from types import SimpleNamespace
 
+import httpx
+import pytest
 from fastapi.testclient import TestClient
 from jose import jwt
+from mcp import ClientSession
+from mcp.client.streamable_http import streamablehttp_client
 
 from langbridge import LangbridgeClient
 from langbridge.runtime import build_configured_local_runtime
@@ -17,6 +22,11 @@ from tests.unit._runtime_host_sync_helpers import (
     runtime_storage_dirs,
     write_sync_runtime_config,
 )
+
+
+@pytest.fixture
+def anyio_backend() -> str:
+    return "asyncio"
 
 
 def _build_runtime(tmp_path: Path):
@@ -115,6 +125,22 @@ agents:
     return runtime
 
 
+def _raw_mcp_initialize_payload() -> dict[str, object]:
+    return {
+        "jsonrpc": "2.0",
+        "id": "initialize-1",
+        "method": "initialize",
+        "params": {
+            "protocolVersion": "2025-06-18",
+            "capabilities": {},
+            "clientInfo": {
+                "name": "langbridge-test-client",
+                "version": "1.0.0",
+            },
+        },
+    }
+
+
 def test_runtime_host_api_exposes_runtime_features(tmp_path: Path) -> None:
     runtime = _build_runtime(tmp_path)
     app = create_runtime_api_app(runtime_host=runtime)
@@ -182,6 +208,124 @@ def test_runtime_host_api_exposes_runtime_features(tmp_path: Path) -> None:
     assert agent.status_code == 200
     assert agent.json()["status"] == "succeeded"
     assert "commerce_analyst" in agent.json()["summary"]
+
+
+def test_runtime_host_api_serves_ui_when_feature_enabled(tmp_path: Path) -> None:
+    runtime = _build_runtime(tmp_path)
+    app = create_runtime_api_app(runtime_host=runtime, features=["ui"])
+    client = TestClient(app)
+
+    shell = client.get("/")
+    assert shell.status_code == 200
+    assert "Langbridge Runtime UI" in shell.text
+
+    summary = client.get("/api/runtime/ui/v1/summary")
+    assert summary.status_code == 200
+    payload = summary.json()
+    assert payload["health"]["status"] == "ok"
+    assert "ui" in payload["features"]
+    assert payload["counts"]["datasets"] == 1
+    assert payload["counts"]["connectors"] == 1
+    assert payload["datasets"][0]["name"] == "shopify_orders"
+    assert payload["connectors"][0]["name"] == "commerce_demo"
+
+    info = client.get("/api/runtime/v1/info")
+    assert info.status_code == 200
+    assert "ui" in info.json()["capabilities"]
+
+
+@pytest.mark.anyio
+async def test_runtime_host_api_serves_mcp_when_feature_enabled(tmp_path: Path) -> None:
+    runtime = _build_runtime(tmp_path)
+    app = create_runtime_api_app(runtime_host=runtime, features=["mcp"])
+
+    @asynccontextmanager
+    async def httpx_client_factory(**kwargs):
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(
+            transport=transport,
+            base_url="http://testserver",
+            **kwargs,
+        ) as client:
+            yield client
+
+    async with app.router.lifespan_context(app):
+        async with streamablehttp_client(
+            "http://testserver/mcp/",
+            httpx_client_factory=httpx_client_factory,
+        ) as streams:
+            async with ClientSession(*streams[:2]) as session:
+                initialize_result = await session.initialize()
+                assert initialize_result.serverInfo.name == "Langbridge Runtime MCP"
+
+                tools = await session.list_tools()
+                tool_names = {tool.name for tool in tools.tools}
+                assert "runtime_info" in tool_names
+                assert "query_sql" in tool_names
+
+                info_result = await session.call_tool("runtime_info", {})
+                assert info_result.isError is False
+                assert info_result.structuredContent["runtime_mode"] == "configured_local"
+                assert info_result.structuredContent["mcp_endpoint"] == "/mcp"
+                assert "mcp" in info_result.structuredContent["capabilities"]
+
+                datasets_result = await session.call_tool("list_datasets", {})
+                assert datasets_result.isError is False
+                assert datasets_result.structuredContent["total"] == 1
+                assert datasets_result.structuredContent["items"][0]["name"] == "shopify_orders"
+
+    info = TestClient(app).get("/api/runtime/v1/info")
+    assert info.status_code == 200
+    assert "mcp" in info.json()["capabilities"]
+
+
+@pytest.mark.anyio
+async def test_runtime_host_api_requires_auth_for_mcp_requests(tmp_path: Path) -> None:
+    runtime = _build_runtime(tmp_path)
+    app = create_runtime_api_app(
+        runtime_host=runtime,
+        features=["mcp"],
+        auth_config=RuntimeAuthConfig(
+            mode=RuntimeAuthMode.static_token,
+            static_token="runtime-token",
+        ),
+    )
+
+    async with app.router.lifespan_context(app):
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            response = await client.post(
+                "/mcp/",
+                json=_raw_mcp_initialize_payload(),
+                headers={
+                    "accept": "application/json, text/event-stream",
+                    "content-type": "application/json",
+                },
+            )
+            assert response.status_code == 401
+
+            authorized_response = await client.post(
+                "/mcp/",
+                json=_raw_mcp_initialize_payload(),
+                headers={
+                    "accept": "application/json, text/event-stream",
+                    "content-type": "application/json",
+                    "authorization": "Bearer runtime-token",
+                },
+            )
+            assert authorized_response.status_code == 200
+
+
+def test_runtime_host_api_does_not_serve_ui_by_default(tmp_path: Path) -> None:
+    runtime = _build_runtime(tmp_path)
+    app = create_runtime_api_app(runtime_host=runtime)
+    client = TestClient(app)
+
+    shell = client.get("/")
+    assert shell.status_code == 404
+
+    summary = client.get("/api/runtime/ui/v1/summary")
+    assert summary.status_code == 404
 
 
 def test_remote_sdk_can_use_runtime_host_api(tmp_path: Path) -> None:

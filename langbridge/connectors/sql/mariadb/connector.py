@@ -8,7 +8,7 @@ from langbridge.connectors.base.metadata import (
     ForeignKeyMetadata,
     TableMetadata,
 )
-from connectors.base.error import ConnectorError
+from langbridge.connectors.base.errors import ConnectorError
 
 from .config import MariaDBConnectorConfig
 

@@ -19,13 +19,13 @@ It is relevant when you need:
 ## Run The Worker
 
 ```bash
-python -m langbridge.apps.runtime_worker.main
+python -m apps.runtime_worker.main
 ```
 
 Reload mode:
 
 ```bash
-python -m langbridge.apps.runtime_worker.main --reload
+python -m apps.runtime_worker.main --reload
 ```
 
 ## Important Environment Variables

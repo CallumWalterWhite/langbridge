@@ -9,7 +9,7 @@ from urllib.parse import parse_qs, urlparse
 import httpx
 
 from langbridge.config import settings
-from langbridge.errors.connector_errors import (
+from .errors import (
     AuthError,
     ConnectorError,
 )

@@ -50,3 +50,10 @@ langbridge = "langbridge.cli.main:main"
 where = ["."]
 include = ["langbridge*"]
 exclude = ["venv*", "__pycache__*", "tests*"]
+
+[tool.setuptools.package-data]
+"langbridge.ui" = [
+  "static/index.html",
+  "static/assets/*.css",
+  "static/assets/*.js",
+]

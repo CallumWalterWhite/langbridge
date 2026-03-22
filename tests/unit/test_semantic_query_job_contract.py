@@ -3,7 +3,7 @@ import uuid
 import pytest
 from pydantic import ValidationError
 
-from langbridge.contracts.jobs.semantic_query_job import (
+from langbridge.runtime.models.jobs import (
     CreateSemanticQueryJobRequest,
 )
 

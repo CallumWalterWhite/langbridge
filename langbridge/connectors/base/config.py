@@ -2,9 +2,17 @@ from abc import ABC
 from enum import Enum
 from typing import Any, List, Optional, Type
 
-from pydantic import Field
+from pydantic import BaseModel, ConfigDict, Field
 
-from langbridge.contracts.base import _Base
+class _Base(BaseModel):
+    model_config = ConfigDict(
+        populate_by_name=True,
+        from_attributes=True,
+    )
+
+    def dict_json(self) -> str:
+        return self.model_dump_json()
+
 
 class ConnectorRuntimeType(Enum):
     POSTGRES = "POSTGRES"

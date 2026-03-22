@@ -82,6 +82,14 @@ That host serves runtime-owned endpoints under `/api/runtime/v1/` for:
 The host currently serves configured local runtimes. It is a core product
 surface, not a temporary demo wrapper.
 
+Enable the runtime-owned MCP surface on the same host:
+
+```bash
+langbridge serve --config examples/runtime_host/langbridge_config.yml --features mcp
+```
+
+When enabled, the runtime mounts a streamable HTTP MCP endpoint at `/mcp`.
+
 The queued worker still exists under `apps/runtime_worker`, but it should be
 understood as a thin runtime-owned assembly for queued, hosted, or edge-style
 execution, not the definition of the runtime product itself.
@@ -106,6 +114,26 @@ Run the self-hosted runtime host:
 
 ```bash
 langbridge serve --config examples/runtime_host/langbridge_config.yml --host 127.0.0.1 --port 8000
+```
+
+Enable the lightweight runtime UI:
+
+```bash
+langbridge serve --config examples/runtime_host/langbridge_config.yml --features ui
+```
+
+The source for that UI lives in `apps/runtime_ui`. Build it with:
+
+```bash
+cd apps/runtime_ui
+npm install
+npm run build
+```
+
+Enable both the UI and MCP server together:
+
+```bash
+langbridge serve --config examples/runtime_host/langbridge_config.yml --features ui,mcp
 ```
 
 Or use Docker:

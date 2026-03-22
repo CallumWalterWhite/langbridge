@@ -8,7 +8,7 @@ import time
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple, Union
 import re
 
-from langbridge.errors.connector_errors import AuthError, ConnectorError, QueryValidationError
+from .errors import AuthError, ConnectorError, QueryValidationError
 from langbridge.connectors.base.config import BaseConnectorConfig, ConnectorRuntimeType
 from langbridge.connectors.base.metadata import TableMetadata, ColumnMetadata, ForeignKeyMetadata
 

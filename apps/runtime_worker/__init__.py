@@ -1,1 +1,0 @@
-"""Runtime worker assembly app."""

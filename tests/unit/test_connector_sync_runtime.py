@@ -9,12 +9,7 @@ import httpx
 import pyarrow.parquet as pq
 import pytest
 
-from langbridge.runtime.services.dataset_sync_service import ConnectorSyncRuntime
 from langbridge.config import settings
-from langbridge.contracts.connectors import (
-    ConnectorSyncMode,
-    ConnectorSyncStatus,
-)
 from langbridge.runtime.persistence.db.connector_sync import ConnectorSyncStateRecord
 from langbridge.runtime.persistence.db.dataset import (
     DatasetColumnRecord,
@@ -36,6 +31,13 @@ from langbridge.connectors.saas.shopify.config import (
 from langbridge.connectors.saas.shopify.connector import (
     ShopifyApiConnector,
 )
+from langbridge.runtime.services.dataset_sync_service import ConnectorSyncRuntime
+
+
+SYNC_MODE_INCREMENTAL = "INCREMENTAL"
+SYNC_MODE_FULL_REFRESH = "FULL_REFRESH"
+SYNC_STATUS_SUCCEEDED = "succeeded"
+SYNC_STATUS_FAILED = "failed"
 
 
 @pytest.fixture
@@ -310,7 +312,7 @@ async def test_connector_sync_runtime_materializes_parent_child_datasets_and_per
         connection_id=connection_id,
         connector_type=ConnectorRuntimeType.SHOPIFY,
         resource_name="orders",
-        sync_mode=ConnectorSyncMode.INCREMENTAL,
+        sync_mode=SYNC_MODE_INCREMENTAL,
     )
 
     connector = _QueueConnector(
@@ -346,11 +348,11 @@ async def test_connector_sync_runtime_materializes_parent_child_datasets_and_per
         resource=_resource(),
         api_connector=connector,
         state=state,
-        sync_mode=ConnectorSyncMode.INCREMENTAL,
+        sync_mode=SYNC_MODE_INCREMENTAL,
     )
 
     assert summary["records_synced"] == 2
-    assert state.status == ConnectorSyncStatus.SUCCEEDED.value
+    assert state.status == SYNC_STATUS_SUCCEEDED
     assert state.last_cursor == "2026-03-01T00:00:00Z"
     assert len(summary["dataset_ids"]) == 2
 
@@ -405,7 +407,7 @@ async def test_connector_sync_runtime_incremental_second_sync_only_upserts_new_r
         connection_id=connection_id,
         connector_type=ConnectorRuntimeType.SHOPIFY,
         resource_name="orders",
-        sync_mode=ConnectorSyncMode.INCREMENTAL,
+        sync_mode=SYNC_MODE_INCREMENTAL,
     )
 
     first_connector = _QueueConnector(
@@ -428,7 +430,7 @@ async def test_connector_sync_runtime_incremental_second_sync_only_upserts_new_r
         resource=_resource(),
         api_connector=first_connector,
         state=state,
-        sync_mode=ConnectorSyncMode.INCREMENTAL,
+        sync_mode=SYNC_MODE_INCREMENTAL,
     )
 
     second_connector = _QueueConnector(
@@ -451,7 +453,7 @@ async def test_connector_sync_runtime_incremental_second_sync_only_upserts_new_r
         resource=_resource(),
         api_connector=second_connector,
         state=state,
-        sync_mode=ConnectorSyncMode.INCREMENTAL,
+        sync_mode=SYNC_MODE_INCREMENTAL,
     )
 
     assert second_connector.calls[0]["since"] == "2026-03-01T00:30:00Z"
@@ -485,7 +487,7 @@ async def test_connector_sync_runtime_falls_back_to_full_refresh_for_non_increme
         connection_id=connection_id,
         connector_type=ConnectorRuntimeType.GOOGLE_ANALYTICS,
         resource_name="sessions",
-        sync_mode=ConnectorSyncMode.INCREMENTAL,
+        sync_mode=SYNC_MODE_INCREMENTAL,
     )
 
     first_connector = _QueueConnector(
@@ -508,7 +510,7 @@ async def test_connector_sync_runtime_falls_back_to_full_refresh_for_non_increme
         ),
         api_connector=first_connector,
         state=state,
-        sync_mode=ConnectorSyncMode.INCREMENTAL,
+        sync_mode=SYNC_MODE_INCREMENTAL,
     )
 
     second_connector = _QueueConnector(
@@ -531,7 +533,7 @@ async def test_connector_sync_runtime_falls_back_to_full_refresh_for_non_increme
         ),
         api_connector=second_connector,
         state=state,
-        sync_mode=ConnectorSyncMode.INCREMENTAL,
+        sync_mode=SYNC_MODE_INCREMENTAL,
     )
 
     dataset = next(iter(dataset_repository.items.values()))
@@ -542,7 +544,7 @@ async def test_connector_sync_runtime_falls_back_to_full_refresh_for_non_increme
         dataset_name=dataset.name,
     )
     assert rows == [{"id": "c", "sessions": 99}]
-    assert state.sync_mode == ConnectorSyncMode.FULL_REFRESH.value
+    assert state.sync_mode == SYNC_MODE_FULL_REFRESH
     assert first_connector.calls[0]["since"] is None
     assert second_connector.calls[0]["since"] is None
 
@@ -562,7 +564,7 @@ async def test_connector_sync_runtime_failure_does_not_advance_checkpoint_state(
         connection_id=connection_id,
         connector_type=ConnectorRuntimeType.SHOPIFY,
         resource_name="orders",
-        sync_mode=ConnectorSyncMode.INCREMENTAL,
+        sync_mode=SYNC_MODE_INCREMENTAL,
     )
 
     successful_connector = _QueueConnector(
@@ -582,7 +584,7 @@ async def test_connector_sync_runtime_failure_does_not_advance_checkpoint_state(
         resource=_resource(),
         api_connector=successful_connector,
         state=state,
-        sync_mode=ConnectorSyncMode.INCREMENTAL,
+        sync_mode=SYNC_MODE_INCREMENTAL,
     )
 
     failed_connector = _QueueConnector(RuntimeError("upstream timeout"))
@@ -596,12 +598,12 @@ async def test_connector_sync_runtime_failure_does_not_advance_checkpoint_state(
             resource=_resource(),
             api_connector=failed_connector,
             state=state,
-            sync_mode=ConnectorSyncMode.INCREMENTAL,
+            sync_mode=SYNC_MODE_INCREMENTAL,
         )
     await runtime.mark_failed(state=state, error_message="upstream timeout")
 
     assert state.last_cursor == "2026-03-01T00:00:00Z"
-    assert state.status == ConnectorSyncStatus.FAILED.value
+    assert state.status == SYNC_STATUS_FAILED
     assert state.error_message == "upstream timeout"
 
 
@@ -623,7 +625,7 @@ async def test_shopify_connector_sync_runtime_full_then_incremental_with_mocked_
         connection_id=connection_id,
         connector_type=ConnectorRuntimeType.SHOPIFY,
         resource_name="orders",
-        sync_mode=ConnectorSyncMode.INCREMENTAL,
+        sync_mode=SYNC_MODE_INCREMENTAL,
     )
 
     order_requests: list[httpx.Request] = []
@@ -685,7 +687,7 @@ async def test_shopify_connector_sync_runtime_full_then_incremental_with_mocked_
         resource=orders_resource,
         api_connector=connector,
         state=state,
-        sync_mode=ConnectorSyncMode.INCREMENTAL,
+        sync_mode=SYNC_MODE_INCREMENTAL,
     )
     await runtime.sync_resource(
         workspace_id=workspace_id,
@@ -696,7 +698,7 @@ async def test_shopify_connector_sync_runtime_full_then_incremental_with_mocked_
         resource=orders_resource,
         api_connector=connector,
         state=state,
-        sync_mode=ConnectorSyncMode.INCREMENTAL,
+        sync_mode=SYNC_MODE_INCREMENTAL,
     )
 
     assert len(order_requests) == 2

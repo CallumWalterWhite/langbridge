@@ -8,7 +8,7 @@ from typing import Any, Mapping
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import padding
 
-from langbridge.errors.connector_errors import (
+from langbridge.connectors.base.errors import (
     AuthError,
     ConnectorError,
 )

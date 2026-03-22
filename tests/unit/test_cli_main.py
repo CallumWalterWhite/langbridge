@@ -103,10 +103,11 @@ def test_cli_serve_delegates_to_runtime_api(tmp_path: Path, monkeypatch) -> None
     config_path = _write_config(tmp_path)
     captured: dict[str, object] = {}
 
-    def fake_run_runtime_api(*, config_path, host, port, reload):
+    def fake_run_runtime_api(*, config_path, host, port, features, reload):
         captured["config_path"] = config_path
         captured["host"] = host
         captured["port"] = port
+        captured["features"] = features
         captured["reload"] = reload
 
     monkeypatch.setattr("langbridge.cli.main.run_runtime_api", fake_run_runtime_api)
@@ -120,6 +121,8 @@ def test_cli_serve_delegates_to_runtime_api(tmp_path: Path, monkeypatch) -> None
             "0.0.0.0",
             "--port",
             "9100",
+            "--features",
+            "ui,mcp",
             "--reload",
         ]
     )
@@ -129,8 +132,26 @@ def test_cli_serve_delegates_to_runtime_api(tmp_path: Path, monkeypatch) -> None
         "config_path": str(config_path),
         "host": "0.0.0.0",
         "port": 9100,
+        "features": ["ui", "mcp"],
         "reload": True,
     }
+
+
+def test_cli_serve_rejects_unknown_feature(tmp_path: Path, capsys) -> None:
+    config_path = _write_config(tmp_path)
+
+    exit_code = main(
+        [
+            "serve",
+            "--config",
+            str(config_path),
+            "--features",
+            "widgets",
+        ]
+    )
+
+    assert exit_code == 1
+    assert "Unsupported serve feature 'widgets'" in capsys.readouterr().err
 
 
 def test_cli_supports_local_sync_commands(tmp_path: Path, capsys) -> None:

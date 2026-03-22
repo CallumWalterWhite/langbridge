@@ -2,7 +2,7 @@ import logging
 from typing import Any, Dict, Optional
 from langbridge.connectors.base.connector import SqlConnector
 from langbridge.connectors.base import SqlDialetcs
-from langbridge.errors.connector_errors import ConnectorError
+from langbridge.connectors.base.errors import ConnectorError
 from langbridge.connectors.base.metadata import ColumnMetadata, ForeignKeyMetadata, TableMetadata
 from .config import SqliteConnectorConfig
 from sqlite3 import connect, OperationalError, DatabaseError, ProgrammingError
