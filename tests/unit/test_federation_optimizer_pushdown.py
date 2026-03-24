@@ -332,6 +332,25 @@ def test_optimizer_supports_cte_references_without_mapping_cte_names() -> None:
     assert "org_abc__src_" not in local_stage.sql
 
 
+def test_optimizer_sets_duckdb_as_local_stage_dialect() -> None:
+    planner = FederatedPlanner()
+    workflow = _workflow()
+
+    output = planner.plan_sql(
+        sql="SELECT o.id, c.name FROM dbo.orders o JOIN dbo.customers c ON o.customer_id = c.id",
+        dialect="tsql",
+        workflow=workflow,
+        source_dialects={"source_orders": "postgres", "source_customers": "postgres"},
+    )
+
+    local_stage = next(
+        stage
+        for stage in output.physical_plan.stages
+        if stage.stage_type == StageType.LOCAL_COMPUTE
+    )
+    assert local_stage.sql_dialect == "duckdb"
+
+
 def test_optimizer_avoids_full_query_pushdown_when_logical_alias_differs_from_physical_table() -> None:
     planner = FederatedPlanner()
     workspace = str(uuid.uuid4())
@@ -387,3 +406,94 @@ def test_parser_normalizes_trunc_and_interval_syntax() -> None:
     assert "INTERVAL '3 MONTHS'" in normalized_sql
     assert "GROUP BY" in normalized_sql
     assert "MONTHS GROUP BY" not in normalized_sql
+
+
+def test_optimizer_renders_postgres_btrim_for_duckdb_local_stage() -> None:
+    planner = FederatedPlanner()
+    workspace = str(uuid.uuid4())
+    workflow = FederationWorkflow(
+        id="wf-opt-local-duckdb-btrim",
+        workspace_id=workspace,
+        dataset=VirtualDataset(
+            id="ds-opt-local-duckdb-btrim",
+            name="optimizer local duckdb btrim",
+            workspace_id=workspace,
+            tables={
+                "shopify_orders": VirtualTableBinding(
+                    table_key="shopify_orders",
+                    source_id="source_orders",
+                    connector_id=uuid.uuid4(),
+                    table="orders_enriched",
+                    metadata={
+                        "physical_table": "orders_enriched",
+                    },
+                ),
+            },
+        ),
+    )
+
+    output = planner.plan_sql(
+        sql=(
+            "SELECT shopify_orders.country, COUNT(*) AS order_count "
+            "FROM shopify_orders "
+            "WHERE NOT shopify_orders.country IS NULL "
+            "AND BTRIM(shopify_orders.country) <> '' "
+            "GROUP BY shopify_orders.country"
+        ),
+        dialect="postgres",
+        workflow=workflow,
+        source_dialects={"source_orders": "sqlite"},
+    )
+
+    local_stage = next(
+        stage
+        for stage in output.physical_plan.stages
+        if stage.stage_type == StageType.LOCAL_COMPUTE
+    )
+    assert local_stage.sql is not None
+    assert local_stage.sql_dialect == "duckdb"
+    assert "BTRIM" not in local_stage.sql.upper()
+    assert "TRIM(" in local_stage.sql.upper()
+
+
+def test_optimizer_renders_tsql_top_using_duckdb_limit_for_local_stage() -> None:
+    planner = FederatedPlanner()
+    workspace = str(uuid.uuid4())
+    workflow = FederationWorkflow(
+        id="wf-opt-local-duckdb-top",
+        workspace_id=workspace,
+        dataset=VirtualDataset(
+            id="ds-opt-local-duckdb-top",
+            name="optimizer local duckdb top",
+            workspace_id=workspace,
+            tables={
+                "shopify_orders": VirtualTableBinding(
+                    table_key="shopify_orders",
+                    source_id="source_orders",
+                    connector_id=uuid.uuid4(),
+                    schema="dbo",
+                    table="orders_enriched",
+                    metadata={
+                        "physical_table": "orders_enriched",
+                    },
+                ),
+            },
+        ),
+    )
+
+    output = planner.plan_sql(
+        sql="SELECT TOP 5 shopify_orders.country FROM shopify_orders ORDER BY shopify_orders.country",
+        dialect="tsql",
+        workflow=workflow,
+        source_dialects={"source_orders": "sqlite"},
+    )
+
+    local_stage = next(
+        stage
+        for stage in output.physical_plan.stages
+        if stage.stage_type == StageType.LOCAL_COMPUTE
+    )
+    assert local_stage.sql is not None
+    assert local_stage.sql_dialect == "duckdb"
+    assert "TOP 5" not in local_stage.sql.upper()
+    assert "LIMIT 5" in local_stage.sql.upper()

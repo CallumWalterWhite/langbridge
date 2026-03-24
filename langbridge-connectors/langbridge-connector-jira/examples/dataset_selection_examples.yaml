@@ -1,0 +1,24 @@
+connector:
+  name: jira
+  type: JIRA
+  package: langbridge-connector-jira
+  note: Declarative connector package provides manifest-driven runtime execution for Jira Cloud admin and metadata resources.
+
+examples:
+  - name: jira_projects
+    description: Materialize Jira Cloud projects through the shared declarative runtime.
+    connector: jira
+    connector_sync:
+      resource_key: projects
+      sync_mode: FULL_REFRESH
+      params:
+        maxResults: 50
+
+  - name: jira_fields
+    description: Materialize Jira Cloud field metadata for downstream dataset modeling.
+    connector: jira
+    connector_sync:
+      resource_key: fields
+      sync_mode: FULL_REFRESH
+      params:
+        maxResults: 50

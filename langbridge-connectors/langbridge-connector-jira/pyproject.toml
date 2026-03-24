@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "langbridge-connector-jira"
+version = "0.1.0"
+description = "Declarative Jira Cloud connector for Langbridge"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = ["langbridge", "PyYAML>=6.0"]
+
+[project.entry-points."langbridge.connectors"]
+jira = "langbridge_connector_jira:get_connector_plugin"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+langbridge_connector_jira = ["manifests/*.yaml"]

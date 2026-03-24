@@ -1,0 +1,65 @@
+{
+  "sql": "SELECT c.region, SUM(o.revenue) AS total_revenue FROM orders AS o JOIN customers AS c ON o.customer_id = c.customer_id GROUP BY c.region",
+  "logical_plan": {
+    "query_type": "sql",
+    "from_alias": "o",
+    "tables": {
+      "c": {
+        "table_key": "customers",
+        "source_id": "src_commerce",
+        "schema_name": "analytics",
+        "table": "customers",
+        "catalog": null
+      },
+      "o": {
+        "table_key": "orders",
+        "source_id": "src_commerce",
+        "schema_name": "analytics",
+        "table": "orders",
+        "catalog": null
+      }
+    },
+    "joins": [
+      {
+        "left_alias": "o",
+        "right_alias": "c",
+        "join_type": "inner",
+        "on_sql": "o.customer_id = c.customer_id"
+      }
+    ],
+    "where_sql": null,
+    "group_by_sql": [
+      "c.region"
+    ],
+    "order_by_sql": [],
+    "limit": null,
+    "offset": null,
+    "has_cte": false
+  },
+  "physical_plan": {
+    "result_stage_id": "scan_full_query",
+    "join_order": [
+      "o"
+    ],
+    "join_strategies": {},
+    "stages": [
+      {
+        "stage_id": "scan_full_query",
+        "stage_type": "remote_full_query",
+        "dependencies": [],
+        "source_id": "src_commerce",
+        "sql": null,
+        "subplan": {
+          "stage_id": "scan_full_query",
+          "source_id": "src_commerce",
+          "alias": "o",
+          "table_key": "orders",
+          "sql": "SELECT c.region, SUM(o.revenue) AS total_revenue FROM orders AS o JOIN customers AS c ON o.customer_id = c.customer_id GROUP BY c.region",
+          "projected_columns": [],
+          "pushed_filters": [],
+          "pushed_limit": null
+        }
+      }
+    ]
+  }
+}

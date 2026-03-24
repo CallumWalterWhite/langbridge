@@ -192,111 +192,13 @@ def predicate_aliases(predicate: exp.Expression, table_aliases: Iterable[str]) -
     return referenced
 
 
-def rewrite_tables_to_stage_sql(
-    expression: exp.Expression,
-    *,
-    stage_tables: dict[str, str],
-) -> str:
-    alias_lookup = _build_table_alias_lookup(expression)
-
-    def _replace(node: exp.Expression) -> exp.Expression:
-        if isinstance(node, exp.Column):
-            return _rewrite_column_for_stage(
-                column=node,
-                stage_tables=stage_tables,
-                alias_lookup=alias_lookup,
-            )
-        if not isinstance(node, exp.Table):
-            return node
-        alias = node.alias_or_name
-        stage_table = stage_tables.get(alias)
-        if stage_table is None:
-            return node
-        return exp.table_(stage_table, alias=alias, quoted=False)
-
-    transformed = expression.transform(_replace)
-    return transformed.sql(dialect="duckdb")
-
-
-def _build_table_alias_lookup(expression: exp.Expression) -> dict[str, str]:
-    candidate_aliases: dict[str, set[str]] = {}
-
-    def _add(key: str | None, alias: str | None) -> None:
-        if not key or not alias:
-            return
-        normalized_key = key.strip().lower()
-        normalized_alias = alias.strip()
-        if not normalized_key or not normalized_alias:
-            return
-        candidate_aliases.setdefault(normalized_key, set()).add(normalized_alias)
-
-    for table in expression.find_all(exp.Table):
-        alias = str(table.alias_or_name or "").strip()
-        if not alias:
-            continue
-
-        table_name = str(table.name or "").strip()
-        schema_name = str(table.db or "").strip()
-        catalog_name = str(table.catalog or "").strip()
-
-        _add(alias, alias)
-        _add(table_name, alias)
-        if schema_name and table_name:
-            _add(f"{schema_name}.{table_name}", alias)
-        if catalog_name and schema_name and table_name:
-            _add(f"{catalog_name}.{schema_name}.{table_name}", alias)
-
-    return {
-        key: next(iter(aliases))
-        for key, aliases in candidate_aliases.items()
-        if len(aliases) == 1
-    }
-
-
-def _rewrite_column_for_stage(
-    *,
-    column: exp.Column,
-    stage_tables: dict[str, str],
-    alias_lookup: dict[str, str],
-) -> exp.Column:
-    table_name = str(column.table or "").strip()
-    schema_name = str(column.db or "").strip()
-    catalog_name = str(column.catalog or "").strip()
-
-    resolved_alias: str | None = None
-    candidates: list[str] = []
-    if table_name:
-        candidates.append(table_name)
-    if schema_name and table_name:
-        candidates.append(f"{schema_name}.{table_name}")
-    if catalog_name and schema_name and table_name:
-        candidates.append(f"{catalog_name}.{schema_name}.{table_name}")
-
-    for candidate in candidates:
-        normalized_candidate = candidate.strip().lower()
-        alias = alias_lookup.get(normalized_candidate)
-        if alias:
-            resolved_alias = alias
-            break
-
-    if resolved_alias is None and table_name and table_name in stage_tables:
-        resolved_alias = table_name
-
-    rewritten = column.copy()
-    if resolved_alias:
-        rewritten.set("table", exp.Identifier(this=resolved_alias, quoted=False))
-    rewritten.set("db", None)
-    rewritten.set("catalog", None)
-    return rewritten
-
-
 def _extract_select(expression: exp.Expression) -> exp.Select | None:
     if isinstance(expression, exp.Select):
         return expression
-    if isinstance(expression, exp.Subqueryable):
+    if isinstance(expression, exp.Subquery):
         return expression if isinstance(expression, exp.Select) else None
     if isinstance(expression, exp.Union):
-        return None
+        return expression.left if isinstance(expression.left, exp.Select) else None
     if isinstance(expression, exp.With):
         body = expression.this
         return body if isinstance(body, exp.Select) else None

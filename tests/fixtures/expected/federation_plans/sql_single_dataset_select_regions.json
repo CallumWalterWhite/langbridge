@@ -1,0 +1,49 @@
+{
+  "sql": "SELECT region FROM customers",
+  "logical_plan": {
+    "query_type": "sql",
+    "from_alias": "customers",
+    "tables": {
+      "customers": {
+        "table_key": "customers",
+        "source_id": "src_commerce",
+        "schema_name": "analytics",
+        "table": "customers",
+        "catalog": null
+      }
+    },
+    "joins": [],
+    "where_sql": null,
+    "group_by_sql": [],
+    "order_by_sql": [],
+    "limit": null,
+    "offset": null,
+    "has_cte": false
+  },
+  "physical_plan": {
+    "result_stage_id": "scan_full_query",
+    "join_order": [
+      "customers"
+    ],
+    "join_strategies": {},
+    "stages": [
+      {
+        "stage_id": "scan_full_query",
+        "stage_type": "remote_full_query",
+        "dependencies": [],
+        "source_id": "src_commerce",
+        "sql": null,
+        "subplan": {
+          "stage_id": "scan_full_query",
+          "source_id": "src_commerce",
+          "alias": "customers",
+          "table_key": "customers",
+          "sql": "SELECT region FROM customers",
+          "projected_columns": [],
+          "pushed_filters": [],
+          "pushed_limit": null
+        }
+      }
+    ]
+  }
+}

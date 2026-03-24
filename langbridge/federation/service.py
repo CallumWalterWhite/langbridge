@@ -63,6 +63,7 @@ class FederatedQueryService:
             planning = self._planner.plan_sql(
                 sql=query,
                 dialect=dialect,
+                local_dialect="duckdb",
                 workflow=workflow,
                 source_dialects=source_dialects,
             )
@@ -75,6 +76,7 @@ class FederatedQueryService:
                 query=smq,
                 semantic_model=semantic_model,
                 dialect=dialect,
+                local_dialect="duckdb",
                 workflow=workflow,
                 source_dialects=source_dialects,
             )
@@ -120,6 +122,7 @@ class FederatedQueryService:
             planning = self._planner.plan_sql(
                 sql=query,
                 dialect=dialect,
+                local_dialect="duckdb",
                 workflow=workflow,
                 source_dialects=source_dialects,
             )
@@ -132,6 +135,7 @@ class FederatedQueryService:
                 query=smq,
                 semantic_model=semantic_model,
                 dialect=dialect,
+                local_dialect="duckdb",
                 workflow=workflow,
                 source_dialects=source_dialects,
             )

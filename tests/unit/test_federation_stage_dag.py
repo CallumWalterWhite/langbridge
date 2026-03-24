@@ -57,6 +57,7 @@ def test_physical_plan_dag_dependencies() -> None:
     final_stage = stages[output.physical_plan.result_stage_id]
 
     assert final_stage.stage_type == StageType.LOCAL_COMPUTE
+    assert final_stage.sql_dialect == "duckdb"
     assert len(final_stage.dependencies) == 2
     for dependency in final_stage.dependencies:
         assert dependency in stages

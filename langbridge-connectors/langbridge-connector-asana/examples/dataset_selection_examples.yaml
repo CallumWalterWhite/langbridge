@@ -1,0 +1,24 @@
+connector:
+  name: asana
+  type: ASANA
+  package: langbridge-connector-asana
+  note: Declarative connector package provides manifest-driven runtime execution for workspace-scoped Asana resources.
+
+examples:
+  - name: asana_projects
+    description: Materialize workspace projects through the shared declarative runtime.
+    connector: asana
+    connector_sync:
+      resource_key: projects
+      sync_mode: FULL_REFRESH
+      params:
+        limit: 100
+
+  - name: asana_users
+    description: Materialize workspace users with the same declarative auth and pagination contract.
+    connector: asana
+    connector_sync:
+      resource_key: users
+      sync_mode: FULL_REFRESH
+      params:
+        limit: 100

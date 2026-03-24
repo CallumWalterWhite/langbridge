@@ -57,6 +57,7 @@ class PhysicalPlanner:
                 stage_type=StageType.LOCAL_COMPUTE,
                 dependencies=dependency_ids,
                 sql=optimized_plan.local_stage_sql,
+                sql_dialect=optimized_plan.local_stage_dialect,
                 retry_limit=2,
                 metadata={
                     "table_inputs": table_inputs,

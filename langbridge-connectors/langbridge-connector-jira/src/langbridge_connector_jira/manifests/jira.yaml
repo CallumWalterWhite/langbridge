@@ -1,0 +1,59 @@
+schema_version: "0.1.0"
+kind: declarative_http_connector
+id: jira
+display_name: Jira
+connector_type: JIRA
+connector_family: API
+description: Declarative Jira Cloud connector for sync-oriented admin and metadata dataset materialization.
+base_url: https://api.atlassian.com/ex/jira/example/rest/api/3
+test_connection_path: /myself
+
+auth:
+  strategy: bearer_token
+  token_field: access_token
+  token_label: Access Token
+  header_name: Authorization
+  header_template: "Bearer {access_token}"
+
+pagination:
+  strategy: offset
+  response_items_field: values
+  limit_param: maxResults
+  cursor_param: startAt
+  response_is_last_field: isLast
+  default_page_size: 50
+  max_page_size: 100
+
+incremental:
+  strategy: request_param
+  request_param: since
+  cursor_field: id
+  cursor_type: string
+
+resources:
+  - key: projects
+    label: Projects
+    path: /project/search
+    primary_key: id
+    supports_incremental: false
+    default_sync_mode: FULL_REFRESH
+    response_items_field: values
+    description: Jira Cloud project metadata records.
+
+  - key: fields
+    label: Fields
+    path: /field/search
+    primary_key: id
+    supports_incremental: false
+    default_sync_mode: FULL_REFRESH
+    response_items_field: values
+    description: Jira Cloud field metadata records.
+
+  - key: statuses
+    label: Statuses
+    path: /statuses/search
+    primary_key: id
+    supports_incremental: false
+    default_sync_mode: FULL_REFRESH
+    response_items_field: values
+    description: Jira Cloud workflow status metadata records.

@@ -1,0 +1,63 @@
+schema_version: "0.1.0"
+kind: declarative_http_connector
+id: hubspot
+display_name: HubSpot
+connector_type: HUBSPOT
+connector_family: API
+description: Declarative HubSpot CRM connector for sync-oriented dataset materialization.
+base_url: https://api.hubapi.com
+test_connection_path: /crm/v3/objects/contacts
+
+auth:
+  strategy: bearer_token
+  token_field: access_token
+  token_label: Private App Token
+  header_name: Authorization
+  header_template: "Bearer {access_token}"
+
+pagination:
+  strategy: cursor
+  response_items_field: results
+  limit_param: limit
+  cursor_param: after
+  next_cursor_source: response
+  next_cursor_field: paging.next.after
+  default_page_size: 100
+  max_page_size: 100
+
+incremental:
+  strategy: client_filter
+  request_param: updatedAfter
+  cursor_field: updatedAt
+  cursor_type: iso_datetime
+
+resources:
+  - key: contacts
+    label: Contacts
+    path: /crm/v3/objects/contacts
+    primary_key: id
+    supports_incremental: true
+    default_sync_mode: INCREMENTAL
+    request_params:
+      archived: "false"
+    description: HubSpot CRM contact records.
+
+  - key: companies
+    label: Companies
+    path: /crm/v3/objects/companies
+    primary_key: id
+    supports_incremental: true
+    default_sync_mode: INCREMENTAL
+    request_params:
+      archived: "false"
+    description: HubSpot CRM company records.
+
+  - key: deals
+    label: Deals
+    path: /crm/v3/objects/deals
+    primary_key: id
+    supports_incremental: true
+    default_sync_mode: INCREMENTAL
+    request_params:
+      archived: "false"
+    description: HubSpot CRM deal records.

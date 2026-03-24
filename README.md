@@ -1,39 +1,21 @@
 # Langbridge
 
-Langbridge is an open source, self-hostable analytics runtime for structured data workloads.
-
-It gives you a single runtime for connectors, datasets, semantic models, federated query, SQL execution, SaaS sync, and agent-style analytical workflows. You can run it in process through Python, expose it over HTTP, serve a lightweight UI, and optionally mount an MCP endpoint from the same runtime host.
-
-The current product center is a strong single-node runtime host. Distributed coordinator/worker scale-out remains preview groundwork in this repo, not the primary v1 deployment path.
+Langbridge is an open source, self-hostable analytics runtime for structured data workloads, built for agentic analytics applications. It provides a unified runtime for connecting to data sources, defining semantic models, executing federated queries, and orchestrating agent-style analytical workflows. The runtime is accessible through a Python SDK and a documented HTTP API, and it can optionally serve a lightweight UI and mount an MCP endpoint.
 
 ## What You Get
 
-- A runtime host with a documented HTTP API under `/api/runtime/v1/*`
-- A Python SDK for local and remote access
-- Built-in connectors for SQL, SaaS/API, NoSQL, and vector systems
-- Semantic query and federated query execution
-- Dataset preview and connector sync flows
-- Optional runtime UI served by the host
-- Optional MCP surface mounted at `/mcp`
+- A runtime host for executing agentic analytics workloads, with support for data source connectors, semantic modeling, federated query planning and execution, and agent orchestration.
+- A Python SDK for interacting with the runtime, including tools for defining connectors, semantic models, and agents.
+- A built-in UI for visualizing and interacting with runtime execution.
+- An MCP endpoint for integrating with external agentic systems.
 
 ## Repository Layout
 
-The main runtime modules live under `langbridge.*`:
-
-- `langbridge.runtime`: runtime context, host construction, auth, services, persistence
-- `langbridge.client`: Python SDK
-- `langbridge.connectors`: built-in connector implementations
-- `langbridge.plugins`: connector registry and extension surface
-- `langbridge.semantic`: semantic model loading and semantic query support
-- `langbridge.federation`: federated planning and execution
-- `langbridge.orchestrator`: runtime-safe agent and tool orchestration
-- `langbridge.mcp`: MCP server assembly
-- `langbridge.ui`: packaged UI bundle served by the runtime host
-
-Supporting project areas:
-
-- `apps/runtime_ui`: React source for the runtime UI
-- `packages/sdk`: packaging for the standalone SDK distribution
+The repository is organized into the following key areas:
+- `langbridge/`: core runtime host implementation, including API, execution engine, connector framework, and MCP endpoint
+- `langbridge-connectors/`: collection of pre-built connectors for common data sources and services (e.g. Shopify, Salesforce, Stripe, etc.)
+- `apps/runtime-ui/`: React source for the runtime UI
+- `packages/sdk/`: packaging for the standalone SDK distribution
 - `examples/`: runnable host and SDK examples
 - `docs/`: architecture, deployment, and development docs
 
@@ -111,7 +93,7 @@ docker compose --profile host up --build runtime-host
 
 The runtime image is defined in `docker/Dockerfile`.
 
-The top-level Docker path is intentionally single-node. Preview distributed execution internals remain in the federation layer, but this repo does not currently position coordinator/worker packaging as the main release-ready self-hosted path.
+The top-level Docker path is intentionally single-node. The runtime host is designed to be horizontally scalable, and can be run in multiple instances behind a load balancer. The runtime does not currently have any built-in distributed execution capabilities, but it can be configured to use external services for distributed query execution and agent orchestration.
 
 ## Identity And Auth
 
@@ -134,6 +116,39 @@ The runtime host supports thin auth modes:
 - `examples/runtime_host_sync/`: connector sync example
 - `examples/sdk/semantic_query/`: local SDK + semantic query walkthrough
 - `examples/sdk/federated_query/`: local SDK + federated query walkthrough
+
+# Supported Connectors
+
+## SQL
+- Postgres
+- MySQL
+- Snowflake
+- BigQuery
+- Redshift
+- Databricks
+- SQLite
+More SQL connectors are in progress, and the connector framework is designed to make it easy to add new ones.
+## SaaS/API
+- Shopify
+- Stripe
+- Salesforce
+- HubSpot
+- Zendesk
+- Google Analytics
+More SaaS connectors are in progress, and the connector framework is designed to make it easy to add new ones.
+## NoSQL
+- MongoDB
+More NoSQL connectors are in progress, and the connector framework is designed to make it easy to add new ones.
+## Vector
+- Pinecone
+- Faiss
+More vector connectors are in progress, and the connector framework is designed to make it easy to add new ones.
+
+# Future Work
+
+## Scale-out architecture with distributed coordinator and worker nodes
+
+Note: the current product center is a strong single-node runtime host. Distributed coordinator/worker scale-out remains preview groundwork in this repo, not the primary v1 deployment path.
 
 ## Documentation
 

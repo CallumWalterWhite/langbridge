@@ -48,6 +48,11 @@ _BUILTIN_PLUGIN_MODULES = (
     "langbridge.connectors.saas.hubspot",
     "langbridge.connectors.saas.google_analytics",
     "langbridge.connectors.saas.salesforce",
+    "langbridge_connector_shopify.plugin",
+    "langbridge_connector_hubspot.plugin",
+    "langbridge_connector_github.plugin",
+    "langbridge_connector_jira.plugin",
+    "langbridge_connector_asana.plugin",
     "langbridge_connector_stripe.plugin",
 )
 _BUILTIN_CONNECTOR_MODULES = (

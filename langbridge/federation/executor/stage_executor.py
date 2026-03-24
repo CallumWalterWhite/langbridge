@@ -9,6 +9,7 @@ import pyarrow as pa
 from langbridge.federation.connectors import RemoteSource
 from langbridge.federation.executor.artifact_store import ArtifactStore
 from langbridge.federation.models.plans import StageArtifact, StageDefinition, StageMetrics, StageType
+from langbridge.federation.utils.sql import normalize_sql_dialect
 
 
 @dataclass(slots=True)
@@ -82,6 +83,11 @@ class StageExecutor:
         if stage.stage_type == StageType.LOCAL_COMPUTE:
             if not stage.sql:
                 raise ValueError(f"Local compute stage '{stage.stage_id}' is missing SQL payload.")
+            sql_dialect = normalize_sql_dialect(stage.sql_dialect, default="duckdb")
+            if sql_dialect != "duckdb":
+                raise ValueError(
+                    f"Local compute stage '{stage.stage_id}' targets unsupported dialect '{sql_dialect}'."
+                )
 
             connection = duckdb.connect(database=":memory:")
             try:

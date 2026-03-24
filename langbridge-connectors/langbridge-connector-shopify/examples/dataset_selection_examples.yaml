@@ -1,0 +1,24 @@
+connector:
+  name: shopify
+  type: SHOPIFY
+  package: langbridge-connector-shopify
+  note: Declarative connector package provides manifest-driven runtime execution for built-in Shopify Admin resources.
+
+examples:
+  - name: shopify_customers
+    description: Materialize Shopify customers from a shop-specific Admin API base URL.
+    connector: shopify
+    connector_sync:
+      resource_key: customers
+      sync_mode: INCREMENTAL
+      params:
+        limit: 100
+
+  - name: shopify_locations
+    description: Materialize Shopify locations with the same declarative auth and pagination runtime.
+    connector: shopify
+    connector_sync:
+      resource_key: locations
+      sync_mode: FULL_REFRESH
+      params:
+        limit: 100

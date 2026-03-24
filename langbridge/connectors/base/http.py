@@ -25,6 +25,7 @@ class ApiResourceDefinition:
     resource: ApiResource
     path: str
     response_key: str | None = None
+    request_params: Mapping[str, Any] | None = None
 
 
 class HttpApiConnector(ApiConnector):

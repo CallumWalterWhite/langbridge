@@ -37,6 +37,7 @@ class FederatedPlanner:
         dialect: str,
         workflow: FederationWorkflow,
         source_dialects: dict[str, str],
+        local_dialect: str = "duckdb",
     ) -> PlanningOutput:
         logical_plan, expression = logical_plan_from_sql(
             sql=sql,
@@ -55,6 +56,7 @@ class FederatedPlanner:
             stats_by_table=self._resolve_stats(workflow),
             source_dialects=source_dialects,
             input_dialect=dialect,
+            local_dialect=local_dialect,
         )
         physical_plan = self._physical_planner.build(optimized_plan=optimized)
         return PlanningOutput(logical_plan=logical_plan, physical_plan=physical_plan, sql=sql)
@@ -67,6 +69,7 @@ class FederatedPlanner:
         dialect: str,
         workflow: FederationWorkflow,
         source_dialects: dict[str, str],
+        local_dialect: str = "duckdb",
     ) -> PlanningOutput:
         sql = self._smq_compiler.compile_to_sql(
             query=query,
@@ -90,6 +93,7 @@ class FederatedPlanner:
             stats_by_table=self._resolve_stats(workflow),
             source_dialects=source_dialects,
             input_dialect=dialect,
+            local_dialect=local_dialect,
         )
         physical_plan = self._physical_planner.build(optimized_plan=optimized)
         return PlanningOutput(logical_plan=logical_plan, physical_plan=physical_plan, sql=sql)

@@ -13,8 +13,11 @@ from langbridge.runtime.models import (
 )
 
 _SAAS_CONNECTOR_KINDS = {
+    "asana",
+    "github",
     "google_analytics",
     "hubspot",
+    "jira",
     "salesforce",
     "shopify",
     "stripe",

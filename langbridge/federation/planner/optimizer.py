@@ -12,9 +12,9 @@ from langbridge.federation.models.virtual_dataset import TableStatistics, Virtua
 from langbridge.federation.planner.parser import (
     extract_required_columns,
     predicate_aliases,
-    rewrite_tables_to_stage_sql,
     split_conjunctive_predicates,
 )
+from langbridge.federation.planner.sql_renderer import render_local_stage_sql
 
 
 @dataclass(slots=True)
@@ -22,6 +22,7 @@ class OptimizedPlan:
     logical_plan: LogicalPlan
     source_subplans: list[SourceSubplan]
     local_stage_sql: str
+    local_stage_dialect: str
     join_order: list[str]
     join_strategies: dict[str, JoinStrategy]
     pushdown_full_query: bool
@@ -40,6 +41,7 @@ class FederatedOptimizer:
         stats_by_table: dict[str, TableStatistics],
         source_dialects: dict[str, str],
         input_dialect: str,
+        local_dialect: str,
     ) -> OptimizedPlan:
         aliases = list(logical_plan.tables.keys())
         required_columns, has_unqualified = extract_required_columns(expression, aliases)
@@ -99,6 +101,7 @@ class FederatedOptimizer:
                 logical_plan=logical_plan,
                 source_subplans=source_subplans,
                 local_stage_sql=local_stage_sql,
+                local_stage_dialect=local_dialect,
                 join_order=join_order,
                 join_strategies=join_strategies,
                 pushdown_full_query=True,
@@ -159,12 +162,18 @@ class FederatedOptimizer:
         )
 
         stage_table_map = {alias: f"scan_{alias}" for alias in logical_plan.tables}
-        local_stage_sql = rewrite_tables_to_stage_sql(expression, stage_tables=stage_table_map)
+        local_stage_sql = render_local_stage_sql(
+            expression,
+            stage_tables=stage_table_map,
+            source_dialect=input_dialect,
+            target_dialect=local_dialect,
+        )
 
         return OptimizedPlan(
             logical_plan=logical_plan,
             source_subplans=source_subplans,
             local_stage_sql=local_stage_sql,
+            local_stage_dialect=local_dialect,
             join_order=join_order,
             join_strategies=join_strategies,
             pushdown_full_query=False,

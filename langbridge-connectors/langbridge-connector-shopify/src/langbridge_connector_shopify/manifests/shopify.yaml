@@ -1,0 +1,60 @@
+schema_version: "0.1.0"
+kind: declarative_http_connector
+id: shopify
+display_name: Shopify
+connector_type: SHOPIFY
+connector_family: API
+description: Declarative Shopify Admin connector for sync-oriented dataset materialization.
+base_url: https://example.myshopify.com/admin/api/2026-01
+test_connection_path: /shop.json
+
+auth:
+  strategy: header_token
+  token_field: access_token
+  token_label: Access Token
+  header_name: X-Shopify-Access-Token
+  header_template: "{access_token}"
+
+pagination:
+  strategy: cursor
+  response_items_field: customers
+  limit_param: limit
+  cursor_param: page_info
+  next_cursor_source: link_header
+  link_header_param: page_info
+  default_page_size: 100
+  max_page_size: 250
+
+incremental:
+  strategy: request_param
+  request_param: updated_at_min
+  cursor_field: updated_at
+  cursor_type: iso_datetime
+
+resources:
+  - key: customers
+    label: Customers
+    path: /customers.json
+    primary_key: id
+    supports_incremental: true
+    default_sync_mode: INCREMENTAL
+    response_items_field: customers
+    description: Shopify customer records.
+
+  - key: draft_orders
+    label: Draft Orders
+    path: /draft_orders.json
+    primary_key: id
+    supports_incremental: true
+    default_sync_mode: INCREMENTAL
+    response_items_field: draft_orders
+    description: Shopify draft order records.
+
+  - key: locations
+    label: Locations
+    path: /locations.json
+    primary_key: id
+    supports_incremental: false
+    default_sync_mode: FULL_REFRESH
+    response_items_field: locations
+    description: Shopify location records.

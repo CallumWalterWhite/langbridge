@@ -1,0 +1,75 @@
+schema_version: "0.1.0"
+kind: declarative_http_connector
+id: github
+display_name: GitHub
+connector_type: GITHUB
+connector_family: API
+description: Declarative GitHub REST connector for authenticated-user sync-oriented dataset materialization.
+base_url: https://api.github.com
+test_connection_path: /user
+
+auth:
+  strategy: bearer_token
+  token_field: access_token
+  token_label: Access Token
+  header_name: Authorization
+  header_template: "Bearer {access_token}"
+  static_headers:
+    - header_name: Accept
+      value: application/vnd.github+json
+    - header_name: X-GitHub-Api-Version
+      value: "2022-11-28"
+
+pagination:
+  strategy: cursor
+  response_items_field: ""
+  limit_param: per_page
+  cursor_param: page
+  next_cursor_source: link_header
+  link_header_param: page
+  default_page_size: 100
+  max_page_size: 100
+
+incremental:
+  strategy: request_param
+  request_param: since
+  cursor_field: updated_at
+  cursor_type: iso_datetime
+
+resources:
+  - key: repositories
+    label: Repositories
+    path: /user/repos
+    primary_key: id
+    supports_incremental: false
+    default_sync_mode: FULL_REFRESH
+    request_params:
+      visibility: all
+      affiliation: owner,organization_member,collaborator
+      sort: updated
+      direction: asc
+    description: Repositories visible to the authenticated user.
+
+  - key: issues
+    label: Issues
+    path: /issues
+    primary_key: id
+    supports_incremental: true
+    default_sync_mode: INCREMENTAL
+    request_params:
+      filter: all
+      state: all
+      sort: updated
+      direction: asc
+    description: Issues assigned to or involving the authenticated user.
+
+  - key: notifications
+    label: Notifications
+    path: /notifications
+    primary_key: id
+    supports_incremental: true
+    default_sync_mode: INCREMENTAL
+    request_params:
+      all: "true"
+      participating: "false"
+    description: Notification threads visible to the authenticated user.

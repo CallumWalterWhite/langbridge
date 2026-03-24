@@ -30,6 +30,9 @@ class ConnectorRuntimeType(Enum):
     SHOPIFY = "SHOPIFY"
     STRIPE = "STRIPE"
     HUBSPOT = "HUBSPOT"
+    GITHUB = "GITHUB"
+    JIRA = "JIRA"
+    ASANA = "ASANA"
     GOOGLE_ANALYTICS = "GOOGLE_ANALYTICS"
     SALESFORCE = "SALESFORCE"
 

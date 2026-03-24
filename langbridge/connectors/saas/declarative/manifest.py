@@ -18,6 +18,11 @@ class DeclarativeAuthHeader(_Base):
     description: str | None = None
 
 
+class DeclarativeStaticHeader(_Base):
+    header_name: str
+    value: str
+
+
 class DeclarativeAuthConfig(_Base):
     strategy: str
     token_field: str
@@ -25,6 +30,7 @@ class DeclarativeAuthConfig(_Base):
     header_name: str
     header_template: str
     optional_headers: list[DeclarativeAuthHeader] = Field(default_factory=list)
+    static_headers: list[DeclarativeStaticHeader] = Field(default_factory=list)
 
 
 class DeclarativePaginationConfig(_Base):
@@ -32,8 +38,12 @@ class DeclarativePaginationConfig(_Base):
     response_items_field: str
     limit_param: str
     cursor_param: str
-    response_has_more_field: str
-    next_cursor_field: str
+    response_has_more_field: str | None = None
+    next_cursor_field: str | None = None
+    next_cursor_source: str = "record"
+    response_is_last_field: str | None = None
+    response_total_field: str | None = None
+    link_header_param: str | None = None
     default_page_size: int
     max_page_size: int
 
@@ -53,6 +63,8 @@ class DeclarativeConnectorResource(_Base):
     supports_incremental: bool = False
     default_sync_mode: str
     description: str | None = None
+    response_items_field: str | None = None
+    request_params: dict[str, object] = Field(default_factory=dict)
 
 
 class DeclarativeConnectorManifest(_Base):

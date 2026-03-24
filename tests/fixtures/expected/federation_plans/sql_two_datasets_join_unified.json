@@ -1,0 +1,103 @@
+{
+  "sql": "SELECT * FROM orders AS o JOIN campaigns AS c ON o.campaign_id = c.campaign_id WHERE c.campaign_name = 'Summer Sale'",
+  "logical_plan": {
+    "query_type": "sql",
+    "from_alias": "o",
+    "tables": {
+      "c": {
+        "table_key": "Marketing__campaigns",
+        "source_id": "src_marketing",
+        "schema_name": "marketing",
+        "table": "campaigns",
+        "catalog": null
+      },
+      "o": {
+        "table_key": "Commerce__orders",
+        "source_id": "src_commerce",
+        "schema_name": "analytics",
+        "table": "orders",
+        "catalog": null
+      }
+    },
+    "joins": [
+      {
+        "left_alias": "o",
+        "right_alias": "c",
+        "join_type": "inner",
+        "on_sql": "o.campaign_id = c.campaign_id"
+      }
+    ],
+    "where_sql": "c.campaign_name = 'Summer Sale'",
+    "group_by_sql": [],
+    "order_by_sql": [],
+    "limit": null,
+    "offset": null,
+    "has_cte": false
+  },
+  "physical_plan": {
+    "result_stage_id": "local_compute_final",
+    "join_order": [
+      "c",
+      "o"
+    ],
+    "join_strategies": {
+      "o->c": "broadcast"
+    },
+    "stages": [
+      {
+        "stage_id": "scan_o",
+        "stage_type": "remote_scan",
+        "dependencies": [],
+        "source_id": "src_commerce",
+        "sql": null,
+        "subplan": {
+          "stage_id": "scan_o",
+          "source_id": "src_commerce",
+          "alias": "o",
+          "table_key": "Commerce__orders",
+          "sql": "SELECT * FROM analytics.orders AS o",
+          "projected_columns": [
+            "*",
+            "campaign_id"
+          ],
+          "pushed_filters": [],
+          "pushed_limit": null
+        }
+      },
+      {
+        "stage_id": "scan_c",
+        "stage_type": "remote_scan",
+        "dependencies": [],
+        "source_id": "src_marketing",
+        "sql": null,
+        "subplan": {
+          "stage_id": "scan_c",
+          "source_id": "src_marketing",
+          "alias": "c",
+          "table_key": "Marketing__campaigns",
+          "sql": "SELECT * FROM marketing.campaigns AS c WHERE c.campaign_name = 'Summer Sale'",
+          "projected_columns": [
+            "*",
+            "campaign_id",
+            "campaign_name"
+          ],
+          "pushed_filters": [
+            "c.campaign_name = 'Summer Sale'"
+          ],
+          "pushed_limit": null
+        }
+      },
+      {
+        "stage_id": "local_compute_final",
+        "stage_type": "local_compute",
+        "dependencies": [
+          "scan_o",
+          "scan_c"
+        ],
+        "source_id": null,
+        "sql": "SELECT * FROM scan_o AS o JOIN scan_c AS c ON o.campaign_id = c.campaign_id WHERE c.campaign_name = 'Summer Sale'",
+        "subplan": null
+      }
+    ]
+  }
+}

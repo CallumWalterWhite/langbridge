@@ -1,0 +1,24 @@
+connector:
+  name: github
+  type: GITHUB
+  package: langbridge-connector-github
+  note: Declarative connector package provides manifest-driven runtime execution for authenticated GitHub REST resources.
+
+examples:
+  - name: github_issues
+    description: Materialize GitHub issues assigned to or involving the authenticated user.
+    connector: github
+    connector_sync:
+      resource_key: issues
+      sync_mode: INCREMENTAL
+      params:
+        per_page: 100
+
+  - name: github_repositories
+    description: Materialize repositories visible to the authenticated user.
+    connector: github
+    connector_sync:
+      resource_key: repositories
+      sync_mode: FULL_REFRESH
+      params:
+        per_page: 100

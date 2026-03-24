@@ -1,0 +1,24 @@
+connector:
+  name: hubspot
+  type: HUBSPOT
+  package: langbridge-connector-hubspot
+  note: Declarative connector package provides manifest-driven runtime execution for built-in HubSpot CRM resources.
+
+examples:
+  - name: hubspot_contacts
+    description: Materialize HubSpot contacts through the shared declarative runtime.
+    connector: hubspot
+    connector_sync:
+      resource_key: contacts
+      sync_mode: INCREMENTAL
+      params:
+        limit: 100
+
+  - name: hubspot_deals
+    description: Materialize HubSpot deals with the same manifest-defined pagination and auth contract.
+    connector: hubspot
+    connector_sync:
+      resource_key: deals
+      sync_mode: INCREMENTAL
+      params:
+        limit: 100

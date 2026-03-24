@@ -74,6 +74,7 @@ class StageDefinition(BaseModel):
     dependencies: list[str] = Field(default_factory=list)
     source_id: str | None = None
     sql: str | None = None
+    sql_dialect: str | None = None
     subplan: SourceSubplan | None = None
     retry_limit: int = 2
     metadata: dict[str, Any] = Field(default_factory=dict)
