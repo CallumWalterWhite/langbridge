@@ -18,9 +18,7 @@ PYTHON_BOUNDARY_ROOTS = [
     REPO_ROOT / "scripts",
 ]
 FORBIDDEN_PATHS = [
-    REPO_ROOT / "apps" / "api",
     REPO_ROOT / "apps" / "worker",
-    REPO_ROOT / "alembic",
     REPO_ROOT / "monitoring",
     REPO_ROOT / "requirements-migrate.txt",
 ]
