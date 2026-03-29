@@ -14,6 +14,8 @@ class SecretProvider(Protocol):
 
 class EnvSecretProvider:
     def resolve(self, reference: SecretReference) -> str:
+        import dotenv
+        dotenv.load_dotenv()  # Load .env file if present
         raw = os.environ.get(reference.identifier)
         if raw is None:
             raise ValueError(f"Environment secret '{reference.identifier}' was not found.")

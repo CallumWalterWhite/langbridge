@@ -14,7 +14,7 @@ from sqlalchemy import (
     JSON,
     String,
     Text,
-    UUID,
+    Uuid as UUID,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship, synonym
 

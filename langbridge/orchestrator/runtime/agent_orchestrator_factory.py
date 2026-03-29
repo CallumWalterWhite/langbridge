@@ -40,7 +40,7 @@ from langbridge.orchestrator.tools.sql_analyst.interfaces import (
     AnalyticalMetric,
     QueryResult,
 )
-from langbridge.config import settings
+from langbridge.runtime.settings import runtime_settings
 from langbridge.federation.models import FederationWorkflow, VirtualDataset
 from langbridge.semantic.loader import load_semantic_model
 from langbridge.semantic.model import Dimension, Measure, Metric, SemanticModel, Table
@@ -490,10 +490,10 @@ class AgentOrchestratorFactory:
                 tables=table_bindings,
                 relationships=[],
             ),
-            broadcast_threshold_bytes=settings.FEDERATION_BROADCAST_THRESHOLD_BYTES,
-            partition_count=settings.FEDERATION_PARTITION_COUNT,
-            max_stage_retries=settings.FEDERATION_STAGE_MAX_RETRIES,
-            stage_parallelism=settings.FEDERATION_STAGE_PARALLELISM,
+            broadcast_threshold_bytes=runtime_settings.FEDERATION_BROADCAST_THRESHOLD_BYTES,
+            partition_count=runtime_settings.FEDERATION_PARTITION_COUNT,
+            max_stage_retries=runtime_settings.FEDERATION_STAGE_MAX_RETRIES,
+            stage_parallelism=runtime_settings.FEDERATION_STAGE_PARALLELISM,
         )
         return workflow, self._choose_workflow_dialect(dialects)
 
@@ -817,6 +817,8 @@ class AgentOrchestratorFactory:
             logger=self._logger,
             event_emitter=event_emitter,
         )
+        
+        print(definition.execution.response_mode)
 
         return SupervisorOrchestrator(
             llm=llm_provider,
@@ -828,6 +830,7 @@ class AgentOrchestratorFactory:
             web_search_agent=web_search_agent,
             logger=self._logger,
             event_emitter=event_emitter,
+            response_mode=definition.execution.response_mode,
         )
 
     def _build_reasoning_agent(

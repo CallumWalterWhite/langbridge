@@ -98,7 +98,26 @@ def runtime_storage_dirs(base_dir: Path) -> Iterator[None]:
         object.__setattr__(runtime_settings, "FEDERATION_ARTIFACT_DIR", original_federation_dir)
 
 
-def write_sync_runtime_config(directory: Path, *, api_base_url: str) -> Path:
+def write_sync_runtime_config(
+    directory: Path,
+    *,
+    api_base_url: str,
+    declared_synced_datasets: list[dict[str, str]] | None = None,
+) -> Path:
+    datasets_block = ""
+    if declared_synced_datasets:
+        dataset_lines = ["", "datasets:"]
+        for item in declared_synced_datasets:
+            dataset_lines.extend(
+                [
+                    f"  - name: {item['name']}",
+                    "    connector: billing_demo",
+                    "    materialization_mode: synced",
+                    "    source:",
+                    f"      resource: {item['resource']}",
+                ]
+            )
+        datasets_block = "\n".join(dataset_lines)
     config_path = directory / "langbridge_sync.yml"
     config_path.write_text(
         f"""
@@ -122,6 +141,7 @@ connectors:
     connection:
       api_key: sk_test_demo
       api_base_url: {api_base_url}
+{datasets_block}
 """.strip(),
         encoding="utf-8",
     )

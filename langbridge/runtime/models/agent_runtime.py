@@ -9,6 +9,10 @@ from pydantic import Field
 
 from langbridge.runtime.models.base import RuntimeModel
 from langbridge.runtime.models.llm import LLMConnectionSecret
+from langbridge.runtime.models.metadata import (
+    LifecycleState, 
+    ManagementMode
+)
 
 
 class RuntimeAgentDefinition(RuntimeModel):
@@ -20,6 +24,8 @@ class RuntimeAgentDefinition(RuntimeModel):
     is_active: bool = True
     created_at: datetime | None = None
     updated_at: datetime | None = None
+    management_mode: ManagementMode
+    lifecycle_state: LifecycleState
 
 
 class RuntimeThreadState(str, enum.Enum):
