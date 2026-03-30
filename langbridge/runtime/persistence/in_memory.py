@@ -18,6 +18,7 @@ from langbridge.runtime.models import (
     RuntimeThreadMessage,
     SemanticModelMetadata,
 )
+from langbridge.runtime.models.metadata import DatasetMaterializationMode, DatasetType
 from langbridge.runtime.security import SecretProviderRegistry
 
 
@@ -94,7 +95,7 @@ class _InMemoryDatasetRepository:
             if str(tag).strip()
         }
         normalized_types = {
-            str(dataset_type).strip().upper()
+            str(getattr(dataset_type, "value", dataset_type)).strip().upper()
             for dataset_type in (dataset_types or [])
             if str(dataset_type).strip()
         }
@@ -114,7 +115,7 @@ class _InMemoryDatasetRepository:
                 dataset_tags = {str(tag).strip().lower() for tag in (dataset.tags_json or []) if str(tag).strip()}
                 if not normalized_tags.issubset(dataset_tags):
                     continue
-            if normalized_types and str(dataset.dataset_type or "").upper() not in normalized_types:
+            if normalized_types and dataset.dataset_type_value not in normalized_types:
                 continue
             items.append(dataset)
 
@@ -139,11 +140,11 @@ class _InMemoryDatasetRepository:
                 continue
             if dataset.connection_id != connection_id:
                 continue
-            if str(dataset.dataset_type or "").upper() != "FILE":
+            if dataset.dataset_type != DatasetType.FILE:
                 continue
-            mode = str(dataset.materialization_mode_value or "").strip().lower()
+            mode = dataset.materialization_mode
             file_config = dict(dataset.file_config_json or {})
-            if mode != "synced" and not bool(file_config.get("managed_dataset")):
+            if mode != DatasetMaterializationMode.SYNCED and not bool(file_config.get("managed_dataset")):
                 continue
             if str(dataset.table_name or "").strip().lower() == normalized_table:
                 return dataset
@@ -158,7 +159,7 @@ class _InMemoryDatasetRepository:
         limit: int = 500,
     ) -> list[DatasetMetadata]:
         normalized_types = {
-            str(dataset_type).strip().upper()
+            str(getattr(dataset_type, "value", dataset_type)).strip().upper()
             for dataset_type in (dataset_types or [])
             if str(dataset_type).strip()
         }
@@ -169,7 +170,7 @@ class _InMemoryDatasetRepository:
             and dataset.connection_id == connection_id
             and (
                 not normalized_types
-                or str(dataset.dataset_type or "").upper() in normalized_types
+                or dataset.dataset_type_value in normalized_types
             )
         ]
         items.sort(

@@ -20,6 +20,7 @@ from langbridge.runtime.models import (
     UnifiedSemanticSourceModelRequest,
     UnifiedSemanticQueryResponse,
 )
+from langbridge.runtime.models.metadata import DatasetType
 from langbridge.connectors.base import (
     SqlConnector,
     SqlConnectorFactory,
@@ -520,8 +521,8 @@ class SemanticQueryExecutionService:
                     raise ExecutionValidationError(
                         f"Dataset '{dataset_id}' referenced by unified semantic dataset '{dataset_key}' was not found."
                     )
-                dataset_type = str(dataset.dataset_type or "").upper()
-                if dataset_type == "FILE":
+                dataset_type = dataset.dataset_type
+                if dataset_type == DatasetType.FILE:
                     table_connector_map[materialized_dataset_key] = synthetic_file_connector_id(dataset.id)
                 elif dataset.connection_id is not None:
                     table_connector_map[materialized_dataset_key] = dataset.connection_id

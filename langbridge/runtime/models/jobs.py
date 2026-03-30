@@ -4,14 +4,20 @@ import uuid
 from enum import Enum
 from typing import Any, Literal
 
-from pydantic import Field, model_validator
+from pydantic import Field, field_validator, model_validator
 
 from langbridge.runtime.models.base import RuntimeRequestModel
+from langbridge.runtime.models.metadata import (
+    DatasetSourceKind,
+    DatasetStorageKind,
+    _normalize_enum_value,
+)
 from langbridge.runtime.models.semantic import (
     UnifiedSemanticMetricRequest,
     UnifiedSemanticRelationshipRequest,
     UnifiedSemanticSourceModelRequest,
 )
+from langbridge.runtime.models.state import ConnectorSyncMode
 
 
 class JobType(str, Enum):
@@ -29,10 +35,6 @@ class JobType(str, Enum):
 class SqlWorkbenchMode(str, Enum):
     dataset = "dataset"
     direct_sql = "direct_sql"
-
-
-_CONNECTOR_SYNC_MODES = {"INCREMENTAL", "FULL_REFRESH", "WEBHOOK_ASSISTED"}
-
 
 def _actor_id_field() -> Any:
     return Field()
@@ -70,8 +72,18 @@ class SqlSelectedDataset(RuntimeRequestModel):
     dataset_name: str | None = Field(default=None, max_length=255)
     canonical_reference: str | None = Field(default=None, max_length=512)
     connector_id: uuid.UUID | None = None
-    source_kind: str | None = Field(default=None, max_length=32)
-    storage_kind: str | None = Field(default=None, max_length=32)
+    source_kind: DatasetSourceKind | None = None
+    storage_kind: DatasetStorageKind | None = None
+
+    @field_validator("source_kind", mode="before")
+    @classmethod
+    def _validate_source_kind(cls, value: Any) -> DatasetSourceKind | None:
+        return _normalize_enum_value(DatasetSourceKind, value, case="lower")
+
+    @field_validator("storage_kind", mode="before")
+    @classmethod
+    def _validate_storage_kind(cls, value: Any) -> DatasetStorageKind | None:
+        return _normalize_enum_value(DatasetStorageKind, value, case="lower")
 
     @model_validator(mode="after")
     def _hydrate_alias_fields(self) -> "SqlSelectedDataset":
@@ -296,21 +308,28 @@ class CreateConnectorSyncJobRequest(RuntimeJobRequestModel):
     actor_id: uuid.UUID = _actor_id_field()
     connection_id: uuid.UUID
     resource_names: list[str] = Field(default_factory=list)
-    sync_mode: str = "INCREMENTAL"
+    sync_mode: ConnectorSyncMode = ConnectorSyncMode.INCREMENTAL
     force_full_refresh: bool = False
     correlation_id: str | None = None
     operation: Literal["connector_sync"] = "connector_sync"
+
+    @field_validator("sync_mode", mode="before")
+    @classmethod
+    def _normalize_sync_mode(cls, value: Any) -> ConnectorSyncMode:
+        normalized = str(getattr(value, "value", value) or ConnectorSyncMode.INCREMENTAL.value).strip().upper()
+        return ConnectorSyncMode(normalized)
 
     @model_validator(mode="after")
     def _validate_resource_names(self) -> "CreateConnectorSyncJobRequest":
         normalized = [str(value or "").strip() for value in self.resource_names if str(value or "").strip()]
         if not normalized:
             raise ValueError("Connector sync requires at least one resource.")
-        sync_mode = str(getattr(self.sync_mode, "value", self.sync_mode) or "INCREMENTAL").strip().upper()
-        if sync_mode not in _CONNECTOR_SYNC_MODES:
-            raise ValueError(f"Unsupported connector sync mode '{sync_mode}'.")
         self.resource_names = normalized
-        self.sync_mode = sync_mode
+        self.sync_mode = ConnectorSyncMode(
+            str(getattr(self.sync_mode, "value", self.sync_mode) or ConnectorSyncMode.INCREMENTAL.value)
+            .strip()
+            .upper()
+        )
         return self
 
 

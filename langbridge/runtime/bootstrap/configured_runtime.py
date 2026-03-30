@@ -22,7 +22,7 @@ from langbridge.runtime.config.models import (
     LocalRuntimeSemanticModelConfig,
     ResolvedLocalRuntimeMetadataStoreConfig,
 )
-from langbridge.runtime.models.metadata import LifecycleState, ManagementMode
+from langbridge.runtime.models.metadata import DatasetStatus, DatasetType, LifecycleState, ManagementMode
 from langbridge.runtime.ports import (
     ConnectorSyncStateStore, 
     DatasetCatalogStore, 
@@ -83,6 +83,7 @@ from langbridge.runtime.models import (
     SemanticModelMetadata,
     SecretReference,
 )
+from langbridge.runtime.models.state import ConnectorSyncMode
 from langbridge.runtime.providers import (
     MemoryConnectorProvider,
     MemorySemanticModelProvider,
@@ -212,11 +213,13 @@ def _relation_parts(relation_name: str) -> tuple[str | None, str | None, str]:
     return parts[0], parts[1], parts[2]
 
 
-def _connector_runtime_type(connector_type: str) -> str:
-    return str(connector_type or "").strip().upper()
+def _connector_runtime_type(connector_type: str | ConnectorRuntimeType) -> ConnectorRuntimeType:
+    if isinstance(connector_type, ConnectorRuntimeType):
+        return connector_type
+    return ConnectorRuntimeType(str(connector_type or "").strip().upper())
 
 
-def _connector_dialect(connector_type: str) -> str:
+def _connector_dialect(connector_type: str | ConnectorRuntimeType) -> str:
     normalized = _connector_runtime_type(connector_type)
     dialect_map = {
         "POSTGRES": "postgres",
@@ -229,7 +232,7 @@ def _connector_dialect(connector_type: str) -> str:
         "ORACLE": "oracle",
         "SQLITE": "sqlite",
     }
-    return dialect_map.get(normalized, normalized.lower() or "tsql")
+    return dialect_map.get(normalized.value, normalized.value.lower() or "tsql")
 
 
 def _merge_dataset_tags(*, existing: list[str], required: list[str]) -> list[str]:
@@ -1138,7 +1141,7 @@ class ConfiguredLocalRuntimeHost(RuntimeHost):
         return normalized
 
     def _get_connector_plugin(self, connector: ConnectorMetadata):
-        return self._resolve_connector_plugin_for_type(connector.connector_type)
+        return self._resolve_connector_plugin_for_type(connector.connector_type_value)
 
     @staticmethod
     def _resolve_connector_plugin_for_type(connector_type: str | None):
@@ -1153,7 +1156,7 @@ class ConfiguredLocalRuntimeHost(RuntimeHost):
     def _connector_capabilities(self, connector: ConnectorMetadata) -> ConnectorCapabilities:
         return resolve_connector_capabilities(
             configured_capabilities=connector.capabilities_json,
-            connector_type=connector.connector_type,
+            connector_type=connector.connector_type_value,
             plugin=self._get_connector_plugin(connector),
         )
 
@@ -1167,10 +1170,9 @@ class ConfiguredLocalRuntimeHost(RuntimeHost):
         )
 
     def _resolve_connector_runtime_type(self, connector: ConnectorMetadata) -> ConnectorRuntimeType:
-        raw_type = str(connector.connector_type or "").strip().upper()
-        if not raw_type:
+        if connector.connector_type is None:
             raise ValueError(f"Connector '{connector.name}' does not define a connector_type.")
-        return ConnectorRuntimeType(raw_type)
+        return connector.connector_type
 
     def _build_api_connector(self, connector: ConnectorMetadata):
         if not self._connector_supports_sync(connector):
@@ -1197,11 +1199,14 @@ class ConfiguredLocalRuntimeHost(RuntimeHost):
         )
 
     @staticmethod
-    def _normalize_sync_mode(value: str | None) -> str:
-        normalized = str(value or "INCREMENTAL").strip().upper()
-        if normalized not in {"INCREMENTAL", "FULL_REFRESH"}:
+    def _normalize_sync_mode(value: str | ConnectorSyncMode | None) -> ConnectorSyncMode:
+        normalized = str(getattr(value, "value", value) or ConnectorSyncMode.INCREMENTAL.value).strip().upper()
+        if normalized not in {
+            ConnectorSyncMode.INCREMENTAL.value,
+            ConnectorSyncMode.FULL_REFRESH.value,
+        }:
             raise ValueError("sync_mode must be either INCREMENTAL or FULL_REFRESH.")
-        return normalized
+        return ConnectorSyncMode(normalized)
 
     @staticmethod
     def _datasets_for_resources(
@@ -1716,17 +1721,17 @@ class ConfiguredLocalRuntimeHostFactory:
             connection_payload = dict(connector.connection or {})
             connector_type = _connector_runtime_type(connector.type)
             plugin = ConfiguredLocalRuntimeHostFactory._resolve_connector_plugin_for_type(
-                connector_type
+                connector_type.value
             )
             if "path" in connection_payload:
                 resolved_path = str(connection_payload.get("path") or "").strip() or None
                 if resolved_path:
-                    if connector_type == "SQLITE":
+                    if connector_type == ConnectorRuntimeType.SQLITE:
                         connection_payload["location"] = resolved_path
                         connection_payload.pop("path", None)
                     else:
                         connection_payload["path"] = resolved_path
-            if "location" in connection_payload and connector_type == "SQLITE":
+            if "location" in connection_payload and connector_type == ConnectorRuntimeType.SQLITE:
                 normalized_location = str(connection_payload.get("location") or "").strip()
                 if normalized_location:
                     connection_payload["location"] = normalized_location
@@ -1735,7 +1740,7 @@ class ConfiguredLocalRuntimeHostFactory:
             connector_id = _stable_uuid("connector", f"{config_path}:{connector.name}")
             capabilities = resolve_connector_capabilities(
                 configured_capabilities=connector.capabilities,
-                connector_type=connector_type,
+                connector_type=connector_type.value,
                 plugin=plugin,
             )
             connectors[connector.name] = ConnectorMetadata(
@@ -1744,9 +1749,9 @@ class ConfiguredLocalRuntimeHostFactory:
                 description=connector.description,
                 connector_type=connector_type,
                 connector_family=(
-                    plugin.connector_family.value.lower()
+                    plugin.connector_family
                     if plugin is not None
-                    else ("file" if connector_type == "FILE" else None)
+                    else None
                 ),
                 workspace_id=context.workspace_id,
                 config={"config": connection_payload},
@@ -1759,7 +1764,7 @@ class ConfiguredLocalRuntimeHostFactory:
                 ),
                 supported_resources=list(plugin.supported_resources) if plugin is not None else [],
                 sync_strategy=(
-                    plugin.sync_strategy.value
+                    plugin.sync_strategy
                     if plugin is not None and plugin.sync_strategy is not None
                     else None
                 ),
@@ -1790,7 +1795,6 @@ class ConfiguredLocalRuntimeHostFactory:
             )
             materialization_mode = resolve_dataset_materialization_mode(
                 explicit_materialization_mode=dataset.materialization_mode,
-                file_config=None,
             )
 
             source_table = str(dataset.source.table or "").strip()
@@ -1811,7 +1815,7 @@ class ConfiguredLocalRuntimeHostFactory:
                         f"but connector '{connector.name}' does not support synced datasets."
                     )
                 plugin = ConfiguredLocalRuntimeHostFactory._resolve_connector_plugin_for_type(
-                    connector.connector_type
+                    connector.connector_type_value
                 )
                 if plugin is None or plugin.api_connector_class is None:
                     raise ValueError(
@@ -1853,10 +1857,10 @@ class ConfiguredLocalRuntimeHostFactory:
                 schema_name = None
                 table_name = _dataset_sql_alias(dataset.name)
                 relation_name = table_name
-                dataset_type = "FILE"
+                dataset_type = DatasetType.FILE
                 sql_text = None
-                storage_kind = "parquet"
-                source_kind = "api"
+                storage_kind = DatasetStorageKind.PARQUET
+                source_kind = DatasetSourceKind.API
                 dialect = "duckdb"
                 storage_uri = None
                 file_config = {
@@ -1864,8 +1868,8 @@ class ConfiguredLocalRuntimeHostFactory:
                         "managed_dataset": True,
                         "connector_sync": {
                             "connector_id": str(connector.id),
-                            "connector_type": connector.connector_type,
-                            "connector_family": connector.connector_family,
+                            "connector_type": connector.connector_type_value,
+                            "connector_family": connector.connector_family_value,
                             "resource_name": sync_resource_name,
                             "root_resource_name": sync_resource_name,
                             "parent_resource_name": None,
@@ -1874,10 +1878,10 @@ class ConfiguredLocalRuntimeHostFactory:
             elif source_table:
                 catalog_name, schema_name, table_name = _relation_parts(source_table)
                 relation_name = source_table
-                dataset_type = "TABLE"
+                dataset_type = DatasetType.TABLE
                 sql_text = None
-                storage_kind = "table"
-                source_kind = "database"
+                storage_kind = DatasetStorageKind.TABLE
+                source_kind = DatasetSourceKind.DATABASE
                 dialect = _connector_dialect(connector.connector_type or "")
                 storage_uri = None
                 file_config = None
@@ -1887,15 +1891,15 @@ class ConfiguredLocalRuntimeHostFactory:
                 table_name = _dataset_sql_alias(dataset.name)
                 relation_name = table_name
                 if source_sql:
-                    dataset_type = "SQL"
+                    dataset_type = DatasetType.SQL
                     sql_text = source_sql
-                    storage_kind = "view"
-                    source_kind = "database"
+                    storage_kind = DatasetStorageKind.VIEW
+                    source_kind = DatasetSourceKind.DATABASE
                     dialect = _connector_dialect(connector.connector_type or "")
                     storage_uri = None
                     file_config = None
                 else:
-                    dataset_type = "FILE"
+                    dataset_type = DatasetType.FILE
                     sql_text = None
                     storage_uri = source_storage_uri
                     if not storage_uri:
@@ -1913,8 +1917,8 @@ class ConfiguredLocalRuntimeHostFactory:
                         raise ValueError(
                             f"Dataset '{dataset.name}' must declare a supported file format (csv or parquet)."
                         )
-                    source_kind = "file"
-                    storage_kind = file_format
+                    source_kind = DatasetSourceKind.FILE
+                    storage_kind = DatasetStorageKind(file_format)
                     dialect = "duckdb"
                     file_config = {
                         "format": file_format,
@@ -1926,8 +1930,6 @@ class ConfiguredLocalRuntimeHostFactory:
                     if dataset.source.quote is not None:
                         file_config["quote"] = dataset.source.quote
 
-            source_kind_enum = DatasetSourceKind(source_kind)
-            storage_kind_enum = DatasetStorageKind(storage_kind)
             relation_identity = build_dataset_relation_identity(
                 dataset_id=dataset_id,
                 connector_id=connector.id,
@@ -1936,12 +1938,12 @@ class ConfiguredLocalRuntimeHostFactory:
                 schema_name=schema_name,
                 table_name=table_name,
                 storage_uri=storage_uri,
-                source_kind=source_kind_enum,
-                storage_kind=storage_kind_enum,
+                source_kind=source_kind,
+                storage_kind=storage_kind,
             )
             execution_capabilities = build_dataset_execution_capabilities(
-                source_kind=source_kind_enum,
-                storage_kind=storage_kind_enum,
+                source_kind=source_kind,
+                storage_kind=storage_kind,
             )
 
             policy = dataset.policy or LocalRuntimeDatasetPolicyConfig()
@@ -1968,7 +1970,7 @@ class ConfiguredLocalRuntimeHostFactory:
                         [
                             "managed",
                             "api-connector",
-                            str(connector.connector_type or "").strip().lower(),
+                            connector.connector_type_value.lower(),
                             f"resource:{sync_resource_name.strip().lower()}",
                         ]
                         if materialization_mode == DatasetMaterializationMode.SYNCED
@@ -1976,9 +1978,9 @@ class ConfiguredLocalRuntimeHostFactory:
                     ),
                 ),
                 dataset_type=dataset_type,
-                materialization_mode=materialization_mode.value,
+                materialization_mode=materialization_mode,
                 source_kind=source_kind,
-                connector_kind=(connector.connector_type or "").lower() or None,
+                connector_kind=(connector.connector_type_value.lower() if connector.connector_type is not None else None),
                 storage_kind=storage_kind,
                 dialect=dialect,
                 catalog_name=catalog_name,
@@ -1992,9 +1994,9 @@ class ConfiguredLocalRuntimeHostFactory:
                 federated_plan=None,
                 file_config=file_config,
                 status=(
-                    "pending_sync"
+                    DatasetStatus.PENDING_SYNC
                     if materialization_mode == DatasetMaterializationMode.SYNCED
-                    else "published"
+                    else DatasetStatus.PUBLISHED
                 ),
                 revision_id=None,
                 row_count_estimate=None,
@@ -2033,9 +2035,9 @@ class ConfiguredLocalRuntimeHostFactory:
     ) -> ConnectorCapabilities:
         return resolve_connector_capabilities(
             configured_capabilities=connector.capabilities_json,
-            connector_type=connector.connector_type,
+            connector_type=connector.connector_type_value,
             plugin=ConfiguredLocalRuntimeHostFactory._resolve_connector_plugin_for_type(
-                connector.connector_type
+                connector.connector_type_value
             ),
         )
 
@@ -2715,6 +2717,7 @@ class ConfiguredLocalRuntimeHostFactory:
             lineage_edge_repository=lineage_edge_repository,
             federated_query_tool=federated_query_tool,
             dataset_provider=dataset_provider,
+            connector_provider=connector_provider,
         )
         sql_query_service = SqlQueryService(
             sql_job_result_artifact_store=None,

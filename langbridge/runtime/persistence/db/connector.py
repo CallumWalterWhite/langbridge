@@ -21,6 +21,8 @@ class Connector(Base):
     sync_strategy = Column(String(50), nullable=True)
     capabilities_json = Column(JSON, nullable=True)
     is_managed = Column(Boolean, default=False, nullable=False)
+    created_by_actor_id = Column(UUID(as_uuid=True), nullable=True, index=True)
+    updated_by_actor_id = Column(UUID(as_uuid=True), nullable=True, index=True)
     management_mode = Column(String(50), nullable=False)
     lifecycle_state = Column(String(50), nullable=False)
 

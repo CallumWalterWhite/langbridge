@@ -10,7 +10,7 @@ import {
 } from "./components/AuthScreens";
 import { useRuntimeAuth } from "./hooks/useRuntimeAuth";
 import { AgentsPage } from "./pages/AgentsPage";
-import { BiPage } from "./pages/BiPage";
+import { DashBoardBuilderPage } from "./pages/DashBoardBuilderPage";
 import { ChatIndexPage } from "./pages/ChatIndexPage";
 import { ChatPage } from "./pages/ChatPage";
 import { ConnectorsPage } from "./pages/ConnectorsPage";
@@ -18,6 +18,7 @@ import { DatasetsPage } from "./pages/DatasetsPage";
 import { OverviewPage } from "./pages/OverviewPage";
 import { SemanticModelsPage } from "./pages/SemanticModelsPage";
 import { SettingsPage } from "./pages/SettingsPage";
+import { SettingsUsersPage } from "./pages/SettingsUsersPage";
 import { SqlPage } from "./pages/SqlPage";
 
 function RuntimeRoutes({ authStatus, session, onLogout }) {
@@ -36,10 +37,14 @@ function RuntimeRoutes({ authStatus, session, onLogout }) {
         <Route path="/agents/:id" element={<AgentsPage />} />
         <Route path="/chat" element={<ChatIndexPage />} />
         <Route path="/chat/:threadId" element={<ChatPage />} />
-        <Route path="/bi" element={<BiPage />} />
+        <Route path="/dashboards" element={<DashBoardBuilderPage />} />
         <Route
           path="/settings"
           element={<SettingsPage authStatus={authStatus} session={session} />}
+        />
+        <Route
+          path="/settings/users"
+          element={<SettingsUsersPage authStatus={authStatus} session={session} />}
         />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>

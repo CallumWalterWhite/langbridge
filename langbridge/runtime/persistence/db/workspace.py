@@ -56,7 +56,9 @@ class RuntimeActor(Base):
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     workspace_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("workspaces.id"), nullable=False, index=True)
     subject: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
+    username: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
     actor_type: Mapped[str] = mapped_column(String(64), nullable=False, default="human")
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="active")
     email: Mapped[str | None] = mapped_column(String(320), nullable=True, index=True)
     display_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     roles_json: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
@@ -74,6 +76,7 @@ class RuntimeActor(Base):
 
     __table_args__ = (
         UniqueConstraint("workspace_id", "subject", name="uq_runtime_actors_workspace_subject"),
+        UniqueConstraint("workspace_id", "username", name="uq_runtime_actors_workspace_username"),
     )
 
 

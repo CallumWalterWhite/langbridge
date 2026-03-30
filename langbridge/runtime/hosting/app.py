@@ -27,6 +27,7 @@ from langbridge.runtime.bootstrap import (
     ConfiguredLocalRuntimeHost,
     build_configured_local_runtime,
 )
+from langbridge.runtime.application.errors import ApplicationError
 from langbridge.runtime.models.jobs import (
     CreateDatasetPreviewJobRequest,
     CreateSqlJobRequest,
@@ -37,6 +38,11 @@ from langbridge.runtime.services.runtime_host import RuntimeHost
 from langbridge.runtime.hosting.api_models import (
     RuntimeAgentAskRequest,
     RuntimeAgentAskResponse,
+    RuntimeActorCreateRequest,
+    RuntimeActorListResponse,
+    RuntimeActorResetPasswordRequest,
+    RuntimeActorSummary,
+    RuntimeActorUpdateRequest,
     RuntimeAuthBootstrapRequest,
     RuntimeAuthLoginRequest,
     RuntimeConnectorCreateRequest,
@@ -275,6 +281,80 @@ def create_runtime_api_app(
             "user": _serialize_runtime_principal_user(principal),
         }
 
+    @app.get("/api/runtime/v1/actors", response_model=RuntimeActorListResponse)
+    async def list_runtime_actors(request: Request) -> RuntimeActorListResponse:
+        principal = await _require_runtime_admin_principal(request)
+        _ = principal
+        local_auth = _require_local_auth_manager(auth_resolver)
+        items = [RuntimeActorSummary.model_validate(_serialize_runtime_actor(actor)) for actor in await local_auth.list_actors()]
+        return RuntimeActorListResponse(items=items, total=len(items))
+
+    @app.post("/api/runtime/v1/actors", status_code=201, response_model=RuntimeActorSummary)
+    async def create_runtime_actor(
+        request: Request,
+        body: RuntimeActorCreateRequest,
+    ) -> RuntimeActorSummary:
+        principal = await _require_runtime_admin_principal(request)
+        _ = principal
+        local_auth = _require_local_auth_manager(auth_resolver)
+        try:
+            actor = await local_auth.create_actor(
+                username=body.username,
+                email=body.email,
+                display_name=body.display_name,
+                actor_type=body.actor_type,
+                password=body.password,
+                roles=list(body.roles or []),
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=_runtime_mutation_status_code(str(exc)), detail=str(exc)) from exc
+        return RuntimeActorSummary.model_validate(_serialize_runtime_actor(actor))
+
+    @app.patch("/api/runtime/v1/actors/{actor_id}", response_model=RuntimeActorSummary)
+    async def update_runtime_actor(
+        request: Request,
+        actor_id: uuid.UUID,
+        body: RuntimeActorUpdateRequest,
+    ) -> RuntimeActorSummary:
+        principal = await _require_runtime_admin_principal(request)
+        _ = principal
+        local_auth = _require_local_auth_manager(auth_resolver)
+        try:
+            actor = await local_auth.update_actor(
+                actor_id=actor_id,
+                email=body.email,
+                display_name=body.display_name,
+                actor_type=body.actor_type,
+                status=body.status,
+                roles=None if body.roles is None else list(body.roles),
+            )
+        except ValueError as exc:
+            detail = str(exc)
+            status_code = 404 if "not found" in detail.lower() else _runtime_mutation_status_code(detail)
+            raise HTTPException(status_code=status_code, detail=detail) from exc
+        return RuntimeActorSummary.model_validate(_serialize_runtime_actor(actor))
+
+    @app.post("/api/runtime/v1/actors/{actor_id}/reset-password", response_model=RuntimeActorSummary)
+    async def reset_runtime_actor_password(
+        request: Request,
+        actor_id: uuid.UUID,
+        body: RuntimeActorResetPasswordRequest,
+    ) -> RuntimeActorSummary:
+        principal = await _require_runtime_admin_principal(request)
+        _ = principal
+        local_auth = _require_local_auth_manager(auth_resolver)
+        try:
+            actor = await local_auth.reset_password(
+                actor_id=actor_id,
+                password=body.password,
+                must_rotate_password=body.must_rotate_password,
+            )
+        except ValueError as exc:
+            detail = str(exc)
+            status_code = 404 if "not found" in detail.lower() else _runtime_mutation_status_code(detail)
+            raise HTTPException(status_code=status_code, detail=detail) from exc
+        return RuntimeActorSummary.model_validate(_serialize_runtime_actor(actor))
+
     @app.get("/api/runtime/v1/info", response_model=RuntimeInfoResponse)
     async def info(request: Request) -> RuntimeInfoResponse:
         configured_host = await _resolve_request_host(request)
@@ -309,6 +389,10 @@ def create_runtime_api_app(
                     "auth.login",
                     "auth.logout",
                     "auth.me",
+                    "actors.list",
+                    "actors.create",
+                    "actors.update",
+                    "actors.reset_password",
                 ]
             )
         if any(bool(item.get("supports_sync")) for item in connector_items):
@@ -348,7 +432,7 @@ def create_runtime_api_app(
         configured_host = await _resolve_request_host(request)
         try:
             return await configured_host.create_dataset(request=body)
-        except ValueError as exc:
+        except (ValueError, ApplicationError) as exc:
             raise HTTPException(
                 status_code=_runtime_mutation_status_code(str(exc)),
                 detail=str(exc),
@@ -463,7 +547,7 @@ def create_runtime_api_app(
         configured_host = await _resolve_request_host(request)
         try:
             return await configured_host.create_semantic_model(request=body)
-        except ValueError as exc:
+        except (ValueError, ApplicationError) as exc:
             raise HTTPException(
                 status_code=_runtime_mutation_status_code(str(exc)),
                 detail=str(exc),
@@ -603,7 +687,7 @@ def create_runtime_api_app(
         configured_host = await _resolve_request_host(request)
         try:
             payload = await configured_host.create_connector(request=body)
-        except ValueError as exc:
+        except (ValueError, ApplicationError) as exc:
             raise HTTPException(
                 status_code=_runtime_mutation_status_code(str(exc)),
                 detail=str(exc),
@@ -950,14 +1034,48 @@ def _set_runtime_session_cookie(
 
 
 def _serialize_runtime_principal_user(principal: RuntimeAuthPrincipal) -> dict[str, Any]:
-    username = principal.display_name or principal.subject or "runtime"
+    username = principal.username or principal.subject or principal.display_name or "runtime"
     return {
         "id": str(principal.actor_id) if principal.actor_id else None,
         "username": username,
+        "display_name": principal.display_name or username,
         "email": principal.email,
         "roles": list(principal.roles),
         "provider": principal.provider,
     }
+
+
+def _serialize_runtime_actor(actor: Any) -> dict[str, Any]:
+    return {
+        "id": actor.id,
+        "workspace_id": actor.workspace_id,
+        "subject": actor.subject,
+        "username": actor.username,
+        "email": actor.email,
+        "display_name": actor.display_name,
+        "actor_type": actor.actor_type,
+        "status": actor.status,
+        "roles": list(actor.roles),
+        "auth_provider": "local_password",
+        "password_algorithm": actor.password_algorithm,
+        "password_updated_at": actor.password_updated_at,
+        "must_rotate_password": bool(actor.must_rotate_password),
+        "created_at": actor.created_at,
+        "updated_at": actor.updated_at,
+    }
+
+
+async def _require_runtime_admin_principal(request: Request) -> RuntimeAuthPrincipal:
+    auth_resolver = request.app.state.runtime_auth
+    principal = await auth_resolver.authenticate(request)
+    if not _principal_has_runtime_admin(principal):
+        raise HTTPException(status_code=403, detail="Runtime admin access is required.")
+    return principal
+
+
+def _principal_has_runtime_admin(principal: RuntimeAuthPrincipal) -> bool:
+    normalized_roles = {str(role or "").strip().lower() for role in principal.roles}
+    return "admin" in normalized_roles or "runtime:admin" in normalized_roles
 
 
 def _resolve_default_background_tasks(

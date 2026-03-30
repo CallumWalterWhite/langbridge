@@ -88,7 +88,7 @@ class GoogleAnalyticsConnectorConfigSchemaFactory(BaseConnectorConfigSchemaFacto
                 ),
             ],
             plugin_metadata=ConnectorPluginMetadata(
-                connector_type=ConnectorRuntimeType.GOOGLE_ANALYTICS.value,
+                connector_type=ConnectorRuntimeType.GOOGLE_ANALYTICS,
                 connector_family=ConnectorFamily.API,
                 supported_resources=list(GOOGLE_ANALYTICS_SUPPORTED_RESOURCES),
                 auth_schema=list(GOOGLE_ANALYTICS_AUTH_SCHEMA),

@@ -6,6 +6,7 @@ from sqlalchemy import String, and_, desc, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from langbridge.runtime.models.metadata import DatasetMaterializationMode, DatasetType
 from langbridge.runtime.persistence.db.dataset import (
     DatasetColumnRecord,
     DatasetPolicyRecord,
@@ -65,7 +66,11 @@ class DatasetRepository(AsyncBaseRepository[DatasetRecord]):
                 ]
                 query = query.where(and_(*tag_filters))
         if dataset_types:
-            normalized_types = [item.strip().upper() for item in dataset_types if item and item.strip()]
+            normalized_types = [
+                str(getattr(item, "value", item)).strip().upper()
+                for item in dataset_types
+                if item and str(getattr(item, "value", item)).strip()
+            ]
             if normalized_types:
                 query = query.where(DatasetRecord.dataset_type.in_(normalized_types))
 
@@ -157,14 +162,14 @@ class DatasetRepository(AsyncBaseRepository[DatasetRecord]):
             self._select_with_relationships().where(
                 DatasetRecord.workspace_id == workspace_id,
                 DatasetRecord.connection_id == connection_id,
-                DatasetRecord.dataset_type == "FILE",
+                DatasetRecord.dataset_type == DatasetType.FILE.value,
                 DatasetRecord.table_name == table_name,
             )
         )
         for row in result.all():
-            mode = str(getattr(row, "materialization_mode", "") or "").strip().lower()
+            mode = getattr(row, "materialization_mode", None)
             file_config = getattr(row, "file_config_json", None) or {}
-            if mode == "synced" or bool(file_config.get("managed_dataset")):
+            if mode == DatasetMaterializationMode.SYNCED.value or bool(file_config.get("managed_dataset")):
                 return row
         return None
 
@@ -181,7 +186,11 @@ class DatasetRepository(AsyncBaseRepository[DatasetRecord]):
             DatasetRecord.connection_id == connection_id,
         )
         if dataset_types:
-            normalized_types = [item.strip().upper() for item in dataset_types if item and item.strip()]
+            normalized_types = [
+                str(getattr(item, "value", item)).strip().upper()
+                for item in dataset_types
+                if item and str(getattr(item, "value", item)).strip()
+            ]
             if normalized_types:
                 query = query.where(DatasetRecord.dataset_type.in_(normalized_types))
         result = await self._session.scalars(

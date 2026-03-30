@@ -201,8 +201,8 @@ export function SemanticModelsPage() {
                       ]}
                     />
                     <div className="panel-actions-inline">
-                      <button className="ghost-button" type="button" onClick={() => navigate("/bi")}>
-                        Open BI
+                      <button className="ghost-button" type="button" onClick={() => navigate("/dashboards")}>
+                        Open Dashboard studio
                       </button>
                       <button
                         className="ghost-button"

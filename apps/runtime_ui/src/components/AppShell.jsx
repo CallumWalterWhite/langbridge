@@ -172,13 +172,6 @@ export function AppShell({ session, authStatus, onLogout, children }) {
       </aside>
 
       <div className="shell-main">
-        <header className="shell-header">
-          <div>
-            <h2>{activePage.label}</h2>
-            <p className="header-copy">{activePage.description}</p>
-          </div>
-        </header>
-
         <nav className="mobile-nav" aria-label="Runtime navigation">
           {flatItems.map((item) => {
             const Icon = item.icon;

@@ -5,13 +5,18 @@ from collections.abc import Mapping
 from typing import Any
 
 from .errors import ExecutionRuntimeError, ExecutionValidationError
-from langbridge.runtime.models.metadata import DatasetMetadata
+from langbridge.runtime.models.metadata import (
+    DatasetMaterializationMode,
+    DatasetMetadata,
+    DatasetSourceKind,
+    DatasetStorageKind,
+    DatasetType,
+)
 from langbridge.runtime.ports import DatasetCatalogStore
 from langbridge.runtime.providers import DatasetMetadataProvider
 from langbridge.runtime.utils.datasets import (
     build_dataset_execution_capabilities,
     build_dataset_relation_identity,
-    derive_legacy_dataset_type,
     resolve_dataset_materialization_mode,
     resolve_dataset_connector_kind,
     resolve_dataset_source_kind,
@@ -45,8 +50,8 @@ class DatasetExecutionResolver:
         *,
         dataset: DatasetMetadata,
     ) -> tuple[FederationWorkflow, str, str]:
-        dataset_type = str(dataset.dataset_type or "").upper()
-        if dataset_type in {"TABLE", "SQL", "FILE"}:
+        dataset_type = dataset.dataset_type
+        if dataset_type in {DatasetType.TABLE, DatasetType.SQL, DatasetType.FILE}:
             binding, dialect = self._build_binding_from_dataset_record(dataset=dataset)
             workflow = self._build_workflow_from_bindings(
                 workflow_id=f"workflow_dataset_{dataset.id.hex[:12]}",
@@ -58,7 +63,7 @@ class DatasetExecutionResolver:
             )
             return workflow, binding.table_key, dialect
 
-        if dataset_type == "FEDERATED":
+        if dataset_type == DatasetType.FEDERATED:
             workflow, default_table_key, dialect = await self._build_federated_dataset_workflow(dataset=dataset)
             return workflow, default_table_key, dialect
 
@@ -136,11 +141,8 @@ class DatasetExecutionResolver:
         logical_table_name: str | None = None,
         catalog_name: str | None = None,
     ) -> tuple[VirtualTableBinding, str]:
-        dataset_type = str(dataset.dataset_type or "").upper()
-        materialization_mode = resolve_dataset_materialization_mode(
-            explicit_materialization_mode=getattr(dataset, "materialization_mode", None),
-            file_config=dict(dataset.file_config_json or {}),
-        ).value
+        dataset_type = dataset.dataset_type
+        materialization_mode = self._materialization_mode(dataset).value
         logical_table = self._logical_table_name(
             dataset=dataset,
             logical_table_name=logical_table_name,
@@ -156,7 +158,7 @@ class DatasetExecutionResolver:
         dialect = (dataset.dialect or "tsql").strip().lower() or "tsql"
         dataset_descriptor = self._build_dataset_execution_descriptor(dataset)
 
-        if dataset_type == "TABLE":
+        if dataset_type == DatasetType.TABLE:
             if dataset.connection_id is None:
                 raise ExecutionValidationError("Executable TABLE datasets require a connection_id.")
             physical_table = dataset.table_name or logical_table
@@ -169,7 +171,8 @@ class DatasetExecutionResolver:
                 catalog=catalog_name or dataset.catalog_name,
                 metadata={
                     "dataset_id": str(dataset.id),
-                    "source_kind": "connector",
+                    "source_kind": dataset_descriptor.source_kind,
+                    "storage_kind": dataset_descriptor.storage_kind,
                     "materialization_mode": materialization_mode,
                     "physical_catalog": dataset.catalog_name,
                     "physical_schema": dataset.schema_name,
@@ -179,7 +182,7 @@ class DatasetExecutionResolver:
             )
             return binding, dialect
 
-        if dataset_type == "SQL":
+        if dataset_type == DatasetType.SQL:
             if dataset.connection_id is None:
                 raise ExecutionValidationError("Executable SQL datasets require a connection_id.")
             sql_text = (dataset.sql_text or "").strip()
@@ -195,7 +198,8 @@ class DatasetExecutionResolver:
                 catalog=catalog_name,
                 metadata={
                     "dataset_id": str(dataset.id),
-                    "source_kind": "connector",
+                    "source_kind": dataset_descriptor.source_kind,
+                    "storage_kind": dataset_descriptor.storage_kind,
                     "materialization_mode": materialization_mode,
                     "physical_sql": sql_text,
                     "sql_dialect": dialect,
@@ -204,13 +208,14 @@ class DatasetExecutionResolver:
             )
             return binding, dialect
 
-        if dataset_type == "FILE":
+        if dataset_type == DatasetType.FILE:
             storage_uri = self._resolve_file_storage_uri(dataset)
             file_format = self._resolve_file_format(dataset, storage_uri=storage_uri)
             file_config = dict(dataset.file_config_json or {})
             metadata: dict[str, Any] = {
                 "dataset_id": str(dataset.id),
-                "source_kind": "file",
+                "source_kind": dataset_descriptor.source_kind,
+                "storage_kind": dataset_descriptor.storage_kind,
                 "materialization_mode": materialization_mode,
                 "storage_uri": storage_uri,
                 "file_format": file_format,
@@ -386,10 +391,7 @@ class DatasetExecutionResolver:
             or str(file_config.get("storage_uri") or file_config.get("uri") or file_config.get("path") or "").strip()
         )
         if not storage_uri:
-            materialization_mode = resolve_dataset_materialization_mode(
-                explicit_materialization_mode=getattr(dataset, "materialization_mode", None),
-                file_config=file_config,
-            )
+            materialization_mode = DatasetExecutionResolver._materialization_mode(dataset)
             sync_meta = file_config.get("connector_sync") if isinstance(file_config.get("connector_sync"), Mapping) else {}
             if materialization_mode.value == "synced":
                 resource_name = str(sync_meta.get("resource_name") or "").strip()
@@ -439,7 +441,7 @@ class DatasetExecutionResolver:
             return logical_schema
         dataset_schema = (dataset.schema_name or "").strip() or None
         if (
-            str(dataset.dataset_type or "").upper() == "FILE"
+            dataset.dataset_type == DatasetType.FILE
             and dataset_schema == "api_connector"
         ):
             return None
@@ -539,26 +541,42 @@ class DatasetExecutionResolver:
         return normalized or None
 
     @staticmethod
+    def _materialization_mode(dataset: Any) -> DatasetMaterializationMode:
+        return resolve_dataset_materialization_mode(
+            explicit_materialization_mode=getattr(dataset, "materialization_mode", None),
+        )
+
+    @staticmethod
+    def _source_kind(dataset: Any) -> DatasetSourceKind:
+        try:
+            return resolve_dataset_source_kind(
+                explicit_source_kind=getattr(dataset, "source_kind", None),
+            )
+        except ValueError as exc:
+            raise ExecutionValidationError(
+                f"Dataset '{getattr(dataset, 'name', getattr(dataset, 'id', 'unknown'))}' "
+                "is missing explicit source_kind."
+            ) from exc
+
+    @staticmethod
+    def _storage_kind(dataset: Any) -> DatasetStorageKind:
+        try:
+            return resolve_dataset_storage_kind(
+                explicit_storage_kind=getattr(dataset, "storage_kind", None),
+            )
+        except ValueError as exc:
+            raise ExecutionValidationError(
+                f"Dataset '{getattr(dataset, 'name', getattr(dataset, 'id', 'unknown'))}' "
+                "is missing explicit storage_kind."
+            ) from exc
+
+    @staticmethod
     def _build_dataset_execution_descriptor(dataset: Any) -> DatasetExecutionDescriptor:
         connector_kind = resolve_dataset_connector_kind(
             explicit_connector_kind=getattr(dataset, "connector_kind", None),
-            connection_connector_type=(dataset.dialect if dataset.connection_id else None),
-            file_config=dict(dataset.file_config_json or {}),
-            storage_uri=dataset.storage_uri,
-            legacy_dataset_type=dataset.dataset_type,
         )
-        source_kind = resolve_dataset_source_kind(
-            explicit_source_kind=getattr(dataset, "source_kind", None),
-            legacy_dataset_type=dataset.dataset_type,
-            connector_kind=connector_kind,
-            file_config=dict(dataset.file_config_json or {}),
-        )
-        storage_kind = resolve_dataset_storage_kind(
-            explicit_storage_kind=getattr(dataset, "storage_kind", None),
-            legacy_dataset_type=dataset.dataset_type,
-            file_config=dict(dataset.file_config_json or {}),
-            storage_uri=dataset.storage_uri,
-        )
+        source_kind = DatasetExecutionResolver._source_kind(dataset)
+        storage_kind = DatasetExecutionResolver._storage_kind(dataset)
         relation_identity = build_dataset_relation_identity(
             dataset_id=dataset.id,
             connector_id=dataset.connection_id,
@@ -576,10 +594,7 @@ class DatasetExecutionResolver:
             storage_kind=storage_kind,
             existing_payload=dict(getattr(dataset, "execution_capabilities_json", None) or {}),
         )
-        materialization_mode = resolve_dataset_materialization_mode(
-            explicit_materialization_mode=getattr(dataset, "materialization_mode", None),
-            file_config=dict(getattr(dataset, "file_config_json", None) or {}),
-        )
+        materialization_mode = DatasetExecutionResolver._materialization_mode(dataset)
         return DatasetExecutionDescriptor(
             dataset_id=dataset.id,
             connector_id=dataset.connection_id,
@@ -590,10 +605,6 @@ class DatasetExecutionResolver:
             storage_kind=storage_kind.value,
             relation_identity=relation_identity.model_dump(mode="json"),
             execution_capabilities=capabilities.model_dump(mode="json"),
-            legacy_dataset_type=derive_legacy_dataset_type(
-                source_kind=source_kind,
-                storage_kind=storage_kind,
-            ),
             metadata={
                 "description": dataset.description,
                 "tags": list(dataset.tags_json or []),

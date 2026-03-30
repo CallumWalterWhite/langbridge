@@ -15,6 +15,7 @@ from langbridge.runtime.models import (
     CreateSqlJobRequest,
     LLMConnectionSecret,
     LLMProvider,
+    SqlSelectedDataset,
 )
 
 
@@ -111,6 +112,19 @@ def test_create_connector_sync_job_request_accepts_camel_case_payload() -> None:
     assert request.connection_id == connection_id
     assert request.resource_names == ["customers", "subscriptions"]
     assert request.sync_mode == "INCREMENTAL"
+
+
+def test_sql_selected_dataset_accepts_stringified_enum_member_names() -> None:
+    dataset = SqlSelectedDataset.model_validate(
+        {
+            "datasetId": str(uuid.uuid4()),
+            "sourceKind": "DatasetSourceKind.DATABASE",
+            "storageKind": "DatasetStorageKind.TABLE",
+        }
+    )
+
+    assert dataset.source_kind == "database"
+    assert dataset.storage_kind == "table"
 
 
 def test_create_connector_sync_job_request_requires_resources() -> None:

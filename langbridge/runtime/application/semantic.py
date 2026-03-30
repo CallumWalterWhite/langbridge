@@ -141,6 +141,8 @@ class SemanticApplication:
                 id=record.id,
                 connector_id=None,
                 workspace_id=record.workspace_id,
+                created_by=self._host.context.actor_id,
+                updated_by=self._host.context.actor_id,
                 name=record.name,
                 description=record.description,
                 content_yaml=record.content_yaml,

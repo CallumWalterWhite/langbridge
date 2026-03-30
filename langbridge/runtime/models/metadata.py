@@ -4,8 +4,13 @@ from datetime import datetime
 from enum import Enum
 from typing import Any, Literal
 
-from pydantic import Field
+from pydantic import Field, field_validator
 
+from langbridge.connectors.base.config import (
+    ConnectorFamily,
+    ConnectorRuntimeType,
+    ConnectorSyncStrategy,
+)
 from langbridge.runtime.models.base import RuntimeModel
 
 class ManagementMode(str, Enum):
@@ -57,6 +62,29 @@ class ConnectorCapabilities(RuntimeModel):
     supports_federated_execution: bool = False
 
 
+def _normalize_enum_value(
+    enum_cls: type[Enum],
+    value: Any,
+    *,
+    case: str | None = None,
+) -> Enum | None:
+    if value is None:
+        return None
+    if isinstance(value, enum_cls):
+        return value
+    raw_value = str(getattr(value, "value", value) or "").strip()
+    if not raw_value:
+        return None
+    enum_name_prefix = f"{enum_cls.__name__}.".lower()
+    if "." in raw_value and raw_value.lower().startswith(enum_name_prefix):
+        raw_value = raw_value.rsplit(".", 1)[-1]
+    if case == "lower":
+        raw_value = raw_value.lower()
+    elif case == "upper":
+        raw_value = raw_value.upper()
+    return enum_cls(raw_value)
+
+
 class ConnectorMetadata(RuntimeModel):
     id: uuid.UUID
     name: str
@@ -64,19 +92,50 @@ class ConnectorMetadata(RuntimeModel):
     version: str | None = None
     label: str | None = None
     icon: str | None = None
-    connector_type: str | None = None
-    connector_family: str | None = None
+    connector_type: ConnectorRuntimeType | None = None
+    connector_family: ConnectorFamily | None = None
     workspace_id: uuid.UUID | None = None
     config: dict[str, Any] | None = None
     connection_metadata: ConnectionMetadata | None = None
     secret_references: dict[str, SecretReference] = Field(default_factory=dict)
     connection_policy: ConnectionPolicy | None = None
     supported_resources: list[str] = Field(default_factory=list)
-    sync_strategy: str | None = None
+    sync_strategy: ConnectorSyncStrategy | None = None
     capabilities: ConnectorCapabilities | None = None
     is_managed: bool = False
+    created_by: uuid.UUID | None = None
+    updated_by: uuid.UUID | None = None
     management_mode: ManagementMode
     lifecycle_state: LifecycleState
+
+    @field_validator("connector_type", mode="before")
+    @classmethod
+    def _validate_connector_type(cls, value: Any) -> ConnectorRuntimeType | None:
+        return _normalize_enum_value(ConnectorRuntimeType, value, case="upper")
+
+    @field_validator("connector_family", mode="before")
+    @classmethod
+    def _validate_connector_family(cls, value: Any) -> ConnectorFamily | None:
+        return _normalize_enum_value(ConnectorFamily, value, case="upper")
+
+    @field_validator("sync_strategy", mode="before")
+    @classmethod
+    def _validate_sync_strategy(cls, value: Any) -> ConnectorSyncStrategy | None:
+        return _normalize_enum_value(ConnectorSyncStrategy, value, case="upper")
+
+    @property
+    def connector_type_value(self) -> str | None:
+        return None if self.connector_type is None else self.connector_type.value
+
+    @property
+    def connector_family_value(self) -> str | None:
+        if self.connector_family is None:
+            return None
+        return self.connector_family.value.lower()
+
+    @property
+    def sync_strategy_value(self) -> str | None:
+        return None if self.sync_strategy is None else self.sync_strategy.value
 
     @property
     def capabilities_json(self) -> dict[str, Any] | None:
@@ -144,6 +203,18 @@ class DatasetMaterializationMode(str, Enum):
     SYNCED = "synced"
 
 
+class DatasetType(str, Enum):
+    TABLE = "TABLE"
+    SQL = "SQL"
+    FILE = "FILE"
+    FEDERATED = "FEDERATED"
+
+
+class DatasetStatus(str, Enum):
+    PUBLISHED = "published"
+    PENDING_SYNC = "pending_sync"
+
+
 class DatasetExecutionCapabilities(RuntimeModel):
     supports_structured_scan: bool = False
     supports_sql_federation: bool = False
@@ -180,11 +251,11 @@ class DatasetMetadata(RuntimeModel):
     sql_alias: str
     description: str | None = None
     tags: list[str] = Field(default_factory=list)
-    dataset_type: str
-    materialization_mode: str | None = None
-    source_kind: str | None = None
+    dataset_type: DatasetType
+    materialization_mode: DatasetMaterializationMode | None = None
+    source_kind: DatasetSourceKind | None = None
     connector_kind: str | None = None
-    storage_kind: str | None = None
+    storage_kind: DatasetStorageKind | None = None
     dialect: str | None = None
     catalog_name: str | None = None
     schema_name: str | None = None
@@ -196,7 +267,7 @@ class DatasetMetadata(RuntimeModel):
     referenced_dataset_ids: list[Any] = Field(default_factory=list)
     federated_plan: dict[str, Any] | None = None
     file_config: dict[str, Any] | None = None
-    status: str = "published"
+    status: DatasetStatus = DatasetStatus.PUBLISHED
     revision_id: uuid.UUID | None = None
     row_count_estimate: int | None = None
     bytes_estimate: int | None = None
@@ -208,14 +279,63 @@ class DatasetMetadata(RuntimeModel):
     management_mode: ManagementMode
     lifecycle_state: LifecycleState
 
+    @field_validator("dataset_type", mode="before")
+    @classmethod
+    def _validate_dataset_type(cls, value: Any) -> DatasetType:
+        normalized = _normalize_enum_value(DatasetType, value, case="upper")
+        if normalized is None:
+            raise ValueError("dataset_type is required.")
+        return normalized
+
+    @field_validator("materialization_mode", mode="before")
+    @classmethod
+    def _validate_materialization_mode(
+        cls,
+        value: Any,
+    ) -> DatasetMaterializationMode | None:
+        return _normalize_enum_value(DatasetMaterializationMode, value, case="lower")
+
+    @field_validator("source_kind", mode="before")
+    @classmethod
+    def _validate_source_kind(cls, value: Any) -> DatasetSourceKind | None:
+        return _normalize_enum_value(DatasetSourceKind, value, case="lower")
+
+    @field_validator("storage_kind", mode="before")
+    @classmethod
+    def _validate_storage_kind(cls, value: Any) -> DatasetStorageKind | None:
+        return _normalize_enum_value(DatasetStorageKind, value, case="lower")
+
+    @field_validator("status", mode="before")
+    @classmethod
+    def _validate_status(cls, value: Any) -> DatasetStatus:
+        normalized = _normalize_enum_value(DatasetStatus, value, case="lower")
+        if normalized is None:
+            return DatasetStatus.PUBLISHED
+        return normalized
+
     @property
     def tags_json(self) -> list[str]:
         return list(self.tags)
 
     @property
+    def dataset_type_value(self) -> str:
+        return self.dataset_type.value
+
+    @property
     def materialization_mode_value(self) -> str | None:
-        normalized = str(self.materialization_mode or "").strip().lower()
-        return normalized or None
+        return None if self.materialization_mode is None else self.materialization_mode.value
+
+    @property
+    def source_kind_value(self) -> str | None:
+        return None if self.source_kind is None else self.source_kind.value
+
+    @property
+    def storage_kind_value(self) -> str | None:
+        return None if self.storage_kind is None else self.storage_kind.value
+
+    @property
+    def status_value(self) -> str:
+        return self.status.value
 
     @property
     def relation_identity_json(self) -> dict[str, Any] | None:
@@ -246,6 +366,8 @@ class SemanticModelMetadata(RuntimeModel):
     id: uuid.UUID
     connector_id: uuid.UUID | None = None
     workspace_id: uuid.UUID
+    created_by: uuid.UUID | None = None
+    updated_by: uuid.UUID | None = None
     name: str
     description: str | None = None
     content_yaml: str

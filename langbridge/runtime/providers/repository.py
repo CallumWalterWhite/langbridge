@@ -37,6 +37,7 @@ from langbridge.runtime.providers.protocols import (
     SqlJobResultArtifactProvider,
     SyncStateProvider,
 )
+from langbridge.runtime.models.state import ConnectorSyncStatus
 from langbridge.runtime.security import SecretProviderRegistry
 
 
@@ -179,7 +180,15 @@ class RepositorySyncStateProvider(SyncStateProvider):
 
     async def mark_failed(self, **kwargs: Any) -> None:
         state = kwargs["state"]
-        state.status = kwargs["status"]
+        state.status = ConnectorSyncStatus(
+            str(
+                getattr(
+                    kwargs.get("status"),
+                    "value",
+                    kwargs.get("status") or ConnectorSyncStatus.FAILED.value,
+                )
+            ).lower()
+        )
         state.error_message = kwargs["error_message"]
         await self._connector_sync_state_repository.save(state)
 

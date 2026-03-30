@@ -87,7 +87,7 @@ class HubSpotConnectorConfigSchemaFactory(BaseConnectorConfigSchemaFactory):
                 ),
             ],
             plugin_metadata=ConnectorPluginMetadata(
-                connector_type=ConnectorRuntimeType.HUBSPOT.value,
+                connector_type=ConnectorRuntimeType.HUBSPOT,
                 connector_family=ConnectorFamily.API,
                 supported_resources=list(HUBSPOT_SUPPORTED_RESOURCES),
                 auth_schema=list(HUBSPOT_AUTH_SCHEMA),

@@ -175,7 +175,7 @@ async def test_build_sources_requires_connector_in_same_workspace() -> None:
                     id=connector_id,
                     name="warehouse",
                     connector_type="POSTGRES",
-                    connector_family="sql",
+                    connector_family="database",
                     workspace_id=uuid.uuid4(),
                     config={"config": {"database": "analytics"}},
                     capabilities=ConnectorCapabilities(

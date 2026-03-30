@@ -19,6 +19,7 @@ from langbridge.runtime.providers.protocols import (
     SqlJobResultArtifactProvider,
     SyncStateProvider,
 )
+from langbridge.runtime.models.state import ConnectorSyncStatus
 
 
 class MemoryDatasetProvider(DatasetMetadataProvider):
@@ -250,7 +251,15 @@ class MemorySyncStateProvider(SyncStateProvider):
 
     async def mark_failed(self, **kwargs: Any) -> None:
         state = kwargs["state"]
-        state.status = str(kwargs.get("status") or "failed")
+        state.status = ConnectorSyncStatus(
+            str(
+                getattr(
+                    kwargs.get("status"),
+                    "value",
+                    kwargs.get("status") or ConnectorSyncStatus.FAILED.value,
+                )
+            ).lower()
+        )
         state.error_message = str(kwargs.get("error_message") or "")
         key = (state.workspace_id, state.connection_id, state.resource_name)
         self._states[key] = state

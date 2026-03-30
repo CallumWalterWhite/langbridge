@@ -20,7 +20,6 @@ class DatasetExecutionDescriptor(BaseModel):
     storage_kind: str
     relation_identity: dict[str, Any] = Field(default_factory=dict)
     execution_capabilities: dict[str, Any] = Field(default_factory=dict)
-    legacy_dataset_type: str | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 

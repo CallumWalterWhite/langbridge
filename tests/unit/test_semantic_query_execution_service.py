@@ -9,6 +9,7 @@ from typing import Any
 
 import pytest
 
+from langbridge.runtime.persistence.db.dataset import DatasetRecord
 from langbridge.runtime.services.semantic_query_execution_service import (
     SemanticQueryExecutionService,
     _normalize_unified_relationship_payload,
@@ -399,6 +400,8 @@ async def test_execute_unified_query_resolves_dataset_backed_tables_per_table() 
                 connection_id=None,
                 name="orders_file",
                 dataset_type="FILE",
+                source_kind="file",
+                storage_kind="parquet",
                 dialect="duckdb",
                 schema_name=None,
                 table_name="orders",
@@ -444,7 +447,6 @@ async def test_execute_unified_query_resolves_dataset_backed_tables_per_table() 
     inventory_binding = workflow["dataset"]["tables"]["Inventory__inventory"]
     assert orders_binding["metadata"]["source_kind"] == "file"
     assert inventory_binding["connector_id"] == str(warehouse_connector_id)
-
 
 
 

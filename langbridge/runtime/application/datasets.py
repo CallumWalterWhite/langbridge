@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Mapping
 
+from langbridge.runtime.application.errors import BusinessValidationError
 from langbridge.runtime.config.models import (
     LocalRuntimeDatasetConfig,
     LocalRuntimeDatasetPolicyConfig,
@@ -12,8 +13,10 @@ from langbridge.runtime.config.models import (
 from langbridge.runtime.models import DatasetMetadata, DatasetPolicyMetadata
 from langbridge.runtime.models.metadata import (
     DatasetMaterializationMode,
+    DatasetStatus,
     DatasetSourceKind,
     DatasetStorageKind,
+    DatasetType,
     LifecycleState,
     ManagementMode,
 )
@@ -41,7 +44,7 @@ def _dataset_sql_alias(name: str) -> str:
 def _relation_parts(relation_name: str) -> tuple[str | None, str | None, str]:
     parts = [part.strip() for part in str(relation_name or "").split(".") if part.strip()]
     if not parts:
-        raise ValueError("Dataset table source must not be empty.")
+        raise BusinessValidationError("Dataset table source must not be empty.")
     if len(parts) == 1:
         return None, None, parts[0]
     if len(parts) == 2:
@@ -112,7 +115,7 @@ class DatasetApplication:
                 "bytes_synced": None,
             }
         return {
-            "status": state.status,
+            "status": state.status_value,
             "resource_name": resource_name,
             "last_cursor": state.last_cursor,
             "last_sync_at": state.last_sync_at,
@@ -150,9 +153,8 @@ class DatasetApplication:
                     "semantic_model": self._dataset_semantic_model(configured_record=configured_record),
                     "materialization_mode": resolve_dataset_materialization_mode(
                         explicit_materialization_mode=dataset.materialization_mode_value,
-                        file_config=dict(dataset.file_config_json or {}),
                     ).value,
-                    "status": dataset.status,
+                    "status": dataset.status_value,
                     "sync_resource": sync_resource,
                     "sync_status": None if sync_state is None else sync_state["status"],
                     "last_sync_at": None if sync_state is None else sync_state["last_sync_at"],
@@ -184,17 +186,16 @@ class DatasetApplication:
             "connector": connector.name if connector is not None else None,
             "connector_id": connector.id if connector is not None else None,
             "semantic_model": self._dataset_semantic_model(configured_record=configured_record),
-            "dataset_type": dataset.dataset_type,
+            "dataset_type": dataset.dataset_type_value,
             "materialization_mode": resolve_dataset_materialization_mode(
                 explicit_materialization_mode=dataset.materialization_mode_value,
-                file_config=dict(dataset.file_config_json or {}),
             ).value,
-            "source_kind": dataset.source_kind,
-            "storage_kind": dataset.storage_kind,
+            "source_kind": dataset.source_kind_value,
+            "storage_kind": dataset.storage_kind_value,
             "table_name": dataset.table_name,
             "storage_uri": dataset.storage_uri,
             "dialect": dataset.dialect,
-            "status": dataset.status,
+            "status": dataset.status_value,
             "tags": list(dataset.tags_json or []),
             "management_mode": management_mode,
             "managed": management_mode == ManagementMode.CONFIG_MANAGED.value,
@@ -280,13 +281,12 @@ class DatasetApplication:
         )
         dataset_name = str(normalized_request.name or "").strip()
         if not dataset_name:
-            raise ValueError("Dataset name is required.")
+            raise BusinessValidationError("Dataset name is required.")
 
         connector = self._host._resolve_connector(normalized_request.connector)
         connector_capabilities = self._host._connector_capabilities(connector)
         materialization_mode = resolve_dataset_materialization_mode(
             explicit_materialization_mode=normalized_request.materialization_mode,
-            file_config=None,
         )
 
         source_table = str(normalized_request.source.table or "").strip()
@@ -300,29 +300,29 @@ class DatasetApplication:
             materialization_mode == DatasetMaterializationMode.LIVE
             and not connector_capabilities.supports_live_datasets
         ):
-            raise ValueError(
+            raise BusinessValidationError(
                 f"Dataset '{dataset_name}' requests materialization_mode 'live', "
                 f"but connector '{connector.name}' does not support live datasets."
             )
         if materialization_mode == DatasetMaterializationMode.SYNCED:
             if not connector_capabilities.supports_synced_datasets:
-                raise ValueError(
+                raise BusinessValidationError(
                     f"Dataset '{dataset_name}' requests materialization_mode 'synced', "
                     f"but connector '{connector.name}' does not support synced datasets."
                 )
-            plugin = self._host._resolve_connector_plugin_for_type(connector.connector_type)
+            plugin = self._host._resolve_connector_plugin_for_type(connector.connector_type_value)
             if plugin is None or plugin.api_connector_class is None:
-                raise ValueError(
+                raise BusinessValidationError(
                     f"Dataset '{dataset_name}' requests materialization_mode 'synced', "
                     f"but connector '{connector.name}' does not expose a runtime sync path yet."
                 )
             if source_sql or source_storage_uri:
-                raise ValueError(
+                raise BusinessValidationError(
                     f"Dataset '{dataset_name}' requests materialization_mode 'synced', "
                     "but synced datasets must use source.resource to name the connector resource to materialize."
                 )
             if not sync_resource_name:
-                raise ValueError(
+                raise BusinessValidationError(
                     f"Dataset '{dataset_name}' requests materialization_mode 'synced', "
                     "but is missing source.resource for the connector resource name."
                 )
@@ -332,7 +332,7 @@ class DatasetApplication:
                 if str(item or "").strip()
             }
             if supported_resources and sync_resource_name not in supported_resources:
-                raise ValueError(
+                raise BusinessValidationError(
                     f"Dataset '{dataset_name}' requests synced resource '{sync_resource_name}', "
                     f"but connector '{connector.name}' only exposes: {', '.join(sorted(supported_resources))}."
                 )
@@ -341,7 +341,7 @@ class DatasetApplication:
             and (source_table or source_sql)
             and not connector_capabilities.supports_query_pushdown
         ):
-            raise ValueError(
+            raise BusinessValidationError(
                 f"Dataset '{dataset_name}' uses a live table/sql source, "
                 f"but connector '{connector.name}' does not expose live query pushdown."
             )
@@ -356,10 +356,10 @@ class DatasetApplication:
             schema_name = None
             table_name = dataset_alias
             relation_name = table_name
-            dataset_type = "FILE"
+            dataset_type = DatasetType.FILE
             sql_text = None
-            storage_kind = DatasetStorageKind.PARQUET.value
-            source_kind = DatasetSourceKind.API.value
+            storage_kind = DatasetStorageKind.PARQUET
+            source_kind = DatasetSourceKind.API
             dialect = "duckdb"
             storage_uri = None
             file_config = {
@@ -367,8 +367,8 @@ class DatasetApplication:
                 "managed_dataset": True,
                 "connector_sync": {
                     "connector_id": str(connector.id),
-                    "connector_type": connector.connector_type,
-                    "connector_family": connector.connector_family,
+                    "connector_type": connector.connector_type_value,
+                    "connector_family": connector.connector_family_value,
                     "resource_name": sync_resource_name,
                     "root_resource_name": sync_resource_name,
                     "parent_resource_name": None,
@@ -377,10 +377,10 @@ class DatasetApplication:
         elif source_table:
             catalog_name, schema_name, table_name = _relation_parts(source_table)
             relation_name = source_table
-            dataset_type = "TABLE"
+            dataset_type = DatasetType.TABLE
             sql_text = None
-            storage_kind = DatasetStorageKind.TABLE.value
-            source_kind = DatasetSourceKind.DATABASE.value
+            storage_kind = DatasetStorageKind.TABLE
+            source_kind = DatasetSourceKind.DATABASE
             dialect = self._host._connector_dialect(connector.connector_type or "")
             storage_uri = None
             file_config = None
@@ -390,19 +390,19 @@ class DatasetApplication:
             table_name = dataset_alias
             relation_name = table_name
             if source_sql:
-                dataset_type = "SQL"
+                dataset_type = DatasetType.SQL
                 sql_text = source_sql
-                storage_kind = DatasetStorageKind.VIEW.value
-                source_kind = DatasetSourceKind.DATABASE.value
+                storage_kind = DatasetStorageKind.VIEW
+                source_kind = DatasetSourceKind.DATABASE
                 dialect = self._host._connector_dialect(connector.connector_type or "")
                 storage_uri = None
                 file_config = None
             else:
-                dataset_type = "FILE"
+                dataset_type = DatasetType.FILE
                 sql_text = None
                 storage_uri = source_storage_uri
                 if not storage_uri:
-                    raise ValueError(
+                    raise BusinessValidationError(
                         f"Dataset '{dataset_name}' must define source.path or source.storage_uri for file-backed datasets."
                     )
                 file_format = str(
@@ -413,11 +413,11 @@ class DatasetApplication:
                     or ""
                 ).strip().lower()
                 if file_format not in {"csv", "parquet"}:
-                    raise ValueError(
+                    raise BusinessValidationError(
                         f"Dataset '{dataset_name}' must declare a supported file format (csv or parquet)."
                     )
-                source_kind = DatasetSourceKind.FILE.value
-                storage_kind = file_format
+                source_kind = DatasetSourceKind.FILE
+                storage_kind = DatasetStorageKind(file_format)
                 dialect = "duckdb"
                 file_config = {"format": file_format}
                 if normalized_request.source.header is not None:
@@ -427,8 +427,6 @@ class DatasetApplication:
                 if normalized_request.source.quote is not None:
                     file_config["quote"] = normalized_request.source.quote
 
-        source_kind_enum = DatasetSourceKind(source_kind)
-        storage_kind_enum = DatasetStorageKind(storage_kind)
         relation_identity = build_dataset_relation_identity(
             dataset_id=dataset_id,
             connector_id=connector.id,
@@ -437,12 +435,12 @@ class DatasetApplication:
             schema_name=schema_name,
             table_name=table_name,
             storage_uri=storage_uri,
-            source_kind=source_kind_enum,
-            storage_kind=storage_kind_enum,
+            source_kind=source_kind,
+            storage_kind=storage_kind,
         )
         execution_capabilities = build_dataset_execution_capabilities(
-            source_kind=source_kind_enum,
-            storage_kind=storage_kind_enum,
+            source_kind=source_kind,
+            storage_kind=storage_kind,
         )
 
         policy_config = normalized_request.policy or LocalRuntimeDatasetPolicyConfig()
@@ -482,7 +480,7 @@ class DatasetApplication:
                     [
                         "managed",
                         "api-connector",
-                        str(connector.connector_type or "").strip().lower(),
+                        str(connector.connector_type.value if connector.connector_type is not None else "").strip().lower(),
                         f"resource:{sync_resource_name.strip().lower()}",
                     ]
                     if materialization_mode == DatasetMaterializationMode.SYNCED
@@ -490,9 +488,9 @@ class DatasetApplication:
                 ),
             ),
             dataset_type=dataset_type,
-            materialization_mode=materialization_mode.value,
+            materialization_mode=materialization_mode,
             source_kind=source_kind,
-            connector_kind=(connector.connector_type or "").lower() or None,
+            connector_kind=(connector.connector_type.value.lower() if connector.connector_type is not None else None),
             storage_kind=storage_kind,
             dialect=dialect,
             catalog_name=catalog_name,
@@ -506,9 +504,9 @@ class DatasetApplication:
             federated_plan=None,
             file_config=file_config,
             status=(
-                "pending_sync"
+                DatasetStatus.PENDING_SYNC
                 if materialization_mode == DatasetMaterializationMode.SYNCED
-                else "published"
+                else DatasetStatus.PUBLISHED
             ),
             revision_id=None,
             row_count_estimate=None,
@@ -529,13 +527,13 @@ class DatasetApplication:
                 offset=0,
             )
             if any(candidate.name == dataset_name for candidate in existing):
-                raise ValueError(f"Dataset '{dataset_name}' already exists.")
+                raise BusinessValidationError(f"Dataset '{dataset_name}' already exists.")
             existing_alias = await self._host._dataset_repository.get_for_workspace_by_sql_alias(
                 workspace_id=self._host.context.workspace_id,
                 sql_alias=dataset_alias,
             )
             if existing_alias is not None:
-                raise ValueError(
+                raise BusinessValidationError(
                     f"Dataset sql_alias '{dataset_alias}' is already in use by dataset '{existing_alias.name}'."
                 )
 

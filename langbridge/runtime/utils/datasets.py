@@ -15,87 +15,32 @@ from langbridge.runtime.models import (
 
 def resolve_dataset_source_kind(
     *,
-    explicit_source_kind: str | None,
-    legacy_dataset_type: str | None,
-    connector_kind: str | None,
-    file_config: Mapping[str, Any] | None,
+    explicit_source_kind: str | DatasetSourceKind | None,
 ) -> DatasetSourceKind:
     normalized = _normalize_enum_value(explicit_source_kind)
     if normalized:
         return DatasetSourceKind(normalized)
-
-    legacy_type = _normalize_enum_value(legacy_dataset_type)
-    sync_meta = _connector_sync_meta(file_config)
-    if legacy_type in {"table", "sql"}:
-        return DatasetSourceKind.DATABASE
-    if legacy_type == "federated":
-        return DatasetSourceKind.VIRTUAL
-    if legacy_type == "file":
-        if sync_meta and connector_kind:
-            return DatasetSourceKind.API
-        return DatasetSourceKind.FILE
-    return DatasetSourceKind.FILE
+    raise ValueError("Dataset source_kind must be set explicitly.")
 
 
 def resolve_dataset_connector_kind(
     *,
     explicit_connector_kind: str | None,
-    connection_connector_type: str | None,
-    file_config: Mapping[str, Any] | None,
-    storage_uri: str | None,
-    legacy_dataset_type: str | None,
 ) -> str | None:
     normalized = _normalize_enum_value(explicit_connector_kind)
     if normalized:
         return normalized
-
-    connector_type = _normalize_enum_value(connection_connector_type)
-    if connector_type:
-        return connector_type
-
-    sync_meta = _connector_sync_meta(file_config)
-    sync_connector_kind = _normalize_enum_value(
-        sync_meta.get("connector_type") if sync_meta else None
-    )
-    if sync_connector_kind:
-        return sync_connector_kind
-
-    file_format = infer_file_storage_kind(file_config=file_config, storage_uri=storage_uri)
-    legacy_type = _normalize_enum_value(legacy_dataset_type)
-    if legacy_type == "file":
-        if file_format == DatasetStorageKind.CSV:
-            return "csv_upload"
-        if file_format == DatasetStorageKind.PARQUET:
-            return "parquet_lake"
-        if file_format == DatasetStorageKind.JSON:
-            return "json_upload"
-        return "file_upload"
-    if legacy_type == "federated":
-        return "virtual"
     return None
 
 
 def resolve_dataset_storage_kind(
     *,
-    explicit_storage_kind: str | None,
-    legacy_dataset_type: str | None,
-    file_config: Mapping[str, Any] | None,
-    storage_uri: str | None,
+    explicit_storage_kind: str | DatasetStorageKind | None,
 ) -> DatasetStorageKind:
     normalized = _normalize_enum_value(explicit_storage_kind)
     if normalized:
         return DatasetStorageKind(normalized)
-
-    legacy_type = _normalize_enum_value(legacy_dataset_type)
-    if legacy_type == "table":
-        return DatasetStorageKind.TABLE
-    if legacy_type == "sql":
-        return DatasetStorageKind.VIEW
-    if legacy_type == "federated":
-        return DatasetStorageKind.VIRTUAL
-    if legacy_type == "file":
-        return infer_file_storage_kind(file_config=file_config, storage_uri=storage_uri)
-    return DatasetStorageKind.VIRTUAL
+    raise ValueError("Dataset storage_kind must be set explicitly.")
 
 
 def infer_file_storage_kind(
@@ -255,19 +200,10 @@ def build_dataset_execution_capabilities(
 def resolve_dataset_materialization_mode(
     *,
     explicit_materialization_mode: str | DatasetMaterializationMode | None,
-    file_config: Mapping[str, Any] | None,
 ) -> DatasetMaterializationMode:
     normalized = _normalize_enum_value(explicit_materialization_mode)
     if normalized:
         return DatasetMaterializationMode(normalized)
-
-    sync_meta = _connector_sync_meta(file_config)
-    if sync_meta:
-        return DatasetMaterializationMode.SYNCED
-
-    config_payload = dict(file_config or {})
-    if config_payload.get("managed_dataset") or config_payload.get("source_storage_uri"):
-        return DatasetMaterializationMode.SYNCED
     return DatasetMaterializationMode.LIVE
 
 
@@ -294,36 +230,6 @@ def dataset_supports_structured_federation(
         capability_payload.supports_structured_scan
         and capability_payload.supports_sql_federation
     )
-
-
-def derive_legacy_dataset_type(
-    *,
-    source_kind: str | DatasetSourceKind,
-    storage_kind: str | DatasetStorageKind,
-) -> str:
-    source_value = str(source_kind).split(".")[-1].lower()
-    storage_value = str(storage_kind).split(".")[-1].lower()
-    if (
-        source_value == DatasetSourceKind.VIRTUAL.value
-        or storage_value == DatasetStorageKind.VIRTUAL.value
-    ):
-        return "FEDERATED"
-    if storage_value in {
-        DatasetStorageKind.CSV.value,
-        DatasetStorageKind.PARQUET.value,
-        DatasetStorageKind.JSON.value,
-    }:
-        return "FILE"
-    if storage_value == DatasetStorageKind.VIEW.value:
-        return "SQL"
-    return "TABLE"
-
-
-def _connector_sync_meta(file_config: Mapping[str, Any] | None) -> Mapping[str, Any]:
-    payload = (file_config or {}).get("connector_sync")
-    if isinstance(payload, Mapping):
-        return payload
-    return {}
 
 
 def _should_suppress_synthetic_schema(

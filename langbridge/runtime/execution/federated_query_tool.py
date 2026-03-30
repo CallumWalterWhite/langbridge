@@ -4,6 +4,7 @@ from uuid import UUID
 
 from pydantic import BaseModel
 
+import pyarrow as pa
 from langbridge.connectors.base import (
     SqlConnectorFactory,
     get_connector_config_factory,
@@ -75,7 +76,7 @@ class FederatedQueryTool:
             dialect=request.dialect,
             workspace_id=request.workspace_id,
         )
-        table = await self._service.fetch_arrow(result_handle)
+        table: pa.Table = await self._service.fetch_arrow(result_handle)
         rows = table.to_pylist()
         return {
             "result_handle": result_handle.model_dump(mode="json"),
@@ -123,13 +124,16 @@ class FederatedQueryTool:
             descriptor_materialization_mode = str(
                 descriptor_payload.get("materialization_mode") or ""
             ).strip().lower()
-            source_kind = str(metadata.get("source_kind") or descriptor_source_kind or "connector").strip().lower()
+            metadata_source_kind = str(metadata.get("source_kind") or "").strip().lower()
+            metadata_storage_kind = str(metadata.get("storage_kind") or "").strip().lower()
+            source_kind = descriptor_source_kind or metadata_source_kind
+            storage_kind = descriptor_storage_kind or metadata_storage_kind
             is_file_like_source = (
                 source_kind == "file"
-                or descriptor_storage_kind in {"csv", "parquet", "json"}
+                or storage_kind in {"csv", "parquet", "json"}
                 or (
                     descriptor_materialization_mode == "synced"
-                    and descriptor_storage_kind in {"csv", "parquet", "json"}
+                    and storage_kind in {"csv", "parquet", "json"}
                 )
             )
             if is_file_like_source:
@@ -181,18 +185,11 @@ class FederatedQueryTool:
         *,
         source_id: str,
     ) -> ConnectorRuntimeType:
-        connector_type = str(connector.connector_type or "").strip().upper()
-        if not connector_type:
+        if connector.connector_type is None:
             raise ValueError(
                 f"Connector '{connector.id}' for source '{source_id}' is missing connector_type."
             )
-        try:
-            runtime_type = ConnectorRuntimeType(connector_type)
-        except ValueError as exc:
-            raise ValueError(
-                f"Connector '{connector.id}' for source '{source_id}' has unsupported connector type "
-                f"'{connector.connector_type}'."
-            ) from exc
+        runtime_type = connector.connector_type
         try:
             self._sql_connector_factory.get_sql_connector_class_reference(runtime_type)
         except ValueError as exc:

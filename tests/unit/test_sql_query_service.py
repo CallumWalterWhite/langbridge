@@ -91,6 +91,8 @@ def test_sql_query_service_defaults_to_all_eligible_workspace_datasets() -> None
     aliases = {dataset.dataset_id: dataset.sql_alias for dataset in selected}
     assert aliases[sales.id] == "sales_orders"
     assert aliases[crm.id] == "crm_contacts"
+    assert all(dataset.source_kind == "database" for dataset in selected)
+    assert all(dataset.storage_kind == "table" for dataset in selected)
 
 
 def test_sql_query_service_selected_datasets_is_a_subset_selector() -> None:

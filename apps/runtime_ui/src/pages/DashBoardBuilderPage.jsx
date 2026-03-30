@@ -26,7 +26,7 @@ import {
   getBiPalette,
   isDateLikeField,
   loadBiStudioState,
-} from "../lib/bi";
+} from "../lib/dashboardBuilder";
 import {
   copyTextToClipboard,
   downloadTextFile,
@@ -75,7 +75,7 @@ function summarizeSelectedMembers(values, prefix) {
   return `${prefix}: ${selected[0]} +${selected.length - 1}`;
 }
 
-export function BiPage() {
+export function DashBoardBuilderPage() {
   const modelsState = useAsyncData(fetchSemanticModels);
   const models = Array.isArray(modelsState.data?.items) ? modelsState.data.items : [];
   const [studioState, setStudioState] = useState(() => loadBiStudioState(readStoredJson));
@@ -252,7 +252,7 @@ export function BiPage() {
       const freshBoard = createBiBoard({ selectedModel: defaultModelName });
       setStudioState({ boards: [freshBoard], activeBoardId: freshBoard.id });
       setActiveWidgetId(freshBoard.widgets[0]?.id || "");
-      setStudioNotice("Reset the BI studio to a fresh local dashboard.");
+      setStudioNotice("Reset the Dashboard studio to a fresh local dashboard.");
       return;
     }
     setStudioState({ boards: remaining, activeBoardId: remaining[0].id });
@@ -430,7 +430,7 @@ export function BiPage() {
       <section className="surface-panel bi-command-bar">
         <div className="bi-command-bar-main">
           <div className="bi-command-bar-copy">
-            <p className="eyebrow">BI Studio</p>
+            <p className="eyebrow">Dashboard Studio</p>
             <h2>{activeBoard?.name || "Runtime dashboard"}</h2>
             <div className="bi-command-bar-meta">
               <span className="chip">{selectedModel || "No model"}</span>

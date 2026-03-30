@@ -1,7 +1,7 @@
 
 import uuid
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -74,6 +74,20 @@ class RuntimeActorRepository(AsyncBaseRepository[RuntimeActor]):
         )
         return result.one_or_none()
 
+    async def get_by_username(
+        self,
+        *,
+        workspace_id: uuid.UUID,
+        username: str,
+    ) -> RuntimeActor | None:
+        result = await self._session.scalars(
+            select(RuntimeActor).where(
+                RuntimeActor.workspace_id == workspace_id,
+                func.lower(RuntimeActor.username) == str(username).strip().casefold(),
+            )
+        )
+        return result.one_or_none()
+
     async def get_by_email(
         self,
         *,
@@ -83,10 +97,18 @@ class RuntimeActorRepository(AsyncBaseRepository[RuntimeActor]):
         result = await self._session.scalars(
             select(RuntimeActor).where(
                 RuntimeActor.workspace_id == workspace_id,
-                RuntimeActor.email == email,
+                func.lower(RuntimeActor.email) == str(email).strip().casefold(),
             )
         )
         return result.one_or_none()
+
+    async def list_for_workspace(self, *, workspace_id: uuid.UUID) -> list[RuntimeActor]:
+        result = await self._session.scalars(
+            select(RuntimeActor)
+            .where(RuntimeActor.workspace_id == workspace_id)
+            .order_by(RuntimeActor.created_at.asc())
+        )
+        return list(result.all())
 
 
 __all__ = [

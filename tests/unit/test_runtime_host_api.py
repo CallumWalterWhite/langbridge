@@ -1150,6 +1150,26 @@ def test_runtime_host_api_creates_runtime_managed_resources_and_exposes_manageme
     assert semantic_models["commerce_performance"]["management_mode"] == "config_managed"
     assert semantic_models["runtime_orders_model"]["management_mode"] == "runtime_managed"
 
+    connection = sqlite3.connect(tmp_path / ".langbridge" / "metadata.db")
+    try:
+        cursor = connection.cursor()
+        connector_owner = cursor.execute(
+            "SELECT created_by_actor_id, updated_by_actor_id FROM connectors WHERE name = 'runtime_demo'"
+        ).fetchone()
+        dataset_owner = cursor.execute(
+            "SELECT created_by_actor_id, updated_by_actor_id FROM datasets WHERE name = 'runtime_orders'"
+        ).fetchone()
+        semantic_owner = cursor.execute(
+            "SELECT created_by_actor_id, updated_by_actor_id FROM semantic_models WHERE name = 'runtime_orders_model'"
+        ).fetchone()
+    finally:
+        connection.close()
+
+    expected_actor_id = runtime.context.actor_id
+    assert tuple(uuid.UUID(value) for value in connector_owner) == (expected_actor_id, expected_actor_id)
+    assert tuple(uuid.UUID(value) for value in dataset_owner) == (expected_actor_id, expected_actor_id)
+    assert tuple(uuid.UUID(value) for value in semantic_owner) == (expected_actor_id, expected_actor_id)
+
 
 def test_runtime_host_api_create_endpoints_do_not_override_config_managed_resources(
     tmp_path: Path,
@@ -1370,17 +1390,19 @@ def test_runtime_host_api_static_token_auth_supports_local_operator_bootstrap_lo
         cursor = connection.cursor()
         credential_row = cursor.execute(
             """
-            SELECT c.password_hash, a.subject, a.email
+            SELECT c.password_hash, c.password_algorithm, c.must_rotate_password, a.subject, a.username, a.email, a.status
             FROM runtime_local_auth_credentials AS c
             JOIN runtime_actors AS a ON a.id = c.actor_id
             """
         ).fetchone()
         assert credential_row is not None
         assert credential_row[0].startswith("pbkdf2_sha256$")
-        assert credential_row[0] != "Password123!"
-        assert "Password123!" not in credential_row[0]
-        assert credential_row[1] == "runtime-admin"
-        assert credential_row[2] == "admin@example.com"
+        assert credential_row[1] == "pbkdf2_sha256"
+        assert credential_row[2] == 0
+        assert credential_row[3] == "runtime-admin"
+        assert credential_row[4] == "runtime-admin"
+        assert credential_row[5] == "admin@example.com"
+        assert credential_row[6] == "active"
     finally:
         connection.close()
 
@@ -1388,14 +1410,14 @@ def test_runtime_host_api_static_token_auth_supports_local_operator_bootstrap_lo
     assert me.status_code == 200
     assert me.json()["auth_mode"] == "static_token"
     assert me.json()["user"]["username"] == "runtime-admin"
-    assert me.json()["user"]["roles"] == ["runtime:admin"]
+    assert me.json()["user"]["roles"] == ["admin"]
     assert me.json()["user"]["provider"] == "runtime_local_session"
 
     actor = asyncio.run(_get_runtime_actor(runtime, uuid.UUID(me.json()["user"]["id"])))
     assert actor is not None
     assert actor.subject == "runtime-admin"
     assert actor.email == "admin@example.com"
-    assert actor.roles_json == ["runtime:admin"]
+    assert actor.roles_json == ["admin"]
     assert actor.metadata_json["runtime_operator"] is True
 
     authenticated_info = client.get("/api/runtime/v1/info")
@@ -1455,6 +1477,119 @@ def test_runtime_host_api_static_token_auth_supports_local_operator_bootstrap_lo
     assert bearer_info_after_bootstrap.status_code == 200
 
 
+def test_runtime_host_api_admin_manages_runtime_users(tmp_path: Path) -> None:
+    runtime = _build_runtime(tmp_path)
+    auth_config = RuntimeAuthConfig(
+        mode=RuntimeAuthMode.static_token,
+        static_token="runtime-token",
+        static_workspace_id=runtime.context.workspace_id,
+        static_roles=("runtime:viewer",),
+        local_auth_enabled=True,
+        local_session_secret="runtime-local-auth-secret",
+    )
+    client = TestClient(_create_runtime_app(runtime, auth_config=auth_config))
+
+    bootstrap = client.post(
+        "/api/runtime/v1/auth/bootstrap",
+        json={
+            "username": "runtime-admin",
+            "email": "admin@example.com",
+            "password": "Password123!",
+        },
+    )
+    assert bootstrap.status_code == 200
+
+    initial_actors = client.get("/api/runtime/v1/actors")
+    assert initial_actors.status_code == 200
+    assert initial_actors.json()["total"] == 1
+    assert initial_actors.json()["items"][0]["roles"] == ["admin"]
+
+    create_actor = client.post(
+        "/api/runtime/v1/actors",
+        json={
+            "username": "builder-one",
+            "email": "builder@example.com",
+            "display_name": "Builder One",
+            "password": "BuilderPass123!",
+            "roles": ["builder", "viewer"],
+        },
+    )
+    assert create_actor.status_code == 201
+    created_actor = create_actor.json()
+    assert created_actor["username"] == "builder-one"
+    assert created_actor["display_name"] == "Builder One"
+    assert created_actor["roles"] == ["builder", "viewer"]
+    assert created_actor["status"] == "active"
+    assert created_actor["password_algorithm"] == "pbkdf2_sha256"
+
+    actor_id = created_actor["id"]
+    listed_actors = client.get("/api/runtime/v1/actors")
+    assert listed_actors.status_code == 200
+    assert listed_actors.json()["total"] == 2
+
+    update_actor = client.patch(
+        f"/api/runtime/v1/actors/{actor_id}",
+        json={
+            "roles": ["analyst", "viewer"],
+            "status": "disabled",
+        },
+    )
+    assert update_actor.status_code == 200
+    assert update_actor.json()["roles"] == ["analyst", "viewer"]
+    assert update_actor.json()["status"] == "disabled"
+
+    disabled_login = client.post(
+        "/api/runtime/v1/auth/login",
+        json={
+            "identifier": "builder-one",
+            "password": "BuilderPass123!",
+        },
+    )
+    assert disabled_login.status_code == 401
+    assert "disabled" in disabled_login.json()["detail"].lower()
+
+    reenable_actor = client.patch(
+        f"/api/runtime/v1/actors/{actor_id}",
+        json={"status": "active"},
+    )
+    assert reenable_actor.status_code == 200
+    assert reenable_actor.json()["status"] == "active"
+
+    reset_password = client.post(
+        f"/api/runtime/v1/actors/{actor_id}/reset-password",
+        json={
+            "password": "BuilderPass456!",
+            "must_rotate_password": True,
+        },
+    )
+    assert reset_password.status_code == 200
+    assert reset_password.json()["must_rotate_password"] is True
+
+    old_password_login = client.post(
+        "/api/runtime/v1/auth/login",
+        json={
+            "identifier": "builder@example.com",
+            "password": "BuilderPass123!",
+        },
+    )
+    assert old_password_login.status_code == 401
+
+    builder_client = TestClient(_create_runtime_app(runtime, auth_config=auth_config))
+    builder_login = builder_client.post(
+        "/api/runtime/v1/auth/login",
+        json={
+            "identifier": "builder-one",
+            "password": "BuilderPass456!",
+        },
+    )
+    assert builder_login.status_code == 200
+    assert builder_login.json()["user"]["username"] == "builder-one"
+    assert builder_login.json()["user"]["roles"] == ["analyst", "viewer"]
+
+    unauthorized_admin_call = builder_client.get("/api/runtime/v1/actors")
+    assert unauthorized_admin_call.status_code == 403
+
+
 def test_runtime_host_api_sqlite_local_auth_persists_across_runtime_restart(tmp_path: Path) -> None:
     runtime = _build_runtime(tmp_path)
     auth_config = RuntimeAuthConfig(
@@ -1476,6 +1611,24 @@ def test_runtime_host_api_sqlite_local_auth_persists_across_runtime_restart(tmp_
         },
     )
     assert bootstrap.status_code == 200
+
+    create_actor = first_client.post(
+        "/api/runtime/v1/actors",
+        json={
+            "username": "sqlite-analyst",
+            "email": "analyst@example.com",
+            "password": "AnalystPass123!",
+            "roles": ["analyst", "viewer"],
+        },
+    )
+    assert create_actor.status_code == 201
+    actor_id = create_actor.json()["id"]
+
+    disable_actor = first_client.patch(
+        f"/api/runtime/v1/actors/{actor_id}",
+        json={"status": "disabled"},
+    )
+    assert disable_actor.status_code == 200
 
     restarted_runtime = build_configured_local_runtime(config_path=str(runtime._config_path))
     restarted_client = TestClient(_create_runtime_app(restarted_runtime, auth_config=auth_config))
@@ -1504,6 +1657,12 @@ def test_runtime_host_api_sqlite_local_auth_persists_across_runtime_restart(tmp_
     )
     assert login.status_code == 200
     assert login.json()["user"]["username"] == "runtime-admin"
+
+    actors = restarted_client.get("/api/runtime/v1/actors")
+    assert actors.status_code == 200
+    actors_by_username = {item["username"]: item for item in actors.json()["items"]}
+    assert actors_by_username["sqlite-analyst"]["roles"] == ["analyst", "viewer"]
+    assert actors_by_username["sqlite-analyst"]["status"] == "disabled"
 
 
 def test_runtime_host_api_in_memory_local_auth_is_ephemeral(tmp_path: Path) -> None:

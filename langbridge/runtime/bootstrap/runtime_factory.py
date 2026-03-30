@@ -268,6 +268,7 @@ def build_local_runtime(
         lineage_edge_repository=lineage_edge_store,
         federated_query_tool=federated_query_tool,
         dataset_provider=dataset_provider,
+        connector_provider=connector_provider,
     )
     sql_query_service = SqlQueryService(
         sql_job_result_artifact_store=(

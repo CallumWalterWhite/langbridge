@@ -26,6 +26,13 @@ from langbridge.runtime.models import (
     RuntimeJob,
     RuntimeJobStatus,
 )
+from langbridge.runtime.models.metadata import (
+    DatasetMaterializationMode,
+    DatasetSourceKind,
+    DatasetStatus,
+    DatasetStorageKind,
+    DatasetType,
+)
 from langbridge.runtime.ports import (
     DatasetCatalogStore,
     DatasetColumnStore,
@@ -34,10 +41,14 @@ from langbridge.runtime.ports import (
     LineageEdgeStore,
     MutableJobHandle,
 )
-from langbridge.runtime.providers import DatasetMetadataProvider
+from langbridge.runtime.providers import ConnectorMetadataProvider, DatasetMetadataProvider
 from langbridge.runtime.services.dataset_execution import (
     DatasetExecutionResolver,
     build_file_scan_sql,
+)
+from langbridge.runtime.utils.datasets import (
+    build_dataset_execution_capabilities,
+    build_dataset_relation_identity,
 )
 from langbridge.runtime.utils.lineage import (
     LineageEdgeType,
@@ -71,6 +82,38 @@ async def _flush_stores(*stores: Any) -> None:
 
 
 class DatasetQueryService:
+    @staticmethod
+    def _connector_dialect(connector_type: str | None) -> str:
+        normalized = str(connector_type or "").strip().upper()
+        dialect_map = {
+            "POSTGRES": "postgres",
+            "MYSQL": "mysql",
+            "MARIADB": "mysql",
+            "SNOWFLAKE": "snowflake",
+            "BIGQUERY": "bigquery",
+            "SQLSERVER": "tsql",
+            "REDSHIFT": "postgres",
+            "ORACLE": "oracle",
+            "SQLITE": "sqlite",
+        }
+        return dialect_map.get(normalized, normalized.lower() or "tsql")
+
+    async def _connector_runtime_kind(
+        self,
+        *,
+        workspace_id: uuid.UUID,
+        connection_id: uuid.UUID,
+    ) -> str | None:
+        if self._connector_provider is None:
+            return None
+        connector = await self._connector_provider.get_connector(
+            workspace_id=workspace_id,
+            connector_id=connection_id,
+        )
+        if connector is None or connector.connector_type is None:
+            return None
+        return connector.connector_type_value.lower()
+
     def __init__(
         self,
         dataset_repository: DatasetCatalogStore | None,
@@ -81,6 +124,7 @@ class DatasetQueryService:
         federated_query_tool: FederatedQueryTool | None = None,
         execution_engine: ExecutionEngine | None = None,
         dataset_provider: DatasetMetadataProvider | None = None,
+        connector_provider: ConnectorMetadataProvider | None = None,
     ) -> None:
         self._logger = logging.getLogger(__name__)
         self._dataset_repository = dataset_repository
@@ -91,6 +135,7 @@ class DatasetQueryService:
         self._federated_query_tool = federated_query_tool
         self._execution_engine = execution_engine or DuckDbExecutionEngine()
         self._dataset_provider = dataset_provider
+        self._connector_provider = connector_provider
         self._dataset_execution_resolver = DatasetExecutionResolver(
             dataset_repository=dataset_repository,
             dataset_provider=dataset_provider,
@@ -332,7 +377,7 @@ class DatasetQueryService:
             dataset_id=request.dataset_id,
             workspace_id=request.workspace_id,
         )
-        if str(dataset.dataset_type or "").upper() != "FILE":
+        if dataset.dataset_type != DatasetType.FILE:
             raise ExecutionValidationError("CSV ingest requires a FILE dataset.")
 
         storage_uri = (request.storage_uri or dataset.storage_uri or "").strip()
@@ -380,8 +425,8 @@ class DatasetQueryService:
             "source_format": "csv",
             "source_storage_uri": storage_uri,
         }
-        dataset.status = "published"
-        dataset.materialization_mode = "synced"
+        dataset.status = DatasetStatus.PUBLISHED
+        dataset.materialization_mode = DatasetMaterializationMode.SYNCED
         dataset.table_name = dataset.table_name or dataset.name
         dataset.schema_name = dataset.schema_name or None
         dataset.row_count_estimate = int(count_rows[0][0]) if count_rows else None
@@ -582,8 +627,35 @@ class DatasetQueryService:
             ),
         )
         now = datetime.now(timezone.utc)
+        dataset_id = uuid.uuid4()
+        connector_kind = await self._connector_runtime_kind(
+            workspace_id=request.workspace_id,
+            connection_id=request.connection_id,
+        )
+        if connector_kind is None:
+            raise ExecutionValidationError(
+                f"Connector metadata is required to create dataset selections for connection '{request.connection_id}'."
+            )
+        source_kind = DatasetSourceKind.DATABASE
+        storage_kind = DatasetStorageKind.TABLE
+        materialization_mode = DatasetMaterializationMode.LIVE
+        relation_identity = build_dataset_relation_identity(
+            dataset_id=dataset_id,
+            connector_id=request.connection_id,
+            dataset_name=final_name,
+            catalog_name=None,
+            schema_name=schema_name,
+            table_name=table_name,
+            storage_uri=None,
+            source_kind=source_kind,
+            storage_kind=storage_kind,
+        )
+        execution_capabilities = build_dataset_execution_capabilities(
+            source_kind=source_kind,
+            storage_kind=storage_kind,
+        )
         dataset = DatasetMetadata(
-            id=uuid.uuid4(),
+            id=dataset_id,
             workspace_id=request.workspace_id,
             connection_id=request.connection_id,
             created_by=request.actor_id,
@@ -592,16 +664,22 @@ class DatasetQueryService:
             sql_alias=self._dataset_sql_alias(final_name),
             description=None,
             tags=self._normalize_tags(list(request.tags or [])),
-            dataset_type="TABLE",
-            dialect=None,
+            dataset_type=DatasetType.TABLE,
+            materialization_mode=materialization_mode,
+            source_kind=source_kind,
+            connector_kind=connector_kind,
+            storage_kind=storage_kind,
+            dialect=self._connector_dialect(connector_kind),
             catalog_name=None,
             schema_name=schema_name,
             table_name=table_name,
             sql_text=None,
+            relation_identity=relation_identity.model_dump(mode="json"),
+            execution_capabilities=execution_capabilities.model_dump(mode="json"),
             referenced_dataset_ids=[],
             federated_plan=None,
             file_config=None,
-            status="published",
+            status=DatasetStatus.PUBLISHED,
             revision_id=None,
             row_count_estimate=None,
             bytes_estimate=None,
@@ -869,7 +947,7 @@ class DatasetQueryService:
                 policy=policy_snapshot,
                 source_bindings=source_bindings,
                 execution_characteristics=execution_characteristics,
-                status=dataset.status,
+                status=dataset.status_value,
                 snapshot=snapshot,
                 note=change_summary,
                 created_by=created_by,
@@ -889,23 +967,28 @@ class DatasetQueryService:
             "name": dataset.name,
             "description": dataset.description,
             "tags": list(dataset.tags_json or []),
-            "dataset_type": dataset.dataset_type,
+            "dataset_type": dataset.dataset_type_value,
             "materialization_mode": dataset.materialization_mode_value,
+            "source_kind": dataset.source_kind_value,
+            "connector_kind": dataset.connector_kind,
+            "storage_kind": dataset.storage_kind_value,
             "dialect": dataset.dialect,
             "storage_uri": dataset.storage_uri,
             "catalog_name": dataset.catalog_name,
             "schema_name": dataset.schema_name,
             "table_name": dataset.table_name,
             "sql_text": dataset.sql_text,
+            "relation_identity": dataset.relation_identity_json,
+            "execution_capabilities": dataset.execution_capabilities_json,
             "referenced_dataset_ids": list(dataset.referenced_dataset_ids_json or []),
             "federated_plan": dataset.federated_plan_json,
             "file_config": dataset.file_config_json,
-            "status": dataset.status,
+            "status": dataset.status_value,
         }
 
     def _build_dataset_source_bindings(self, dataset: DatasetMetadata) -> list[dict[str, Any]]:
-        dataset_type = str(dataset.dataset_type or "").upper()
-        if dataset_type == "TABLE":
+        dataset_type = dataset.dataset_type
+        if dataset_type == DatasetType.TABLE:
             return [
                 {
                     "source_type": "connection",
@@ -921,7 +1004,7 @@ class DatasetQueryService:
                     "table_name": dataset.table_name,
                 },
             ]
-        if dataset_type == "FILE":
+        if dataset_type == DatasetType.FILE:
             storage_uri = (
                 str((dataset.file_config_json or {}).get("source_storage_uri") or "").strip()
                 or str((dataset.file_config_json or {}).get("storage_uri") or "").strip()
@@ -935,7 +1018,7 @@ class DatasetQueryService:
                     "file_config": dict(dataset.file_config_json or {}),
                 }
             ]
-        if dataset_type == "FEDERATED":
+        if dataset_type == DatasetType.FEDERATED:
             bindings: list[dict[str, Any]] = []
             seen: set[str] = set()
             for raw_value in dataset.referenced_dataset_ids_json or []:
@@ -997,8 +1080,8 @@ class DatasetQueryService:
                 )
             )
 
-        dataset_type = str(dataset.dataset_type or "").upper()
-        if dataset_type == "TABLE" and dataset.connection_id is not None and dataset.table_name:
+        dataset_type = dataset.dataset_type
+        if dataset_type == DatasetType.TABLE and dataset.connection_id is not None and dataset.table_name:
             edges.append(
                 LineageEdge(
                     workspace_id=dataset.workspace_id,
@@ -1028,7 +1111,7 @@ class DatasetQueryService:
                     },
                 )
             )
-        elif dataset_type == "FILE":
+        elif dataset_type == DatasetType.FILE:
             storage_uri = (
                 str((dataset.file_config_json or {}).get("source_storage_uri") or "").strip()
                 or str((dataset.file_config_json or {}).get("storage_uri") or "").strip()
@@ -1049,7 +1132,7 @@ class DatasetQueryService:
                         },
                     )
                 )
-        elif dataset_type == "FEDERATED":
+        elif dataset_type == DatasetType.FEDERATED:
             seen_ids: set[str] = set()
             for item in self._build_dataset_source_bindings(dataset):
                 raw_id = item.get("dataset_id")

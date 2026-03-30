@@ -1,6 +1,8 @@
 
 import uuid
 
+import pytest
+
 from langbridge.runtime.models.metadata import (
     DatasetMaterializationMode,
     DatasetSourceKind,
@@ -17,32 +19,15 @@ from langbridge.runtime.utils.datasets import (
 )
 
 
-def test_shopify_parquet_dataset_resolves_to_structured_api_dataset() -> None:
-    file_config = {
-        "format": "parquet",
-        "connector_sync": {
-            "connector_type": "shopify",
-            "resource_name": "orders",
-        },
-    }
+def test_explicit_shopify_parquet_dataset_resolves_to_structured_api_dataset() -> None:
     connector_kind = resolve_dataset_connector_kind(
-        explicit_connector_kind=None,
-        connection_connector_type=None,
-        file_config=file_config,
-        storage_uri="file:///tmp/shopify_orders.parquet",
-        legacy_dataset_type="FILE",
+        explicit_connector_kind="shopify",
     )
     source_kind = resolve_dataset_source_kind(
-        explicit_source_kind=None,
-        legacy_dataset_type="FILE",
-        connector_kind=connector_kind,
-        file_config=file_config,
+        explicit_source_kind=DatasetSourceKind.API,
     )
     storage_kind = resolve_dataset_storage_kind(
-        explicit_storage_kind=None,
-        legacy_dataset_type="FILE",
-        file_config=file_config,
-        storage_uri="file:///tmp/shopify_orders.parquet",
+        explicit_storage_kind=DatasetStorageKind.PARQUET,
     )
     relation_identity = build_dataset_relation_identity(
         dataset_id=uuid.uuid4(),
@@ -74,56 +59,25 @@ def test_shopify_parquet_dataset_resolves_to_structured_api_dataset() -> None:
     )
 
 
-def test_legacy_table_dataset_defaults_to_database_table_capabilities() -> None:
-    source_kind = resolve_dataset_source_kind(
-        explicit_source_kind=None,
-        legacy_dataset_type="TABLE",
-        connector_kind="postgres",
-        file_config=None,
-    )
-    storage_kind = resolve_dataset_storage_kind(
-        explicit_storage_kind=None,
-        legacy_dataset_type="TABLE",
-        file_config=None,
-        storage_uri=None,
-    )
-    capabilities = build_dataset_execution_capabilities(
-        source_kind=source_kind,
-        storage_kind=storage_kind,
-    )
+def test_dataset_kind_resolvers_require_explicit_values() -> None:
+    with pytest.raises(ValueError, match="source_kind"):
+        resolve_dataset_source_kind(explicit_source_kind=None)
 
-    assert source_kind == DatasetSourceKind.DATABASE
-    assert storage_kind == DatasetStorageKind.TABLE
-    assert capabilities.supports_structured_scan is True
-    assert capabilities.supports_sql_federation is True
+    with pytest.raises(ValueError, match="storage_kind"):
+        resolve_dataset_storage_kind(explicit_storage_kind=None)
 
 
 def test_resolve_dataset_materialization_mode_prefers_explicit_value() -> None:
     resolved = resolve_dataset_materialization_mode(
         explicit_materialization_mode=DatasetMaterializationMode.LIVE,
-        file_config={
-            "managed_dataset": True,
-            "connector_sync": {
-                "connector_type": "shopify",
-                "resource_name": "orders",
-            },
-        },
     )
 
     assert resolved == DatasetMaterializationMode.LIVE
 
 
-def test_resolve_dataset_materialization_mode_marks_connector_synced_files_as_synced() -> None:
+def test_resolve_dataset_materialization_mode_defaults_to_live_when_missing() -> None:
     resolved = resolve_dataset_materialization_mode(
         explicit_materialization_mode=None,
-        file_config={
-            "format": "parquet",
-            "managed_dataset": True,
-            "connector_sync": {
-                "connector_type": "shopify",
-                "resource_name": "orders",
-            },
-        },
     )
 
-    assert resolved == DatasetMaterializationMode.SYNCED
+    assert resolved == DatasetMaterializationMode.LIVE

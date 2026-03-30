@@ -234,7 +234,7 @@ def test_semantic_vector_explicit_connector_path_resolves_connector_scoped_store
                     workspace_id=workspace_id,
                     name="semantic-qdrant",
                     connector_type="qdrant",
-                    connector_family="vector",
+                    connector_family="vector_db",
                     config={"config": {"host": "qdrant.internal", "port": 6333}},
                     connection_metadata=ConnectionMetadata(extra={"https": False}),
                     secret_references={

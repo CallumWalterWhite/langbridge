@@ -15,7 +15,6 @@ from langbridge.runtime.models import (
     SemanticQueryResponse,
 )
 from langbridge.orchestrator.llm.provider import LLMProvider
-from langbridge.runtime.errors import BusinessValidationError
 from langbridge.semantic.query import SemanticQuery
 
 from .schemas import (
@@ -131,7 +130,7 @@ class SemanticQueryBuilderCopilotTool:
         if request.generate_preview:
             try:
                 preview = await self._execute_preview(request, suggestion.semantic_query)
-            except BusinessValidationError as exc:
+            except ValueError as exc:
                 self.logger.warning("Semantic preview failed: %s", exc)
                 actions.append(f"Preview failed: {exc}")
 
@@ -196,13 +195,13 @@ class SemanticQueryBuilderCopilotTool:
     def _parse_model_response(self, raw_text: str) -> _CopilotSuggestion:
         blob = self._extract_json_blob(raw_text)
         if not blob:
-            raise BusinessValidationError(
+            raise ValueError(
                 "Copilot LLM response did not include a JSON payload."
             )
         try:
             data = json.loads(blob)
         except json.JSONDecodeError as exc:
-            raise BusinessValidationError(
+            raise ValueError(
                 f"Copilot response was not valid JSON: {exc}"
             ) from exc
 
@@ -222,7 +221,7 @@ class SemanticQueryBuilderCopilotTool:
             or data.get("builderState")
         )
         if not isinstance(semantic_payload, dict):
-            raise BusinessValidationError(
+            raise ValueError(
                 "Copilot response did not include a 'semanticQuery' object."
             )
 

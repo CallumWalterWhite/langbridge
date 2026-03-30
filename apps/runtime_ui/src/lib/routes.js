@@ -55,10 +55,10 @@ export const NAV_SECTIONS = [
         description: "Federated and direct SQL with local history and saved workbench state.",
       },
       {
-        to: "/bi",
+        to: "/dashboards",
         label: "Dashboard Studio",
         icon: Sparkles,
-        description: "Runtime BI studio with local dashboards and semantic query widgets.",
+        description: "Runtime Dashboard studio with local dashboards and semantic query widgets.",
       },
       {
         to: "/agents",

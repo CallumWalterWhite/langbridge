@@ -86,7 +86,7 @@ class ShopifyConnectorConfigSchemaFactory(BaseConnectorConfigSchemaFactory):
                 ),
             ],
             plugin_metadata=ConnectorPluginMetadata(
-                connector_type=ConnectorRuntimeType.SHOPIFY.value,
+                connector_type=ConnectorRuntimeType.SHOPIFY,
                 connector_family=ConnectorFamily.API,
                 supported_resources=list(SHOPIFY_SUPPORTED_RESOURCES),
                 auth_schema=list(SHOPIFY_AUTH_SCHEMA),

@@ -2,14 +2,22 @@ from datetime import datetime
 import uuid
 from typing import Any
 
-from pydantic import Field, model_validator
+from pydantic import Field, field_serializer, field_validator, model_validator
 
+from langbridge.connectors.base.config import (
+    ConnectorFamily,
+    ConnectorRuntimeType,
+    ConnectorSyncStrategy,
+)
 from langbridge.runtime.models.base import RuntimeModel, RuntimeRequestModel
 from langbridge.runtime.models.metadata import (
     ConnectorCapabilities,
     DatasetMaterializationMode,
+    DatasetStatus,
+    DatasetType,
     ManagementMode,
 )
+from langbridge.runtime.models.state import ConnectorSyncMode, ConnectorSyncStatus
 
 
 class RuntimeInfoResponse(RuntimeModel):
@@ -31,10 +39,10 @@ class RuntimeDatasetSummary(RuntimeModel):
     description: str | None = None
     connector: str | None = None
     semantic_model: str | None = None
-    materialization_mode: str | None = None
-    status: str | None = None
+    materialization_mode: DatasetMaterializationMode | None = None
+    status: DatasetStatus | None = None
     sync_resource: str | None = None
-    sync_status: str | None = None
+    sync_status: ConnectorSyncStatus | None = None
     last_sync_at: datetime | None = None
     management_mode: ManagementMode
     managed: bool = False
@@ -49,14 +57,41 @@ class RuntimeConnectorSummary(RuntimeModel):
     id: uuid.UUID | None = None
     name: str
     description: str | None = None
-    connector_type: str | None = None
-    connector_family: str | None = None
+    connector_type: ConnectorRuntimeType | None = None
+    connector_family: ConnectorFamily | None = None
     supports_sync: bool = False
     supported_resources: list[str] = Field(default_factory=list)
-    sync_strategy: str | None = None
+    sync_strategy: ConnectorSyncStrategy | None = None
     capabilities: dict[str, Any] = Field(default_factory=dict)
     management_mode: ManagementMode
     managed: bool = False
+
+    @field_validator("connector_type", mode="before")
+    @classmethod
+    def _validate_connector_type(cls, value: Any) -> ConnectorRuntimeType | None:
+        if value in {None, ""}:
+            return None
+        return ConnectorRuntimeType(str(getattr(value, "value", value)).strip().upper())
+
+    @field_validator("connector_family", mode="before")
+    @classmethod
+    def _validate_connector_family(cls, value: Any) -> ConnectorFamily | None:
+        if value in {None, ""}:
+            return None
+        return ConnectorFamily(str(getattr(value, "value", value)).strip().upper())
+
+    @field_validator("sync_strategy", mode="before")
+    @classmethod
+    def _validate_sync_strategy(cls, value: Any) -> ConnectorSyncStrategy | None:
+        if value in {None, ""}:
+            return None
+        return ConnectorSyncStrategy(str(getattr(value, "value", value)).strip().upper())
+
+    @field_serializer("connector_family", when_used="json")
+    def _serialize_connector_family(self, value: ConnectorFamily | None) -> str | None:
+        if value is None:
+            return None
+        return value.value.lower()
 
 
 class RuntimeConnectorListResponse(RuntimeModel):
@@ -84,13 +119,18 @@ class RuntimeSemanticModelListResponse(RuntimeModel):
 
 class RuntimeConnectorCreateRequest(RuntimeRequestModel):
     name: str = Field(..., min_length=1, max_length=255)
-    type: str = Field(..., min_length=1, max_length=64)
+    type: ConnectorRuntimeType
     description: str | None = Field(default=None, max_length=1024)
     connection: dict[str, Any] = Field(default_factory=dict)
     metadata: dict[str, Any] = Field(default_factory=dict)
     secrets: dict[str, Any] = Field(default_factory=dict)
     policy: dict[str, Any] | None = None
     capabilities: ConnectorCapabilities | dict[str, Any] | None = None
+
+    @field_validator("type", mode="before")
+    @classmethod
+    def _validate_type(cls, value: Any) -> ConnectorRuntimeType:
+        return ConnectorRuntimeType(str(getattr(value, "value", value) or "").strip().upper())
 
 
 class RuntimeDatasetSourceRequest(RuntimeRequestModel):
@@ -314,8 +354,8 @@ class RuntimeSyncResourceSummary(RuntimeModel):
     cursor_field: str | None = None
     incremental_cursor_field: str | None = None
     supports_incremental: bool = False
-    default_sync_mode: str | None = None
-    status: str | None = None
+    default_sync_mode: ConnectorSyncMode | None = None
+    status: ConnectorSyncStatus | None = None
     last_cursor: str | None = None
     last_sync_at: datetime | None = None
     dataset_ids: list[uuid.UUID] = Field(default_factory=list)
@@ -334,13 +374,13 @@ class RuntimeSyncStateSummary(RuntimeModel):
     workspace_id: uuid.UUID | None = None
     connection_id: uuid.UUID | None = None
     connector_name: str | None = None
-    connector_type: str | None = None
+    connector_type: ConnectorRuntimeType | None = None
     resource_name: str
-    sync_mode: str | None = None
+    sync_mode: ConnectorSyncMode | None = None
     last_cursor: str | None = None
     last_sync_at: datetime | None = None
     state: dict[str, Any] = Field(default_factory=dict)
-    status: str | None = None
+    status: ConnectorSyncStatus | None = None
     error_message: str | None = None
     records_synced: int = 0
     bytes_synced: int | None = None
@@ -357,8 +397,14 @@ class RuntimeSyncStateListResponse(RuntimeModel):
 
 class RuntimeSyncRequest(RuntimeRequestModel):
     resource_names: list[str] = Field(default_factory=list)
-    sync_mode: str = "INCREMENTAL"
+    sync_mode: ConnectorSyncMode = ConnectorSyncMode.INCREMENTAL
     force_full_refresh: bool = False
+
+    @field_validator("sync_mode", mode="before")
+    @classmethod
+    def _normalize_sync_mode(cls, value: Any) -> ConnectorSyncMode:
+        normalized = str(getattr(value, "value", value) or ConnectorSyncMode.INCREMENTAL.value).strip().upper()
+        return ConnectorSyncMode(normalized)
 
     @model_validator(mode="after")
     def _validate_resources(self) -> "RuntimeSyncRequest":
@@ -370,13 +416,17 @@ class RuntimeSyncRequest(RuntimeRequestModel):
         if not normalized:
             raise ValueError("resource_names must contain at least one resource.")
         self.resource_names = normalized
-        self.sync_mode = str(self.sync_mode or "INCREMENTAL").strip().upper() or "INCREMENTAL"
+        self.sync_mode = ConnectorSyncMode(
+            str(getattr(self.sync_mode, "value", self.sync_mode) or ConnectorSyncMode.INCREMENTAL.value)
+            .strip()
+            .upper()
+        )
         return self
 
 
 class RuntimeSyncExecutionResult(RuntimeModel):
     resource_name: str
-    sync_mode: str | None = None
+    sync_mode: ConnectorSyncMode | None = None
     records_synced: int = 0
     bytes_synced: int | None = None
     last_cursor: str | None = None
@@ -388,7 +438,7 @@ class RuntimeSyncResponse(RuntimeModel):
     status: str
     connector_id: uuid.UUID | None = None
     connector_name: str | None = None
-    sync_mode: str | None = None
+    sync_mode: ConnectorSyncMode | None = None
     resources: list[RuntimeSyncExecutionResult] = Field(default_factory=list)
     summary: str | None = None
     error: str | None = None
@@ -416,3 +466,48 @@ class RuntimeAuthLoginRequest(RuntimeRequestModel):
         if not str(self.identifier or "").strip():
             raise ValueError("identifier, username, or email is required.")
         return self
+
+
+class RuntimeActorSummary(RuntimeModel):
+    id: uuid.UUID
+    workspace_id: uuid.UUID
+    subject: str
+    username: str
+    email: str
+    display_name: str
+    actor_type: str
+    status: str
+    roles: list[str] = Field(default_factory=list)
+    auth_provider: str = "local_password"
+    password_algorithm: str
+    password_updated_at: datetime
+    must_rotate_password: bool = False
+    created_at: datetime
+    updated_at: datetime
+
+
+class RuntimeActorListResponse(RuntimeModel):
+    items: list[RuntimeActorSummary] = Field(default_factory=list)
+    total: int = 0
+
+
+class RuntimeActorCreateRequest(RuntimeRequestModel):
+    username: str = Field(..., min_length=3, max_length=64)
+    email: str = Field(..., min_length=3, max_length=320)
+    display_name: str | None = Field(default=None, max_length=255)
+    actor_type: str = Field(default="human", min_length=1, max_length=64)
+    password: str = Field(..., min_length=8)
+    roles: list[str] = Field(default_factory=list)
+
+
+class RuntimeActorUpdateRequest(RuntimeRequestModel):
+    email: str | None = Field(default=None, min_length=3, max_length=320)
+    display_name: str | None = Field(default=None, max_length=255)
+    actor_type: str | None = Field(default=None, min_length=1, max_length=64)
+    status: str | None = Field(default=None, min_length=1, max_length=32)
+    roles: list[str] | None = None
+
+
+class RuntimeActorResetPasswordRequest(RuntimeRequestModel):
+    password: str = Field(..., min_length=8)
+    must_rotate_password: bool = False

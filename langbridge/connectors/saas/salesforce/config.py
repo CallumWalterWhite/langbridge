@@ -112,7 +112,7 @@ class SalesforceConnectorConfigSchemaFactory(BaseConnectorConfigSchemaFactory):
                 ),
             ],
             plugin_metadata=ConnectorPluginMetadata(
-                connector_type=ConnectorRuntimeType.SALESFORCE.value,
+                connector_type=ConnectorRuntimeType.SALESFORCE,
                 connector_family=ConnectorFamily.API,
                 supported_resources=list(SALESFORCE_SUPPORTED_RESOURCES),
                 auth_schema=list(SALESFORCE_AUTH_SCHEMA),

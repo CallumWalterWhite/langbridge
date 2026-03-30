@@ -34,7 +34,7 @@ class _FakeCursor:
         self.description = description or []
         self.executed: list[tuple[str, object]] = []
 
-    async def __aenter__(self) -> _FakeCursor:
+    async def __aenter__(self) -> "_FakeCursor":
         return self
 
     async def __aexit__(self, exc_type, exc, tb) -> None:
@@ -51,7 +51,7 @@ class _FakeConnection:
     def __init__(self, cursor: _FakeCursor) -> None:
         self._cursor = cursor
 
-    async def __aenter__(self) -> _FakeConnection:
+    async def __aenter__(self) -> "_FakeConnection":
         return self
 
     async def __aexit__(self, exc_type, exc, tb) -> None:

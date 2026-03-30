@@ -626,7 +626,11 @@ class SemanticVectorSearchService:
             workspace_id=workspace_id,
             index_metadata=index_metadata,
         )
-        connector_type = ConnectorRuntimeType(str(connector.connector_type).upper())
+        if connector.connector_type is None:
+            raise ValueError(
+                f"Connector '{connector.id}' does not define a connector_type."
+            )
+        connector_type = connector.connector_type
         connector_class = self._vector_factory.get_managed_vector_db_class_reference(
             connector_type
         )

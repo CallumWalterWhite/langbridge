@@ -111,7 +111,7 @@ def build_declarative_plugin_metadata(
     resolved_connector_type = connector_type or ConnectorRuntimeType(manifest.connector_type)
     resolved_connector_family = connector_family or ConnectorFamily(manifest.connector_family)
     return ConnectorPluginMetadata(
-        connector_type=resolved_connector_type.value,
+        connector_type=resolved_connector_type,
         connector_family=resolved_connector_family,
         supported_resources=list(manifest.resource_keys),
         auth_schema=list(resolved_auth_schema),

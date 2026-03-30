@@ -15,7 +15,7 @@ This app is the source for the runtime-owned UI shell.
   - `/sql`
   - `/agents`
   - `/chat`
-  - `/bi`
+  - `/dashboards`
   - `/settings`
 
 ## Auth flow

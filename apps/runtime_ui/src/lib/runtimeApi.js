@@ -75,6 +75,31 @@ export function fetchAuthMe() {
   return runtimeRequest("/api/runtime/v1/auth/me");
 }
 
+export function fetchActors() {
+  return runtimeRequest("/api/runtime/v1/actors");
+}
+
+export function createActor(payload) {
+  return runtimeRequest("/api/runtime/v1/actors", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function updateActor(actorId, payload) {
+  return runtimeRequest(`/api/runtime/v1/actors/${encodeURIComponent(actorId)}`, {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function resetActorPassword(actorId, payload) {
+  return runtimeRequest(`/api/runtime/v1/actors/${encodeURIComponent(actorId)}/reset-password`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
 export function fetchRuntimeInfo() {
   return runtimeRequest("/api/runtime/v1/info");
 }

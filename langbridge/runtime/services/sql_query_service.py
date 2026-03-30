@@ -634,8 +634,14 @@ class SqlQueryService:
                 dataset_name=str(getattr(dataset, "name", "")).strip() or None,
                 canonical_reference=self._dataset_canonical_reference(dataset),
                 connector_id=getattr(dataset, "connection_id", None),
-                source_kind=str(getattr(dataset, "source_kind", "")).strip().lower() or None,
-                storage_kind=str(getattr(dataset, "storage_kind", "")).strip().lower() or None,
+                source_kind=(
+                    getattr(dataset, "source_kind_value", None)
+                    or getattr(dataset, "source_kind", None)
+                ),
+                storage_kind=(
+                    getattr(dataset, "storage_kind_value", None)
+                    or getattr(dataset, "storage_kind", None)
+                ),
             )
             for dataset in ordered_datasets
         ]

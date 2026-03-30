@@ -64,6 +64,7 @@ class RuntimeLocalAuthCredentialRepository(AsyncBaseRepository[RuntimeLocalAuthC
             .where(
                 RuntimeLocalAuthCredential.workspace_id == workspace_id,
                 or_(
+                    func.lower(RuntimeActor.username) == normalized_identifier,
                     func.lower(RuntimeActor.subject) == normalized_identifier,
                     func.lower(RuntimeActor.email) == normalized_identifier,
                 ),

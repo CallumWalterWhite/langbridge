@@ -949,14 +949,10 @@ semantic_models:
             {
                 "contact_external_id": "CRM-00000001",
                 "campaign_name": "Spring Refresh",
-                "campaign_channel": "email",
-                "engagement_score": 91,
             },
             {
                 "contact_external_id": "CRM-00000002",
                 "campaign_name": "VIP Retention",
-                "campaign_channel": "sms",
-                "engagement_score": 77,
             },
         ]
 
@@ -967,7 +963,7 @@ semantic_models:
                 "name": "campaign_file",
                 "description": None,
                 "connector_type": "FILE",
-                "connector_family": "file",
+                "connector_family": None,
                 "supports_sync": False,
                 "supported_resources": [],
                 "sync_strategy": None,
@@ -1181,15 +1177,15 @@ def test_saas_connector_example_configs_build_runtime_connectors(
     connectors = asyncio.run(runtime.list_connectors())
 
     assert connectors == [
-        {
-            "id": runtime._connectors[connector_name].id,
-            "name": connector_name,
-            "description": runtime._connectors[connector_name].description,
-            "connector_type": runtime._connectors[connector_name].connector_type,
-            "connector_family": runtime._connectors[connector_name].connector_family,
-            "supports_sync": True,
-            "supported_resources": expected_resources,
-            "sync_strategy": "INCREMENTAL",
+            {
+                "id": runtime._connectors[connector_name].id,
+                "name": connector_name,
+                "description": runtime._connectors[connector_name].description,
+                "connector_type": runtime._connectors[connector_name].connector_type_value,
+                "connector_family": runtime._connectors[connector_name].connector_family_value,
+                "supports_sync": True,
+                "supported_resources": expected_resources,
+                "sync_strategy": "INCREMENTAL",
             "capabilities": {
                 "supports_live_datasets": False,
                 "supports_synced_datasets": True,

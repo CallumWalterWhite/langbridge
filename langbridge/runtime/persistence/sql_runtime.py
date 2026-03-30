@@ -54,7 +54,6 @@ def _reconcile_sql_runtime_metadata(
     from langbridge.runtime.persistence.db import dataset as _db_dataset  # noqa: F401
     from langbridge.runtime.persistence.db import job as _db_job  # noqa: F401
     from langbridge.runtime.persistence.db import lineage as _db_lineage  # noqa: F401
-    from langbridge.runtime.persistence.db import runtime as _db_runtime  # noqa: F401
     from langbridge.runtime.persistence.db import semantic as _db_semantic  # noqa: F401
     from langbridge.runtime.persistence.db import sql as _db_sql  # noqa: F401
     from langbridge.runtime.persistence.db import threads as _db_threads  # noqa: F401

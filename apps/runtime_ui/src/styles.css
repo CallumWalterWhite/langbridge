@@ -244,7 +244,7 @@ pre {
 }
 
 .app-shell {
-  --side-nav-width: 288px;
+  --side-nav-width: 220px;
   min-height: 100vh;
 }
 
@@ -272,7 +272,7 @@ pre {
 
 .brand-mark strong {
   display: block;
-  font-size: 1rem;
+  font-size: 0.8rem;
   font-weight: 700;
 }
 
@@ -328,10 +328,11 @@ pre {
 .nav-item,
 .mobile-nav-item {
   display: grid;
-  gap: 8px;
-  padding: 14px 16px;
+  gap: 6px;
+  padding: 5px 10px;
   border-radius: var(--radius-sm);
   color: var(--text-secondary);
+  font-size: 0.75rem;
   border: 1px solid transparent;
   transition: background 140ms ease, border-color 140ms ease, color 140ms ease, transform 140ms ease;
 }
@@ -1396,6 +1397,88 @@ pre {
   color: var(--text-primary);
 }
 
+.section-tab-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  text-decoration: none;
+}
+
+.settings-section-tabs {
+  margin-bottom: 0;
+}
+
+.settings-callout {
+  gap: 12px;
+}
+
+.settings-callout-actions,
+.settings-form-actions {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.settings-user-list {
+  display: grid;
+  gap: 12px;
+}
+
+.settings-user-card {
+  width: 100%;
+  padding: 16px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.settings-user-card-head,
+.settings-inline-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.settings-user-card-head strong {
+  display: block;
+  margin-bottom: 4px;
+}
+
+.settings-user-summary {
+  gap: 10px;
+}
+
+.status-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 30px;
+  padding: 0 12px;
+  border-radius: 999px;
+  border: 1px solid var(--panel-border);
+  background: var(--chip-bg);
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+
+.status-pill.active {
+  border-color: var(--success-border);
+  background: var(--success-soft);
+  color: var(--success-text, var(--text-primary));
+}
+
+.status-pill.disabled {
+  border-color: var(--danger-border);
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+.danger-button {
+  border-color: var(--danger-border);
+  color: var(--danger);
+}
+
 .warning-list {
   display: grid;
   gap: 12px;
@@ -2053,6 +2136,32 @@ pre {
   gap: 18px;
 }
 
+.bi-shell .primary-button,
+.bi-shell .ghost-button,
+.bi-shell .ghost-link {
+  gap: 6px;
+  min-height: 38px;
+  padding: 0 14px;
+  border-radius: 14px;
+  font-size: 0.88rem;
+  font-weight: 650;
+  letter-spacing: 0.01em;
+}
+
+.bi-shell .primary-button {
+  box-shadow: 0 10px 22px rgba(15, 23, 42, 0.12);
+}
+
+.bi-shell .ghost-button,
+.bi-shell .ghost-link {
+  box-shadow: 0 6px 16px rgba(15, 23, 42, 0.08);
+}
+
+.bi-shell .button-icon {
+  width: 14px;
+  height: 14px;
+}
+
 .bi-command-bar {
   display: grid;
   gap: 18px;
@@ -2256,8 +2365,8 @@ pre {
 }
 
 .bi-widget-run-button {
-  min-height: 40px;
-  padding-inline: 14px;
+  min-height: 34px;
+  padding-inline: 12px;
 }
 
 .bi-widget-foot {

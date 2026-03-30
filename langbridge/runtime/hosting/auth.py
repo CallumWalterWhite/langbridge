@@ -1,4 +1,4 @@
-
+from __future__ import annotations
 import os
 import time
 import uuid
@@ -17,7 +17,7 @@ from langbridge.runtime.hosting.local_auth import (
     RuntimeLocalAuthError,
     RuntimeLocalAuthManager,
     RuntimeLocalSession,
-)
+)   
 
 if TYPE_CHECKING:
     from langbridge.runtime.bootstrap.configured_runtime import ConfiguredLocalRuntimeHost
@@ -38,6 +38,7 @@ class RuntimeAuthPrincipal:
     actor_id: uuid.UUID | None
     roles: tuple[str, ...] = field(default_factory=tuple)
     subject: str | None = None
+    username: str | None = None
     email: str | None = None
     display_name: str | None = None
     provider: str = "runtime_none"
@@ -211,9 +212,10 @@ class RuntimeAuthResolver:
                 workspace_id=self._default_context.workspace_id,
                 actor_id=session.id,
                 roles=tuple(session.roles),
-                subject=session.username,
+                subject=session.subject,
+                username=session.username,
                 email=session.email,
-                display_name=session.username,
+                display_name=session.display_name,
                 provider=session.provider,
             ),
             persist_local_actor=True,
@@ -386,10 +388,13 @@ class RuntimeAuthResolver:
                     id=principal.actor_id or uuid.uuid4(),
                     workspace_id=principal.workspace_id,
                     subject=principal.subject,
-                    actor_type="operator",
+                    username=principal.username or principal.subject,
+                    actor_type="human",
+                    status="active",
                     email=principal.email,
                     display_name=principal.display_name or principal.subject or principal.email or "Runtime Operator",
                     roles_json=list(principal.roles),
+                    is_active=True,
                     metadata_json={
                         "provider": principal.provider,
                         "runtime_operator": True,
@@ -400,10 +405,13 @@ class RuntimeAuthResolver:
                 if actor.workspace_id != principal.workspace_id:
                     raise self._unauthorized("Runtime actor does not belong to the authenticated workspace.")
                 actor.subject = principal.subject
-                actor.actor_type = "operator"
+                actor.username = principal.username or principal.subject or actor.username
+                actor.actor_type = "human"
+                actor.status = "active"
                 actor.email = principal.email
                 actor.display_name = principal.display_name or principal.subject or principal.email or actor.display_name
                 actor.roles_json = list(principal.roles)
+                actor.is_active = True
                 actor.metadata_json = {
                     **dict(actor.metadata_json or {}),
                     "provider": principal.provider,

@@ -2,7 +2,7 @@
 Connector registry responsible for managing available connectors.
 """
 
-
+from __future__ import annotations
 from dataclasses import dataclass, field
 from importlib import import_module
 from importlib.metadata import entry_points
@@ -86,19 +86,29 @@ def _ensure_repo_connector_src_paths() -> None:
             sys.path.insert(0, src_path)
 
 
+def _register_builtin_plugins_from_modules() -> None:
+    _ensure_repo_connector_src_paths()
+
+    for module_path in _BUILTIN_PLUGIN_MODULES:
+        try:
+            module = import_module(module_path)
+            plugin_factory = getattr(module, "get_connector_plugin", None)
+            if not callable(plugin_factory):
+                continue
+            plugin = plugin_factory()
+            if isinstance(plugin, ConnectorPlugin):
+                _plugin_registry.register(plugin)
+        except Exception as exc:
+            logger.warning("Skipping connector plugin module %s: %s", module_path, exc)
+
+
 def ensure_builtin_plugins_loaded() -> None:
     global _builtin_plugins_loaded
 
     if _builtin_plugins_loaded:
         return
 
-    _ensure_repo_connector_src_paths()
-
-    for module_path in _BUILTIN_PLUGIN_MODULES:
-        try:
-            import_module(module_path)
-        except Exception as exc:
-            logger.warning("Skipping connector plugin module %s: %s", module_path, exc)
+    _register_builtin_plugins_from_modules()
 
     _builtin_plugins_loaded = True
 
@@ -116,6 +126,11 @@ def ensure_builtin_connectors_loaded() -> None:
             import_module(module_path)
         except Exception as exc:
             logger.warning("Skipping connector module %s: %s", module_path, exc)
+
+    # Re-register plugin metadata in canonical override order after connector
+    # modules load, because connector imports can register older built-in
+    # plugins and mask repo-scoped declarative packages.
+    _register_builtin_plugins_from_modules()
 
     _builtin_connectors_loaded = True
 

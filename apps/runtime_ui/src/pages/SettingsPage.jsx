@@ -1,11 +1,16 @@
-import { useAsyncData } from "../hooks/useAsyncData";
+import { Link } from "react-router-dom";
+
+import { SettingsSectionNav } from "../components/SettingsSectionNav";
 import { fetchRuntimeInfo } from "../lib/runtimeApi";
+import { hasRuntimeAdminRole } from "../lib/runtimeAuthz";
 import { formatList, formatValue } from "../lib/format";
+import { useAsyncData } from "../hooks/useAsyncData";
 import { DetailList, PageEmpty, Panel } from "../components/PagePrimitives";
 
 export function SettingsPage({ authStatus, session }) {
   const { data, loading, error, reload } = useAsyncData(fetchRuntimeInfo);
   const info = data || {};
+  const isAdmin = hasRuntimeAdminRole(session?.roles);
 
   return (
     <div className="page-stack">
@@ -27,6 +32,8 @@ export function SettingsPage({ authStatus, session }) {
           </div>
         </div>
       </section>
+
+      <SettingsSectionNav session={session} />
 
       <Panel
         title="Runtime settings"
@@ -78,6 +85,25 @@ export function SettingsPage({ authStatus, session }) {
             <PageEmpty
               title="No capabilities"
               message="The runtime did not expose capability metadata."
+            />
+          )}
+        </Panel>
+
+        <Panel title="Governance" className="compact-panel">
+          {isAdmin ? (
+            <div className="callout success settings-callout">
+              <strong>Local user management enabled</strong>
+              <span>Manage runtime users, roles, password resets, and account state from the users section.</span>
+              <div className="settings-callout-actions">
+                <Link className="ghost-link" to="/settings/users">
+                  Open users
+                </Link>
+              </div>
+            </div>
+          ) : (
+            <PageEmpty
+              title="Admin-only surface"
+              message="This session can inspect runtime settings but cannot manage local runtime users."
             />
           )}
         </Panel>

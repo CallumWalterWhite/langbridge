@@ -14,7 +14,7 @@ class _Base(BaseModel):
         return self.model_dump_json()
 
 
-class ConnectorRuntimeType(Enum):
+class ConnectorRuntimeType(str, Enum):
     POSTGRES = "POSTGRES"
     MYSQL = "MYSQL"
     MARIADB = "MARIADB"
@@ -35,6 +35,9 @@ class ConnectorRuntimeType(Enum):
     ASANA = "ASANA"
     GOOGLE_ANALYTICS = "GOOGLE_ANALYTICS"
     SALESFORCE = "SALESFORCE"
+    
+    # Non-exhaustive list of file types - we can expand this as needed
+    FILE = "FILE"
 
 
 class ConnectorFamily(str, Enum):
@@ -81,7 +84,7 @@ class ConnectorAuthFieldSchema(_Base):
 
 
 class ConnectorPluginMetadata(_Base):
-    connector_type: str
+    connector_type: ConnectorRuntimeType
     connector_family: ConnectorFamily
     supported_resources: List[str] = Field(default_factory=list)
     auth_schema: List[ConnectorAuthFieldSchema] = Field(default_factory=list)
@@ -105,6 +108,10 @@ class BaseConnectorConfigFactory(ABC):
     @classmethod
     def create(cls, config: dict) -> BaseConnectorConfig:
         return BaseConnectorConfig(**config)
+    
+    @classmethod
+    def get_metadata_keys(cls) -> List[str]:
+        return []
 
 class BaseConnectorConfigSchemaFactory(ABC):
     type: ConnectorRuntimeType

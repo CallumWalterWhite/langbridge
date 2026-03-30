@@ -247,11 +247,11 @@ async def test_runtime_auth_local_operator_session_builds_runtime_context() -> N
     assert principal.actor_id == session.id
     assert principal.subject == "runtime-admin"
     assert principal.email == "admin@example.com"
-    assert principal.roles == ("runtime:admin",)
+    assert principal.roles == ("admin",)
     assert principal.provider == "runtime_local_session"
     assert context.workspace_id == default_context.workspace_id
     assert context.actor_id == session.id
-    assert context.roles == ("runtime:admin",)
+    assert context.roles == ("admin",)
     assert context.request_id == "req-local"
 
 

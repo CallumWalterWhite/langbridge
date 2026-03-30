@@ -1,17 +1,22 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { getErrorMessage } from "../lib/format";
 
 export function useAsyncData(loader, dependencies = [], options = {}) {
   const { enabled = true, initialData = null } = options;
+  const initialDataRef = useRef(initialData);
   const [data, setData] = useState(initialData);
   const [loading, setLoading] = useState(Boolean(enabled));
   const [error, setError] = useState("");
 
+  useEffect(() => {
+    initialDataRef.current = initialData;
+  }, [initialData]);
+
   const load = useCallback(async () => {
     if (!enabled) {
       setLoading(false);
-      return initialData;
+      return initialDataRef.current;
     }
     setLoading(true);
     setError("");
@@ -25,7 +30,7 @@ export function useAsyncData(loader, dependencies = [], options = {}) {
     } finally {
       setLoading(false);
     }
-  }, [enabled, initialData, loader, ...dependencies]);
+  }, [enabled, loader, ...dependencies]);
 
   useEffect(() => {
     void load();

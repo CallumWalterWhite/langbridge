@@ -109,8 +109,8 @@ export function OverviewPage() {
       icon: Table2,
     },
     {
-      to: "/bi",
-      label: "Launch BI studio",
+      to: "/dashboards",
+      label: "Launch Dashboard studio",
       description: "Compose runtime-local dashboards on top of semantic models.",
       icon: Sparkles,
     },
@@ -199,12 +199,12 @@ export function OverviewPage() {
               cta="Open SQL"
             />
             <FeatureCard
-              to="/bi"
+              to="/dashboards"
               icon={LayoutGrid}
               metric={`${formatValue(memory[2].value)} dashboards`}
-              title="BI studio"
+              title="Dashboard studio"
               description="Compose runtime-local dashboards with semantic fields, filters, and widgets."
-              cta="Launch BI"
+              cta="Dashboard BI"
             />
           </div>
         </section>
