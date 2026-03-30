@@ -18,6 +18,7 @@ Langbridge is a self-hostable analytics runtime with a Python SDK, runtime host 
 - `docs/architecture/execution-plane.md`
 - `docs/architecture/federated-query-engine.md`
 - `docs/architecture/hybrid-deployment.md`
+- `docs/architecture/runtime-api-layering.md`
 - `docs/architecture/runtime-boundary.md`
 - `docs/architecture/dataset-federation-upgrade.md`
 

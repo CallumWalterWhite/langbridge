@@ -31,7 +31,8 @@ jobs:
           else
             VERSION="${{ inputs.version }}"
           fi
-          echo "value=${VERSION}" >> "${GITHUB_OUTPUT}"
+          
+          echo "Resolved version: $VERSION"
 
       - name: Set up Python
         uses: actions/setup-python@v5

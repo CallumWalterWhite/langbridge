@@ -207,8 +207,6 @@ def _handle_info(args: argparse.Namespace) -> int:
         finally:
             client.close()
         _print_json(payload)
-        return 0
-
     payload = _fetch_remote_runtime_info(base_url=args.url, token=args.token)
     _print_json(payload)
     return 0

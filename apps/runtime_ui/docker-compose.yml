@@ -1,0 +1,28 @@
+services:
+  runtime-ui:
+    build:
+      context: ../..
+      dockerfile: docker/Dockerfile.runtime_ui
+    container_name: langbridge-runtime-ui
+    command:
+      - serve
+      - --config
+      - /examples/runtime_host/langbridge_config.yml
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8000"
+      - --features
+      - ui
+    environment:
+      OTEL_SDK_DISABLED: "true"
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+    ports:
+      - "8000:8000"
+    volumes:
+      - ../../examples:/examples
+      - runtime_ui_state:/examples/runtime_host/.langbridge
+    restart: unless-stopped
+
+volumes:
+  runtime_ui_state:

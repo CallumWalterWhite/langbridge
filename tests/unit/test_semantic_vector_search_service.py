@@ -210,6 +210,7 @@ def test_semantic_vector_refresh_builds_default_faiss_index_and_searches_dimensi
         assert indexes[0].refresh_status == SemanticVectorIndexStatus.READY
         assert indexes[0].indexed_value_count == 2
         assert indexes[0].embedding_dimension == 2
+        assert len(federated_query_tool.calls) == 1
         assert federated_query_tool.calls[0]["query"].startswith("SELECT DISTINCT")
         assert "FROM shopify_orders" in federated_query_tool.calls[0]["query"]
         assert embedder.calls[0] == ["France", "Germany"]

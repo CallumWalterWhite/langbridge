@@ -1718,62 +1718,91 @@ class ConfiguredLocalRuntimeHostFactory:
     ) -> dict[str, ConnectorMetadata]:
         connectors: dict[str, ConnectorMetadata] = {}
         for connector in config.connectors:
-            connection_payload = dict(connector.connection or {})
-            connector_type = _connector_runtime_type(connector.type)
-            plugin = ConfiguredLocalRuntimeHostFactory._resolve_connector_plugin_for_type(
-                connector_type.value
+            connector_metadata = ConfiguredLocalRuntimeHostFactory._build_single_connector_model(
+                connector=connector,
+                config_path=config_path,
+                context=context,
             )
-            if "path" in connection_payload:
-                resolved_path = str(connection_payload.get("path") or "").strip() or None
-                if resolved_path:
-                    if connector_type == ConnectorRuntimeType.SQLITE:
-                        connection_payload["location"] = resolved_path
-                        connection_payload.pop("path", None)
-                    else:
-                        connection_payload["path"] = resolved_path
-            if "location" in connection_payload and connector_type == ConnectorRuntimeType.SQLITE:
-                normalized_location = str(connection_payload.get("location") or "").strip()
-                if normalized_location:
-                    connection_payload["location"] = normalized_location
-            metadata_payload = dict(connector.metadata or {})
-            merged_connection = {**connection_payload, **metadata_payload}
-            connector_id = _stable_uuid("connector", f"{config_path}:{connector.name}")
-            capabilities = resolve_connector_capabilities(
-                configured_capabilities=connector.capabilities,
-                connector_type=connector_type.value,
-                plugin=plugin,
-            )
-            connectors[connector.name] = ConnectorMetadata(
-                id=connector_id,
-                name=connector.name,
-                description=connector.description,
-                connector_type=connector_type,
-                connector_family=(
-                    plugin.connector_family
-                    if plugin is not None
-                    else None
-                ),
-                workspace_id=context.workspace_id,
-                config={"config": connection_payload},
-                connection_metadata=_extract_connection_metadata(merged_connection),
-                secret_references=dict(connector.secrets or {}),
-                connection_policy=(
-                    ConnectionPolicy.model_validate(connector.policy)
-                    if isinstance(connector.policy, Mapping)
-                    else None
-                ),
-                supported_resources=list(plugin.supported_resources) if plugin is not None else [],
-                sync_strategy=(
-                    plugin.sync_strategy
-                    if plugin is not None and plugin.sync_strategy is not None
-                    else None
-                ),
-                capabilities=capabilities,
-                is_managed=connector.managed,
-                management_mode=ManagementMode.CONFIG_MANAGED,
-                lifecycle_state=LifecycleState.ACTIVE,
-            )
+            connectors[connector.name] = connector_metadata
         return connectors
+
+    @staticmethod
+    def _build_single_connector_model(
+        *,
+        connector: LocalRuntimeConnectorConfig,
+        config_path: Path,
+        context: RuntimeContext,
+    ) -> ConnectorMetadata:
+        connection_payload = ConfiguredLocalRuntimeHostFactory._normalize_connector_connection_payload(
+            connection=connector.connection,
+            connector_type=_connector_runtime_type(connector.type),
+        )
+        connector_type = _connector_runtime_type(connector.type)
+        plugin = ConfiguredLocalRuntimeHostFactory._resolve_connector_plugin_for_type(
+            connector_type.value
+        )
+        metadata_payload = dict(connector.metadata or {})
+        merged_connection = {**connection_payload, **metadata_payload}
+        connector_id = _stable_uuid("connector", f"{config_path}:{connector.name}")
+        capabilities = resolve_connector_capabilities(
+            configured_capabilities=connector.capabilities,
+            connector_type=connector_type.value,
+            plugin=plugin,
+        )
+        return ConnectorMetadata(
+            id=connector_id,
+            name=connector.name,
+            description=connector.description,
+            connector_type=connector_type,
+            connector_family=(
+                plugin.connector_family
+                if plugin is not None
+                else None
+            ),
+            workspace_id=context.workspace_id,
+            config={"config": connection_payload},
+            connection_metadata=_extract_connection_metadata(merged_connection),
+            secret_references=dict(connector.secrets or {}),
+            connection_policy=(
+                ConnectionPolicy.model_validate(connector.policy)
+                if isinstance(connector.policy, Mapping)
+                else None
+            ),
+            supported_resources=list(plugin.supported_resources) if plugin is not None else [],
+            sync_strategy=(
+                plugin.sync_strategy
+                if plugin is not None and plugin.sync_strategy is not None
+                else None
+            ),
+            capabilities=capabilities,
+            is_managed=connector.managed,
+            management_mode=ManagementMode.CONFIG_MANAGED,
+            lifecycle_state=LifecycleState.ACTIVE,
+        )
+
+    @staticmethod
+    def _normalize_connector_connection_payload(
+        *,
+        connection: dict[str, Any] | None,
+        connector_type: ConnectorRuntimeType,
+    ) -> dict[str, Any]:
+        connection_payload = dict(connection or {})
+        
+        if "path" in connection_payload:
+            resolved_path = str(connection_payload.get("path") or "").strip() or None
+            if resolved_path:
+                if connector_type == ConnectorRuntimeType.SQLITE:
+                    connection_payload["location"] = resolved_path
+                    connection_payload.pop("path", None)
+                else:
+                    connection_payload["path"] = resolved_path
+        
+        if "location" in connection_payload and connector_type == ConnectorRuntimeType.SQLITE:
+            normalized_location = str(connection_payload.get("location") or "").strip()
+            if normalized_location:
+                connection_payload["location"] = normalized_location
+        
+        return connection_payload
 
     @staticmethod
     def _build_dataset_models(
@@ -1785,7 +1814,7 @@ class ConfiguredLocalRuntimeHostFactory:
     ) -> tuple[dict[str, DatasetMetadata], dict[str, LocalRuntimeDatasetRecord]]:
         datasets: dict[str, DatasetMetadata] = {}
         dataset_records: dict[str, LocalRuntimeDatasetRecord] = {}
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         for dataset in config.datasets:
             connector = connectors.get(dataset.connector)
             if connector is None:
@@ -2635,8 +2664,8 @@ class ConfiguredLocalRuntimeHostFactory:
                     ),
                     content_yaml=record.content_yaml,
                     content_json=copy.deepcopy(record.content_json),
-                    created_at=datetime.utcnow(),
-                    updated_at=datetime.utcnow(),
+                    created_at=datetime.now(timezone.utc),
+                    updated_at=datetime.now(timezone.utc),
                     management_mode=record.management_mode,
                     lifecycle_state=LifecycleState.ACTIVE,
                 )
