@@ -9,6 +9,7 @@ import {
   Panel,
   SectionTabs,
 } from "../components/PagePrimitives";
+import { SemanticModelBuilder } from "../components/semantic-models/SemanticModelBuilder";
 import { useAsyncData } from "../hooks/useAsyncData";
 import {
   createSemanticModel,
@@ -19,11 +20,8 @@ import {
   updateSemanticModel,
 } from "../lib/runtimeApi";
 import { formatList, formatValue, getErrorMessage } from "../lib/format";
-import {
-  buildSemanticModelDraft,
-  describeManagementMode,
-  parseJsonObjectInput,
-} from "../lib/managedResources";
+import { describeManagementMode } from "../lib/managedResources";
+import { buildSemanticModelBuilderState } from "../lib/semanticModelBuilder";
 import {
   buildItemRef,
   extractSemanticDatasets,
@@ -31,24 +29,6 @@ import {
   renderJson,
   resolveItemByRef,
 } from "../lib/runtimeUi";
-
-function buildSemanticModelFormState() {
-  return {
-    name: "",
-    description: "",
-    datasets: [],
-    modelText: buildSemanticModelDraft({ name: "", description: "", datasets: [] }),
-    modelDirty: false,
-  };
-}
-
-function buildSemanticModelEditFormState(detail) {
-  return {
-    description: detail?.description || "",
-    datasets: Array.isArray(detail?.dataset_names) ? detail.dataset_names : [],
-    modelText: JSON.stringify(detail?.content_json || {}, null, 2),
-  };
-}
 
 export function SemanticModelsPage() {
   const params = useParams();
@@ -107,61 +87,27 @@ export function SemanticModelsPage() {
         dataset.measures.length > 0,
     );
 
-  function syncSemanticModelDraft(nextValues) {
-    setCreateForm((current) => {
-      const nextState =
-        typeof nextValues === "function" ? nextValues(current) : { ...current, ...nextValues };
-      if (!nextState.modelDirty) {
-        nextState.modelText = buildSemanticModelDraft({
-          name: nextState.name,
-          description: nextState.description,
-          datasets: nextState.datasets,
-        });
-      }
-      return nextState;
-    });
-  }
-
-  function toggleCreateDataset(datasetName) {
-    syncSemanticModelDraft((current) => ({
-      ...current,
-      datasets: current.datasets.includes(datasetName)
-        ? current.datasets.filter((item) => item !== datasetName)
-        : [...current.datasets, datasetName],
-    }));
-  }
-
   function resetCreateForm() {
-    setCreateForm(buildSemanticModelFormState());
+    setCreateResetKey((current) => current + 1);
     setCreateError("");
   }
 
-  async function handleCreateSemanticModel(event) {
-    event.preventDefault();
+  async function handleCreateSemanticModel(payload) {
     setCreateSubmitting(true);
     setCreateError("");
     setCreateSuccess("");
 
     try {
-      const name = String(createForm.name || "").trim();
-      if (!name) {
-        throw new Error("Semantic model name is required.");
-      }
-      if (createForm.datasets.length === 0) {
-        throw new Error("Select at least one dataset for the semantic model.");
-      }
-
-      const payload = {
-        name,
-        datasets: createForm.datasets,
-        model: parseJsonObjectInput(createForm.modelText, "Semantic model JSON", {}),
+      const normalizedPayload = {
+        name: payload.name,
+        datasets: payload.datasets,
+        model: payload.model,
       };
-      const description = String(createForm.description || "").trim();
-      if (description) {
-        payload.description = description;
+      if (payload.description) {
+        normalizedPayload.description = payload.description;
       }
 
-      const created = await createSemanticModel(payload);
+      const created = await createSemanticModel(normalizedPayload);
       setData((current) => {
         const items = Array.isArray(current?.items) ? current.items : [];
         const nextItems = [
@@ -189,42 +135,31 @@ export function SemanticModelsPage() {
   }
 
   const [showCreate, setShowCreate] = useState(false);
-  const [createForm, setCreateForm] = useState(buildSemanticModelFormState);
+  const [createResetKey, setCreateResetKey] = useState(0);
   const [createSubmitting, setCreateSubmitting] = useState(false);
   const [createError, setCreateError] = useState("");
   const [createSuccess, setCreateSuccess] = useState("");
   const [showEdit, setShowEdit] = useState(false);
-  const [editForm, setEditForm] = useState(buildSemanticModelEditFormState(null));
   const [editSubmitting, setEditSubmitting] = useState(false);
   const [editError, setEditError] = useState("");
   const [editSuccess, setEditSuccess] = useState("");
   const [deleteSubmitting, setDeleteSubmitting] = useState(false);
   const [deleteError, setDeleteError] = useState("");
+  const editBuilderState = buildSemanticModelBuilderState(detail, datasets);
 
-  function resetEditForm(nextDetail = detail) {
-    setEditForm(buildSemanticModelEditFormState(nextDetail));
+  function resetEditForm() {
     setEditError("");
   }
 
-  function toggleEditDataset(datasetName) {
-    setEditForm((current) => ({
-      ...current,
-      datasets: current.datasets.includes(datasetName)
-        ? current.datasets.filter((item) => item !== datasetName)
-        : [...current.datasets, datasetName],
-    }));
-  }
-
   function beginEditSemanticModel() {
-    resetEditForm(detail);
+    resetEditForm();
     setShowEdit(true);
     setShowCreate(false);
     setEditSuccess("");
     setDeleteError("");
   }
 
-  async function handleUpdateSemanticModel(event) {
-    event.preventDefault();
+  async function handleUpdateSemanticModel(payload) {
     if (!detail) {
       return;
     }
@@ -233,13 +168,10 @@ export function SemanticModelsPage() {
     setEditSuccess("");
     setDeleteError("");
     try {
-      if (editForm.datasets.length === 0) {
-        throw new Error("Select at least one dataset for the semantic model.");
-      }
       const updated = await updateSemanticModel(String(detail.id || detail.name), {
-        description: String(editForm.description || "").trim() || null,
-        datasets: editForm.datasets,
-        model: parseJsonObjectInput(editForm.modelText, "Semantic model JSON", {}),
+        description: String(payload.description || "").trim() || null,
+        datasets: payload.datasets,
+        model: payload.model,
       });
       setDetail(updated);
       setData((current) => {
@@ -347,7 +279,13 @@ export function SemanticModelsPage() {
               className="primary-button"
               type="button"
               onClick={() => {
-                setShowCreate((current) => !current);
+                setShowCreate((current) => {
+                  const nextValue = !current;
+                  if (nextValue) {
+                    setShowEdit(false);
+                  }
+                  return nextValue;
+                });
                 setCreateError("");
                 setCreateSuccess("");
               }}
@@ -445,134 +383,20 @@ export function SemanticModelsPage() {
               }
             >
               <ManagementModeNotice mode="runtime_managed" resourceLabel="New semantic models" />
-              <form className="form-grid" onSubmit={handleCreateSemanticModel}>
-                <label className="field">
-                  <span>Name</span>
-                  <input
-                    className="text-input"
-                    type="text"
-                    value={createForm.name}
-                    onChange={(event) =>
-                      syncSemanticModelDraft({ name: event.target.value })
-                    }
-                    placeholder="runtime_orders_model"
-                    disabled={createSubmitting}
-                  />
-                </label>
-
-                <label className="field">
-                  <span>Description</span>
-                  <input
-                    className="text-input"
-                    type="text"
-                    value={createForm.description}
-                    onChange={(event) =>
-                      syncSemanticModelDraft({ description: event.target.value })
-                    }
-                    placeholder="Short semantic model description"
-                    disabled={createSubmitting}
-                  />
-                </label>
-
-                <div className="field field-full">
-                  <div className="callout">
-                    <strong>Dataset bindings: {createForm.datasets.length}</strong>
-                    <span>
-                      Choose the runtime datasets this semantic model should bind to, then refine the generated JSON contract.
-                    </span>
-                  </div>
-                </div>
-
-                <div className="field field-full">
-                  <span>Datasets</span>
-                  {datasets.length > 0 ? (
-                    <div className="stack-list">
-                      {datasets.map((dataset) => {
-                        const checked = createForm.datasets.includes(dataset.name);
-                        return (
-                          <div key={dataset.id || dataset.name} className="list-card static">
-                            <div className="list-card-topline">
-                              <strong>{dataset.label || dataset.name}</strong>
-                              <ManagementBadge mode={dataset.management_mode} />
-                            </div>
-                            <span>
-                              {[dataset.connector, dataset.materialization_mode]
-                                .filter(Boolean)
-                                .join(" | ")}
-                            </span>
-                            <small>{describeManagementMode(dataset.management_mode)}</small>
-                            <label className="checkbox-field">
-                              <input
-                                type="checkbox"
-                                checked={checked}
-                                onChange={() => toggleCreateDataset(dataset.name)}
-                                disabled={createSubmitting}
-                              />
-                              <span>{checked ? "Included" : "Include dataset"}</span>
-                            </label>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  ) : (
-                    <PageEmpty
-                      title="No datasets available"
-                      message="Create at least one dataset before creating a semantic model."
-                    />
-                  )}
-                </div>
-
-                <label className="field field-full">
-                  <span>Semantic model JSON</span>
-                  <textarea
-                    className="textarea-input"
-                    value={createForm.modelText}
-                    onChange={(event) =>
-                      setCreateForm((current) => ({
-                        ...current,
-                        modelText: event.target.value,
-                        modelDirty: true,
-                      }))
-                    }
-                    disabled={createSubmitting}
-                  />
-                  <small className="field-hint">
-                    The draft is scaffolded from the selected datasets. Edit it directly to define dimensions, measures, and any additional semantic metadata.
-                  </small>
-                </label>
-
-                <div className="page-actions field-full">
-                  <button
-                    className="ghost-button"
-                    type="button"
-                    onClick={() =>
-                      setCreateForm((current) => ({
-                        ...current,
-                        modelText: buildSemanticModelDraft({
-                          name: current.name,
-                          description: current.description,
-                          datasets: current.datasets,
-                        }),
-                        modelDirty: false,
-                      }))
-                    }
-                    disabled={createSubmitting}
-                  >
-                    Reset draft from selected datasets
-                  </button>
-                </div>
-
-                {createError ? <div className="error-banner field-full">{createError}</div> : null}
-                <div className="page-actions field-full">
-                  <button
-                    className="primary-button"
-                    type="submit"
-                    disabled={createSubmitting || datasets.length === 0}
-                  >
-                    {createSubmitting ? "Creating semantic model..." : "Create semantic model"}
-                  </button>
-                </div>
-              </form>
+              <SemanticModelBuilder
+                key={`create-${createResetKey}`}
+                mode="create"
+                initialState={buildSemanticModelBuilderState(null, datasets)}
+                datasetOptions={datasets}
+                submitting={createSubmitting}
+                submitError={createError}
+                submitLabel="Create semantic model"
+                onSubmit={handleCreateSemanticModel}
+                onCancel={() => {
+                  setShowCreate(false);
+                  resetCreateForm();
+                }}
+              />
             </Panel>
           ) : null}
 
@@ -595,83 +419,22 @@ export function SemanticModelsPage() {
               }
             >
               <ManagementModeNotice mode="runtime_managed" resourceLabel="Editable semantic model" />
-              <form className="form-grid" onSubmit={handleUpdateSemanticModel}>
-                <label className="field">
-                  <span>Name</span>
-                  <input className="text-input" type="text" value={detail.name} disabled />
-                </label>
-
-                <label className="field">
-                  <span>Description</span>
-                  <input
-                    className="text-input"
-                    type="text"
-                    value={editForm.description}
-                    onChange={(event) =>
-                      setEditForm((current) => ({ ...current, description: event.target.value }))
-                    }
-                    disabled={editSubmitting}
-                  />
-                </label>
-
-                <div className="field field-full">
-                  <span>Datasets</span>
-                  <div className="stack-list">
-                    {datasets.map((dataset) => {
-                      const checked = editForm.datasets.includes(dataset.name);
-                      return (
-                        <div key={`edit-${dataset.id || dataset.name}`} className="list-card static">
-                          <div className="list-card-topline">
-                            <strong>{dataset.label || dataset.name}</strong>
-                            <ManagementBadge mode={dataset.management_mode} />
-                          </div>
-                          <span>
-                            {[dataset.connector, dataset.materialization_mode]
-                              .filter(Boolean)
-                              .join(" | ")}
-                          </span>
-                          <label className="checkbox-field">
-                            <input
-                              type="checkbox"
-                              checked={checked}
-                              onChange={() => toggleEditDataset(dataset.name)}
-                              disabled={editSubmitting}
-                            />
-                            <span>{checked ? "Included" : "Include dataset"}</span>
-                          </label>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-
-                <label className="field field-full">
-                  <span>Semantic model JSON</span>
-                  <textarea
-                    className="textarea-input"
-                    value={editForm.modelText}
-                    onChange={(event) =>
-                      setEditForm((current) => ({ ...current, modelText: event.target.value }))
-                    }
-                    disabled={editSubmitting}
-                  />
-                </label>
-
-                {editError ? <div className="error-banner field-full">{editError}</div> : null}
-                <div className="settings-form-actions field-full">
-                  <button className="primary-button" type="submit" disabled={editSubmitting}>
-                    {editSubmitting ? "Saving..." : "Save semantic model"}
-                  </button>
-                  <button
-                    className="ghost-button danger-button"
-                    type="button"
-                    onClick={() => void handleDeleteSemanticModel()}
-                    disabled={editSubmitting || deleteSubmitting}
-                  >
-                    {deleteSubmitting ? "Deleting..." : "Delete semantic model"}
-                  </button>
-                </div>
-              </form>
+              <SemanticModelBuilder
+                key={`edit-${detail.id || detail.name}-${detail.updated_at || detail.updatedAt || "current"}`}
+                mode="edit"
+                initialState={editBuilderState}
+                datasetOptions={datasets}
+                submitting={editSubmitting}
+                submitError={editError}
+                submitLabel="Save semantic model"
+                deleteSubmitting={deleteSubmitting}
+                onSubmit={handleUpdateSemanticModel}
+                onDelete={handleDeleteSemanticModel}
+                onCancel={() => {
+                  setShowEdit(false);
+                  resetEditForm();
+                }}
+              />
             </Panel>
           ) : null}
 
