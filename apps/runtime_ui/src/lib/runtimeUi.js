@@ -1,6 +1,6 @@
 export const SQL_HISTORY_STORAGE_KEY = "langbridge.runtime_ui.sql_history";
 export const SQL_SAVED_STORAGE_KEY = "langbridge.runtime_ui.sql_saved";
-export const BI_STUDIO_STORAGE_KEY = "langbridge.runtime_ui.bi_studio";
+export const DASHBOARD_BUILDER_STORAGE_KEY = "langbridge.runtime_ui.dashboard_builder";
 
 export const DEFAULT_SQL_QUERY = `SELECT country, SUM(net_revenue) AS net_sales
 FROM shopify_orders
@@ -452,7 +452,7 @@ export function buildActivityFeed(payload) {
       kind: "Dataset",
       description:
         dataset.description ||
-        `${dataset.connector || "Runtime"} dataset ready for SQL, BI, and agent use.`,
+        `${dataset.connector || "Runtime"} dataset ready for SQL, Dashboard Builder, and agent use.`,
       timestamp: dataset.updated_at || dataset.created_at,
     });
   });
@@ -464,7 +464,7 @@ export function buildActivityFeed(payload) {
       title: model.name,
       kind: "Semantic model",
       description:
-        model.description || "Semantic model available for runtime query and BI flows.",
+        model.description || "Semantic model available for runtime query and dashboard-builder flows.",
       timestamp: model.updated_at || model.updatedAt || model.created_at,
     });
   });

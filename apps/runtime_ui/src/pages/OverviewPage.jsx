@@ -19,7 +19,7 @@ import {
   fetchThreads,
 } from "../lib/runtimeApi";
 import {
-  BI_STUDIO_STORAGE_KEY,
+  DASHBOARD_BUILDER_STORAGE_KEY,
   SQL_HISTORY_STORAGE_KEY,
   SQL_SAVED_STORAGE_KEY,
   buildActivityFeed,
@@ -65,7 +65,7 @@ export function OverviewPage() {
   const memory = (() => {
     const sqlHistory = readStoredJson(SQL_HISTORY_STORAGE_KEY, []);
     const savedQueries = readStoredJson(SQL_SAVED_STORAGE_KEY, []);
-    const studio = readStoredJson(BI_STUDIO_STORAGE_KEY, { boards: [] });
+    const studio = readStoredJson(DASHBOARD_BUILDER_STORAGE_KEY, { boards: [] });
     const boards = Array.isArray(studio?.boards) ? studio.boards : [];
     return [
       {
@@ -79,7 +79,7 @@ export function OverviewPage() {
         detail: "Local execution history captured from the runtime SQL workspace.",
       },
       {
-        label: "BI dashboards",
+        label: "Dashboard Builder dashboards",
         value: formatValue(boards.length),
         detail: "Browser-local dashboards replacing cloud dashboard services.",
       },
@@ -110,7 +110,7 @@ export function OverviewPage() {
     },
     {
       to: "/dashboards",
-      label: "Launch Dashboard studio",
+      label: "Launch Dashboard Builder",
       description: "Compose runtime-local dashboards on top of semantic models.",
       icon: Sparkles,
     },
@@ -202,9 +202,9 @@ export function OverviewPage() {
               to="/dashboards"
               icon={LayoutGrid}
               metric={`${formatValue(memory[2].value)} dashboards`}
-              title="Dashboard studio"
+              title="Dashboard Builder"
               description="Compose runtime-local dashboards with semantic fields, filters, and widgets."
-              cta="Dashboard BI"
+              cta="Open Dashboard Builder"
             />
           </div>
         </section>

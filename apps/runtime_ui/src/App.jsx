@@ -10,7 +10,7 @@ import {
 } from "./components/AuthScreens";
 import { useRuntimeAuth } from "./hooks/useRuntimeAuth";
 import { AgentsPage } from "./pages/AgentsPage";
-import { DashBoardBuilderPage } from "./pages/DashBoardBuilderPage";
+import { DashboardBuilderPage } from "./pages/DashboardBuilderPage";
 import { ChatIndexPage } from "./pages/ChatIndexPage";
 import { ChatPage } from "./pages/ChatPage";
 import { ConnectorsPage } from "./pages/ConnectorsPage";
@@ -37,7 +37,7 @@ function RuntimeRoutes({ authStatus, session, onLogout }) {
         <Route path="/agents/:id" element={<AgentsPage />} />
         <Route path="/chat" element={<ChatIndexPage />} />
         <Route path="/chat/:threadId" element={<ChatPage />} />
-        <Route path="/dashboards" element={<DashBoardBuilderPage />} />
+        <Route path="/dashboards" element={<DashboardBuilderPage />} />
         <Route
           path="/settings"
           element={<SettingsPage authStatus={authStatus} session={session} />}

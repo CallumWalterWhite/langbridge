@@ -173,7 +173,7 @@ export function AgentsPage() {
           ) : (
             <PageEmpty
               title="No agents"
-              message="Define runtime agents to use local chat and BI copilots."
+              message="Define runtime agents to use local chat and dashboard builder copilots."
             />
           )}
         </Panel>
