@@ -18,6 +18,8 @@ class DatasetExecutionDescriptor(BaseModel):
     source_kind: str
     connector_kind: str | None = None
     storage_kind: str
+    source: dict[str, Any] | None = None
+    sync: dict[str, Any] | None = None
     relation_identity: dict[str, Any] = Field(default_factory=dict)
     execution_capabilities: dict[str, Any] = Field(default_factory=dict)
     metadata: dict[str, Any] = Field(default_factory=dict)

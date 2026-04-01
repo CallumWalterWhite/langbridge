@@ -85,7 +85,7 @@ class ConnectorApplication:
             "connector_family": connector.connector_family_value,
             "supports_sync": self._host._connector_supports_sync(connector),
             "supported_resources": list(connector.supported_resources or []),
-            "sync_strategy": connector.sync_strategy_value,
+            "default_sync_strategy": connector.default_sync_strategy_value,
             "capabilities": capabilities.model_dump(mode="json"),
             "management_mode": management_mode,
             "managed": management_mode == ManagementMode.CONFIG_MANAGED.value,
@@ -180,7 +180,7 @@ class ConnectorApplication:
                     "family": plugin.connector_family,
                     "supports_sync": plugin.api_connector_class is not None,
                     "supported_resources": list(plugin.supported_resources),
-                    "sync_strategy": plugin.sync_strategy,
+                    "default_sync_strategy": plugin.default_sync_strategy,
                     "capabilities_schema": capabilities_schema.model_dump(mode="json"),
                 }
             )
@@ -206,7 +206,7 @@ class ConnectorApplication:
                 connector_family=plugin.connector_family,
                 supported_resources=list(plugin.supported_resources),
                 auth_schema=list(plugin.auth_schema),
-                sync_strategy=plugin.sync_strategy,
+                default_sync_strategy=plugin.default_sync_strategy,
                 capabilities=plugin.capabilities,
             )
 
@@ -309,9 +309,9 @@ class ConnectorApplication:
             secret_references=secret_references,
             connection_policy=connection_policy,
             supported_resources=list(plugin.supported_resources) if plugin is not None else [],
-            sync_strategy=(
-                plugin.sync_strategy
-                if plugin is not None and plugin.sync_strategy is not None
+            default_sync_strategy=(
+                plugin.default_sync_strategy
+                if plugin is not None and plugin.default_sync_strategy is not None
                 else None
             ),
             capabilities=capabilities,

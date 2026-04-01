@@ -59,7 +59,7 @@ Manifest resource by key:
 dataset:
   name: stripe_customers
   connector: stripe
-  connector_sync:
+  sync:
     resource_key: customers
     sync_mode: INCREMENTAL
     params:
@@ -72,7 +72,7 @@ Another manifest resource:
 dataset:
   name: stripe_invoices
   connector: stripe
-  connector_sync:
+  sync:
     resource_key: invoices
     sync_mode: INCREMENTAL
     params:

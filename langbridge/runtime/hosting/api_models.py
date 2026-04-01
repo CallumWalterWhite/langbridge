@@ -42,8 +42,9 @@ class RuntimeDatasetSummary(RuntimeModel):
     connector: str | None = None
     semantic_model: str | None = None
     materialization_mode: DatasetMaterializationMode | None = None
+    source: dict[str, Any] | None = None
+    sync: dict[str, Any] | None = None
     status: DatasetStatus | None = None
-    sync_resource: str | None = None
     sync_status: ConnectorSyncStatus | None = None
     last_sync_at: datetime | None = None
     management_mode: ManagementMode
@@ -61,7 +62,7 @@ class RuntimeConnectorTypeSummary(RuntimeModel):
     family: ConnectorFamily | None = None
     supports_sync: bool = False
     supported_resources: list[str] = Field(default_factory=list)
-    sync_strategy: ConnectorSyncStrategy | None = None
+    default_sync_strategy: ConnectorSyncStrategy | None = None
     capabilities_schema: dict[str, Any] = Field(default_factory=dict)
 
 class RuntimeConnectorSummary(RuntimeModel):
@@ -72,7 +73,7 @@ class RuntimeConnectorSummary(RuntimeModel):
     connector_family: ConnectorFamily | None = None
     supports_sync: bool = False
     supported_resources: list[str] = Field(default_factory=list)
-    sync_strategy: ConnectorSyncStrategy | None = None
+    default_sync_strategy: ConnectorSyncStrategy | None = None
     capabilities: dict[str, Any] = Field(default_factory=dict)
     management_mode: ManagementMode
     managed: bool = False
@@ -91,9 +92,9 @@ class RuntimeConnectorSummary(RuntimeModel):
             return None
         return ConnectorFamily(str(getattr(value, "value", value)).strip().upper())
 
-    @field_validator("sync_strategy", mode="before")
+    @field_validator("default_sync_strategy", mode="before")
     @classmethod
-    def _validate_sync_strategy(cls, value: Any) -> ConnectorSyncStrategy | None:
+    def _validate_default_sync_strategy(cls, value: Any) -> ConnectorSyncStrategy | None:
         if value in {None, ""}:
             return None
         return ConnectorSyncStrategy(str(getattr(value, "value", value)).strip().upper())
@@ -199,48 +200,64 @@ class RuntimeDatasetPolicyRequest(RuntimeRequestModel):
     allow_dml: bool = False
 
 
+class RuntimeDatasetSyncConfigRequest(RuntimeRequestModel):
+    resource: str
+    strategy: ConnectorSyncStrategy | None = None
+    cadence: str | None = None
+    cursor_field: str | None = None
+    initial_cursor: str | None = None
+    lookback_window: str | None = None
+    backfill_start: str | None = None
+    backfill_end: str | None = None
+
+    @field_validator("strategy", mode="before")
+    @classmethod
+    def _normalize_strategy(cls, value: Any) -> ConnectorSyncStrategy | None:
+        if value in {None, ""}:
+            return None
+        return ConnectorSyncStrategy(str(getattr(value, "value", value)).strip().upper())
+
+    @model_validator(mode="after")
+    def _validate_sync(self) -> "RuntimeDatasetSyncConfigRequest":
+        resource = str(self.resource or "").strip()
+        if not resource:
+            raise ValueError("Dataset sync config requires resource.")
+        self.resource = resource
+        return self
+
+
 class RuntimeDatasetCreateRequest(RuntimeRequestModel):
     name: str = Field(..., min_length=1, max_length=255)
     description: str | None = Field(default=None, max_length=1024)
     connector: str | None = Field(default=None, min_length=1, max_length=255)
-    materialization_mode: DatasetMaterializationMode = DatasetMaterializationMode.LIVE
-    source: RuntimeDatasetSourceRequest
+    materialization_mode: DatasetMaterializationMode
+    source: RuntimeDatasetSourceRequest | None = None
+    sync: RuntimeDatasetSyncConfigRequest | None = None
     tags: list[str] = Field(default_factory=list)
     policy: RuntimeDatasetPolicyRequest | None = None
 
     @model_validator(mode="after")
     def _validate_materialization_mode_source(self) -> "RuntimeDatasetCreateRequest":
         connector_name = str(self.connector or "").strip()
-        resource_name = str(self.source.resource or "").strip()
-        table_name = str(self.source.table or "").strip()
-        sql = str(self.source.sql or "").strip()
-        storage_uri = str(self.source.storage_uri or "").strip()
-        path = str(self.source.path or "").strip()
-
         if self.materialization_mode == DatasetMaterializationMode.SYNCED:
-            if sql or storage_uri or path:
-                raise ValueError(
-                    "Synced datasets must declare source.resource with the connector resource name."
-                )
             if not connector_name:
                 raise ValueError("Dataset connector is required for synced datasets.")
-            if resource_name:
-                return self
-            if table_name:
-                self.source.resource = table_name
-                self.source.table = None
-                return self
-            raise ValueError(
-                "Synced datasets must declare source.resource with the connector resource name."
-            )
+            if self.source is not None:
+                raise ValueError("Synced datasets must declare sync config, not live source config.")
+            if self.sync is None:
+                raise ValueError("Synced datasets must declare sync config.")
+            return self
 
-        if resource_name:
+        if self.sync is not None:
+            raise ValueError("Live datasets must not declare sync config.")
+        if self.source is None:
+            raise ValueError("Live datasets must declare source.")
+        table_name = str(self.source.table or "").strip()
+        resource_name = str(self.source.resource or "").strip()
+        sql = str(self.source.sql or "").strip()
+        if not connector_name and (table_name or resource_name or sql):
             raise ValueError(
-                "Live datasets cannot use source.resource; use source.table, source.sql, or source.path/source.storage_uri."
-            )
-        if not connector_name and (table_name or sql):
-            raise ValueError(
-                "Dataset connector is required for table-backed and sql-backed dataset sources."
+                "Dataset connector is required for table-backed, sql-backed, and API live dataset sources."
             )
         return self
 
@@ -249,38 +266,24 @@ class RuntimeDatasetUpdateRequest(RuntimeRequestModel):
     description: str | None = Field(default=None, max_length=1024)
     materialization_mode: DatasetMaterializationMode | None = None
     source: RuntimeDatasetSourceRequest | None = None
+    sync: RuntimeDatasetSyncConfigRequest | None = None
     tags: list[str] | None = None
     policy: RuntimeDatasetPolicyRequest | None = None
 
     @model_validator(mode="after")
     def _validate_materialization_mode_source(self) -> "RuntimeDatasetUpdateRequest":
-        if self.materialization_mode is None or self.source is None:
+        if self.materialization_mode is None:
             return self
-        resource_name = str(self.source.resource or "").strip()
-        table_name = str(self.source.table or "").strip()
-        sql = str(self.source.sql or "").strip()
-        storage_uri = str(self.source.storage_uri or "").strip()
-        path = str(self.source.path or "").strip()
 
         if self.materialization_mode == DatasetMaterializationMode.SYNCED:
-            if sql or storage_uri or path:
-                raise ValueError(
-                    "Synced datasets must declare source.resource with the connector resource name."
-                )
-            if resource_name:
+            if self.source is not None:
+                raise ValueError("Synced datasets must declare sync config, not live source config.")
+            if self.sync is not None:
                 return self
-            if table_name:
-                self.source.resource = table_name
-                self.source.table = None
-                return self
-            raise ValueError(
-                "Synced datasets must declare source.resource with the connector resource name."
-            )
+            return self
 
-        if resource_name:
-            raise ValueError(
-                "Live datasets cannot use source.resource; use source.table, source.sql, or source.path/source.storage_uri."
-            )
+        if self.sync is not None:
+            raise ValueError("Live datasets must not declare sync config.")
         return self
 
 

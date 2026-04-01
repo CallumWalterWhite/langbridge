@@ -21,16 +21,18 @@ from langbridge.runtime.utils.datasets import (
     build_dataset_relation_identity,
 )
 from langbridge.connectors.base import ApiResource
-from langbridge.connectors.base.config import ConnectorRuntimeType
+from langbridge.connectors.base.config import ConnectorRuntimeType, ConnectorSyncStrategy
 from langbridge.runtime.models import (
     ConnectorSyncState,
     DatasetColumnMetadata,
     DatasetMaterializationMode,
     DatasetMetadata,
     DatasetPolicyMetadata,
+    DatasetSource,
     DatasetStatus,
     DatasetType,
     DatasetRevision,
+    DatasetSyncConfig,
     LineageEdge,
 )
 from langbridge.runtime.ports import (
@@ -309,24 +311,14 @@ class ConnectorSyncRuntime:
 
         file_config = {
             "format": "parquet",
-            "storage_uri": storage_uri,
             "managed_dataset": True,
-            "connector_sync": {
-                "connector_id": str(connection_id),
-                "connector_type": connector_type.value,
-                "connector_family": getattr(connector_record, "connector_family_value", None),
-                "resource_name": resource_name,
-                "root_resource_name": root_resource_name,
-                "parent_resource_name": parent_resource_name,
-                "sync_mode": sync_mode.value,
-                "last_sync_at": last_sync_at.isoformat(),
-                "last_cursor": checkpoint_cursor,
-                "primary_key": primary_key,
-                "schema_drift": schema_drift,
-            },
         }
 
         if dataset is None:
+            sync_contract = DatasetSyncConfig(
+                resource=resource_name,
+                strategy=ConnectorSyncStrategy(sync_mode.value),
+            )
             dataset = DatasetMetadata(
                 id=uuid.uuid4(),
                 workspace_id=workspace_id,
@@ -339,6 +331,8 @@ class ConnectorSyncRuntime:
                 tags=self._dataset_tags(connector_type=connector_type, resource_name=resource_name),
                 dataset_type=DatasetType.FILE,
                 materialization_mode=DatasetMaterializationMode.SYNCED,
+                source=None,
+                sync=sync_contract,
                 source_kind=DatasetSourceKind.API,
                 connector_kind=connector_type.value.lower(),
                 storage_kind=DatasetStorageKind.PARQUET,
@@ -367,11 +361,16 @@ class ConnectorSyncRuntime:
             self._dataset_repository.add(dataset)
             change_summary = f"Initial sync materialized {resource_name}."
         else:
-            existing_sync_meta = self._sync_meta(dataset)
-            existing_resource_name = str(existing_sync_meta.get("resource_name") or "").strip()
+            existing_sync = dataset.sync
+            existing_resource_name = str(dataset.sync.resource if dataset.sync is not None else "").strip()
             configured_dataset = (
                 str(getattr(dataset.management_mode, "value", dataset.management_mode))
                 == ManagementMode.CONFIG_MANAGED.value
+            )
+            dataset_sync_strategy = (
+                existing_sync.strategy
+                if existing_sync is not None
+                else ConnectorSyncStrategy(sync_mode.value)
             )
             dataset.connection_id = connection_id
             dataset.updated_by = actor_id
@@ -388,6 +387,17 @@ class ConnectorSyncRuntime:
             )
             dataset.dataset_type = DatasetType.FILE
             dataset.materialization_mode = DatasetMaterializationMode.SYNCED
+            dataset.source = None
+            dataset.sync = DatasetSyncConfig(
+                resource=resource_name,
+                strategy=dataset_sync_strategy,
+                cadence=existing_sync.cadence if existing_sync is not None else None,
+                cursor_field=existing_sync.cursor_field if existing_sync is not None else None,
+                initial_cursor=existing_sync.initial_cursor if existing_sync is not None else None,
+                lookback_window=existing_sync.lookback_window if existing_sync is not None else None,
+                backfill_start=existing_sync.backfill_start if existing_sync is not None else None,
+                backfill_end=existing_sync.backfill_end if existing_sync is not None else None,
+            )
             dataset.source_kind = DatasetSourceKind.API
             dataset.connector_kind = connector_type.value.lower()
             dataset.storage_kind = DatasetStorageKind.PARQUET
@@ -541,10 +551,8 @@ class ConnectorSyncRuntime:
         )
 
         file_config = dict(dataset.file_config_json or {})
-        sync_meta = file_config.get("connector_sync") if isinstance(file_config.get("connector_sync"), dict) else {}
-        if sync_meta is None:
-            sync_meta = {}
-        storage_uri = str(file_config.get("storage_uri") or dataset.storage_uri or "").strip()
+        sync_meta = dict(dataset.sync_json or {})
+        storage_uri = str(dataset.storage_uri or "").strip()
 
         edges: list[LineageEdge] = []
         if dataset.connection_id is not None:
@@ -559,7 +567,7 @@ class ConnectorSyncRuntime:
                     metadata={"connection_id": str(dataset.connection_id)},
                 )
             )
-        resource_name = str(sync_meta.get("resource_name") or "").strip()
+        resource_name = str(sync_meta.get("resource") or "").strip()
         if dataset.connection_id is not None and resource_name:
             edges.append(
                 LineageEdge(
@@ -574,10 +582,9 @@ class ConnectorSyncRuntime:
                     edge_type=LineageEdgeType.MATERIALIZES_FROM.value,
                     metadata={
                         "connection_id": str(dataset.connection_id),
-                        "connector_type": sync_meta.get("connector_type"),
                         "resource_name": resource_name,
-                        "root_resource_name": sync_meta.get("root_resource_name"),
-                        "parent_resource_name": sync_meta.get("parent_resource_name"),
+                        "strategy": sync_meta.get("strategy"),
+                        "cadence": sync_meta.get("cadence"),
                     },
                 )
             )
@@ -638,6 +645,8 @@ class ConnectorSyncRuntime:
             "tags": list(dataset.tags_json or []),
             "dataset_type": dataset.dataset_type_value,
             "materialization_mode": dataset.materialization_mode_value,
+            "source": dataset.source_json,
+            "sync": dataset.sync_json,
             "source_kind": dataset.source_kind_value,
             "connector_kind": dataset.connector_kind,
             "storage_kind": dataset.storage_kind_value,
@@ -658,8 +667,8 @@ class ConnectorSyncRuntime:
     @staticmethod
     def _build_dataset_source_bindings(dataset: DatasetMetadata) -> list[dict[str, Any]]:
         file_config = dict(dataset.file_config_json or {})
-        sync_meta = file_config.get("connector_sync") if isinstance(file_config.get("connector_sync"), dict) else {}
-        storage_uri = str(file_config.get("storage_uri") or dataset.storage_uri or "").strip()
+        sync_meta = dict(dataset.sync_json or {})
+        storage_uri = str(dataset.storage_uri or "").strip()
         relation_identity, execution_capabilities = ConnectorSyncRuntime._resolve_dataset_descriptor_snapshot(
             dataset
         )
@@ -668,6 +677,8 @@ class ConnectorSyncRuntime:
                 "source_type": "dataset_contract",
                 "dataset_id": str(dataset.id),
                 "materialization_mode": dataset.materialization_mode_value,
+                "source": dataset.source_json,
+                "sync": dataset.sync_json,
                 "source_kind": dataset.source_kind_value,
                 "connector_kind": dataset.connector_kind,
                 "storage_kind": dataset.storage_kind_value,
@@ -687,10 +698,10 @@ class ConnectorSyncRuntime:
                 {
                     "source_type": "api_resource",
                     "connection_id": str(dataset.connection_id) if dataset.connection_id else None,
-                    "connector_type": sync_meta.get("connector_type"),
-                    "resource_name": sync_meta.get("resource_name"),
-                    "root_resource_name": sync_meta.get("root_resource_name"),
-                    "parent_resource_name": sync_meta.get("parent_resource_name"),
+                    "resource_name": sync_meta.get("resource"),
+                    "strategy": sync_meta.get("strategy"),
+                    "cadence": sync_meta.get("cadence"),
+                    "cursor_field": sync_meta.get("cursor_field"),
                 }
             )
         if storage_uri:
@@ -823,7 +834,7 @@ class ConnectorSyncRuntime:
             if dataset.materialization_mode != DatasetMaterializationMode.SYNCED:
                 continue
             sync_meta = self._sync_meta(dataset)
-            if str(sync_meta.get("resource_name") or "").strip() == normalized_resource_name:
+            if str(sync_meta.get("resource") or "").strip() == normalized_resource_name:
                 return dataset
             if str(dataset.name or "").strip().lower() == normalized_generated_name:
                 generated_match = dataset
@@ -833,11 +844,7 @@ class ConnectorSyncRuntime:
 
     @staticmethod
     def _sync_meta(dataset: DatasetMetadata) -> Mapping[str, Any]:
-        file_config = dict(dataset.file_config_json or {})
-        payload = file_config.get("connector_sync")
-        if isinstance(payload, Mapping):
-            return payload
-        return {}
+        return dict(dataset.sync_json or {})
 
     @staticmethod
     def _dataset_parquet_path(

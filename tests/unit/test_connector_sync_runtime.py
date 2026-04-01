@@ -102,10 +102,7 @@ class _FakeDatasetRepository:
                 dataset.workspace_id == workspace_id
                 and dataset.connection_id == connection_id
                 and dataset.dataset_type == "FILE"
-                and (
-                    str(dataset.materialization_mode or "").strip().lower() == "synced"
-                    or bool((dataset.file_config_json or {}).get("managed_dataset"))
-                )
+                and str(dataset.materialization_mode or "").strip().lower() == "synced"
                 and dataset.table_name == table_name
             ):
                 return dataset
@@ -360,12 +357,12 @@ async def test_connector_sync_runtime_materializes_parent_child_datasets_and_per
     root_dataset = next(
         dataset
         for dataset in datasets
-        if (dataset.file_config_json or {}).get("connector_sync", {}).get("resource_name") == "orders"
+        if (dataset.sync_json or {}).get("resource") == "orders"
     )
     child_dataset = next(
         dataset
         for dataset in datasets
-        if (dataset.file_config_json or {}).get("connector_sync", {}).get("resource_name") == "orders__line_items"
+        if (dataset.sync_json or {}).get("resource") == "orders__line_items"
     )
 
     root_rows = _parquet_rows(
@@ -432,6 +429,11 @@ async def test_connector_sync_runtime_reuses_declared_synced_dataset_for_matchin
             table_name="billing_customers",
             storage_uri=None,
             sql_text=None,
+            source=None,
+            sync={
+                "resource": "customers",
+                "strategy": "INCREMENTAL",
+            },
             relation_identity=None,
             execution_capabilities=None,
             referenced_dataset_ids=[],
@@ -439,12 +441,6 @@ async def test_connector_sync_runtime_reuses_declared_synced_dataset_for_matchin
             file_config={
                 "format": "parquet",
                 "managed_dataset": True,
-                "connector_sync": {
-                    "connector_type": "STRIPE",
-                    "resource_name": "customers",
-                    "root_resource_name": "customers",
-                    "parent_resource_name": None,
-                },
             },
             status="pending_sync",
             revision_id=None,

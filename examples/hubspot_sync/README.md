@@ -3,7 +3,7 @@
 This example runs a self-hosted Langbridge runtime host configured with the
 declarative HubSpot connector and syncs live HubSpot CRM resources into
 runtime-managed datasets. It now showcases dataset-owned sync configuration:
-each dataset declares its own `materialization_mode` and `source.resource`.
+each dataset declares its own `materialization_mode` and `sync.resource`.
 
 ## What This Example Covers
 
@@ -105,7 +105,7 @@ curl -X POST http://localhost:8000/api/runtime/v1/connectors/hubspot_demo/sync \
   }'
 ```
 
-This works because the dataset controls `source.resource`, and the HubSpot
+This works because the dataset controls `sync.resource`, and the HubSpot
 connector resolves `/crm/v3/objects/custom_objects` dynamically at sync time.
 
 ## Inspect The Resulting Dataset

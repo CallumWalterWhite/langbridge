@@ -139,7 +139,7 @@ class _FakeRuntimeHost:
                 "connector_family": "api",
                 "supports_sync": True,
                 "supported_resources": ["customers"],
-                "sync_strategy": "INCREMENTAL",
+                "default_sync_strategy": "INCREMENTAL",
                 "capabilities": {
                     "supports_live_datasets": False,
                     "supports_synced_datasets": True,
@@ -850,6 +850,7 @@ connectors:
 datasets:
   - name: shopify_orders
     connector: commerce_demo
+    materialization_mode: live
     semantic_model: commerce_performance
     default_time_dimension: order_date
     source:

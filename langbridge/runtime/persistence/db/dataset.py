@@ -56,6 +56,8 @@ class DatasetRecord(Base):
     tags_json: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
     dataset_type: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
     materialization_mode: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
+    source_json: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    sync_json: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     source_kind: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
     connector_kind: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
     storage_kind: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)

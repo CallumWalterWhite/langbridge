@@ -28,6 +28,7 @@ from langbridge.runtime.models import (
 )
 from langbridge.runtime.models.metadata import (
     DatasetMaterializationMode,
+    DatasetSource,
     DatasetSourceKind,
     DatasetStatus,
     DatasetStorageKind,
@@ -53,6 +54,7 @@ from langbridge.runtime.utils.datasets import (
 from langbridge.runtime.utils.lineage import (
     LineageEdgeType,
     LineageNodeType,
+    build_api_resource_id,
     build_file_resource_id,
     build_source_table_resource_id,
     stable_payload_hash,
@@ -425,8 +427,13 @@ class DatasetQueryService:
             "source_format": "csv",
             "source_storage_uri": storage_uri,
         }
+        dataset.source = DatasetSource(
+            storage_uri=dataset.storage_uri,
+            format="parquet",
+        )
+        dataset.sync = None
         dataset.status = DatasetStatus.PUBLISHED
-        dataset.materialization_mode = DatasetMaterializationMode.SYNCED
+        dataset.materialization_mode = DatasetMaterializationMode.LIVE
         dataset.table_name = dataset.table_name or dataset.name
         dataset.schema_name = dataset.schema_name or None
         dataset.row_count_estimate = int(count_rows[0][0]) if count_rows else None
@@ -674,6 +681,8 @@ class DatasetQueryService:
             schema_name=schema_name,
             table_name=table_name,
             sql_text=None,
+            source=DatasetSource(table=table_name),
+            sync=None,
             relation_identity=relation_identity.model_dump(mode="json"),
             execution_capabilities=execution_capabilities.model_dump(mode="json"),
             referenced_dataset_ids=[],
@@ -983,6 +992,8 @@ class DatasetQueryService:
             "referenced_dataset_ids": list(dataset.referenced_dataset_ids_json or []),
             "federated_plan": dataset.federated_plan_json,
             "file_config": dataset.file_config_json,
+            "source": dataset.source_json,
+            "sync": dataset.sync_json,
             "status": dataset.status_value,
         }
 
@@ -994,6 +1005,8 @@ class DatasetQueryService:
                     "source_type": "connection",
                     "connection_id": str(dataset.connection_id) if dataset.connection_id else None,
                     "materialization_mode": dataset.materialization_mode_value,
+                    "source": dataset.source_json,
+                    "sync": dataset.sync_json,
                 },
                 {
                     "source_type": "source_table",
@@ -1002,11 +1015,33 @@ class DatasetQueryService:
                     "catalog_name": dataset.catalog_name,
                     "schema_name": dataset.schema_name,
                     "table_name": dataset.table_name,
+                    "source": dataset.source_json,
+                    "sync": dataset.sync_json,
+                },
+            ]
+        if dataset_type == DatasetType.API:
+            source = dict(dataset.source_json or {})
+            return [
+                {
+                    "source_type": "connection",
+                    "connection_id": str(dataset.connection_id) if dataset.connection_id else None,
+                    "materialization_mode": dataset.materialization_mode_value,
+                    "source": dataset.source_json,
+                    "sync": dataset.sync_json,
+                },
+                {
+                    "source_type": "api_resource",
+                    "connection_id": str(dataset.connection_id) if dataset.connection_id else None,
+                    "materialization_mode": dataset.materialization_mode_value,
+                    "resource_name": str(source.get("resource") or "").strip() or None,
+                    "source": dataset.source_json,
+                    "sync": dataset.sync_json,
                 },
             ]
         if dataset_type == DatasetType.FILE:
             storage_uri = (
-                str((dataset.file_config_json or {}).get("source_storage_uri") or "").strip()
+                str((dataset.source_json or {}).get("storage_uri") or "").strip()
+                or str((dataset.file_config_json or {}).get("source_storage_uri") or "").strip()
                 or str((dataset.file_config_json or {}).get("storage_uri") or "").strip()
                 or dataset.storage_uri
             )
@@ -1016,6 +1051,8 @@ class DatasetQueryService:
                     "materialization_mode": dataset.materialization_mode_value,
                     "storage_uri": storage_uri,
                     "file_config": dict(dataset.file_config_json or {}),
+                    "source": dataset.source_json,
+                    "sync": dataset.sync_json,
                 }
             ]
         if dataset_type == DatasetType.FEDERATED:
@@ -1111,9 +1148,32 @@ class DatasetQueryService:
                     },
                 )
             )
+        elif dataset_type == DatasetType.API and dataset.connection_id is not None:
+            source = dict(dataset.source_json or {})
+            resource_name = str(source.get("resource") or "").strip()
+            if resource_name:
+                edges.append(
+                    LineageEdge(
+                        workspace_id=dataset.workspace_id,
+                        source_type=LineageNodeType.API_RESOURCE.value,
+                        source_id=build_api_resource_id(
+                            connection_id=dataset.connection_id,
+                            resource_name=resource_name,
+                        ),
+                        target_type=LineageNodeType.DATASET.value,
+                        target_id=str(dataset.id),
+                        edge_type=LineageEdgeType.MATERIALIZES_FROM.value,
+                        metadata={
+                            "connection_id": str(dataset.connection_id),
+                            "resource_name": resource_name,
+                            "source": dataset.source_json,
+                        },
+                    )
+                )
         elif dataset_type == DatasetType.FILE:
             storage_uri = (
-                str((dataset.file_config_json or {}).get("source_storage_uri") or "").strip()
+                str((dataset.source_json or {}).get("storage_uri") or "").strip()
+                or str((dataset.file_config_json or {}).get("source_storage_uri") or "").strip()
                 or str((dataset.file_config_json or {}).get("storage_uri") or "").strip()
                 or dataset.storage_uri
             )

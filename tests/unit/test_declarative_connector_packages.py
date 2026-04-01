@@ -136,8 +136,8 @@ def test_manifest_plugin_examples_and_entrypoint_align(case: dict[str, object]) 
     assert schema.plugin_metadata is not None
     assert schema.plugin_metadata.supported_resources == list(case["resources"])
     assert payload.connector.package == case["package_dir"]
-    assert [example.connector_sync.resource_key for example in payload.examples] == case["example_resource_keys"]
-    assert all(example.connector_sync.resource is None for example in payload.examples)
+    assert [example.sync.resource_key for example in payload.examples] == case["example_resource_keys"]
+    assert all(example.sync.resource is None for example in payload.examples)
     pyproject = (package_root / "pyproject.toml").read_text(encoding="utf-8")
     assert '[project.entry-points."langbridge.connectors"]' in pyproject
     assert str(case["entrypoint"]) in pyproject

@@ -112,7 +112,7 @@ def write_sync_runtime_config(
                     f"  - name: {item['name']}",
                     "    connector: billing_demo",
                     "    materialization_mode: synced",
-                    "    source:",
+                    "    sync:",
                     f"      resource: {item['resource']}",
                 ]
             )

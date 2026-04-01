@@ -45,6 +45,7 @@ connectors:
 datasets:
   - name: orders
     connector: local_demo
+    materialization_mode: live
     semantic_model: commerce
     source:
       table: orders
@@ -246,6 +247,29 @@ def test_local_runtime_config_parses_dataset_materialization_mode_and_connector_
     assert config.datasets[0].materialization_mode.value == "live"
 
 
+def test_local_runtime_config_requires_explicit_dataset_materialization_mode() -> None:
+    with pytest.raises(ValueError, match="materialization_mode"):
+        LocalRuntimeConfig.model_validate(
+            {
+                "version": 1,
+                "connectors": [
+                    {
+                        "name": "warehouse",
+                        "type": "sqlite",
+                        "connection": {"location": "./example.db"},
+                    }
+                ],
+                "datasets": [
+                    {
+                        "name": "orders",
+                        "connector": "warehouse",
+                        "source": {"table": "orders"},
+                    }
+                ],
+            }
+        )
+
+
 def test_local_runtime_config_uses_explicit_source_resource_for_synced_datasets() -> None:
     config = LocalRuntimeConfig.model_validate(
         {
@@ -262,41 +286,40 @@ def test_local_runtime_config_uses_explicit_source_resource_for_synced_datasets(
                     "name": "billing_customers",
                     "connector": "billing_demo",
                     "materialization_mode": "synced",
-                    "source": {"resource": "customers"},
+                    "sync": {"resource": "customers"},
                 }
             ],
         }
     )
 
     assert config.datasets[0].materialization_mode.value == "synced"
-    assert config.datasets[0].source.resource == "customers"
-    assert config.datasets[0].source.table is None
+    assert config.datasets[0].sync is not None
+    assert config.datasets[0].sync.resource == "customers"
+    assert config.datasets[0].source is None
 
 
-def test_local_runtime_config_normalizes_legacy_synced_source_table_to_source_resource() -> None:
-    config = LocalRuntimeConfig.model_validate(
-        {
-            "version": 1,
-            "connectors": [
-                {
-                    "name": "billing_demo",
-                    "type": "stripe",
-                    "connection": {"api_key": "test-key"},
-                }
-            ],
-            "datasets": [
-                {
-                    "name": "billing_customers",
-                    "connector": "billing_demo",
-                    "materialization_mode": "synced",
-                    "source": {"table": "customers"},
-                }
-            ],
-        }
-    )
-
-    assert config.datasets[0].source.resource == "customers"
-    assert config.datasets[0].source.table is None
+def test_local_runtime_config_rejects_legacy_synced_source_shape() -> None:
+    with pytest.raises(ValueError, match="Synced datasets must declare sync config"):
+        LocalRuntimeConfig.model_validate(
+            {
+                "version": 1,
+                "connectors": [
+                    {
+                        "name": "billing_demo",
+                        "type": "stripe",
+                        "connection": {"api_key": "test-key"},
+                    }
+                ],
+                "datasets": [
+                    {
+                        "name": "billing_customers",
+                        "connector": "billing_demo",
+                        "materialization_mode": "synced",
+                        "source": {"table": "customers"},
+                    }
+                ],
+            }
+        )
 
 
 def test_configured_local_runtime_rejects_live_dataset_for_connector_without_query_pushdown(
@@ -349,19 +372,8 @@ datasets:
         encoding="utf-8",
     )
 
-    runtime = build_configured_local_runtime(config_path=config_path)
-
-    dataset_record = runtime._datasets["orders"]
-    dataset_model = asyncio.run(
-        runtime.providers.dataset_metadata.get_dataset(
-            workspace_id=runtime.context.workspace_id,
-            dataset_id=dataset_record.id,
-        )
-    )
-
-    assert dataset_model is not None
-    assert dataset_model.materialization_mode == "live"
-    assert dataset_model.table_name == "orders"
+    with pytest.raises(ValueError, match="does not support live datasets"):
+        build_configured_local_runtime(config_path=config_path)
 
 
 def test_configured_local_runtime_supports_config_defined_synced_dataset(
@@ -380,7 +392,7 @@ datasets:
   - name: billing_customers
     connector: billing_demo
     materialization_mode: synced
-    source:
+    sync:
       resource: customers
 """.strip(),
         encoding="utf-8",
@@ -402,17 +414,14 @@ datasets:
     assert dataset_model.storage_kind == "parquet"
     assert dataset_model.storage_uri is None
     assert dataset_model.status == "pending_sync"
+    assert dataset_model.source_json is None
+    assert dataset_model.sync_json == {
+        "resource": "customers",
+        "strategy": "INCREMENTAL",
+    }
     assert dataset_model.file_config == {
         "format": "parquet",
         "managed_dataset": True,
-            "connector_sync": {
-                "connector_id": str(runtime._connectors["billing_demo"].id),
-                "connector_type": "STRIPE",
-                "connector_family": "api",
-                "resource_name": "customers",
-                "root_resource_name": "customers",
-                "parent_resource_name": None,
-        },
     }
 
 
@@ -434,45 +443,17 @@ datasets:
   - name: hubspot_custom_objects
     connector: hubspot_demo
     materialization_mode: synced
-    source:
+    sync:
       resource: custom_objects
 """.strip(),
         encoding="utf-8",
     )
 
-    runtime = build_configured_local_runtime(config_path=config_path)
-
-    connectors = asyncio.run(runtime.list_connectors())
-    assert connectors[0]["name"] == "hubspot_demo"
-    assert connectors[0]["supports_sync"] is True
-    assert connectors[0]["capabilities"]["supports_synced_datasets"] is False
-
-    dataset_record = runtime._datasets["hubspot_custom_objects"]
-    dataset_model = asyncio.run(
-        runtime.providers.dataset_metadata.get_dataset(
-            workspace_id=runtime.context.workspace_id,
-            dataset_id=dataset_record.id,
-        )
-    )
-
-    assert dataset_model is not None
-    assert dataset_model.materialization_mode == "synced"
-    assert dataset_model.status == "pending_sync"
-    assert dataset_model.file_config == {
-        "format": "parquet",
-        "managed_dataset": True,
-            "connector_sync": {
-                "connector_id": str(runtime._connectors["hubspot_demo"].id),
-                "connector_type": "HUBSPOT",
-                "connector_family": "api",
-                "resource_name": "custom_objects",
-                "root_resource_name": "custom_objects",
-                "parent_resource_name": None,
-        },
-    }
+    with pytest.raises(ValueError, match="does not support synced datasets"):
+        build_configured_local_runtime(config_path=config_path)
 
 
-def test_configured_local_runtime_supports_legacy_synced_source_table_compatibility(
+def test_configured_local_runtime_rejects_legacy_synced_source_shape(
     tmp_path: Path,
 ) -> None:
     config_path = tmp_path / "langbridge_config.yml"
@@ -494,30 +475,8 @@ datasets:
         encoding="utf-8",
     )
 
-    runtime = build_configured_local_runtime(config_path=config_path)
-
-    dataset_record = runtime._datasets["billing_customers"]
-    dataset_model = asyncio.run(
-        runtime.providers.dataset_metadata.get_dataset(
-            workspace_id=runtime.context.workspace_id,
-            dataset_id=dataset_record.id,
-        )
-    )
-
-    assert dataset_model is not None
-    assert dataset_model.materialization_mode == "synced"
-    assert dataset_model.file_config == {
-        "format": "parquet",
-        "managed_dataset": True,
-            "connector_sync": {
-                "connector_id": str(runtime._connectors["billing_demo"].id),
-                "connector_type": "STRIPE",
-                "connector_family": "api",
-                "resource_name": "customers",
-                "root_resource_name": "customers",
-                "parent_resource_name": None,
-        },
-    }
+    with pytest.raises(ValueError, match="Synced datasets must declare sync config"):
+        build_configured_local_runtime(config_path=config_path)
 
 
 def test_configured_local_runtime_rejects_synced_dataset_with_non_resource_source(
@@ -543,7 +502,7 @@ datasets:
         encoding="utf-8",
     )
 
-    with pytest.raises(ValueError, match="must declare source.resource"):
+    with pytest.raises(ValueError, match="Synced datasets must declare sync config"):
         build_configured_local_runtime(config_path=config_path)
 
 
@@ -747,6 +706,7 @@ connectors:
 datasets:
   - name: orders
     connector: local_demo
+    materialization_mode: live
     semantic_model: commerce
     source:
       table: orders
@@ -817,12 +777,14 @@ connectors:
 datasets:
   - name: orders
     connector: local_demo
+    materialization_mode: live
     semantic_model: commerce
     source:
       table: orders
 
   - name: customers
     connector: local_demo
+    materialization_mode: live
     semantic_model: customers_model
     source:
       table: customers
@@ -983,6 +945,7 @@ connectors:
 datasets:
   - name: marketing_campaigns
     connector: campaign_file
+    materialization_mode: live
     source:
       path: ./marketing_campaigns.csv
       format: csv
@@ -1057,11 +1020,11 @@ semantic_models:
                 "id": runtime._connectors["campaign_file"].id,
                 "name": "campaign_file",
                 "description": None,
-                "connector_type": "FILE",
+                "connector_type": "LOCAL_FILESYSTEM",
                 "connector_family": None,
                 "supports_sync": False,
                 "supported_resources": [],
-                "sync_strategy": None,
+                "default_sync_strategy": None,
                 "capabilities": {
                     "supports_live_datasets": True,
                     "supports_synced_datasets": False,
@@ -1085,9 +1048,11 @@ def test_configured_local_runtime_syncs_connector_resources(tmp_path: Path) -> N
         assert connectors[0]["name"] == "billing_demo"
         assert connectors[0]["connector_family"] == "api"
         assert connectors[0]["supports_sync"] is True
-        assert connectors[0]["capabilities"]["supports_live_datasets"] is False
+        assert connectors[0]["default_sync_strategy"] == "INCREMENTAL"
+        assert connectors[0]["capabilities"]["supports_live_datasets"] is True
         assert connectors[0]["capabilities"]["supports_synced_datasets"] is True
         assert connectors[0]["capabilities"]["supports_incremental_sync"] is True
+        assert connectors[0]["capabilities"]["supports_federated_execution"] is True
         assert connectors[0]["management_mode"] == "config_managed"
         assert connectors[0]["managed"] is True
 
@@ -1145,8 +1110,12 @@ def test_configured_local_runtime_reuses_declared_synced_dataset_for_connector_s
                 "connector": "billing_demo",
                 "semantic_model": None,
                 "materialization_mode": "synced",
+                "source": None,
+                "sync": {
+                    "resource": "customers",
+                    "strategy": "INCREMENTAL",
+                },
                 "status": "pending_sync",
-                "sync_resource": "customers",
                 "sync_status": "never_synced",
                 "last_sync_at": None,
                 "management_mode": "config_managed",
@@ -1156,7 +1125,11 @@ def test_configured_local_runtime_reuses_declared_synced_dataset_for_connector_s
 
         detail_before = asyncio.run(runtime.get_dataset(dataset_ref="billing_customers"))
         assert detail_before["status"] == "pending_sync"
-        assert detail_before["sync_resource"] == "customers"
+        assert detail_before["source"] is None
+        assert detail_before["sync"] == {
+            "resource": "customers",
+            "strategy": "INCREMENTAL",
+        }
         assert detail_before["sync_state"]["status"] == "never_synced"
         assert detail_before["storage_uri"] is None
 
@@ -1196,12 +1169,22 @@ def test_configured_local_runtime_reuses_declared_synced_dataset_for_connector_s
         assert listed_after[0]["id"] == declared_dataset.id
         assert listed_after[0]["name"] == "billing_customers"
         assert listed_after[0]["status"] == "published"
+        assert listed_after[0]["source"] is None
+        assert listed_after[0]["sync"] == {
+            "resource": "customers",
+            "strategy": "INCREMENTAL",
+        }
         assert listed_after[0]["sync_status"] == "succeeded"
         assert listed_after[0]["management_mode"] == "config_managed"
         assert listed_after[0]["managed"] is True
 
         detail_after = asyncio.run(runtime.get_dataset(dataset_ref="billing_customers"))
         assert detail_after["status"] == "published"
+        assert detail_after["source"] is None
+        assert detail_after["sync"] == {
+            "resource": "customers",
+            "strategy": "INCREMENTAL",
+        }
         assert detail_after["sync_state"]["status"] == "succeeded"
         assert detail_after["storage_uri"] is not None
 
@@ -1223,30 +1206,30 @@ def test_configured_local_runtime_reuses_declared_synced_dataset_for_connector_s
 @pytest.mark.parametrize(
     ("example_name", "connector_name", "env_vars", "expected_resources", "expected_fields"),
     [
-        (
-            "shopify_sync",
-            "shopify_demo",
-            {
-                "SHOPIFY_SHOP_DOMAIN": "acme.myshopify.com",
-                "SHOPIFY_ACCESS_TOKEN": "shpat_test_token",
-            },
-            ["customers", "draft_orders", "locations"],
-            {
-                "shop_domain": "acme.myshopify.com",
-                "access_token": "shpat_test_token",
-            },
-        ),
+            (
+                "shopify_sync",
+                "shopify_demo",
+                {
+                    "SHOPIFY_SHOP_DOMAIN": "acme.myshopify.com",
+                    "SHOPIFY_ACCESS_TOKEN": "shpat_test_token",
+                },
+                ["orders", "customers", "products"],
+                {
+                    "shop_domain": "acme.myshopify.com",
+                    "access_token": "shpat_test_token",
+                },
+            ),
         (
             "hubspot_sync",
-            "hubspot_demo",
-            {
-                "HUBSPOT_ACCESS_TOKEN": "pat_test_token",
-            },
-            ["contacts", "companies", "deals"],
-            {
-                "access_token": "pat_test_token",
-            },
-        ),
+                "hubspot_demo",
+                {
+                    "HUBSPOT_ACCESS_TOKEN": "pat_test_token",
+                },
+                ["contacts", "companies", "deals", "tickets"],
+                {
+                    "access_token": "pat_test_token",
+                },
+            ),
     ],
 )
 def test_saas_connector_example_configs_build_runtime_connectors(
@@ -1280,14 +1263,14 @@ def test_saas_connector_example_configs_build_runtime_connectors(
                 "connector_family": runtime._connectors[connector_name].connector_family_value,
                 "supports_sync": True,
                 "supported_resources": expected_resources,
-                "sync_strategy": "INCREMENTAL",
+                "default_sync_strategy": "INCREMENTAL",
             "capabilities": {
-                "supports_live_datasets": False,
+                "supports_live_datasets": True,
                 "supports_synced_datasets": True,
                 "supports_incremental_sync": True,
                 "supports_query_pushdown": False,
                 "supports_preview": False,
-                "supports_federated_execution": False,
+                "supports_federated_execution": True,
             },
             "management_mode": "config_managed",
             "managed": True,

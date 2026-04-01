@@ -70,6 +70,7 @@ The current declarative runtime slice is intentionally narrow and runtime-first:
 - package manifests define auth, pagination, incremental cursor rules, resource inventory, and connector capability metadata
 - core `langbridge` turns that manifest into an executable `ApiConnector`
 - the existing runtime sync flow materializes those resources into runtime-managed datasets with `materialization_mode: synced`
+- live API datasets can now execute honestly as dataset-declared live sources by fetching resource data into DuckDB-backed local federation
 
 The declarative runtime now covers multiple common SaaS API patterns:
 
@@ -86,10 +87,10 @@ The runtime is intentionally honest about what it supports today:
 
 - config-defined SQL datasets: supported with `materialization_mode: live`
 - config-defined file datasets: supported with `materialization_mode: live`
-- config-defined synced API datasets: supported with `materialization_mode: synced` and `source.resource` naming the sync resource
+- config-defined synced API datasets: supported with `materialization_mode: synced` and `sync.resource` naming the sync resource
 - runtime-managed connector sync datasets: supported with `materialization_mode: synced`
 - config-defined synced datasets without a runtime sync path: not supported yet
-- live API/SaaS datasets: not implemented yet unless a connector eventually exposes a real live execution path
+- live API/SaaS datasets: supported when the connector exposes a runtime API execution path; Langbridge fetches the dataset-declared API resource into local DuckDB execution rather than pretending SQL pushdown exists
 
 Connector packages under `langbridge-connectors` should stay thin and primarily
 provide package-owned config/schema/plugin wiring plus either:

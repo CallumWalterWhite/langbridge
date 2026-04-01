@@ -101,7 +101,7 @@ A dataset requesting `materialization_mode: live` must use a connector that
 supports live datasets. A dataset requesting `materialization_mode: synced`
 must use a connector that supports synced datasets. Config-defined synced
 datasets currently require a runtime sync-capable connector and use
-`source.resource` as the declared connector resource name to materialize.
+`sync.resource` as the declared connector resource name to materialize.
 
 ## Policies And Guardrails
 

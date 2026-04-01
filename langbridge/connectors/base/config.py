@@ -91,7 +91,7 @@ class ConnectorPluginMetadata(_Base):
     connector_family: ConnectorFamily
     supported_resources: List[str] = Field(default_factory=list)
     auth_schema: List[ConnectorAuthFieldSchema] = Field(default_factory=list)
-    sync_strategy: ConnectorSyncStrategy | None = None
+    default_sync_strategy: ConnectorSyncStrategy | None = None
     capabilities: ConnectorCapabilities = Field(default_factory=ConnectorCapabilities)
 
 

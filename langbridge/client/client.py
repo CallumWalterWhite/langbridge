@@ -237,7 +237,7 @@ class ConnectorSummary(_AwaitableModel):
     connector_family: str | None = None
     supports_sync: bool = False
     supported_resources: list[str] = Field(default_factory=list)
-    sync_strategy: str | None = None
+    default_sync_strategy: str | None = None
     capabilities: dict[str, Any] = Field(default_factory=dict)
     managed: bool = False
 

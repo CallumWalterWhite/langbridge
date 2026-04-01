@@ -144,7 +144,11 @@ def build_dataset_execution_capabilities(
         except Exception:
             pass
 
-    if storage_kind in {DatasetStorageKind.TABLE, DatasetStorageKind.VIEW}:
+    if storage_kind in {
+        DatasetStorageKind.TABLE,
+        DatasetStorageKind.VIEW,
+        DatasetStorageKind.MEMORY,
+    }:
         return DatasetExecutionCapabilities(
             supports_structured_scan=True,
             supports_sql_federation=True,
@@ -204,7 +208,7 @@ def resolve_dataset_materialization_mode(
     normalized = _normalize_enum_value(explicit_materialization_mode)
     if normalized:
         return DatasetMaterializationMode(normalized)
-    return DatasetMaterializationMode.LIVE
+    raise ValueError("Dataset materialization_mode must be set explicitly.")
 
 
 def dataset_supports_structured_federation(

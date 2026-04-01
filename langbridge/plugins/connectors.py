@@ -197,7 +197,7 @@ class ConnectorPlugin:
     connector_family: ConnectorFamily
     supported_resources: tuple[str, ...] = ()
     auth_schema: tuple[ConnectorAuthFieldSchema, ...] = ()
-    sync_strategy: ConnectorSyncStrategy | None = None
+    default_sync_strategy: ConnectorSyncStrategy | None = None
     capabilities: ConnectorCapabilities = field(default_factory=ConnectorCapabilities)
     config_factory: Type[BaseConnectorConfigFactory] | None = None
     config_schema_factory: Type[BaseConnectorConfigSchemaFactory] | None = None

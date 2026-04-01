@@ -90,7 +90,7 @@ def from_connector_record(value: Any | None) -> ConnectorMetadata | None:
             or getattr(value, "supported_resources_json", None)
             or []
         ),
-        sync_strategy=getattr(value, "sync_strategy", None),
+        default_sync_strategy=getattr(value, "default_sync_strategy", None),
         capabilities=capabilities,
         is_managed=bool(getattr(value, "is_managed", False)),
         created_by=getattr(value, "created_by", None) or getattr(value, "created_by_actor_id", None),
@@ -127,7 +127,7 @@ def to_connector_record(value: ConnectorMetadata | Connector) -> Connector:
             else value.connection_policy.model_dump(exclude_none=True)
         ),
         supported_resources_json=list(value.supported_resources or []),
-        sync_strategy=value.sync_strategy_value,
+        default_sync_strategy=value.default_sync_strategy_value,
         capabilities_json=value.capabilities_json,
         is_managed=value.is_managed,
         created_by_actor_id=value.created_by,

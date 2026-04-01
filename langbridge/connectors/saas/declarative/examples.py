@@ -36,7 +36,7 @@ class DeclarativeDatasetExample(_Base):
     name: str
     description: str
     connector: str
-    connector_sync: DatasetSyncSelection
+    sync: DatasetSyncSelection
 
 
 class DeclarativeDatasetConnectorReference(_Base):

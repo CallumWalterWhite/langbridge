@@ -143,8 +143,7 @@ class _InMemoryDatasetRepository:
             if dataset.dataset_type != DatasetType.FILE:
                 continue
             mode = dataset.materialization_mode
-            file_config = dict(dataset.file_config_json or {})
-            if mode != DatasetMaterializationMode.SYNCED and not bool(file_config.get("managed_dataset")):
+            if mode != DatasetMaterializationMode.SYNCED:
                 continue
             if str(dataset.table_name or "").strip().lower() == normalized_table:
                 return dataset

@@ -4,7 +4,7 @@ This example runs a self-hosted Langbridge runtime host next to a local
 Stripe-like mock API and syncs the declared `billing_customers` dataset from the
 `customers` resource.
 The declared synced dataset uses `materialization_mode: synced` with
-`source.resource: customers`.
+`sync.resource: customers`.
 
 ## What This Example Starts
 
@@ -46,7 +46,8 @@ curl http://localhost:8000/api/runtime/v1/connectors
 ```
 
 The connector payload now includes explicit capability flags. In this example
-`billing_demo` supports synced datasets, not live datasets.
+`billing_demo` supports both live and synced datasets, while the dataset
+contract explicitly chooses `synced`.
 
 List syncable resources:
 

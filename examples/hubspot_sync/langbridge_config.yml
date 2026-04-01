@@ -28,12 +28,12 @@ datasets:
     description: Synced dataset pinned to the manifest-listed HubSpot contacts resource.
     connector: hubspot_demo
     materialization_mode: synced
-    source:
+    sync:
       resource: contacts
 
   - name: hubspot_custom_objects
     description: Synced dataset using a dataset-selected dynamic HubSpot CRM object resource.
     connector: hubspot_demo
     materialization_mode: synced
-    source:
+    sync:
       resource: custom_objects

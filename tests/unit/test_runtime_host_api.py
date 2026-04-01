@@ -73,6 +73,7 @@ connectors:
 datasets:
   - name: shopify_orders
     connector: commerce_demo
+    materialization_mode: live
     semantic_model: commerce_performance
     default_time_dimension: order_date
     source:
@@ -306,17 +307,20 @@ connectors:
 datasets:
   - name: shopify_orders
     connector: commerce_demo
+    materialization_mode: live
     semantic_model: commerce_performance
     default_time_dimension: order_date
     source:
       table: orders_enriched
   - name: shopify_customers
     connector: commerce_demo
+    materialization_mode: live
     semantic_model: commerce_performance
     source:
       table: customer_profiles
   - name: campaign_touchpoints
     connector: commerce_demo
+    materialization_mode: live
     semantic_model: marketing_performance
     source:
       table: campaign_touchpoints
@@ -1050,12 +1054,16 @@ def test_runtime_host_api_supports_declared_synced_datasets_before_and_after_syn
                     "id": str(runtime._datasets["billing_customers"].id),
                     "name": "billing_customers",
                     "label": runtime._datasets["billing_customers"].label,
-                    "description": "Configured synced dataset awaiting connector sync for resource 'customers'.",
+                "description": "Configured synced dataset awaiting connector sync for resource 'customers'.",
                 "connector": "billing_demo",
                 "semantic_model": None,
                 "materialization_mode": "synced",
+                "source": None,
+                "sync": {
+                    "resource": "customers",
+                    "strategy": "INCREMENTAL",
+                },
                 "status": "pending_sync",
-                "sync_resource": "customers",
                 "sync_status": "never_synced",
                 "last_sync_at": None,
                 "management_mode": "config_managed",
@@ -1278,8 +1286,12 @@ def test_runtime_host_api_updates_and_deletes_runtime_managed_resources(
     )
     assert connector_update.status_code == 200
     assert connector_update.json()["description"] == "Updated runtime connector"
-    assert connector_update.json()["metadata"]["schema"] == "main"
     assert connector_update.json()["management_mode"] == "runtime_managed"
+    assert connector_update.json()["metadata"]["extra"]["schema"] == "main"
+
+    connector_detail = client.get("/api/runtime/v1/connectors/runtime_demo")
+    assert connector_detail.status_code == 200
+    assert connector_detail.json()["metadata"]["extra"]["schema"] == "main"
 
     dataset_update = client.patch(
         "/api/runtime/v1/datasets/runtime_orders",
@@ -1373,8 +1385,8 @@ def test_runtime_host_api_supports_connectorless_file_datasets(
     )
     assert preview.status_code == 200
     assert preview.json()["rows"] == [
-        {"order_id": "1", "customer_name": "Ada"},
-        {"order_id": "2", "customer_name": "Grace"},
+        {"order_id": 1, "customer_name": "Ada"},
+        {"order_id": 2, "customer_name": "Grace"},
     ]
 
     updated = client.patch(

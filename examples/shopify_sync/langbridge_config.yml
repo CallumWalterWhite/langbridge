@@ -31,12 +31,12 @@ datasets:
     description: Synced dataset pinned to the manifest-listed Shopify customers resource.
     connector: shopify_demo
     materialization_mode: synced
-    source:
+    sync:
       resource: customers
 
   - name: shopify_price_rules
     description: Synced dataset using a dataset-selected dynamic Shopify Admin API resource.
     connector: shopify_demo
     materialization_mode: synced
-    source:
+    sync:
       resource: price_rules

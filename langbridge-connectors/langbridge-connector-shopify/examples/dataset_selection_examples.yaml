@@ -8,7 +8,7 @@ examples:
   - name: shopify_customers
     description: Materialize Shopify customers from a shop-specific Admin API base URL.
     connector: shopify
-    connector_sync:
+    sync:
       resource_key: customers
       sync_mode: INCREMENTAL
       params:
@@ -17,7 +17,7 @@ examples:
   - name: shopify_orders
     description: Materialize Shopify orders with the same package-owned auth and pagination runtime.
     connector: shopify
-    connector_sync:
+    sync:
       resource_key: orders
       sync_mode: INCREMENTAL
       params:

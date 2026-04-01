@@ -51,7 +51,7 @@ class DatasetExecutionResolver:
         dataset: DatasetMetadata,
     ) -> tuple[FederationWorkflow, str, str]:
         dataset_type = dataset.dataset_type
-        if dataset_type in {DatasetType.TABLE, DatasetType.SQL, DatasetType.FILE}:
+        if dataset_type in {DatasetType.TABLE, DatasetType.SQL, DatasetType.API, DatasetType.FILE}:
             binding, dialect = self._build_binding_from_dataset_record(dataset=dataset)
             workflow = self._build_workflow_from_bindings(
                 workflow_id=f"workflow_dataset_{dataset.id.hex[:12]}",
@@ -207,6 +207,31 @@ class DatasetExecutionResolver:
                 dataset_descriptor=dataset_descriptor,
             )
             return binding, dialect
+
+        if dataset_type == DatasetType.API:
+            if dataset.connection_id is None:
+                raise ExecutionValidationError("Executable API datasets require a connection_id.")
+            source = dict(dataset.source_json or {})
+            resource_name = str(source.get("resource") or "").strip()
+            if not resource_name:
+                raise ExecutionValidationError("API dataset is missing source.resource.")
+            binding = VirtualTableBinding(
+                table_key=resolved_table_key,
+                source_id=f"api_{dataset.connection_id.hex[:12]}",
+                connector_id=dataset.connection_id,
+                schema=logical_schema_name,
+                table=logical_table,
+                catalog=catalog_name,
+                metadata={
+                    "dataset_id": str(dataset.id),
+                    "source_kind": dataset_descriptor.source_kind,
+                    "storage_kind": dataset_descriptor.storage_kind,
+                    "materialization_mode": materialization_mode,
+                    "api_resource": resource_name,
+                },
+                dataset_descriptor=dataset_descriptor,
+            )
+            return binding, "duckdb"
 
         if dataset_type == DatasetType.FILE:
             storage_uri = self._resolve_file_storage_uri(dataset)
@@ -392,10 +417,10 @@ class DatasetExecutionResolver:
         )
         if not storage_uri:
             materialization_mode = DatasetExecutionResolver._materialization_mode(dataset)
-            sync_meta = file_config.get("connector_sync") if isinstance(file_config.get("connector_sync"), Mapping) else {}
             if materialization_mode.value == "synced":
-                resource_name = str(sync_meta.get("resource_name") or "").strip()
-                connector_name = str(sync_meta.get("connector_type") or "").strip().lower() or "connector"
+                sync_config = dict(dataset.sync_json or {})
+                resource_name = str(sync_config.get("resource") or "").strip()
+                connector_name = str(dataset.connector_kind or "").strip().lower() or "connector"
                 resource_detail = f" resource '{resource_name}'" if resource_name else ""
                 raise ExecutionValidationError(
                     f"Synced dataset '{dataset.name}' has not been populated yet. "
@@ -603,6 +628,8 @@ class DatasetExecutionResolver:
             source_kind=source_kind.value,
             connector_kind=connector_kind,
             storage_kind=storage_kind.value,
+            source=getattr(dataset, "source_json", None),
+            sync=getattr(dataset, "sync_json", None),
             relation_identity=relation_identity.model_dump(mode="json"),
             execution_capabilities=capabilities.model_dump(mode="json"),
             metadata={

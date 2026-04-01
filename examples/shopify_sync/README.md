@@ -3,7 +3,7 @@
 This example runs a self-hosted Langbridge runtime host configured with the
 declarative Shopify connector and syncs live Shopify Admin API resources into
 runtime-managed datasets. It now showcases dataset-owned sync configuration:
-each dataset declares its own `materialization_mode` and `source.resource`.
+each dataset declares its own `materialization_mode` and `sync.resource`.
 
 ## What This Example Covers
 
@@ -135,7 +135,7 @@ curl -X POST http://localhost:8000/api/runtime/v1/connectors/shopify_demo/sync \
   }'
 ```
 
-This works because the dataset controls `source.resource`, and the Shopify
+This works because the dataset controls `sync.resource`, and the Shopify
 connector resolves `/admin/api/2025-01/price_rules.json` dynamically at sync time.
 
 ## Inspect The Resulting Dataset

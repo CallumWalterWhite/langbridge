@@ -75,9 +75,8 @@ def test_resolve_dataset_materialization_mode_prefers_explicit_value() -> None:
     assert resolved == DatasetMaterializationMode.LIVE
 
 
-def test_resolve_dataset_materialization_mode_defaults_to_live_when_missing() -> None:
-    resolved = resolve_dataset_materialization_mode(
-        explicit_materialization_mode=None,
-    )
-
-    assert resolved == DatasetMaterializationMode.LIVE
+def test_resolve_dataset_materialization_mode_requires_explicit_value() -> None:
+    with pytest.raises(ValueError, match="materialization_mode"):
+        resolve_dataset_materialization_mode(
+            explicit_materialization_mode=None,
+        )
