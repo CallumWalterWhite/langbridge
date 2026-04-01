@@ -1,22 +1,20 @@
-from langbridge.plugins import (
+from langbridge.connectors.base.config import (
     ConnectorCapabilities,
-    ConnectorPlugin,
     ConnectorFamily,
     ConnectorRuntimeType,
-    register_connector_plugin,
 )
+from langbridge.plugins import ConnectorPlugin, register_connector_plugin
 
 from .config import (
     GOOGLE_ANALYTICS_AUTH_SCHEMA,
     GOOGLE_ANALYTICS_SUPPORTED_RESOURCES,
     GOOGLE_ANALYTICS_SYNC_STRATEGY,
-    GoogleAnalyticsConnectorConfig,
     GoogleAnalyticsConnectorConfigFactory,
     GoogleAnalyticsConnectorConfigSchemaFactory,
 )
 from .connector import GoogleAnalyticsApiConnector
 
-register_connector_plugin(
+PLUGIN = register_connector_plugin(
     ConnectorPlugin(
         connector_type=ConnectorRuntimeType.GOOGLE_ANALYTICS,
         connector_family=ConnectorFamily.API,
@@ -33,9 +31,10 @@ register_connector_plugin(
     )
 )
 
-__all__ = [
-    "GoogleAnalyticsApiConnector",
-    "GoogleAnalyticsConnectorConfig",
-    "GoogleAnalyticsConnectorConfigFactory",
-    "GoogleAnalyticsConnectorConfigSchemaFactory",
-]
+
+def get_connector_plugin() -> ConnectorPlugin:
+    return PLUGIN
+
+
+def register_plugin() -> ConnectorPlugin:
+    return PLUGIN

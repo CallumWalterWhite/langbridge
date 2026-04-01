@@ -59,7 +59,8 @@ class SourceSubplan(BaseModel):
     source_id: str
     alias: str
     table_key: str
-    sql: str
+    sql: str | None = None
+    resource: str | None = None
     projected_columns: list[str] = Field(default_factory=list)
     pushed_filters: list[str] = Field(default_factory=list)
     pushed_limit: int | None = None

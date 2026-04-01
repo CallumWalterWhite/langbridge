@@ -60,6 +60,11 @@ class AnalystQueryRequest(BaseModel):
         default=None,
         description="Optional list of formatted semantic search results to include in the prompt.",
     )
+    error_retries: int = Field(default=0, ge=0, description="Number of times the agent should retry on error.")
+    error_history: List[str] = Field(
+        default_factory=list,
+        description="Optional list of error messages to include in the prompt.",
+    )
 
 
 class AnalyticalColumn(BaseModel):
@@ -70,6 +75,7 @@ class AnalyticalColumn(BaseModel):
 
 class AnalyticalField(BaseModel):
     name: str
+    expression: str | None = None
     synonyms: list[str] = Field(default_factory=list)
 
 

@@ -575,9 +575,9 @@ class AgentOrchestratorFactory:
         for dataset_binding in datasets:
             for column in dataset_binding.columns:
                 field_name = f"{dataset_binding.sql_alias}.{column.name}"
-                dimensions.append(AnalyticalField(name=field_name))
+                dimensions.append(AnalyticalField(name=field_name, expression=column.name))
                 if self._is_numeric_type(column.data_type):
-                    measures.append(AnalyticalField(name=field_name))
+                    measures.append(AnalyticalField(name=field_name, expression=column.name))
 
         relationships = [self._format_virtual_relationship(item) for item in workflow.dataset.relationships]
         context_name = asset_dataset.name
@@ -623,6 +623,7 @@ class AgentOrchestratorFactory:
                 dimensions.append(
                     AnalyticalField(
                         name=f"{table_key}.{dimension.name}",
+                        expression=str(dimension.expression or dimension.name).strip(),
                         synonyms=list(dimension.synonyms or []),
                     )
                 )
@@ -630,6 +631,7 @@ class AgentOrchestratorFactory:
                 measures.append(
                     AnalyticalField(
                         name=f"{table_key}.{measure.name}",
+                        expression=str(measure.expression or measure.name).strip(),
                         synonyms=list(measure.synonyms or []),
                     )
                 )

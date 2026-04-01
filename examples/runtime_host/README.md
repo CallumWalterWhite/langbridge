@@ -3,8 +3,6 @@
 This example shows the main self-hosted Langbridge runtime surface: the runtime
 host serving a configured local runtime over HTTP.
 
-It does not depend on `langbridge-cloud`.
-
 ## What This Example Gives You
 
 - a Dockerized runtime host

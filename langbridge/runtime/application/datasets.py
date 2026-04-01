@@ -473,12 +473,6 @@ class DatasetApplication:
         source: _DatasetSourceInput,
     ) -> ConnectorMetadata:
         resolved_connector = self._require_connector(dataset_name=dataset_name, connector=connector)
-        connector_capabilities = self._host._connector_capabilities(resolved_connector)
-        if not connector_capabilities.supports_synced_datasets:
-            raise BusinessValidationError(
-                f"Dataset '{dataset_name}' requests materialization_mode 'synced', "
-                f"but connector '{resolved_connector.name}' does not support synced datasets."
-            )
         plugin = self._host._resolve_connector_plugin_for_type(resolved_connector.connector_type_value)
         if plugin is None or plugin.api_connector_class is None:
             raise BusinessValidationError(
@@ -489,16 +483,6 @@ class DatasetApplication:
             raise BusinessValidationError(
                 f"Dataset '{dataset_name}' requests materialization_mode 'synced', "
                 "but is missing source.resource for the connector resource name."
-            )
-        supported_resources = {
-            str(item or "").strip()
-            for item in (resolved_connector.supported_resources or [])
-            if str(item or "").strip()
-        }
-        if supported_resources and source.resource_name not in supported_resources:
-            raise BusinessValidationError(
-                f"Dataset '{dataset_name}' requests synced resource '{source.resource_name}', "
-                f"but connector '{resolved_connector.name}' only exposes: {', '.join(sorted(supported_resources))}."
             )
         return resolved_connector
 
@@ -520,14 +504,6 @@ class DatasetApplication:
             return connector
         resolved_connector = self._require_connector(dataset_name=dataset_name, connector=connector)
         connector_capabilities = self._host._connector_capabilities(resolved_connector)
-        if (
-            materialization_mode == DatasetMaterializationMode.LIVE
-            and not connector_capabilities.supports_live_datasets
-        ):
-            raise BusinessValidationError(
-                f"Dataset '{dataset_name}' requests materialization_mode 'live', "
-                f"but connector '{resolved_connector.name}' does not support live datasets."
-            )
         if (
             materialization_mode == DatasetMaterializationMode.LIVE
             and (source.is_table or source.is_sql)

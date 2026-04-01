@@ -16,7 +16,6 @@ services:
       mock-stripe:
         condition: service_healthy
     environment:
-      OTEL_SDK_DISABLED: "true"
       DATASET_FILE_LOCAL_DIR: /example/.cache/datasets
       FEDERATION_ARTIFACT_DIR: /example/.cache/federation
     ports:

@@ -1257,10 +1257,8 @@ class ConfiguredLocalRuntimeHost(RuntimeHost):
 
     def _connector_supports_sync(self, connector: ConnectorMetadata) -> bool:
         plugin = self._get_connector_plugin(connector)
-        capabilities = self._connector_capabilities(connector)
         return bool(
             plugin is not None
-            and capabilities.supports_synced_datasets
             and plugin.api_connector_class is not None
         )
 
@@ -1931,17 +1929,7 @@ class ConfiguredLocalRuntimeHostFactory:
             source_storage_uri = str(dataset.source.storage_uri or "").strip() or None
             if source_storage_uri is None and dataset.source.path:
                 source_storage_uri = Path(str(dataset.source.path)).resolve().as_uri()
-            if materialization_mode == DatasetMaterializationMode.LIVE and not connector_capabilities.supports_live_datasets:
-                raise ValueError(
-                    f"Dataset '{dataset.name}' requests materialization_mode 'live', "
-                    f"but connector '{connector.name}' does not support live datasets."
-                )
             if materialization_mode == DatasetMaterializationMode.SYNCED:
-                if not connector_capabilities.supports_synced_datasets:
-                    raise ValueError(
-                        f"Dataset '{dataset.name}' requests materialization_mode 'synced', "
-                        f"but connector '{connector.name}' does not support synced datasets."
-                    )
                 plugin = ConfiguredLocalRuntimeHostFactory._resolve_connector_plugin_for_type(
                     connector.connector_type_value
                 )
@@ -1959,16 +1947,6 @@ class ConfiguredLocalRuntimeHostFactory:
                     raise ValueError(
                         f"Dataset '{dataset.name}' requests materialization_mode 'synced', "
                         "but is missing source.resource for the connector resource name."
-                    )
-                supported_resources = {
-                    str(item or "").strip()
-                    for item in (connector.supported_resources or [])
-                    if str(item or "").strip()
-                }
-                if supported_resources and sync_resource_name not in supported_resources:
-                    raise ValueError(
-                        f"Dataset '{dataset.name}' requests synced resource '{sync_resource_name}', "
-                        f"but connector '{connector.name}' only exposes: {', '.join(sorted(supported_resources))}."
                     )
             if (
                 materialization_mode == DatasetMaterializationMode.LIVE

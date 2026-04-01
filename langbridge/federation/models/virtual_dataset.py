@@ -41,7 +41,7 @@ class VirtualTableBinding(BaseModel):
 
     @property
     def full_name(self) -> str:
-        if self.schema_name in self.table:
+        if self.schema_name is not None and self.schema_name in self.table:
             return self.table
         parts = [self.catalog, self.schema_name, self.table]
         return ".".join([part for part in parts if part])
@@ -71,10 +71,10 @@ class VirtualDataset(BaseModel):
     
     @property
     def virtual_tables(self) -> dict[str, VirtualTableBinding]:
-        return [
-            {table_key.lower(): binding}
+        return {
+            table_key.lower(): binding
             for table_key, binding in self.tables.items()
-        ]
+        }
 
 
 class FederationWorkflow(BaseModel):

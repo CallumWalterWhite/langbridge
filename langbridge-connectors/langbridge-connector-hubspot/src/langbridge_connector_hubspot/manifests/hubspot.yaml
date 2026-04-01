@@ -61,3 +61,13 @@ resources:
     request_params:
       archived: "false"
     description: HubSpot CRM deal records.
+
+  - key: tickets
+    label: Tickets
+    path: /crm/v3/objects/tickets
+    primary_key: id
+    supports_incremental: true
+    default_sync_mode: INCREMENTAL
+    request_params:
+      archived: "false"
+    description: HubSpot CRM ticket records.

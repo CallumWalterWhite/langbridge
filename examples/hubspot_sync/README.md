@@ -2,19 +2,17 @@
 
 This example runs a self-hosted Langbridge runtime host configured with the
 declarative HubSpot connector and syncs live HubSpot CRM resources into
-runtime-managed datasets.
-
-It stays fully runtime-scoped and does not depend on `langbridge-cloud`.
+runtime-managed datasets. It now showcases dataset-owned sync configuration:
+each dataset declares its own `materialization_mode` and `source.resource`.
 
 ## What This Example Covers
 
 - a configured HubSpot connector under `examples/hubspot_sync/langbridge_config.yml`
+- predeclared synced datasets that choose the HubSpot resource at the dataset layer
 - runtime-managed sync state persisted under `.langbridge/metadata.db`
 - synced datasets materialized into the local DuckDB execution store
-- the packaged declarative HubSpot resources currently exposed by Langbridge:
-  - `contacts`
-  - `companies`
-  - `deals`
+- a manifest-listed dataset resource: `contacts`
+- a dynamic dataset-selected resource: `custom_objects`
 
 ## Prerequisites
 
@@ -56,7 +54,8 @@ curl http://localhost:8000/api/runtime/v1/connectors
 ```
 
 The connector payload includes explicit capability flags. `hubspot_demo`
-currently supports synced datasets, not live datasets.
+is an API sync connector, but the dataset decides whether a given dataset is
+declared as `synced`.
 
 List syncable HubSpot resources:
 
@@ -64,9 +63,25 @@ List syncable HubSpot resources:
 curl http://localhost:8000/api/runtime/v1/connectors/hubspot_demo/sync/resources
 ```
 
+Because this example predeclares datasets, the resource list will include both:
+
+- `contacts`, which comes from the packaged connector manifest
+- `custom_objects`, which is surfaced because the dataset requested it even though it is not statically listed
+
+List the configured datasets:
+
+```bash
+curl http://localhost:8000/api/runtime/v1/datasets
+```
+
+You should see:
+
+- `hubspot_contacts`
+- `hubspot_custom_objects`
+
 ## Run A Sync
 
-Sync contacts incrementally:
+Sync the manifest-listed `contacts` dataset incrementally:
 
 ```bash
 SYNC_RESPONSE=$(curl -s -X POST http://localhost:8000/api/runtime/v1/connectors/hubspot_demo/sync \
@@ -79,17 +94,30 @@ SYNC_RESPONSE=$(curl -s -X POST http://localhost:8000/api/runtime/v1/connectors/
 printf '%s\n' "$SYNC_RESPONSE"
 ```
 
-You can switch the resource list to `companies` or `deals`.
+Sync the dataset-selected dynamic `custom_objects` resource:
+
+```bash
+curl -X POST http://localhost:8000/api/runtime/v1/connectors/hubspot_demo/sync \
+  -H "Content-Type: application/json" \
+  -d '{
+    "resource_names": ["custom_objects"],
+    "sync_mode": "INCREMENTAL"
+  }'
+```
+
+This works because the dataset controls `source.resource`, and the HubSpot
+connector resolves `/crm/v3/objects/custom_objects` dynamically at sync time.
 
 ## Inspect The Resulting Dataset
 
-List datasets:
+List datasets before or after sync:
 
 ```bash
 curl http://localhost:8000/api/runtime/v1/datasets
 ```
 
-The synced dataset returned by this flow reports `materialization_mode: synced`.
+Both declared datasets report `materialization_mode: synced` because that is
+owned by the dataset config, not inferred from the connector.
 
 Read the runtime-managed dataset name returned by the sync:
 
@@ -124,5 +152,7 @@ langbridge sync states --url http://localhost:8000 --connector hubspot_demo
 
 - this example is meant for a live HubSpot account, not a local mock API
 - connector credentials stay on the runtime side through env-backed secret references
-- synced datasets are runtime-managed materializations created by connector sync
+- synced datasets are declared by the dataset config, and connector sync populates them
+- `custom_objects` demonstrates dataset-driven dynamic resource resolution for HubSpot
+- live materialization is also dataset-owned in the runtime, but this example stays focused on API sync datasets
 - remove local persisted runtime state by deleting `examples/hubspot_sync/.langbridge`

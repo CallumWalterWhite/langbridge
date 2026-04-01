@@ -5,9 +5,6 @@ product in self-hosted mode. It intentionally goes beyond a single-dataset
 commerce walkthrough and shows a governed runtime with multiple connectors,
 multiple datasets, multiple semantic models, and two scoped agents.
 
-Everything in this folder is runtime-local. It does not depend on
-`langbridge-cloud`.
-
 ## What The Setup Contains
 
 - `langbridge_config.yml`

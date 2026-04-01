@@ -44,14 +44,8 @@ _BUILTIN_PLUGIN_MODULES = (
     "langbridge.connectors.sql.sqlserver",
     "langbridge.connectors.vector.faiss",
     "langbridge.connectors.vector.qdrant",
-    "langbridge.connectors.saas.shopify",
-    "langbridge.connectors.saas.hubspot",
-    "langbridge.connectors.saas.google_analytics",
-    "langbridge.connectors.saas.salesforce",
 )
 
-# example: langbridge_connector_hubspot.plugin
-_PACKAGED_PLUGIN_MODULE_PATH = "langbridge_connector_*"
 _BUILTIN_CONNECTOR_MODULES = (
     "langbridge.connectors.builtin.postgres.connector",
     "langbridge.connectors.builtin.mysql.connector",
@@ -83,6 +77,21 @@ def _ensure_repo_connector_src_paths() -> None:
             sys.path.insert(0, src_path)
 
 
+def _iter_repo_connector_package_modules() -> tuple[str, ...]:
+    repo_connectors_dir = Path(__file__).resolve().parents[2] / "langbridge-connectors"
+    if not repo_connectors_dir.exists():
+        return ()
+
+    module_names: list[str] = []
+    for package_dir in sorted(repo_connectors_dir.glob("*/src/langbridge_connector_*")):
+        if not package_dir.is_dir():
+            continue
+        if not (package_dir / "__init__.py").exists():
+            continue
+        module_names.append(package_dir.name)
+    return tuple(module_names)
+
+
 def _register_builtin_plugins_from_modules() -> None:
     _ensure_repo_connector_src_paths()
 
@@ -97,6 +106,16 @@ def _register_builtin_plugins_from_modules() -> None:
                 _plugin_registry.register(plugin)
         except Exception as exc:
             logger.warning("Skipping connector plugin module %s: %s", module_path, exc)
+
+
+def _register_repo_connector_plugins() -> None:
+    _ensure_repo_connector_src_paths()
+
+    for module_path in _iter_repo_connector_package_modules():
+        try:
+            _register_loaded_plugin(import_module(module_path))
+        except Exception as exc:
+            logger.warning("Skipping repo connector package %s: %s", module_path, exc)
 
 
 def _register_loaded_plugin(loaded: object) -> None:
@@ -134,6 +153,7 @@ def ensure_builtin_plugins_loaded() -> None:
         return
 
     _register_builtin_plugins_from_modules()
+    _register_repo_connector_plugins()
 
     _builtin_plugins_loaded = True
 
@@ -154,9 +174,9 @@ def ensure_builtin_connectors_loaded() -> None:
             logger.warning("Skipping connector module %s: %s", module_path, exc)
 
     # Re-register plugin metadata in canonical override order after connector
-    # modules load, because connector imports can register older built-in
-    # plugins and mask repo-scoped declarative packages.
+    # modules load so repo-scoped connector packages stay authoritative.
     _register_builtin_plugins_from_modules()
+    _register_repo_connector_plugins()
 
     _builtin_connectors_loaded = True
 

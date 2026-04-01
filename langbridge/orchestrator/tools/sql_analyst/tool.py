@@ -4,12 +4,13 @@ Federated analytical tool for dataset-backed and semantic-model-backed SQL gener
 
 
 import asyncio
+import inspect
 import logging
 import re
 import time
 import uuid
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Dict, List, Optional
 
 import sqlglot
 from sqlglot import exp
@@ -37,6 +38,10 @@ from .interfaces import (
 
 SQL_FENCE_RE = re.compile(r"```(?:sql)?\s*(.*?)```", re.IGNORECASE | re.DOTALL)
 VECTOR_SIMILARITY_THRESHOLD = 0.83
+VECTOR_SEARCH_TOP_K = 3
+MAX_VECTOR_MATCHES = 10
+MAX_CANDIDATE_PHRASES = 8
+RETRY_BACKOFF_SECONDS = 1
 TEMPORAL_TYPE_NAMES = {"date", "datetime", "time", "timestamp", "timestamptz"}
 
 
@@ -70,8 +75,8 @@ class SqlAnalystTool:
         llm: LLMProvider,
         context: AnalyticalContext,
         federated_sql_executor: FederatedSqlExecutor,
-        semantic_model: SemanticModelLike,
-        logger: logging.Logger,
+        semantic_model: SemanticModelLike | None = None,
+        logger: logging.Logger | None = None,
         llm_temperature: float = 0.0,
         priority: int = 0,
         embedder: Optional[EmbeddingProvider] = None,
@@ -187,35 +192,55 @@ class SqlAnalystTool:
             raise
 
     async def arun(self, query_request: AnalystQueryRequest) -> AnalystQueryResponse:
+        request = query_request.model_copy(deep=True)
+        max_retries = max(int(request.error_retries or 0), 0)
+
+        for attempt in range(max_retries + 1):
+            response = await self._execute(request)
+            if not response.error or attempt >= max_retries:
+                return response
+
+            await self._emit_event(
+                event_type="AnalyticalToolExecutionError",
+                message=response.error,
+                visibility=AgentEventVisibility.public,
+                details=self._event_details(
+                    error=response.error,
+                    retry_count=attempt,
+                    max_retries=max_retries,
+                ),
+            )
+            self.logger.warning(
+                "Execution error for asset %s: %s. Retrying (%d/%d)...",
+                self.name,
+                response.error,
+                attempt + 1,
+                max_retries,
+            )
+            request.error_history.append(response.error)
+            await asyncio.sleep(RETRY_BACKOFF_SECONDS)
+
+        raise RuntimeError(f"Execution failed for asset {self.name} after {max_retries} retries.")
+
+    async def _execute(self, query_request: AnalystQueryRequest) -> AnalystQueryResponse:
         await self._emit_event(
             event_type="AnalyticalToolStarted",
             message="Analyzing the selected analytical asset.",
             visibility=AgentEventVisibility.public,
-            details={
-                "asset_name": self.name,
-                "asset_type": self.asset_type,
-                "execution_mode": self.context.execution_mode,
-            },
+            details=self._event_details(execution_mode=self.context.execution_mode),
         )
         start_ts = time.perf_counter()
-        active_request = query_request
-
-        if self.embedder and self._semantic_vector_search_service is not None:
-            try:
-                active_request = await self._maybe_augment_request_with_vectors(query_request)
-            except Exception as exc:  # pragma: no cover
-                self.logger.warning("Vector search failed; continuing without augmentation: %s", exc)
-                active_request = query_request
+        active_request = await self._augment_request(query_request)
 
         try:
-            canonical_sql = await asyncio.to_thread(self._generate_canonical_sql, active_request)
+            canonical_sql = await self._generate_canonical_sql(active_request)
         except Exception as exc:  # pragma: no cover
             self.logger.exception("LLM failed to generate SQL for asset %s", self.name)
             await self._emit_event(
                 event_type="AnalyticalSqlGenerationFailed",
                 message="Failed to generate SQL from your request.",
                 visibility=AgentEventVisibility.public,
-                details={"asset_name": self.name, "asset_type": self.asset_type, "error": str(exc)},
+                details=self._event_details(error=str(exc)),
             )
             return self._build_response(
                 sql_canonical="",
@@ -224,38 +249,25 @@ class SqlAnalystTool:
                 elapsed_ms=None,
             )
 
-        canonical_sql = self._extract_sql(canonical_sql.strip())
-        canonical_sql = self._expand_semantic_measure_references(canonical_sql)
-        canonical_sql = self._normalize_temporal_predicates(canonical_sql)
+        canonical_sql = self._prepare_canonical_sql(canonical_sql)
         await self._emit_event(
             event_type="AnalyticalSqlGenerated",
             message="SQL was generated for federated execution.",
             visibility=AgentEventVisibility.internal,
-            details={
-                "asset_name": self.name,
-                "asset_type": self.asset_type,
-                "sql_canonical": canonical_sql,
-            },
+            details=self._event_details(sql_canonical=canonical_sql),
         )
 
-        sql_validation_error: str | None = None
-        try:
-            sqlglot.parse_one(canonical_sql, read="postgres")
-        except sqlglot.ParseError as exc:
-            sql_validation_error = f"Canonical SQL failed to parse: {exc}"
-
+        sql_validation_error = self._validate_sql(canonical_sql)
         if sql_validation_error:
             elapsed_ms = int((time.perf_counter() - start_ts) * 1000)
             await self._emit_event(
                 event_type="AnalyticalSqlValidationFailed",
                 message="Generated SQL did not pass validation.",
                 visibility=AgentEventVisibility.internal,
-                details={
-                    "asset_name": self.name,
-                    "asset_type": self.asset_type,
-                    "error": sql_validation_error,
-                    "sql_canonical": canonical_sql,
-                },
+                details=self._event_details(
+                    error=sql_validation_error,
+                    sql_canonical=canonical_sql,
+                ),
             )
             return self._build_response(
                 sql_canonical=canonical_sql,
@@ -264,44 +276,29 @@ class SqlAnalystTool:
                 elapsed_ms=elapsed_ms,
             )
 
-        executable_sql = canonical_sql
-        if active_request.limit:
-            executable_sql, _ = enforce_preview_limit(
-                canonical_sql,
-                max_rows=active_request.limit,
-                dialect="postgres",
-            )
-
-        telemetry = ToolTelemetry(
-            canonical_sql=canonical_sql,
-            executable_sql=executable_sql,
-        )
-        self._log_sql(telemetry)
+        executable_sql = self._prepare_executable_sql(canonical_sql, limit=active_request.limit)
+        self._log_sql(ToolTelemetry(canonical_sql=canonical_sql, executable_sql=executable_sql))
 
         await self._emit_event(
             event_type="AnalyticalSqlExecutionPrepared",
             message="Prepared federated SQL statement.",
             visibility=AgentEventVisibility.internal,
-            details={
-                "asset_name": self.name,
-                "asset_type": self.asset_type,
-                "dialect": self.dialect,
-                "sql_canonical": canonical_sql,
-                "sql_executable": executable_sql,
-                "max_rows": active_request.limit,
-            },
+            details=self._event_details(
+                dialect=self.dialect,
+                sql_canonical=canonical_sql,
+                sql_executable=executable_sql,
+                max_rows=active_request.limit,
+            ),
         )
         await self._emit_event(
             event_type="AnalyticalSqlExecutionStarted",
             message="Running federated analytical query.",
             visibility=AgentEventVisibility.public,
-            details={
-                "asset_name": self.name,
-                "asset_type": self.asset_type,
-                "dialect": self.dialect,
-                "execution_mode": self.context.execution_mode,
-                "max_rows": active_request.limit,
-            },
+            details=self._event_details(
+                dialect=self.dialect,
+                execution_mode=self.context.execution_mode,
+                max_rows=active_request.limit,
+            ),
         )
 
         result_payload: QueryResult | None = None
@@ -316,12 +313,10 @@ class SqlAnalystTool:
                 event_type="AnalyticalSqlExecutionCompleted",
                 message="Federated analytical query completed.",
                 visibility=AgentEventVisibility.public,
-                details={
-                    "asset_name": self.name,
-                    "asset_type": self.asset_type,
-                    "row_count": result_payload.rowcount,
-                    "elapsed_ms": result_payload.elapsed_ms,
-                },
+                details=self._event_details(
+                    row_count=result_payload.rowcount,
+                    elapsed_ms=result_payload.elapsed_ms,
+                ),
             )
         except Exception as exc:  # pragma: no cover
             self.logger.exception("Federated execution failed for asset %s", self.name)
@@ -330,11 +325,7 @@ class SqlAnalystTool:
                 event_type="AnalyticalSqlExecutionFailed",
                 message="Federated analytical query failed.",
                 visibility=AgentEventVisibility.public,
-                details={
-                    "asset_name": self.name,
-                    "asset_type": self.asset_type,
-                    "error": str(exc),
-                },
+                details=self._event_details(error=str(exc)),
             )
 
         elapsed_ms = int((time.perf_counter() - start_ts) * 1000)
@@ -345,6 +336,86 @@ class SqlAnalystTool:
             error=execution_error,
             elapsed_ms=elapsed_ms,
         )
+
+    def _event_details(self, **extra: Any) -> dict[str, Any]:
+        details = {
+            "asset_name": self.name,
+            "asset_type": self.asset_type,
+        }
+        details.update(extra)
+        return details
+
+    async def _augment_request(self, request: AnalystQueryRequest) -> AnalystQueryRequest:
+        if not self.embedder or self._semantic_vector_search_service is None:
+            return request
+        try:
+            return await self._maybe_augment_request_with_vectors(request)
+        except Exception as exc:  # pragma: no cover
+            self.logger.warning("Vector search failed; continuing without augmentation: %s", exc)
+            return request
+
+    def _prepare_canonical_sql(self, raw_sql: str) -> str:
+        canonical_sql = self._extract_sql(raw_sql.strip())
+        canonical_sql = self._expand_semantic_measure_references(canonical_sql)
+        return self._normalize_temporal_predicates(canonical_sql)
+
+    @staticmethod
+    def _validate_sql(sql: str) -> str | None:
+        try:
+            sqlglot.parse_one(sql, read="postgres")
+        except sqlglot.ParseError as exc:
+            return f"Canonical SQL failed to parse: {exc}"
+        return None
+
+    @staticmethod
+    def _prepare_executable_sql(sql: str, *, limit: int | None) -> str:
+        if not limit:
+            return sql
+        executable_sql, _ = enforce_preview_limit(
+            sql,
+            max_rows=limit,
+            dialect="postgres",
+        )
+        return executable_sql
+
+    def _build_sql_orchestration_instructions(self) -> str:
+        orchestration = getattr(self.semantic_model, "orchestration", None)
+        if orchestration is not None:
+            return (
+                "Orchestration instructions (provide guidance on how to generate SQL for this semantic model, including how to use its semantic definitions and how to join its tables if applicable):\n"
+                f"{orchestration}\n"
+            )
+        return ""
+
+    def _build_error_hints(self, error_history: list[str]) -> str:
+        if not error_history:
+            return ""
+        hints = "\n".join(f"- {error}" for error in error_history[-3:])
+        return f"Previous execution errors:\n{hints}\nUse these hints to avoid repeating the same mistakes.\n"
+
+    async def _generate_canonical_sql(self, request: AnalystQueryRequest) -> str:
+        prompt = self._build_prompt(request)
+        self.logger.info("Invoking LLM for analytical asset %s", self.name)
+        self.logger.debug("Prompt for %s:\n%s", self.name, prompt)
+        return await self._complete_prompt(prompt)
+
+    async def _complete_prompt(self, prompt: str) -> str:
+        async_completion = getattr(self.llm, "acomplete", None)
+        if callable(async_completion):
+            result = async_completion(prompt, temperature=self.llm_temperature)
+            if inspect.isawaitable(result):
+                return await result
+            return result
+
+        completion = getattr(self.llm, "complete", None)
+        if callable(completion):
+            return await asyncio.to_thread(
+                completion,
+                prompt,
+                temperature=self.llm_temperature,
+            )
+
+        raise AttributeError("Configured LLM provider does not support complete or acomplete.")
 
     def _build_response(
         self,
@@ -390,14 +461,6 @@ class SqlAnalystTool:
             )
         except Exception as exc:  # pragma: no cover
             self.logger.warning("Failed to emit analytical tool event %s: %s", event_type, exc)
-            
-    def _build_sql_orchestration_instructions(self) -> str:
-        if self.semantic_model.orchestration is not None:
-            return (
-                "Orchestration instructions (provide guidance on how to generate SQL for this semantic model, including how to use its semantic definitions and how to join its tables if applicable):\n"
-                f"{self.semantic_model.orchestration}\n"
-            )
-        return ""
 
     def _build_prompt(self, request: AnalystQueryRequest) -> str:
         conversation_text = ""
@@ -438,7 +501,8 @@ class SqlAnalystTool:
             "- Do not invent columns, tables, metrics, or joins.\n"
             "- Use ANSI-friendly PostgreSQL syntax.\n"
             "- Use search hints only as grounding for filters when they are relevant.\n"
-            f"{self.__build_sql_orchestration_instructions()}"
+            f"{self._build_sql_orchestration_instructions()}"
+            f"{self._build_error_hints(request.error_history)}"
             f"{limit_hint}"
             f"{filters_text}"
             f"{conversation_text}"
@@ -446,12 +510,6 @@ class SqlAnalystTool:
             f"Question: {request.question}\n"
             "Return SQL in PostgreSQL dialect only. No comments or explanation."
         )
-
-    def _generate_canonical_sql(self, request: AnalystQueryRequest) -> str:
-        prompt = self._build_prompt(request)
-        self.logger.info("Invoking LLM for analytical asset %s", self.name)
-        self.logger.debug("Prompt for %s:\n%s", self.name, prompt)
-        return self.llm.complete(prompt, temperature=self.llm_temperature)
 
     def _render_analysis_context(self) -> str:
         if self.context.asset_type == "semantic_model":
@@ -579,7 +637,7 @@ class SqlAnalystTool:
             semantic_model_id=self._semantic_vector_search_model_id,
             queries=phrases,
             embedding_provider=self.embedder,
-            top_k=10,
+            top_k=VECTOR_SEARCH_TOP_K,
         )
         if not raw_hits:
             return []
@@ -595,7 +653,7 @@ class SqlAnalystTool:
             for hit in raw_hits
             if hit.score >= VECTOR_SIMILARITY_THRESHOLD
         ]
-        return matches[:10]
+        return matches[:MAX_VECTOR_MATCHES]
 
     def _extract_candidate_phrases(self, question: str) -> List[str]:
         base = question.strip()
@@ -624,12 +682,12 @@ class SqlAnalystTool:
             question,
             flags=re.IGNORECASE,
         ):
-            cleaned = re.split(r"[.,;:?!]", keyword_match, 1)[0]
+            cleaned = re.split(r"[.,;:?!]", keyword_match, maxsplit=1)[0]
             _add(cleaned)
         for capitalized in re.findall(r"\b([A-Z][\w-]*(?:\s+[A-Z][\w-]*)+)\b", question):
             _add(capitalized)
 
-        return candidates[:8]
+        return candidates[:MAX_CANDIDATE_PHRASES]
 
     @staticmethod
     def _augment_question_with_matches(question: str, matches: List[VectorMatch]) -> str:
@@ -670,7 +728,7 @@ class SqlAnalystTool:
             (str(table_key).strip().lower(), str(measure.name).strip().lower()): str(
                 measure.expression or measure.name
             ).strip()
-            for table_key, table in self.semantic_model.tables.items()
+            for table_key, table in (getattr(self.semantic_model, "tables", {}) or {}).items()
             for measure in (table.measures or [])
             if str(measure.expression or measure.name).strip()
         }
@@ -718,7 +776,7 @@ class SqlAnalystTool:
             return []
 
         parts: list[str] = ["Semantic definitions:"]
-        for table_key, table in self.semantic_model.tables.items():
+        for table_key, table in (getattr(self.semantic_model, "tables", {}) or {}).items():
             parts.append(f"  - table {table_key}")
             for dimension in table.dimensions or []:
                 expression_sql = str(dimension.expression or dimension.name).strip()
@@ -780,7 +838,7 @@ class SqlAnalystTool:
                 unqualified_targets.setdefault(column_name, set()).add(cast_target)
 
         if self.semantic_model is not None:
-            for table_key, table in self.semantic_model.tables.items():
+            for table_key, table in (getattr(self.semantic_model, "tables", {}) or {}).items():
                 alias = str(table_key or "").strip().lower() or None
                 for dimension in table.dimensions or []:
                     cast_target = self._cast_target_for_type(getattr(dimension, "type", None))

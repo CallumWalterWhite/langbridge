@@ -24,12 +24,6 @@ from langbridge.connectors.base.connector import (
     ApiResource,
 )
 from langbridge.connectors.base.config import ConnectorRuntimeType
-from langbridge.connectors.saas.shopify.config import (
-    ShopifyConnectorConfig,
-)
-from langbridge.connectors.saas.shopify.connector import (
-    ShopifyApiConnector,
-)
 from langbridge.runtime.models import DatasetMetadata
 from langbridge.runtime.models.metadata import LifecycleState, ManagementMode
 from langbridge.runtime.settings import runtime_settings

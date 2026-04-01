@@ -5,7 +5,7 @@ display_name: Shopify
 connector_type: SHOPIFY
 connector_family: API
 description: Declarative Shopify Admin connector for sync-oriented dataset materialization.
-base_url: https://example.myshopify.com/admin/api/2026-01
+base_url: https://example.myshopify.com/admin/api/2025-01
 test_connection_path: /shop.json
 
 auth:
@@ -32,6 +32,17 @@ incremental:
   cursor_type: iso_datetime
 
 resources:
+  - key: orders
+    label: Orders
+    path: /orders.json
+    primary_key: id
+    supports_incremental: true
+    default_sync_mode: INCREMENTAL
+    response_items_field: orders
+    request_params:
+      status: any
+    description: Shopify order records.
+
   - key: customers
     label: Customers
     path: /customers.json
@@ -41,20 +52,11 @@ resources:
     response_items_field: customers
     description: Shopify customer records.
 
-  - key: draft_orders
-    label: Draft Orders
-    path: /draft_orders.json
+  - key: products
+    label: Products
+    path: /products.json
     primary_key: id
     supports_incremental: true
     default_sync_mode: INCREMENTAL
-    response_items_field: draft_orders
-    description: Shopify draft order records.
-
-  - key: locations
-    label: Locations
-    path: /locations.json
-    primary_key: id
-    supports_incremental: false
-    default_sync_mode: FULL_REFRESH
-    response_items_field: locations
-    description: Shopify location records.
+    response_items_field: products
+    description: Shopify product records.

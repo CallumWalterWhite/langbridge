@@ -42,7 +42,7 @@ class SqlConnectorRemoteSource(RemoteSource):
             pushdown_projection=True,
             pushdown_aggregation=True,
             pushdown_limit=True,
-            pushdown_join=False,
+            pushdown_join=True,
         )
 
     def dialect(self) -> str:

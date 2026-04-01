@@ -299,7 +299,7 @@ def test_local_runtime_config_normalizes_legacy_synced_source_table_to_source_re
     assert config.datasets[0].source.table is None
 
 
-def test_configured_local_runtime_rejects_live_dataset_for_connector_without_live_support(
+def test_configured_local_runtime_rejects_live_dataset_for_connector_without_query_pushdown(
     tmp_path: Path,
 ) -> None:
     config_path = tmp_path / "langbridge_config.yml"
@@ -321,8 +321,47 @@ datasets:
         encoding="utf-8",
     )
 
-    with pytest.raises(ValueError, match="does not support live datasets"):
+    with pytest.raises(ValueError, match="does not expose live query pushdown"):
         build_configured_local_runtime(config_path=config_path)
+
+
+def test_configured_local_runtime_allows_live_dataset_when_dataset_controls_materialization_mode(
+    tmp_path: Path,
+) -> None:
+    config_path = tmp_path / "langbridge_config.yml"
+    config_path.write_text(
+        """
+version: 1
+connectors:
+  - name: local_demo
+    type: sqlite
+    connection:
+      location: ./example.db
+    capabilities:
+      supports_live_datasets: false
+datasets:
+  - name: orders
+    connector: local_demo
+    materialization_mode: live
+    source:
+      table: orders
+""".strip(),
+        encoding="utf-8",
+    )
+
+    runtime = build_configured_local_runtime(config_path=config_path)
+
+    dataset_record = runtime._datasets["orders"]
+    dataset_model = asyncio.run(
+        runtime.providers.dataset_metadata.get_dataset(
+            workspace_id=runtime.context.workspace_id,
+            dataset_id=dataset_record.id,
+        )
+    )
+
+    assert dataset_model is not None
+    assert dataset_model.materialization_mode == "live"
+    assert dataset_model.table_name == "orders"
 
 
 def test_configured_local_runtime_supports_config_defined_synced_dataset(
@@ -372,6 +411,62 @@ datasets:
                 "connector_family": "api",
                 "resource_name": "customers",
                 "root_resource_name": "customers",
+                "parent_resource_name": None,
+        },
+    }
+
+
+def test_configured_local_runtime_allows_dynamic_synced_resource_when_dataset_controls_resource_name(
+    tmp_path: Path,
+) -> None:
+    config_path = tmp_path / "langbridge_config.yml"
+    config_path.write_text(
+        """
+version: 1
+connectors:
+  - name: hubspot_demo
+    type: hubspot
+    connection:
+      access_token: test-token
+    capabilities:
+      supports_synced_datasets: false
+datasets:
+  - name: hubspot_custom_objects
+    connector: hubspot_demo
+    materialization_mode: synced
+    source:
+      resource: custom_objects
+""".strip(),
+        encoding="utf-8",
+    )
+
+    runtime = build_configured_local_runtime(config_path=config_path)
+
+    connectors = asyncio.run(runtime.list_connectors())
+    assert connectors[0]["name"] == "hubspot_demo"
+    assert connectors[0]["supports_sync"] is True
+    assert connectors[0]["capabilities"]["supports_synced_datasets"] is False
+
+    dataset_record = runtime._datasets["hubspot_custom_objects"]
+    dataset_model = asyncio.run(
+        runtime.providers.dataset_metadata.get_dataset(
+            workspace_id=runtime.context.workspace_id,
+            dataset_id=dataset_record.id,
+        )
+    )
+
+    assert dataset_model is not None
+    assert dataset_model.materialization_mode == "synced"
+    assert dataset_model.status == "pending_sync"
+    assert dataset_model.file_config == {
+        "format": "parquet",
+        "managed_dataset": True,
+            "connector_sync": {
+                "connector_id": str(runtime._connectors["hubspot_demo"].id),
+                "connector_type": "HUBSPOT",
+                "connector_family": "api",
+                "resource_name": "custom_objects",
+                "root_resource_name": "custom_objects",
                 "parent_resource_name": None,
         },
     }

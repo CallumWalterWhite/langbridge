@@ -46,11 +46,11 @@ async def test_declarative_shopify_connector_uses_shop_domain_and_link_paginatio
 
     def handler(request: httpx.Request) -> httpx.Response:
         requests.append(request)
-        if request.url.path == "/admin/api/2026-01/shop.json":
+        if request.url.path == "/admin/api/2025-01/shop.json":
             assert request.url.host == "acme.myshopify.com"
             assert request.headers["X-Shopify-Access-Token"] == "shpat_test"
             return httpx.Response(200, json={"shop": {"id": 1}})
-        if request.url.path == "/admin/api/2026-01/customers.json":
+        if request.url.path == "/admin/api/2025-01/customers.json":
             assert request.url.params["limit"] == "2"
             assert request.url.params["updated_at_min"] == "2025-01-01T00:00:00Z"
             return httpx.Response(
@@ -65,7 +65,7 @@ async def test_declarative_shopify_connector_uses_shop_domain_and_link_paginatio
                     ]
                 },
                 headers={
-                    "Link": '<https://acme.myshopify.com/admin/api/2026-01/customers.json?page_info=cursor-2&limit=2>; rel="next"'
+                    "Link": '<https://acme.myshopify.com/admin/api/2025-01/customers.json?page_info=cursor-2&limit=2>; rel="next"'
                 },
             )
         raise AssertionError(f"Unexpected Shopify request: {request.method} {request.url}")
@@ -130,6 +130,86 @@ async def test_declarative_hubspot_connector_uses_response_cursor_and_client_fil
     assert [record["id"] for record in result.records] == ["2"]
     assert result.records[0]["properties__firstname"] == "Ada"
     assert result.next_cursor == "cursor-2"
+
+
+@pytest.mark.anyio
+async def test_declarative_shopify_connector_resolves_dynamic_resources_from_dataset_names() -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        if request.url.path == "/admin/api/2025-01/shop.json":
+            return httpx.Response(200, json={"shop": {"id": 1}})
+        if request.url.path == "/admin/api/2025-01/price_rules.json":
+            assert request.url.params["limit"] == "2"
+            assert request.url.params["updated_at_min"] == "2025-01-01T00:00:00Z"
+            return httpx.Response(
+                200,
+                json={
+                    "price_rules": [
+                        {"id": 7, "title": "VIP"},
+                    ]
+                },
+            )
+        raise AssertionError(f"Unexpected Shopify request: {request.method} {request.url}")
+
+    connector = ShopifyDeclarativeApiConnector(
+        ShopifyDeclarativeConnectorConfig(
+            shop_domain="acme.myshopify.com",
+            access_token="shpat_test",
+        ),
+        transport=httpx.MockTransport(handler),
+    )
+
+    await connector.test_connection()
+    result = await connector.extract_resource(
+        "price_rules",
+        since="2025-01-01T00:00:00Z",
+        limit=2,
+    )
+
+    assert len(requests) == 2
+    assert result.resource == "price_rules"
+    assert result.records == [{"id": 7, "title": "VIP"}]
+
+
+@pytest.mark.anyio
+async def test_declarative_hubspot_connector_resolves_dynamic_resources_from_dataset_names() -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        assert request.headers["Authorization"] == "Bearer hubspot-token"
+        if request.url.path == "/crm/v3/objects/contacts":
+            return httpx.Response(200, json={"results": []})
+        if request.url.path == "/crm/v3/objects/custom_objects":
+            assert request.url.params["limit"] == "2"
+            assert request.url.params["archived"] == "false"
+            return httpx.Response(
+                200,
+                json={
+                    "results": [
+                        {"id": "42", "updatedAt": "2025-01-03T00:00:00Z", "properties": {"name": "Ada"}},
+                    ]
+                },
+            )
+        raise AssertionError(f"Unexpected HubSpot request: {request.method} {request.url}")
+
+    connector = HubSpotDeclarativeApiConnector(
+        HubSpotDeclarativeConnectorConfig(access_token="hubspot-token"),
+        transport=httpx.MockTransport(handler),
+    )
+
+    await connector.test_connection()
+    result = await connector.extract_resource(
+        "custom_objects",
+        since="2025-01-01T00:00:00Z",
+        limit=2,
+    )
+
+    assert len(requests) == 2
+    assert result.resource == "custom_objects"
+    assert result.records == [{"id": "42", "updatedAt": "2025-01-03T00:00:00Z", "properties__name": "Ada"}]
 
 
 @pytest.mark.anyio

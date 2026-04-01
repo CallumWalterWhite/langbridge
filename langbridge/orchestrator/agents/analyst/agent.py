@@ -48,6 +48,7 @@ class AnalystAgent:
             conversation_context=conversation_context,
             filters=filters,
             limit=limit if limit is not None else 1000,
+            error_retries=0 # No retries for synchronous execution, as it may block the thread
         )
         return self.answer_with_request(request)
 
@@ -73,8 +74,9 @@ class AnalystAgent:
             conversation_context=conversation_context,
             filters=filters,
             limit=limit if limit is not None else 1000,
+            error_retries=3 # Allow for some retries in case of transient errors during async execution
         )
-        tool = await asyncio.to_thread(self.selector.select, request)
+        tool = self.selector.select(request)
         self.logger.info(
             "AnalystAgent selected %s analytical asset '%s'",
             tool.asset_type,

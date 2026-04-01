@@ -11,41 +11,34 @@ import pytest
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 
-from langbridge.connectors.saas.google_analytics.config import (
-    GoogleAnalyticsConnectorConfig,
-)
-from langbridge.connectors.saas.google_analytics.connector import (
-    GoogleAnalyticsApiConnector,
-)
 from langbridge.connectors.base import http as http_api_connector_module
-from langbridge.connectors.saas.hubspot.config import (
-    HubSpotConnectorConfig,
-)
-from langbridge.connectors.saas.hubspot.connector import (
-    HubSpotApiConnector,
-)
-from langbridge.connectors.saas.salesforce.config import (
-    SalesforceConnectorConfig,
-)
-from langbridge.connectors.saas.salesforce.connector import (
-    SalesforceApiConnector,
-)
-from langbridge.connectors.saas.shopify.config import (
-    ShopifyConnectorConfig,
-)
-from langbridge.connectors.saas.shopify.connector import (
-    ShopifyApiConnector,
-)
 
-STRIPE_PACKAGE_SRC = (
+CONNECTOR_SRC_DIRS = [
     Path(__file__).resolve().parents[2]
     / "langbridge-connectors"
-    / "langbridge-connector-stripe"
+    / package_name
     / "src"
-)
-if str(STRIPE_PACKAGE_SRC) not in sys.path:
-    sys.path.insert(0, str(STRIPE_PACKAGE_SRC))
+    for package_name in (
+        "langbridge-connector-stripe",
+        "langbridge-connector-shopify",
+        "langbridge-connector-hubspot",
+        "langbridge-connector-google-analytics",
+        "langbridge-connector-salesforce",
+    )
+]
+for src_dir in CONNECTOR_SRC_DIRS:
+    src_path = str(src_dir)
+    if src_path not in sys.path:
+        sys.path.insert(0, src_path)
 
+from langbridge_connector_google_analytics.config import GoogleAnalyticsConnectorConfig
+from langbridge_connector_google_analytics.connector import GoogleAnalyticsApiConnector
+from langbridge_connector_hubspot.config import HubSpotConnectorConfig
+from langbridge_connector_hubspot.connector import HubSpotApiConnector
+from langbridge_connector_salesforce.config import SalesforceConnectorConfig
+from langbridge_connector_salesforce.connector import SalesforceApiConnector
+from langbridge_connector_shopify.config import ShopifyConnectorConfig
+from langbridge_connector_shopify.connector import ShopifyApiConnector
 from langbridge_connector_stripe.config import StripeDeclarativeConnectorConfig
 from langbridge_connector_stripe.connector import StripeDeclarativeApiConnector
 
@@ -166,6 +159,64 @@ async def test_hubspot_connector_accepts_legacy_access_token_config() -> None:
     await connector.test_connection()
 
     assert len(requests) == 1
+
+
+@pytest.mark.anyio
+async def test_shopify_connector_supports_legacy_app_credentials_flow() -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        if request.url.path == "/admin/oauth/access_token":
+            payload = parse_qs(request.content.decode("utf-8"))
+            assert payload["client_id"] == ["legacy-client-id"]
+            assert payload["client_secret"] == ["legacy-client-secret"]
+            assert payload["grant_type"] == ["client_credentials"]
+            return httpx.Response(200, json={"access_token": "shpat_legacy"})
+        if request.url.path == "/admin/api/2025-01/shop.json":
+            assert request.headers["X-Shopify-Access-Token"] == "shpat_legacy"
+            return httpx.Response(200, json={"shop": {"id": 1}})
+        if request.url.path == "/admin/api/2025-01/orders.json":
+            assert request.headers["X-Shopify-Access-Token"] == "shpat_legacy"
+            assert request.url.params["limit"] == "2"
+            assert request.url.params["status"] == "any"
+            assert request.url.params["updated_at_min"] == "2025-01-01T00:00:00Z"
+            return httpx.Response(
+                200,
+                json={
+                    "orders": [
+                        {
+                            "id": 101,
+                            "updated_at": "2025-01-02T00:00:00Z",
+                            "customer": {"email": "ada@example.com"},
+                        }
+                    ]
+                },
+                headers={
+                    "Link": '<https://acme.myshopify.com/admin/api/2025-01/orders.json?page_info=cursor-2&limit=2>; rel="next"'
+                },
+            )
+        raise AssertionError(f"Unexpected Shopify request: {request.method} {request.url}")
+
+    connector = ShopifyApiConnector(
+        ShopifyConnectorConfig(
+            shop_domain="acme.myshopify.com",
+            shopify_app_client_id="legacy-client-id",
+            shopify_app_client_secret="legacy-client-secret",
+        ),
+        transport=httpx.MockTransport(handler),
+    )
+
+    await connector.test_connection()
+    result = await connector.extract_resource(
+        "orders",
+        since="2025-01-01T00:00:00Z",
+        limit=2,
+    )
+
+    assert len(requests) == 3
+    assert result.records[0]["customer__email"] == "ada@example.com"
+    assert result.next_cursor == "cursor-2"
 
 @pytest.mark.anyio
 async def test_google_analytics_connector_uses_service_account_jwt_and_run_report() -> None:

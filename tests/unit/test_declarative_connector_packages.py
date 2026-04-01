@@ -7,7 +7,11 @@ import pytest
 
 from langbridge.connectors.base.config import ConnectorRuntimeType
 from langbridge.connectors.saas.declarative import DeclarativeHttpApiConnector
-from langbridge.plugins import get_connector_plugin
+from langbridge.plugins import (
+    get_connector_config_factory,
+    get_connector_config_schema_factory,
+    get_connector_plugin,
+)
 
 CONNECTOR_CASES = (
     {
@@ -27,12 +31,12 @@ CONNECTOR_CASES = (
         "module": "langbridge_connector_shopify",
         "manifest": "shopify.yaml",
         "connector_type": "SHOPIFY",
-        "base_url": "https://example.myshopify.com/admin/api/2026-01",
-        "resources": ("customers", "draft_orders", "locations"),
-        "auth_fields": ["shop_domain", "access_token"],
-        "config_fields": ["shop_domain", "access_token", "api_base_url"],
+        "base_url": "https://example.myshopify.com/admin/api/2025-01",
+        "resources": ("orders", "customers", "products"),
+        "auth_fields": ["shop_domain", "access_token", "shopify_app_client_id", "shopify_app_client_secret"],
+        "config_fields": ["shop_domain", "access_token", "shopify_app_client_id", "shopify_app_client_secret", "api_base_url"],
         "entrypoint": 'shopify = "langbridge_connector_shopify:get_connector_plugin"',
-        "example_resource_keys": ["customers", "locations"],
+        "example_resource_keys": ["customers", "orders"],
     },
     {
         "package_dir": "langbridge-connector-hubspot",
@@ -40,9 +44,9 @@ CONNECTOR_CASES = (
         "manifest": "hubspot.yaml",
         "connector_type": "HUBSPOT",
         "base_url": "https://api.hubapi.com",
-        "resources": ("contacts", "companies", "deals"),
-        "auth_fields": ["access_token"],
-        "config_fields": ["access_token", "api_base_url"],
+        "resources": ("contacts", "companies", "deals", "tickets"),
+        "auth_fields": ["access_token", "portal_id"],
+        "config_fields": ["access_token", "portal_id", "api_base_url"],
         "entrypoint": 'hubspot = "langbridge_connector_hubspot:get_connector_plugin"',
         "example_resource_keys": ["contacts", "deals"],
     },
@@ -144,10 +148,12 @@ def test_manifest_plugin_examples_and_entrypoint_align(case: dict[str, object]) 
     (
         (ConnectorRuntimeType.SHOPIFY, "langbridge_connector_shopify"),
         (ConnectorRuntimeType.HUBSPOT, "langbridge_connector_hubspot"),
+        (ConnectorRuntimeType.GOOGLE_ANALYTICS, "langbridge_connector_google_analytics"),
         (ConnectorRuntimeType.GITHUB, "langbridge_connector_github"),
         (ConnectorRuntimeType.JIRA, "langbridge_connector_jira"),
         (ConnectorRuntimeType.ASANA, "langbridge_connector_asana"),
         (ConnectorRuntimeType.STRIPE, "langbridge_connector_stripe"),
+        (ConnectorRuntimeType.SALESFORCE, "langbridge_connector_salesforce"),
     ),
 )
 def test_runtime_plugin_registry_resolves_repo_connector_packages(
@@ -159,3 +165,11 @@ def test_runtime_plugin_registry_resolves_repo_connector_packages(
     assert plugin is not None
     assert plugin.api_connector_class is not None
     assert plugin.api_connector_class.__module__.startswith(expected_module_prefix)
+    assert plugin.config_factory is not None
+    assert plugin.config_schema_factory is not None
+
+    config_factory = get_connector_config_factory(runtime_type)
+    schema_factory = get_connector_config_schema_factory(runtime_type)
+
+    assert config_factory.__module__.startswith(expected_module_prefix)
+    assert schema_factory.__module__.startswith(expected_module_prefix)

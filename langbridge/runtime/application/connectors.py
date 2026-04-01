@@ -1,8 +1,10 @@
+import inspect
 import uuid
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Mapping, Set
 
 from langbridge.connectors.base import (
+    ApiResource,
     ConnectorPluginMetadata,
     ConnectorRuntimeType,
     get_connector_config_factory,
@@ -117,6 +119,49 @@ class ConnectorApplication:
                 f"Connector '{connector.name}' is config_managed and read-only in the runtime UI."
             )
 
+    async def _resolve_api_resource(
+        self,
+        *,
+        connector: ConnectorMetadata,
+        api_connector: Any,
+        resource_name: str,
+        discovered_resources: dict[str, ApiResource],
+        allow_placeholder: bool = False,
+    ) -> ApiResource:
+        normalized_name = str(resource_name or "").strip()
+        if not normalized_name:
+            raise BusinessValidationError("Connector resource name is required.")
+
+        resource = discovered_resources.get(normalized_name)
+        if resource is not None:
+            return resource
+
+        resolver = getattr(api_connector, "resolve_resource", None)
+        if callable(resolver):
+            try:
+                resolved_resource = resolver(normalized_name)
+                if inspect.isawaitable(resolved_resource):
+                    resolved_resource = await resolved_resource
+                if isinstance(resolved_resource, ApiResource):
+                    discovered_resources[resolved_resource.name] = resolved_resource
+                    return resolved_resource
+            except Exception as exc:
+                if not allow_placeholder:
+                    raise BusinessValidationError(
+                        f"Connector '{connector.name}' could not resolve resource '{normalized_name}'."
+                    ) from exc
+        elif not allow_placeholder:
+            raise BusinessValidationError(
+                f"Connector '{connector.name}' does not expose resource '{normalized_name}'."
+            )
+
+        placeholder_resource = ApiResource(
+            name=normalized_name,
+            label=normalized_name,
+        )
+        discovered_resources[placeholder_resource.name] = placeholder_resource
+        return placeholder_resource
+
     async def list_connectors(self) -> list[dict[str, Any]]:
         items: list[dict[str, Any]] = []
         for connector in self._host._connectors.values():
@@ -133,7 +178,7 @@ class ConnectorApplication:
                     "label": plugin.connector_type,
                     "description": plugin.connector_type,
                     "family": plugin.connector_family,
-                    "supports_sync": bool(plugin.supported_resources),
+                    "supports_sync": plugin.api_connector_class is not None,
                     "supported_resources": list(plugin.supported_resources),
                     "sync_strategy": plugin.sync_strategy,
                     "capabilities_schema": capabilities_schema.model_dump(mode="json"),
@@ -457,8 +502,29 @@ class ConnectorApplication:
             )
             dataset_bindings = self._host._datasets_for_resources(datasets)
 
+        discovered_resources = {
+            resource.name: resource
+            for resource in await api_connector.discover_resources()
+        }
+        ordered_resource_names = list(discovered_resources)
+        for resource_name in sorted(
+            {
+                *states_by_resource.keys(),
+                *dataset_bindings.keys(),
+            }
+            - set(discovered_resources)
+        ):
+            ordered_resource_names.append(resource_name)
+
         items: list[dict[str, Any]] = []
-        for resource in await api_connector.discover_resources():
+        for resource_name in ordered_resource_names:
+            resource = await self._resolve_api_resource(
+                connector=connector,
+                api_connector=api_connector,
+                resource_name=resource_name,
+                discovered_resources=discovered_resources,
+                allow_placeholder=True,
+            )
             state = states_by_resource.get(resource.name)
             bound_datasets = dataset_bindings.get(resource.name, [])
             items.append(
@@ -540,7 +606,10 @@ class ConnectorApplication:
         api_connector = self._host._build_api_connector(connector)
         await api_connector.test_connection()
 
-        discovered_resources = {resource.name: resource for resource in await api_connector.discover_resources()}
+        discovered_resources = {
+            resource.name: resource
+            for resource in await api_connector.discover_resources()
+        }
         normalized_resources = [
             str(resource or "").strip()
             for resource in (resources or [])
@@ -548,14 +617,14 @@ class ConnectorApplication:
         ]
         if not normalized_resources:
             raise BusinessValidationError("At least one resource must be supplied for connector sync.")
-        unknown_resources = [
-            resource_name
-            for resource_name in normalized_resources
-            if resource_name not in discovered_resources
-        ]
-        if unknown_resources:
-            raise BusinessValidationError(
-                f"Unsupported resource(s) requested for sync: {', '.join(sorted(unknown_resources))}."
+
+        resolved_resources: dict[str, ApiResource] = {}
+        for resource_name in normalized_resources:
+            resolved_resources[resource_name] = await self._resolve_api_resource(
+                connector=connector,
+                api_connector=api_connector,
+                resource_name=resource_name,
+                discovered_resources=discovered_resources,
             )
 
         normalized_sync_mode = self._host._normalize_sync_mode(sync_mode)
@@ -581,7 +650,7 @@ class ConnectorApplication:
                         connection_id=connector.id,
                         connector_record=connector,
                         connector_type=connector_type,
-                        resource=discovered_resources[resource_name],
+                        resource=resolved_resources[resource_name],
                         api_connector=api_connector,
                         state=active_state,
                         sync_mode=("FULL_REFRESH" if force_full_refresh else normalized_sync_mode),

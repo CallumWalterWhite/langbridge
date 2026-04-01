@@ -6,8 +6,6 @@ Stripe-like mock API and syncs the declared `billing_customers` dataset from the
 The declared synced dataset uses `materialization_mode: synced` with
 `source.resource: customers`.
 
-It is fully runtime-scoped and does not depend on `langbridge-cloud`.
-
 ## What This Example Starts
 
 - `runtime-host`: self-hosted runtime host

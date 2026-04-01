@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from langbridge.federation.models.plans import LogicalPlan, PhysicalPlan, QueryType
 from langbridge.federation.models.smq import SMQQuery
 from langbridge.federation.models.virtual_dataset import FederationWorkflow, TableStatistics
-from langbridge.federation.planner.optimizer import FederatedOptimizer
+from langbridge.federation.planner.optimizer import FederatedOptimizer, OptimizedPlan
 from langbridge.federation.planner.parser import logical_plan_from_sql
 from langbridge.federation.planner.physical_planner import PhysicalPlanner
 from langbridge.federation.planner.smq_compiler import SMQCompiler
@@ -85,7 +85,7 @@ class FederatedPlanner:
         optimizer = FederatedOptimizer(
             broadcast_threshold_bytes=workflow.broadcast_threshold_bytes,
         )
-        optimized = optimizer.optimize(
+        optimized: OptimizedPlan = optimizer.optimize(
             logical_plan=logical_plan,
             expression=expression,
             virtual_dataset=workflow.dataset,
@@ -94,7 +94,7 @@ class FederatedPlanner:
             input_dialect=dialect,
             local_dialect=local_dialect,
         )
-        physical_plan = self._physical_planner.build(optimized_plan=optimized)
+        physical_plan: PhysicalPlan = self._physical_planner.build(optimized_plan=optimized)
         return PlanningOutput(logical_plan=logical_plan, physical_plan=physical_plan, sql=sql)
 
     def _resolve_stats(self, workflow: FederationWorkflow) -> dict[str, TableStatistics]:

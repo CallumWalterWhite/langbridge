@@ -92,8 +92,14 @@ The runtime is intentionally honest about what it supports today:
 - live API/SaaS datasets: not implemented yet unless a connector eventually exposes a real live execution path
 
 Connector packages under `langbridge-connectors` should stay thin and primarily
-provide manifest files, package-specific config/schema adapters, and a package-owned
-connector class that points at the core declarative runtime.
+provide package-owned config/schema/plugin wiring plus either:
+
+- manifest files that point at the core declarative runtime
+- package-owned connector logic where the runtime behavior is not yet a clean declarative fit
+
+Where a connector package exists, the runtime should resolve that package as the
+authoritative connector implementation. Core `langbridge` now retains only the
+shared SaaS runtime contracts and declarative execution helpers.
 
 ## Current Declarative Connector Packages
 
@@ -102,6 +108,8 @@ The current package set under `langbridge-connectors` is:
 - `langbridge-connector-stripe`
 - `langbridge-connector-shopify`
 - `langbridge-connector-hubspot`
+- `langbridge-connector-google-analytics`
+- `langbridge-connector-salesforce`
 - `langbridge-connector-github`
 - `langbridge-connector-jira`
 - `langbridge-connector-asana`
