@@ -732,13 +732,17 @@ class SqlQueryService:
                 raise ExecutionValidationError(
                     f"Dataset '{dataset.name}' is missing a SQL alias."
                 )
-            binding, _dialect = self._dataset_execution_resolver._build_binding_from_dataset_record(
-                dataset=dataset,
-                table_key=sql_alias,
-                logical_schema=None,
-                logical_table_name=sql_alias,
-                catalog_name=None,
-            )
+            try:
+                binding, _dialect = self._dataset_execution_resolver._build_binding_from_dataset_record(
+                    dataset=dataset,
+                    table_key=sql_alias,
+                    logical_schema=None,
+                    logical_table_name=sql_alias,
+                    catalog_name=None,
+                )
+            except ExecutionValidationError as exc:
+                # Ignore execution validation errors for individual tables to allow partial execution of federated datasets
+                continue
             binding = self._with_dataset_logical_alias(binding=binding, dataset_alias=sql_alias)
             table_bindings[binding.table_key] = binding
 

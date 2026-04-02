@@ -296,13 +296,17 @@ class DatasetExecutionResolver:
                 dataset_id=dataset_ref,
                 table_key=table_key,
             )
-            binding, dialect = self._build_binding_from_dataset_record(
-                dataset=child_dataset,
-                table_key=table_key,
-                logical_schema=self._string_or_none(table_entry.get("schema")),
-                logical_table_name=self._string_or_none(table_entry.get("table") or table_entry.get("name")),
-                catalog_name=self._string_or_none(table_entry.get("catalog")),
-            )
+            try:
+                binding, dialect = self._build_binding_from_dataset_record(
+                    dataset=child_dataset,
+                    table_key=table_key,
+                    logical_schema=self._string_or_none(table_entry.get("schema")),
+                    logical_table_name=self._string_or_none(table_entry.get("table") or table_entry.get("name")),
+                    catalog_name=self._string_or_none(table_entry.get("catalog")),
+                )
+            except ExecutionValidationError:
+                # Ignore execution validation errors for individual tables to allow partial execution of federated datasets
+                continue
             table_bindings[table_key] = binding
             dialects.append(dialect)
             consumed_ids.add(dataset_ref)
@@ -315,7 +319,11 @@ class DatasetExecutionResolver:
                 dataset_id=child_dataset_id,
                 table_key=str(child_dataset_id),
             )
-            binding, dialect = self._build_binding_from_dataset_record(dataset=child_dataset)
+            try:
+                binding, dialect = self._build_binding_from_dataset_record(dataset=child_dataset)
+            except ExecutionValidationError:
+                # Ignore execution validation errors for individual tables to allow partial execution of federated datasets
+                continue
             table_bindings[binding.table_key] = binding
             dialects.append(dialect)
 
