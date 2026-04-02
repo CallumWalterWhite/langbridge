@@ -23,6 +23,8 @@ The current host serves configured local runtimes and exposes:
 - `GET /api/runtime/v1/health`
 - `GET /api/runtime/v1/info`
 - `GET /api/runtime/v1/datasets`
+- `GET /api/runtime/v1/datasets/{dataset_ref}/sync`
+- `POST /api/runtime/v1/datasets/{dataset_ref}/sync`
 - `POST /api/runtime/v1/datasets/{dataset_ref}/preview`
 - `POST /api/runtime/v1/semantic/query`
 - `POST /api/runtime/v1/sql/query`
@@ -30,7 +32,6 @@ The current host serves configured local runtimes and exposes:
 - `GET /api/runtime/v1/connectors`
 - `GET /api/runtime/v1/connectors/{connector_name}/sync/resources`
 - `GET /api/runtime/v1/connectors/{connector_name}/sync/states`
-- `POST /api/runtime/v1/connectors/{connector_name}/sync`
 - interactive docs at `/api/runtime/docs`
 
 ## Runtime Metadata Migrations

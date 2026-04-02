@@ -2,7 +2,6 @@ version: 1
 
 runtime:
   mode: local
-  # Explicit runtime metadata persistence for the synced datasets and sync state.
   metadata_store:
     type: sqlite
     path: .langbridge/metadata.db
@@ -16,7 +15,7 @@ runtime:
 connectors:
   - name: shopify_demo
     type: shopify
-    description: Self-hosted Shopify sync example backed by a live Shopify Admin API store.
+    description: Shopify synced dataset example using explicit resource paths.
     connection: {}
     secrets:
       shop_domain:
@@ -27,36 +26,28 @@ connectors:
         identifier: SHOPIFY_ACCESS_TOKEN
 
 datasets:
-  - name: shopify_customers
-    description: Synced parent dataset for Shopify customers with explicit 1:1 address flattening.
+  - name: shopify_synced_customers
+    description: Synced parent dataset for customers with explicit 1:1 address flattening.
     connector: shopify_demo
     materialization_mode: synced
-    # materialization_mode: live
-    # source:
-    #   resource: customers
-    #   flatten:
-    #     - default_address
     sync:
       resource: customers
       flatten:
         - default_address
+      strategy: INCREMENTAL
 
-  - name: shopify_product_options
-    description: Synced child dataset pinned to the explicit Shopify child resource path `products.options`.
+  - name: shopify_synced_product_options
+    description: Synced explicit child dataset for the 1:many `products.options` path.
     connector: shopify_demo
     materialization_mode: synced
-    # materialization_mode: live
-    # source:
-    #   resource: products.options
     sync:
       resource: products.options
+      strategy: INCREMENTAL
 
-  - name: shopify_price_rules
-    description: Synced dataset using a dataset-selected dynamic Shopify Admin API resource.
+  - name: shopify_synced_price_rules
+    description: Synced dynamic Shopify resource using an explicit dataset-owned resource path.
     connector: shopify_demo
-    # materialization_mode: live
     materialization_mode: synced
-    # source:
-    #   resource: price_rules
     sync:
       resource: price_rules
+      strategy: FULL_REFRESH

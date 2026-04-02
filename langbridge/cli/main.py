@@ -138,15 +138,9 @@ def _build_parser() -> argparse.ArgumentParser:
     sync_states.add_argument("--connector", required=True, help="Connector name")
     sync_states.set_defaults(handler=_handle_sync_states)
 
-    sync_run = sync_subparsers.add_parser("run", help="Run connector sync for explicit resources.")
+    sync_run = sync_subparsers.add_parser("run", help="Run sync for a dataset.")
     _add_client_source_args(sync_run)
-    sync_run.add_argument("--connector", required=True, help="Connector name")
-    sync_run.add_argument(
-        "--resource",
-        action="append",
-        default=[],
-        help="Resource name to sync. Repeat for multiple resources.",
-    )
+    sync_run.add_argument("--dataset", required=True, help="Dataset name or dataset id")
     sync_run.add_argument(
         "--mode",
         default="INCREMENTAL",
@@ -310,14 +304,10 @@ def _handle_sync_states(args: argparse.Namespace) -> int:
 
 
 def _handle_sync_run(args: argparse.Namespace) -> int:
-    resources = [str(item).strip() for item in (args.resource or []) if str(item).strip()]
-    if not resources:
-        raise ValueError("At least one --resource value is required.")
     client = _build_client_from_args(args)
     try:
         result = client.sync.run(
-            connector_name=args.connector,
-            resource_names=resources,
+            dataset=args.dataset,
             sync_mode=args.mode,
             force_full_refresh=bool(args.full_refresh),
         )

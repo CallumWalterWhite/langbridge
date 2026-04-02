@@ -6,7 +6,9 @@ from langbridge.connectors.base.errors import AuthError, ConnectorError
 from langbridge.connectors.base.http import (
     ApiResourceDefinition,
     HttpApiConnector,
-    flatten_api_records,
+)
+from langbridge.connectors.base.resource_paths import (
+    describe_api_child_resources,
 )
 
 from .config import SALESFORCE_SUPPORTED_RESOURCES, SalesforceConnectorConfig
@@ -79,6 +81,7 @@ class SalesforceApiConnector(HttpApiConnector):
             resource=ApiResource(
                 name="accounts",
                 label="Accounts",
+                path="accounts",
                 primary_key="Id",
                 cursor_field="nextRecordsUrl",
                 incremental_cursor_field="SystemModstamp",
@@ -91,6 +94,7 @@ class SalesforceApiConnector(HttpApiConnector):
             resource=ApiResource(
                 name="contacts",
                 label="Contacts",
+                path="contacts",
                 primary_key="Id",
                 cursor_field="nextRecordsUrl",
                 incremental_cursor_field="SystemModstamp",
@@ -103,6 +107,7 @@ class SalesforceApiConnector(HttpApiConnector):
             resource=ApiResource(
                 name="leads",
                 label="Leads",
+                path="leads",
                 primary_key="Id",
                 cursor_field="nextRecordsUrl",
                 incremental_cursor_field="SystemModstamp",
@@ -115,6 +120,7 @@ class SalesforceApiConnector(HttpApiConnector):
             resource=ApiResource(
                 name="opportunities",
                 label="Opportunities",
+                path="opportunities",
                 primary_key="Id",
                 cursor_field="nextRecordsUrl",
                 incremental_cursor_field="SystemModstamp",
@@ -168,20 +174,20 @@ class SalesforceApiConnector(HttpApiConnector):
             for record in records
             if isinstance(record, Mapping)
         ]
-        flattened_records, child_records = flatten_api_records(
-            resource_name=definition.resource.name,
-            records=normalized_records,
-            primary_key=definition.resource.primary_key,
-        )
         raw_cursor = payload.get("nextRecordsUrl")
         next_cursor = str(raw_cursor).strip() or None if raw_cursor else None
         return ApiExtractResult(
             resource=definition.resource.name,
             status="success",
-            records=flattened_records,
+            records=normalized_records,
             next_cursor=next_cursor,
-            checkpoint_cursor=_max_salesforce_cursor(flattened_records, "SystemModstamp"),
-            child_records=child_records,
+            checkpoint_cursor=_max_salesforce_cursor(normalized_records, "SystemModstamp"),
+            child_resources=list(
+                describe_api_child_resources(
+                    resource_path=definition.resource.path or definition.resource.name,
+                    records=normalized_records,
+                )
+            ),
         )
 
     async def _authenticated_json(

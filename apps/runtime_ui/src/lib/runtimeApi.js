@@ -158,8 +158,12 @@ export function fetchConnectorStates(connectorName) {
   );
 }
 
-export function runConnectorSync(connectorName, payload) {
-  return runtimeRequest(`/api/runtime/v1/connectors/${encodeURIComponent(connectorName)}/sync`, {
+export function fetchDatasetSync(datasetRef) {
+  return runtimeRequest(`/api/runtime/v1/datasets/${encodeURIComponent(datasetRef)}/sync`);
+}
+
+export function runDatasetSync(datasetRef, payload) {
+  return runtimeRequest(`/api/runtime/v1/datasets/${encodeURIComponent(datasetRef)}/sync`, {
     method: "POST",
     body: JSON.stringify(payload),
   });

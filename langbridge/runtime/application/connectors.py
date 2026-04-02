@@ -1,18 +1,19 @@
 import inspect
 import uuid
-from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Mapping, Set
 
 from langbridge.connectors.base import (
     ApiResource,
     ConnectorPluginMetadata,
     ConnectorRuntimeType,
+    api_parent_resource_path,
+    api_resource_root,
     get_connector_config_factory,
     get_connector_config_schema_factory,
+    normalize_api_resource_path,
 )
 from langbridge.runtime.application.errors import ApplicationError, BusinessValidationError
 from langbridge.runtime.config.models import LocalRuntimeConnectorConfig
-from langbridge.runtime.models import ConnectorSyncState
 from langbridge.runtime.models.metadata import (
     ConnectionMetadata,
     ConnectionPolicy,
@@ -119,6 +120,13 @@ class ConnectorApplication:
                 f"Connector '{connector.name}' is config_managed and read-only in the runtime UI."
             )
 
+    @staticmethod
+    def _normalize_resource_path(resource_name: str) -> str:
+        try:
+            return normalize_api_resource_path(resource_name)
+        except ValueError as exc:
+            raise BusinessValidationError(str(exc)) from exc
+
     async def _resolve_api_resource(
         self,
         *,
@@ -158,6 +166,7 @@ class ConnectorApplication:
         placeholder_resource = ApiResource(
             name=normalized_name,
             label=normalized_name,
+            path=normalized_name,
         )
         discovered_resources[placeholder_resource.name] = placeholder_resource
         return placeholder_resource
@@ -506,27 +515,42 @@ class ConnectorApplication:
             resource.name: resource
             for resource in await api_connector.discover_resources()
         }
-        ordered_resource_names = list(discovered_resources)
-        for resource_name in sorted(
+        ordered_resource_paths = list(discovered_resources)
+        for resource_path in sorted(
             {
                 *states_by_resource.keys(),
                 *dataset_bindings.keys(),
             }
             - set(discovered_resources)
         ):
-            ordered_resource_names.append(resource_name)
+            ordered_resource_paths.append(resource_path)
 
         items: list[dict[str, Any]] = []
-        for resource_name in ordered_resource_names:
-            resource = await self._resolve_api_resource(
+        for resource_path in ordered_resource_paths:
+            normalized_path = self._normalize_resource_path(resource_path)
+            root_resource_name = api_resource_root(normalized_path)
+            root_resource = await self._resolve_api_resource(
                 connector=connector,
                 api_connector=api_connector,
-                resource_name=resource_name,
+                resource_name=root_resource_name,
                 discovered_resources=discovered_resources,
                 allow_placeholder=True,
             )
-            state = states_by_resource.get(resource.name)
-            bound_datasets = dataset_bindings.get(resource.name, [])
+            if normalized_path == root_resource_name:
+                resource = root_resource
+            else:
+                resource = ApiResource(
+                    name=normalized_path,
+                    path=normalized_path,
+                    label=normalized_path,
+                    parent_resource=api_parent_resource_path(normalized_path),
+                    cursor_field=root_resource.cursor_field,
+                    incremental_cursor_field=root_resource.incremental_cursor_field,
+                    supports_incremental=root_resource.supports_incremental,
+                    default_sync_mode=root_resource.default_sync_mode,
+                )
+            state = states_by_resource.get(normalized_path)
+            bound_datasets = dataset_bindings.get(normalized_path, [])
             items.append(
                 {
                     "name": resource.name,
@@ -602,73 +626,44 @@ class ConnectorApplication:
         force_full_refresh: bool = False,
     ) -> dict[str, Any]:
         connector = self._host._resolve_connector(connector_name)
-        connector_type = self._host._resolve_connector_runtime_type(connector)
-        api_connector = self._host._build_api_connector(connector)
-        await api_connector.test_connection()
-
-        discovered_resources = {
-            resource.name: resource
-            for resource in await api_connector.discover_resources()
-        }
         normalized_resources = [
-            str(resource or "").strip()
+            self._normalize_resource_path(str(resource or "").strip())
             for resource in (resources or [])
             if str(resource or "").strip()
         ]
         if not normalized_resources:
             raise BusinessValidationError("At least one resource must be supplied for connector sync.")
 
-        resolved_resources: dict[str, ApiResource] = {}
-        for resource_name in normalized_resources:
-            resolved_resources[resource_name] = await self._resolve_api_resource(
-                connector=connector,
-                api_connector=api_connector,
-                resource_name=resource_name,
-                discovered_resources=discovered_resources,
-            )
-
-        normalized_sync_mode: ConnectorSyncMode = sync_mode
+        normalized_sync_mode = ConnectorSyncMode(str(getattr(sync_mode, "value", sync_mode)).strip().upper())
         summaries: list[dict[str, Any]] = []
-        active_state: ConnectorSyncState | None = None
-        try:
-            async with self._host._runtime_operation_scope() as uow:
-                for resource_name in normalized_resources:
-                    active_state = await self._host.services.dataset_sync.get_or_create_state(
-                        workspace_id=self._host.context.workspace_id,
-                        connection_id=connector.id,
-                        connector_type=connector_type,
-                        resource_name=resource_name,
-                        sync_mode=normalized_sync_mode,
-                    )
-                    active_state.status = ConnectorSyncStatus.RUNNING
-                    active_state.sync_mode = normalized_sync_mode
-                    active_state.error_message = None
-                    active_state.updated_at = datetime.now(timezone.utc)
-                    summary = await self._host._runtime_host.sync_dataset(
-                        workspace_id=self._host.context.workspace_id,
-                        actor_id=self._host.context.actor_id,
-                        connection_id=connector.id,
-                        connector_record=connector,
-                        connector_type=connector_type,
-                        resource=resolved_resources[resource_name],
-                        api_connector=api_connector,
-                        state=active_state,
-                        sync_mode=(ConnectorSyncMode.FULL_REFRESH if force_full_refresh else normalized_sync_mode),
-                        flattern_into_datasets=False # TODO: add flattern_into_datasets as a parameter to this method and pass it down to the sync_dataset call
-                    )
-                    summaries.append(summary)
-                if uow is not None:
-                    await uow.commit()
-        except Exception as exc:
-            if active_state is not None:
-                async with self._host._runtime_operation_scope() as failure_uow:
-                    await self._host.services.dataset_sync.mark_failed(
-                        state=active_state,
-                        error_message=str(exc),
-                    )
-                    if failure_uow is not None:
-                        await failure_uow.commit()
-            raise
+        async with self._host._runtime_operation_scope():
+            datasets = await self._host._dataset_repository.list_for_connection(
+                workspace_id=self._host.context.workspace_id,
+                connection_id=connector.id,
+                limit=1000,
+            )
+            datasets_by_resource = self._host._datasets_for_resources(datasets)
+
+        for resource_name in normalized_resources:
+            bound_datasets = datasets_by_resource.get(resource_name, [])
+            if not bound_datasets:
+                raise BusinessValidationError(
+                    f"Connector '{connector.name}' has no synced dataset for resource path '{resource_name}'. "
+                    "Create or declare the dataset before syncing it."
+                )
+            if len(bound_datasets) > 1:
+                raise BusinessValidationError(
+                    f"Connector '{connector.name}' has multiple synced datasets bound to resource path "
+                    f"'{resource_name}'. Resource paths must be unique per connector."
+                )
+            dataset_payload = await self._host.sync_dataset(
+                dataset_ref=str(bound_datasets[0].id),
+                sync_mode=normalized_sync_mode,
+                force_full_refresh=force_full_refresh,
+            )
+            resource_summaries = list(dataset_payload.get("resources") or [])
+            if resource_summaries:
+                summaries.append(resource_summaries[0])
 
         return {
             "status": "succeeded",
@@ -680,5 +675,5 @@ class ConnectorApplication:
                 else normalized_sync_mode.value
             ),
             "resources": summaries,
-            "summary": f"Connector sync completed for {len(summaries)} resource(s).",
+            "summary": f"Connector resource sync delegated to {len(summaries)} dataset(s).",
         }

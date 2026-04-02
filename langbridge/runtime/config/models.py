@@ -32,6 +32,7 @@ class LocalRuntimeDatasetSourceConfig(BaseModel):
 
     table: str | None = None
     resource: str | None = None
+    flatten: list[str] | None = None
     sql: str | None = None
     path: str | None = None
     storage_uri: str | None = None
@@ -52,6 +53,8 @@ class LocalRuntimeDatasetSourceConfig(BaseModel):
             raise ValueError(
                 "Dataset source must define exactly one of table, resource, sql, or path/storage_uri."
             )
+        if self.flatten and not has_resource:
+            raise ValueError("Dataset source flatten paths are only valid for resource-backed API datasets.")
         return self
 
 
@@ -69,6 +72,7 @@ class LocalRuntimeDatasetSyncConfig(BaseModel):
     model_config = ConfigDict(extra="allow")
 
     resource: str
+    flatten: list[str] | None = None
     strategy: ConnectorSyncStrategy | None = None
     cadence: str | None = None
     cursor_field: str | None = None
@@ -77,7 +81,6 @@ class LocalRuntimeDatasetSyncConfig(BaseModel):
     backfill_start: str | None = None
     backfill_end: str | None = None
     sync_on_start: bool = False
-    flattern_into_datasets: bool = False
 
     @model_validator(mode="after")
     def _validate_sync(self) -> "LocalRuntimeDatasetSyncConfig":

@@ -65,8 +65,8 @@ instead of assuming behavior from connector family alone.
 Examples:
 
 - a SQLite or Postgres dataset can be `live`
-- a runtime-managed API sync dataset is `synced`
-- a config-defined synced connector resource can be declared in YAML and populated later by connector sync
+- a runtime-managed dataset intentionally created through the runtime can be `synced`
+- a config-defined synced connector resource path can be declared in YAML and populated later by dataset sync
 - a connector may eventually support both modes, but only if the runtime has a real execution path for each
 
 ## Workspace Scope
@@ -101,7 +101,43 @@ A dataset requesting `materialization_mode: live` must use a connector that
 supports live datasets. A dataset requesting `materialization_mode: synced`
 must use a connector that supports synced datasets. Config-defined synced
 datasets currently require a runtime sync-capable connector and use
-`sync.resource` as the declared connector resource name to materialize.
+`sync.resource` as the declared connector resource path to materialize.
+
+## API Resource Paths
+
+For API-backed datasets, the dataset owns the selected resource path.
+
+- `sync.resource: orders` materializes the parent resource
+- `sync.resource: orders.line_items` materializes an explicit child resource path
+- `sync.resource: accounts.owner` materializes an explicit 1:1 child object as its own dataset
+
+The runtime does not create additional datasets just because a connector
+discovers nested children during sync. A dataset only exists when it is:
+
+- declared in config
+- or intentionally created through the runtime dataset APIs
+
+## Explicit Flattening
+
+API flattening is dataset-owned through `sync.flatten` or `source.flatten`.
+
+- flattening is only valid for resource-backed API datasets
+- flattening is explicit, not inferred from connector discovery
+- only 1:1 child objects may be flattened into the parent dataset
+- 1:many children are never flattened into the parent dataset and never silently materialized as sibling datasets
+
+Example:
+
+```yaml
+datasets:
+  - name: billing_customers
+    connector: billing_demo
+    materialization_mode: synced
+    sync:
+      resource: customers
+      flatten:
+        - default_address
+```
 
 ## Policies And Guardrails
 

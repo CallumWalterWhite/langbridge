@@ -1,7 +1,3 @@
-import json
-import os
-import re
-import ssl
 from dataclasses import dataclass
 from typing import Any, Mapping
 from urllib.parse import parse_qs, urlparse
@@ -14,9 +10,6 @@ from .errors import (
 )
 
 from .connector import ApiConnector, ApiExtractResult, ApiResource, ApiSyncResult
-
-_KEY_SANITIZER = re.compile(r"[^0-9A-Za-z_]+")
-_SCALAR_TYPES = (str, int, float, bool, type(None))
 
 
 @dataclass(frozen=True, slots=True)
@@ -59,11 +52,10 @@ class HttpApiConnector(ApiConnector):
             cursor=cursor,
             limit=limit,
         )
-        child_count = sum(len(rows) for rows in (result.child_records or {}).values())
         return ApiSyncResult(
             resource=resource_name,
             status=result.status,
-            records_synced=len(result.records) + child_count,
+            records_synced=len(result.records),
             datasets_created=[],
         )
 
@@ -183,37 +175,6 @@ class HttpApiConnector(ApiConnector):
                             return value.strip()
         return fallback
 
-def flatten_api_records(
-    *,
-    resource_name: str,
-    records: list[dict[str, Any]],
-    primary_key: str | None = "id",
-) -> tuple[list[dict[str, Any]], dict[str, list[dict[str, Any]]]]:
-    flattened_records: list[dict[str, Any]] = []
-    child_records: dict[str, list[dict[str, Any]]] = {}
-
-    for record_index, raw_record in enumerate(records):
-        if not isinstance(raw_record, Mapping):
-            flattened_records.append({"value": raw_record})
-            continue
-
-        flattened: dict[str, Any] = {}
-        record_id = raw_record.get(primary_key) if primary_key else raw_record.get("id")
-        _flatten_mapping(
-            payload=raw_record,
-            row=flattened,
-            child_records=child_records,
-            table_name=resource_name,
-            parent_table=resource_name,
-            parent_id=record_id,
-            path_segments=[],
-        )
-        if record_id is None:
-            flattened.setdefault("_record_index", record_index)
-        flattened_records.append(flattened)
-
-    return flattened_records, child_records
-
 
 def parse_link_header_cursor(link_header: str | None, *, param_name: str = "page_info") -> str | None:
     if not link_header:
@@ -232,74 +193,3 @@ def parse_link_header_cursor(link_header: str | None, *, param_name: str = "page
         if values:
             return values[0]
     return None
-
-
-def _flatten_mapping(
-    *,
-    payload: Mapping[str, Any],
-    row: dict[str, Any],
-    child_records: dict[str, list[dict[str, Any]]],
-    table_name: str,
-    parent_table: str,
-    parent_id: Any,
-    path_segments: list[str],
-) -> None:
-    for raw_key, value in payload.items():
-        key = _normalize_key(raw_key)
-        if not key:
-            continue
-        next_segments = [*path_segments, key]
-        field_name = "__".join(next_segments)
-
-        if isinstance(value, _SCALAR_TYPES):
-            row[field_name] = value
-            continue
-
-        if isinstance(value, Mapping):
-            _flatten_mapping(
-                payload=value,
-                row=row,
-                child_records=child_records,
-                table_name=table_name,
-                parent_table=parent_table,
-                parent_id=parent_id,
-                path_segments=next_segments,
-            )
-            continue
-
-        if isinstance(value, list):
-            child_table_name = f"{table_name}__{field_name}"
-            for child_index, child_value in enumerate(value):
-                child_row = {
-                    "_parent_table": parent_table,
-                    "_parent_id": parent_id,
-                    "_child_index": child_index,
-                }
-                if isinstance(child_value, Mapping):
-                    child_record_id = child_value.get("id", parent_id)
-                    _flatten_mapping(
-                        payload=child_value,
-                        row=child_row,
-                        child_records=child_records,
-                        table_name=child_table_name,
-                        parent_table=child_table_name,
-                        parent_id=child_record_id,
-                        path_segments=[],
-                    )
-                elif isinstance(child_value, _SCALAR_TYPES):
-                    child_row["value"] = child_value
-                else:
-                    child_row["value"] = _json_string(child_value)
-                child_records.setdefault(child_table_name, []).append(child_row)
-            continue
-
-        row[field_name] = _json_string(value)
-
-
-def _normalize_key(value: Any) -> str:
-    key = _KEY_SANITIZER.sub("_", str(value or "")).strip("_")
-    return key
-
-
-def _json_string(value: Any) -> str:
-    return json.dumps(value, separators=(",", ":"), sort_keys=True, default=str)

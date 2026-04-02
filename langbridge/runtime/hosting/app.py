@@ -55,6 +55,8 @@ from langbridge.runtime.hosting.api_models import (
     RuntimeDatasetListResponse,
     RuntimeDatasetPreviewRequest,
     RuntimeDatasetPreviewResponse,
+    RuntimeDatasetSyncRequest,
+    RuntimeDatasetSyncStateResponse,
     RuntimeConnectorUpdateRequest,
     RuntimeDatasetUpdateRequest,
     RuntimeInfoResponse,
@@ -63,7 +65,6 @@ from langbridge.runtime.hosting.api_models import (
     RuntimeSemanticModelUpdateRequest,
     RuntimeSemanticQueryRequest,
     RuntimeSemanticQueryResponse,
-    RuntimeSyncRequest,
     RuntimeSyncResourceListResponse,
     RuntimeSyncResponse,
     RuntimeSyncStateListResponse,
@@ -431,9 +432,10 @@ def create_runtime_api_app(
         if any(bool(item.get("supports_sync")) for item in connector_items):
             capabilities.extend(
                 [
-                    "sync.resources",
-                    "sync.states",
-                    "sync.run",
+                    "connectors.sync.resources",
+                    "connectors.sync.states",
+                    "datasets.sync.get",
+                    "datasets.sync.run",
                 ]
             )
         if ui_enabled:
@@ -549,6 +551,49 @@ def create_runtime_api_app(
             bytes_scanned=payload.get("bytes_scanned"),
             generated_sql=payload.get("generated_sql"),
         )
+
+    @app.get(
+        "/api/runtime/v1/datasets/{dataset_ref}/sync",
+        response_model=RuntimeDatasetSyncStateResponse,
+    )
+    async def get_dataset_sync(
+        request: Request,
+        dataset_ref: str,
+    ) -> RuntimeDatasetSyncStateResponse:
+        configured_host = await _resolve_request_host(request)
+        try:
+            payload = await configured_host.get_dataset_sync(dataset_ref=dataset_ref)
+        except (ValueError, BusinessValidationError) as exc:
+            detail = str(exc)
+            status_code = 404 if _is_missing_runtime_resource(detail) else 400
+            raise HTTPException(status_code=status_code, detail=detail) from exc
+        return RuntimeDatasetSyncStateResponse.model_validate(payload)
+
+    @app.post(
+        "/api/runtime/v1/datasets/{dataset_ref}/sync",
+        response_model=RuntimeSyncResponse,
+    )
+    async def sync_dataset(
+        request: Request,
+        dataset_ref: str,
+        body: RuntimeDatasetSyncRequest,
+    ) -> RuntimeSyncResponse:
+        configured_host = await _resolve_request_host(request)
+        try:
+            payload = await configured_host.sync_dataset(
+                dataset_ref=dataset_ref,
+                sync_mode=body.sync_mode,
+                force_full_refresh=bool(body.force_full_refresh),
+            )
+        except (ValueError, BusinessValidationError, ExecutionValidationError) as exc:
+            detail = str(exc)
+            status_code = 404 if _is_missing_runtime_resource(detail) else 400
+            raise HTTPException(status_code=status_code, detail=detail) from exc
+        except HTTPException:
+            raise
+        except Exception as exc:
+            _raise_runtime_internal_server_error("dataset sync", exc)
+        return RuntimeSyncResponse.model_validate(payload)
 
     @app.post("/api/runtime/v1/semantic/query", response_model=RuntimeSemanticQueryResponse)
     async def query_semantic(
@@ -856,29 +901,6 @@ def create_runtime_api_app(
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         return RuntimeSyncStateListResponse(items=items, total=len(items))
-
-    @app.post(
-        "/api/runtime/v1/connectors/{connector_name}/sync",
-        response_model=RuntimeSyncResponse,
-    )
-    async def sync_connector(
-        request: Request,
-        connector_name: str,
-        body: RuntimeSyncRequest,
-    ) -> RuntimeSyncResponse:
-        configured_host = await _resolve_request_host(request)
-        try:
-            payload = await configured_host.sync_connector_resources(
-                connector_name=connector_name,
-                resources=list(body.resource_names or []),
-                sync_mode=body.sync_mode,
-                force_full_refresh=bool(body.force_full_refresh),
-            )
-        except HTTPException:
-            raise
-        except Exception as exc:
-            _raise_runtime_internal_server_error("connector sync", exc)
-        return RuntimeSyncResponse.model_validate(payload)
 
     if ui_enabled:
         @app.get("/api/runtime/ui/v1/summary")

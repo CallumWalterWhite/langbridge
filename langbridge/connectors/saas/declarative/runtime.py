@@ -8,8 +8,10 @@ from langbridge.connectors.base.errors import ConnectorError
 from langbridge.connectors.base.http import (
     ApiResourceDefinition,
     HttpApiConnector,
-    flatten_api_records,
     parse_link_header_cursor,
+)
+from langbridge.connectors.base.resource_paths import (
+    describe_api_child_resources,
 )
 
 from .manifest import DeclarativeConnectorManifest, DeclarativeConnectorResource
@@ -71,15 +73,11 @@ class DeclarativeHttpApiConnector(HttpApiConnector):
             records=records,
             since=since,
         )
-        flattened_records, child_records = flatten_api_records(
-            resource_name=definition.resource.name,
-            records=[record for record in records if isinstance(record, dict)],
-            primary_key=definition.resource.primary_key,
-        )
+        structured_records = [record for record in records if isinstance(record, dict)]
         return ApiExtractResult(
             resource=definition.resource.name,
             status="success",
-            records=flattened_records,
+            records=structured_records,
             next_cursor=self._next_cursor(
                 payload=payload,
                 response=response,
@@ -89,7 +87,12 @@ class DeclarativeHttpApiConnector(HttpApiConnector):
                 page_size=page_size,
             ),
             checkpoint_cursor=self._checkpoint_cursor(records=records),
-            child_records=child_records,
+            child_resources=list(
+                describe_api_child_resources(
+                    resource_path=definition.resource.path or definition.resource.name,
+                    records=structured_records,
+                )
+            ),
         )
 
     def _require_manifest(self) -> DeclarativeConnectorManifest:
@@ -285,6 +288,7 @@ def _build_resource_definition(
         resource=ApiResource(
             name=resource.key,
             label=resource.label,
+            path=resource.key,
             primary_key=resource.primary_key,
             cursor_field=manifest.pagination.cursor_param,
             incremental_cursor_field=(

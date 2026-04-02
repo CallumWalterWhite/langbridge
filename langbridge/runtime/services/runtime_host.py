@@ -72,7 +72,7 @@ class RuntimeHost:
     async def sync_dataset(self, *args: Any, **kwargs: Any) -> Any:
         if self.services.dataset_sync is None:
             raise RuntimeError("DatasetSyncService is not configured for this runtime host.")
-        return await self.services.dataset_sync.sync_resource(*args, **kwargs)
+        return await self.services.dataset_sync.sync_dataset(*args, **kwargs)
 
     async def create_agent(self, *args: Any, **kwargs: Any) -> Any:
         if self.services.agent_execution is None:

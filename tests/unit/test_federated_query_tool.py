@@ -15,7 +15,11 @@ from langbridge.runtime.execution.federated_query_tool import (
     FederatedQueryTool,
 )
 from langbridge.runtime.providers import MemoryConnectorProvider
-from langbridge.federation.connectors import DuckDbFileRemoteSource
+from langbridge.federation.connectors import (
+    ApiConnectorRemoteSource,
+    DuckDbFileRemoteSource,
+    DuckDbParquetRemoteSource,
+)
 from langbridge.federation.models import (
     DatasetExecutionDescriptor,
     FederationWorkflow,
@@ -47,7 +51,6 @@ class _FakeApiConnector:
         return ApiExtractResult(
             resource=resource_name,
             records=list(self._payloads.get(resource_name, [])),
-            child_records={},
         )
 
 
@@ -63,6 +66,25 @@ class StubStorageConnector(StorageConnector):
 
     async def get_object(self, bucket: str, key: str) -> bytes:
         raise NotImplementedError
+
+
+def _storage_connector_metadata(*, workspace_id: str, connector_id: uuid.UUID) -> ConnectorMetadata:
+    return ConnectorMetadata(
+        id=connector_id,
+        name="storage_demo",
+        connector_type="LOCAL_FILESYSTEM",
+        connector_family="storage",
+        workspace_id=uuid.UUID(workspace_id),
+        config={"config": {"root_path": "/tmp"}},
+        capabilities=ConnectorCapabilities(
+            supports_live_datasets=False,
+            supports_synced_datasets=False,
+            supports_incremental_sync=False,
+            supports_federated_execution=False,
+        ),
+        management_mode=ManagementMode.CONFIG_MANAGED,
+        lifecycle_state=LifecycleState.ACTIVE,
+    )
 
 
 @pytest.mark.anyio
@@ -140,8 +162,11 @@ async def test_build_sources_uses_descriptor_for_saas_parquet_dataset() -> None:
 
 
 @pytest.mark.anyio
-async def test_build_sources_uses_parquet_remote_source_for_distributed_parquet_workflow() -> None:
+async def test_build_sources_uses_parquet_remote_source_for_distributed_parquet_workflow(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     workspace_id = str(uuid.uuid4())
+    connector_id = uuid.uuid4()
     workflow = FederationWorkflow(
         id="workflow_remote_parquet_test",
         workspace_id=workspace_id,
@@ -153,7 +178,7 @@ async def test_build_sources_uses_parquet_remote_source_for_distributed_parquet_
                 "orders": VirtualTableBinding(
                     table_key="orders",
                     source_id="parquet_source_orders",
-                    connector_id=None,
+                    connector_id=connector_id,
                     table="orders",
                     metadata={
                         "source_kind": "file",
@@ -166,7 +191,16 @@ async def test_build_sources_uses_parquet_remote_source_for_distributed_parquet_
             relationships=[],
         ),
     )
-    tool = FederatedQueryTool(connector_provider=MemoryConnectorProvider())
+    tool = FederatedQueryTool(
+        connector_provider=MemoryConnectorProvider(
+            {connector_id: _storage_connector_metadata(workspace_id=workspace_id, connector_id=connector_id)}
+        )
+    )
+
+    async def _fake_create_storage_connector(*, connector_type, connector_config):
+        return StubStorageConnector()
+
+    monkeypatch.setattr(tool, "_create_storage_connector", _fake_create_storage_connector)
 
     sources = await tool._build_sources(workflow)
 
@@ -175,8 +209,11 @@ async def test_build_sources_uses_parquet_remote_source_for_distributed_parquet_
 
 
 @pytest.mark.anyio
-async def test_build_sources_passes_storage_connector_to_parquet_remote_source() -> None:
+async def test_build_sources_passes_storage_connector_to_parquet_remote_source(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     workspace_id = str(uuid.uuid4())
+    connector_id = uuid.uuid4()
     workflow = FederationWorkflow(
         id="workflow_remote_parquet_with_storage_test",
         workspace_id=workspace_id,
@@ -188,7 +225,7 @@ async def test_build_sources_passes_storage_connector_to_parquet_remote_source()
                 "orders": VirtualTableBinding(
                     table_key="orders",
                     source_id="parquet_source_orders",
-                    connector_id=None,
+                    connector_id=connector_id,
                     table="orders",
                     metadata={
                         "source_kind": "file",
@@ -203,9 +240,15 @@ async def test_build_sources_passes_storage_connector_to_parquet_remote_source()
     )
     storage_connector = StubStorageConnector()
     tool = FederatedQueryTool(
-        connector_provider=MemoryConnectorProvider(),
-        storage_connector=storage_connector,
+        connector_provider=MemoryConnectorProvider(
+            {connector_id: _storage_connector_metadata(workspace_id=workspace_id, connector_id=connector_id)}
+        ),
     )
+
+    async def _fake_create_storage_connector(*, connector_type, connector_config):
+        return storage_connector
+
+    monkeypatch.setattr(tool, "_create_storage_connector", _fake_create_storage_connector)
 
     sources = await tool._build_sources(workflow)
     source = sources["parquet_source_orders"]
@@ -366,7 +409,7 @@ async def test_build_sources_uses_api_remote_source_for_live_api_descriptor(monk
     )
     fake_connector = _FakeApiConnector({"customers": [{"id": "cus_001", "email": "ada@example.com"}]})
 
-    async def _fake_create_api_connector(*, connector_type, connector_config):
+    def _fake_create_api_connector(*, connector_type, connector_config):
         return fake_connector
 
     monkeypatch.setattr(tool, "_create_api_connector", _fake_create_api_connector)

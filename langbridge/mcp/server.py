@@ -679,9 +679,10 @@ def _build_runtime_capabilities(
     if any(bool(item.get("supports_sync")) for item in connector_items):
         capabilities.extend(
             [
-                "sync.resources",
-                "sync.states",
-                "sync.run",
+                "connectors.sync.resources",
+                "connectors.sync.states",
+                "datasets.sync.get",
+                "datasets.sync.run",
             ]
         )
     for feature in features:

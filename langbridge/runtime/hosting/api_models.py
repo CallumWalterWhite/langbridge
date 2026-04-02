@@ -169,6 +169,7 @@ class RuntimeConnectorUpdateRequest(RuntimeRequestModel):
 class RuntimeDatasetSourceRequest(RuntimeRequestModel):
     table: str | None = None
     resource: str | None = None
+    flatten: list[str] | None = None
     sql: str | None = None
     path: str | None = None
     storage_uri: str | None = None
@@ -189,6 +190,8 @@ class RuntimeDatasetSourceRequest(RuntimeRequestModel):
             raise ValueError(
                 "Dataset source must define exactly one of table, resource, sql, or path/storage_uri."
             )
+        if self.flatten and not has_resource:
+            raise ValueError("Dataset source flatten paths are only valid for resource-backed API datasets.")
         return self
 
 
@@ -202,6 +205,7 @@ class RuntimeDatasetPolicyRequest(RuntimeRequestModel):
 
 class RuntimeDatasetSyncConfigRequest(RuntimeRequestModel):
     resource: str
+    flatten: list[str] | None = None
     strategy: ConnectorSyncStrategy | None = None
     cadence: str | None = None
     cursor_field: str | None = None
@@ -327,6 +331,17 @@ class RuntimeDatasetPreviewResponse(RuntimeModel):
     generated_sql: str | None = None
     error: str | None = None
     job_id: uuid.UUID | None = None
+
+
+class RuntimeDatasetSyncRequest(RuntimeRequestModel):
+    sync_mode: ConnectorSyncMode = ConnectorSyncMode.INCREMENTAL
+    force_full_refresh: bool = False
+
+    @field_validator("sync_mode", mode="before")
+    @classmethod
+    def _normalize_sync_mode(cls, value: Any) -> ConnectorSyncMode:
+        normalized = str(getattr(value, "value", value) or ConnectorSyncMode.INCREMENTAL.value).strip().upper()
+        return ConnectorSyncMode(normalized)
 
 
 class RuntimeSemanticQueryRequest(RuntimeRequestModel):
@@ -482,6 +497,18 @@ class RuntimeSyncStateListResponse(RuntimeModel):
     total: int = 0
 
 
+class RuntimeDatasetSyncStateResponse(RuntimeModel):
+    dataset_id: uuid.UUID | None = None
+    dataset_name: str | None = None
+    connector_id: uuid.UUID | None = None
+    connector_name: str | None = None
+    connector_type: ConnectorRuntimeType | None = None
+    materialization_mode: DatasetMaterializationMode | None = None
+    resource_name: str
+    sync: dict[str, Any] = Field(default_factory=dict)
+    sync_state: RuntimeSyncStateSummary | None = None
+
+
 class RuntimeSyncRequest(RuntimeRequestModel):
     resource_names: list[str] = Field(default_factory=list)
     sync_mode: ConnectorSyncMode = ConnectorSyncMode.INCREMENTAL
@@ -523,6 +550,8 @@ class RuntimeSyncExecutionResult(RuntimeModel):
 
 class RuntimeSyncResponse(RuntimeModel):
     status: str
+    dataset_id: uuid.UUID | None = None
+    dataset_name: str | None = None
     connector_id: uuid.UUID | None = None
     connector_name: str | None = None
     sync_mode: ConnectorSyncMode | None = None

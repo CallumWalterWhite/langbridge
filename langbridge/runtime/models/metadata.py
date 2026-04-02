@@ -203,6 +203,7 @@ class DatasetMaterializationMode(str, Enum):
 class DatasetSource(RuntimeModel):
     table: str | None = None
     resource: str | None = None
+    flatten: list[str] | None = None
     sql: str | None = None
     storage_uri: str | None = None
     format: str | None = None
@@ -221,11 +222,14 @@ class DatasetSource(RuntimeModel):
             raise ValueError(
                 "Dataset source must define exactly one of table, resource, sql, or storage_uri."
             )
+        if self.flatten and not has_resource:
+            raise ValueError("Dataset source flatten paths are only valid for resource-backed API datasets.")
         return self
 
 
 class DatasetSyncConfig(RuntimeModel):
     resource: str
+    flatten: list[str] | None = None
     strategy: ConnectorSyncStrategy
     cadence: str | None = None
     cursor_field: str | None = None
@@ -234,7 +238,6 @@ class DatasetSyncConfig(RuntimeModel):
     backfill_start: str | None = None
     backfill_end: str | None = None
     sync_on_start: bool = False
-    flattern_into_datasets: bool = False
 
     @field_validator("strategy", mode="before")
     @classmethod

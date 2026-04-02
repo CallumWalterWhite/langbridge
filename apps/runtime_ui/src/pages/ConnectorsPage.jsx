@@ -26,7 +26,7 @@ import {
   fetchConnectorTypeConfig,
   fetchConnectors,
   fetchConnectorTypes,
-  runConnectorSync,
+  runDatasetSync,
   updateConnector,
 } from "../lib/runtimeApi";
 import { buildItemRef, resolveItemByRef } from "../lib/runtimeUi";
@@ -686,12 +686,33 @@ export function ConnectorsPage() {
     setSyncError("");
     setSyncResult(null);
     try {
-      const payload = await runConnectorSync(selected.name, {
-        resource_names: selectedResources,
-        sync_mode: syncMode,
-        force_full_refresh: forceFullRefresh,
+      const selectedDatasetRefs = selectedResourceItems.map((item) => {
+        const datasetNames = Array.isArray(item?.dataset_names) ? item.dataset_names.filter(Boolean) : [];
+        if (datasetNames.length !== 1) {
+          throw new Error(
+            `Resource '${item?.name || "unknown"}' must be bound to exactly one dataset before it can be synced from the connector view.`,
+          );
+        }
+        return datasetNames[0];
       });
-      setSyncResult(payload);
+
+      const syncResponses = [];
+      for (const datasetRef of selectedDatasetRefs) {
+        const payload = await runDatasetSync(datasetRef, {
+          sync_mode: syncMode,
+          force_full_refresh: forceFullRefresh,
+        });
+        syncResponses.push(payload);
+      }
+      setSyncResult({
+        summary:
+          syncResponses.length === 1
+            ? syncResponses[0]?.summary || "Dataset sync completed"
+            : `Dataset sync completed for ${syncResponses.length} datasets.`,
+        resources: syncResponses.flatMap((item) =>
+          Array.isArray(item?.resources) ? item.resources : [],
+        ),
+      });
       const [resourcePayload, statePayload] = await Promise.all([
         fetchConnectorResources(selected.name),
         fetchConnectorStates(selected.name),
@@ -1384,7 +1405,7 @@ export function ConnectorsPage() {
                             type="submit"
                             disabled={syncing || selectedResources.length === 0}
                           >
-                            {syncing ? "Running sync..." : "Run connector sync"}
+                            {syncing ? "Running sync..." : "Run dataset sync"}
                           </button>
                         </div>
                       </form>

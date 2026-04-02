@@ -100,6 +100,7 @@ class ShopifyApiConnector(DeclarativeHttpApiConnector):
             resource=ApiResource(
                 name=normalized_name,
                 label=normalized_name.replace("_", " ").title(),
+                path=normalized_name,
                 primary_key="id",
                 cursor_field=SHOPIFY_MANIFEST.pagination.cursor_param,
                 incremental_cursor_field=SHOPIFY_MANIFEST.incremental.cursor_field,

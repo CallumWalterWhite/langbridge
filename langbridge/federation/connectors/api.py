@@ -7,6 +7,10 @@ import duckdb
 import pyarrow as pa
 
 from langbridge.connectors.base.connector import ApiConnector
+from langbridge.connectors.base.resource_paths import (
+    api_resource_root,
+    materialize_api_resource_rows,
+)
 from langbridge.federation.connectors.base import RemoteExecutionResult, RemoteSource, SourceCapabilities
 from langbridge.federation.models.plans import SourceSubplan
 from langbridge.federation.models.virtual_dataset import TableStatistics, VirtualTableBinding
@@ -99,9 +103,16 @@ class ApiConnectorRemoteSource(RemoteSource):
             )
 
     async def _fetch_binding_table(self, binding: VirtualTableBinding) -> pa.Table:
-        resource_name = self._resource_name(binding)
-        extract_result = await self._connector.extract_resource(resource_name=resource_name)
-        return _records_to_arrow(list(extract_result.records or []))
+        resource_path = self._resource_path(binding)
+        root_resource_name = api_resource_root(resource_path)
+        extract_result = await self._connector.extract_resource(resource_name=root_resource_name)
+        rows = materialize_api_resource_rows(
+            resource_path=resource_path,
+            records=list(extract_result.records or []),
+            primary_key=await self._resource_primary_key(root_resource_name),
+            flatten=self._flatten_paths(binding),
+        )
+        return _records_to_arrow(rows.rows)
 
     def _require_binding(self, table_key: str) -> VirtualTableBinding:
         binding = self._bindings.get(table_key)
@@ -112,7 +123,7 @@ class ApiConnectorRemoteSource(RemoteSource):
         return binding
 
     @staticmethod
-    def _resource_name(binding: VirtualTableBinding) -> str:
+    def _resource_path(binding: VirtualTableBinding) -> str:
         descriptor = getattr(binding, "dataset_descriptor", None)
         descriptor_source = (
             dict(descriptor.source or {})
@@ -128,6 +139,33 @@ class ApiConnectorRemoteSource(RemoteSource):
         if not resource_name:
             raise ValueError(f"API binding '{binding.table_key}' is missing dataset source.resource.")
         return resource_name
+
+    @staticmethod
+    def _flatten_paths(binding: VirtualTableBinding) -> list[str]:
+        descriptor = getattr(binding, "dataset_descriptor", None)
+        descriptor_source = (
+            dict(descriptor.source or {})
+            if descriptor is not None and isinstance(descriptor.source, dict)
+            else {}
+        )
+        metadata = binding.metadata if isinstance(binding.metadata, dict) else {}
+        flatten_paths = descriptor_source.get("flatten")
+        if isinstance(flatten_paths, list):
+            return [str(path).strip() for path in flatten_paths if str(path).strip()]
+        if isinstance(metadata.get("api_flatten"), list):
+            return [str(path).strip() for path in metadata["api_flatten"] if str(path).strip()]
+        return []
+
+    async def _resource_primary_key(self, resource_name: str) -> str | None:
+        resolver = getattr(self._connector, "resolve_resource", None)
+        if callable(resolver):
+            resolved = resolver(resource_name)
+            if hasattr(resolved, "__await__"):
+                resolved = await resolved
+            primary_key = getattr(resolved, "primary_key", None)
+            if str(primary_key or "").strip():
+                return str(primary_key).strip()
+        return "id"
 
     @staticmethod
     def _temporary_relation_name(*, index: int, binding: VirtualTableBinding) -> str:

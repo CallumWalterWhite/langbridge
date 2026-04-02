@@ -37,6 +37,10 @@ from langbridge.runtime.utils.connector_runtime import (
     build_connector_runtime_payload,
     resolve_connector_capabilities,
 )
+from langbridge.connectors.base.resource_paths import (
+    normalize_api_flatten_paths,
+    normalize_api_resource_path,
+)
 from langbridge.runtime.utils.datasets import (
     build_dataset_execution_capabilities,
     build_dataset_relation_identity,
@@ -446,6 +450,26 @@ class ConfiguredLocalRuntimeHost(RuntimeHost):
 
     async def query_dataset(self, *, request) -> dict[str, Any]:
         return await self._applications.datasets.query_dataset(request=request)
+
+    async def get_dataset_sync(
+        self,
+        *,
+        dataset_ref: str,
+    ) -> dict[str, Any]:
+        return await self._applications.datasets.get_dataset_sync(dataset_ref=dataset_ref)
+
+    async def sync_dataset(
+        self,
+        *,
+        dataset_ref: str,
+        sync_mode: str = "INCREMENTAL",
+        force_full_refresh: bool = False,
+    ) -> dict[str, Any]:
+        return await self._applications.datasets.sync_dataset(
+            dataset_ref=dataset_ref,
+            sync_mode=sync_mode,
+            force_full_refresh=force_full_refresh,
+        )
 
     async def query_semantic(self, *args: Any, **kwargs: Any) -> Any:
         return await self._applications.semantic.query_semantic(*args, **kwargs)
@@ -1919,6 +1943,7 @@ class ConfiguredLocalRuntimeHostFactory:
     ) -> tuple[dict[str, DatasetMetadata], dict[str, LocalRuntimeDatasetRecord]]:
         datasets: dict[str, DatasetMetadata] = {}
         dataset_records: dict[str, LocalRuntimeDatasetRecord] = {}
+        synced_resource_bindings: set[tuple[uuid.UUID, str]] = set()
         now = datetime.now(timezone.utc)
         for dataset in config.datasets:
             materialization_mode = resolve_dataset_materialization_mode(
@@ -1932,7 +1957,16 @@ class ConfiguredLocalRuntimeHostFactory:
             source_config = dataset.source
             sync_config = dataset.sync
             source_table = str(source_config.table or "").strip() if source_config is not None else ""
-            source_resource_name = str(source_config.resource or "").strip() if source_config is not None else ""
+            source_resource_name = (
+                normalize_api_resource_path(str(source_config.resource or "").strip())
+                if source_config is not None and str(source_config.resource or "").strip()
+                else ""
+            )
+            source_flatten_paths = (
+                normalize_api_flatten_paths(source_config.flatten)
+                if source_config is not None
+                else []
+            )
             source_sql = str(source_config.sql or "").strip() if source_config is not None else ""
             source_storage_uri = (
                 str(source_config.storage_uri or "").strip() or None
@@ -1941,7 +1975,16 @@ class ConfiguredLocalRuntimeHostFactory:
             )
             if source_storage_uri is None and source_config is not None and source_config.path:
                 source_storage_uri = Path(str(source_config.path)).resolve().as_uri()
-            sync_resource_name = str(sync_config.resource or "").strip() if sync_config is not None else ""
+            sync_resource_name = (
+                normalize_api_resource_path(str(sync_config.resource or "").strip())
+                if sync_config is not None and str(sync_config.resource or "").strip()
+                else ""
+            )
+            sync_flatten_paths = (
+                normalize_api_flatten_paths(sync_config.flatten)
+                if sync_config is not None
+                else []
+            )
             requires_connector = (
                 materialization_mode == DatasetMaterializationMode.SYNCED
                 or bool(source_table or source_resource_name or source_sql)
@@ -2009,6 +2052,7 @@ class ConfiguredLocalRuntimeHostFactory:
                     )
                 sync_contract = DatasetSyncConfig(
                     resource=sync_resource_name,
+                    flatten=sync_flatten_paths or None,
                     strategy=sync_strategy,
                     cadence=str(sync_config.cadence or "").strip() or None,
                     cursor_field=str(sync_config.cursor_field or "").strip() or None,
@@ -2017,6 +2061,13 @@ class ConfiguredLocalRuntimeHostFactory:
                     backfill_start=str(sync_config.backfill_start or "").strip() or None,
                     backfill_end=str(sync_config.backfill_end or "").strip() or None,
                 )
+                binding_key = (connector.id, sync_resource_name)
+                if binding_key in synced_resource_bindings:
+                    raise ValueError(
+                        f"Connector '{connector.name}' has multiple datasets bound to sync.resource "
+                        f"'{sync_resource_name}'. Resource paths must be unique per connector."
+                    )
+                synced_resource_bindings.add(binding_key)
             elif connector is not None and not connector_capabilities.supports_live_datasets and requires_connector:
                 raise ValueError(
                     f"Dataset '{dataset.name}' requests materialization_mode 'live', "
@@ -2068,7 +2119,10 @@ class ConfiguredLocalRuntimeHostFactory:
                 dialect = "duckdb"
                 storage_uri = None
                 file_config = None
-                live_source = DatasetSource(resource=source_resource_name)
+                live_source = DatasetSource(
+                    resource=source_resource_name,
+                    flatten=source_flatten_paths or None,
+                )
             elif source_table:
                 if connector is None:
                     raise ValueError(
@@ -2192,7 +2246,7 @@ class ConfiguredLocalRuntimeHostFactory:
                 description=(
                     dataset.description
                     or (
-                        f"Configured synced dataset awaiting connector sync for resource '{sync_resource_name}'."
+                        f"Configured synced dataset awaiting dataset sync for resource path '{sync_resource_name}'."
                         if materialization_mode == DatasetMaterializationMode.SYNCED
                         else None
                     )

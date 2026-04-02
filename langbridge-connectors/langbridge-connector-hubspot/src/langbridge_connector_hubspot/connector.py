@@ -30,6 +30,7 @@ class HubSpotApiConnector(DeclarativeHttpApiConnector):
             resource=ApiResource(
                 name=normalized_name,
                 label=normalized_name.replace("_", " ").title(),
+                path=normalized_name,
                 primary_key="id",
                 cursor_field=HUBSPOT_MANIFEST.pagination.cursor_param,
                 incremental_cursor_field=HUBSPOT_MANIFEST.incremental.cursor_field,

@@ -84,10 +84,9 @@ You should see:
 Sync the manifest-listed `contacts` dataset incrementally:
 
 ```bash
-SYNC_RESPONSE=$(curl -s -X POST http://localhost:8000/api/runtime/v1/connectors/hubspot_demo/sync \
+SYNC_RESPONSE=$(curl -s -X POST http://localhost:8000/api/runtime/v1/datasets/hubspot_contacts/sync \
   -H "Content-Type: application/json" \
   -d '{
-    "resource_names": ["contacts"],
     "sync_mode": "INCREMENTAL"
   }')
 
@@ -97,10 +96,9 @@ printf '%s\n' "$SYNC_RESPONSE"
 Sync the dataset-selected dynamic `custom_objects` resource:
 
 ```bash
-curl -X POST http://localhost:8000/api/runtime/v1/connectors/hubspot_demo/sync \
+curl -X POST http://localhost:8000/api/runtime/v1/datasets/hubspot_custom_objects/sync \
   -H "Content-Type: application/json" \
   -d '{
-    "resource_names": ["custom_objects"],
     "sync_mode": "INCREMENTAL"
   }'
 ```
@@ -144,7 +142,7 @@ curl http://localhost:8000/api/runtime/v1/connectors/hubspot_demo/sync/states
 ```bash
 langbridge connectors list --url http://localhost:8000
 langbridge sync resources --url http://localhost:8000 --connector hubspot_demo
-langbridge sync run --url http://localhost:8000 --connector hubspot_demo --resource contacts
+langbridge sync run --url http://localhost:8000 --dataset hubspot_contacts
 langbridge sync states --url http://localhost:8000 --connector hubspot_demo
 ```
 
@@ -152,7 +150,7 @@ langbridge sync states --url http://localhost:8000 --connector hubspot_demo
 
 - this example is meant for a live HubSpot account, not a local mock API
 - connector credentials stay on the runtime side through env-backed secret references
-- synced datasets are declared by the dataset config, and connector sync populates them
+- synced datasets are declared by the dataset config, and dataset sync populates them
 - `custom_objects` demonstrates dataset-driven dynamic resource resolution for HubSpot
 - live materialization is also dataset-owned in the runtime, but this example stays focused on API sync datasets
 - remove local persisted runtime state by deleting `examples/hubspot_sync/.langbridge`

@@ -1,15 +1,19 @@
-from abc import ABC, abstractmethod
 import asyncio
-from dataclasses import dataclass
+from abc import ABC, abstractmethod
+from dataclasses import dataclass, field
 import json
 import logging
+import re
 import time
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
-import re
 
 from .errors import AuthError, ConnectorError, QueryValidationError
 from langbridge.connectors.base.config import BaseConnectorConfig, ConnectorRuntimeType
 from langbridge.connectors.base.metadata import TableMetadata, ColumnMetadata, ForeignKeyMetadata
+from langbridge.connectors.base.resource_paths import (
+    ApiChildResource,
+    ApiResourceCardinality,
+)
 
 @dataclass(slots=True)
 class QueryResult:
@@ -66,8 +70,13 @@ class NoSqlQueryResult:
 class ApiResource:
     name: str
     label: str | None = None
+    path: str | None = None
     primary_key: str | None = None
     parent_resource: str | None = None
+    cardinality: ApiResourceCardinality = ApiResourceCardinality.MANY
+    supports_flattening: bool = False
+    addressable: bool = True
+    children: tuple[ApiChildResource, ...] = field(default_factory=tuple)
     cursor_field: str | None = None
     incremental_cursor_field: str | None = None
     supports_incremental: bool = False
@@ -81,7 +90,7 @@ class ApiExtractResult:
     status: str = "success"
     next_cursor: str | None = None
     checkpoint_cursor: str | None = None
-    child_records: Dict[str, List[Dict[str, Any]]] | None = None
+    child_resources: List[ApiChildResource] | None = None
 
 
 @dataclass(slots=True)

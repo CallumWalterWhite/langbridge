@@ -86,7 +86,8 @@ async def test_declarative_shopify_connector_uses_shop_domain_and_link_paginatio
     )
 
     assert len(requests) == 2
-    assert result.records[0]["default_address__city"] == "London"
+    assert result.records[0]["default_address"]["city"] == "London"
+    assert {child.path for child in result.child_resources or []} >= {"customers.default_address"}
     assert result.next_cursor == "cursor-2"
 
 
@@ -128,7 +129,7 @@ async def test_declarative_hubspot_connector_uses_response_cursor_and_client_fil
 
     assert len(requests) == 2
     assert [record["id"] for record in result.records] == ["2"]
-    assert result.records[0]["properties__firstname"] == "Ada"
+    assert result.records[0]["properties"]["firstname"] == "Ada"
     assert result.next_cursor == "cursor-2"
 
 
@@ -209,7 +210,7 @@ async def test_declarative_hubspot_connector_resolves_dynamic_resources_from_dat
 
     assert len(requests) == 2
     assert result.resource == "custom_objects"
-    assert result.records == [{"id": "42", "updatedAt": "2025-01-03T00:00:00Z", "properties__name": "Ada"}]
+    assert result.records == [{"id": "42", "updatedAt": "2025-01-03T00:00:00Z", "properties": {"name": "Ada"}}]
 
 
 @pytest.mark.anyio
@@ -255,7 +256,7 @@ async def test_declarative_github_connector_handles_top_level_lists_and_link_hea
     )
 
     assert len(requests) == 2
-    assert result.records[0]["repository__full_name"] == "acme/platform"
+    assert result.records[0]["repository"]["full_name"] == "acme/platform"
     assert result.next_cursor == "2"
 
 
@@ -293,7 +294,7 @@ async def test_declarative_jira_connector_uses_cloud_id_base_url_and_offset_pagi
     result = await connector.extract_resource("projects", limit=1)
 
     assert len(requests) == 2
-    assert result.records[0]["lead__displayName"] == "Ada"
+    assert result.records[0]["lead"]["displayName"] == "Ada"
     assert result.next_cursor == "1"
 
 

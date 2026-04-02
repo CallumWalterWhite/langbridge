@@ -23,7 +23,7 @@ The current execution plane should be read as single-node first. There are dispa
 - dataset query service: `langbridge/runtime/services/dataset_query_service.py`
 - SQL query service: `langbridge/runtime/services/sql_query_service.py`
 - semantic query service: `langbridge/runtime/services/semantic_query_execution_service.py`
-- connector sync runtime: `langbridge/runtime/services/dataset_sync_service.py`
+- dataset sync runtime: `langbridge/runtime/services/dataset_sync_service.py`
 - agent execution service: `langbridge/runtime/services/agent_execution_service.py`
 - federated execution bridge: `langbridge/runtime/execution/federated_query_tool.py`
 - federated engine: `langbridge/federation/*`

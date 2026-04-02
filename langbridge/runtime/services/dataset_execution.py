@@ -26,6 +26,8 @@ from langbridge.runtime.utils.sql import enforce_read_only_sql
 from langbridge.runtime.utils.storage_uri import resolve_local_storage_path
 from langbridge.federation.models import (
     DatasetExecutionDescriptor,
+    DatasetFreshnessDescriptor,
+    DatasetFreshnessPolicy,
     FederationWorkflow,
     VirtualDataset,
     VirtualRelationship,
@@ -213,6 +215,7 @@ class DatasetExecutionResolver:
                 raise ExecutionValidationError("Executable API datasets require a connection_id.")
             source = dict(dataset.source_json or {})
             resource_name = str(source.get("resource") or "").strip()
+            flatten_paths = list(source.get("flatten") or [])
             if not resource_name:
                 raise ExecutionValidationError("API dataset is missing source.resource.")
             binding = VirtualTableBinding(
@@ -228,6 +231,7 @@ class DatasetExecutionResolver:
                     "storage_kind": dataset_descriptor.storage_kind,
                     "materialization_mode": materialization_mode,
                     "api_resource": resource_name,
+                    "api_flatten": flatten_paths,
                 },
                 dataset_descriptor=dataset_descriptor,
             )
@@ -428,11 +432,10 @@ class DatasetExecutionResolver:
             if materialization_mode.value == "synced":
                 sync_config = dict(dataset.sync_json or {})
                 resource_name = str(sync_config.get("resource") or "").strip()
-                connector_name = str(dataset.connector_kind or "").strip().lower() or "connector"
-                resource_detail = f" resource '{resource_name}'" if resource_name else ""
+                resource_detail = f" (resource path '{resource_name}')" if resource_name else ""
                 raise ExecutionValidationError(
                     f"Synced dataset '{dataset.name}' has not been populated yet. "
-                    f"Run connector sync for {connector_name}{resource_detail} before querying it."
+                    f"Run dataset sync for dataset '{dataset.name}'{resource_detail} before querying it."
                 )
             raise ExecutionValidationError(f"FILE dataset '{dataset.id}' is missing storage_uri.")
         return storage_uri
@@ -644,6 +647,32 @@ class DatasetExecutionResolver:
                 "description": dataset.description,
                 "tags": list(dataset.tags_json or []),
             },
+            freshness=DatasetExecutionResolver._build_dataset_freshness_descriptor(dataset),
+        )
+
+    @staticmethod
+    def _build_dataset_freshness_descriptor(dataset: Any) -> DatasetFreshnessDescriptor:
+        materialization_mode = DatasetExecutionResolver._materialization_mode(dataset)
+        revision_id = getattr(dataset, "revision_id", None)
+        revision_hash = getattr(dataset, "revision_hash", None)
+
+        if materialization_mode == DatasetMaterializationMode.SYNCED:
+            if revision_id is not None:
+                return DatasetFreshnessDescriptor(
+                    policy=DatasetFreshnessPolicy.REVISION,
+                    freshness_key=f"dataset-revision:{revision_id}",
+                    revision_id=revision_id,
+                    revision_hash=str(revision_hash) if revision_hash is not None else None,
+                    reason="Synced datasets are cacheable only for a specific dataset revision.",
+                )
+            return DatasetFreshnessDescriptor(
+                policy=DatasetFreshnessPolicy.UNKNOWN,
+                reason="Synced dataset is missing revision metadata, so federation stage cache is bypassed.",
+            )
+
+        return DatasetFreshnessDescriptor(
+            policy=DatasetFreshnessPolicy.VOLATILE,
+            reason="Live datasets bypass federation stage cache.",
         )
 
 

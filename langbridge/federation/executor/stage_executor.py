@@ -7,6 +7,7 @@ import pyarrow as pa
 
 from langbridge.federation.connectors import RemoteSource
 from langbridge.federation.executor.artifact_store import ArtifactStore
+from langbridge.federation.executor.cache_context import StageCacheDescriptor, StageCacheResolver
 from langbridge.federation.models.plans import StageArtifact, StageDefinition, StageMetrics, StageType
 from langbridge.federation.utils.sql import normalize_sql_dialect
 
@@ -22,9 +23,11 @@ class StageExecutor:
         self,
         *,
         artifact_store: ArtifactStore,
+        cache_resolver: StageCacheResolver,
         sources: dict[str, RemoteSource],
     ) -> None:
         self._artifact_store = artifact_store
+        self._cache_resolver = cache_resolver
         self._sources = sources
 
     async def execute_stage(
@@ -34,11 +37,16 @@ class StageExecutor:
         context: StageExecutionContext,
     ) -> tuple[StageArtifact, StageMetrics]:
         started = time.perf_counter()
+        cache_descriptor = self._cache_resolver.describe_stage(
+            stage=stage,
+            dependency_caches=self._dependency_caches(stage=stage, context=context),
+        )
 
         cached = self._artifact_store.get_cached_stage_output(
             workspace_id=context.workspace_id,
             plan_id=context.plan_id,
             stage_id=stage.stage_id,
+            expected_cache=cache_descriptor,
         )
         if cached is not None:
             runtime_ms = int((time.perf_counter() - started) * 1000)
@@ -65,6 +73,7 @@ class StageExecutor:
                 plan_id=context.plan_id,
                 stage_id=stage.stage_id,
                 table=remote_result.table,
+                cache=cache_descriptor,
             )
             runtime_ms = int((time.perf_counter() - started) * 1000)
             return artifact, StageMetrics(
@@ -115,6 +124,7 @@ class StageExecutor:
                     plan_id=context.plan_id,
                     stage_id=stage.stage_id,
                     table=local_table,
+                    cache=cache_descriptor,
                 )
                 runtime_ms = int((time.perf_counter() - started) * 1000)
                 return artifact, StageMetrics(
@@ -131,3 +141,19 @@ class StageExecutor:
                 connection.close()
 
         raise ValueError(f"Unsupported stage type '{stage.stage_type}'.")
+
+    def _dependency_caches(
+        self,
+        *,
+        stage: StageDefinition,
+        context: StageExecutionContext,
+    ) -> dict[str, StageCacheDescriptor | None]:
+        dependency_caches: dict[str, StageCacheDescriptor | None] = {}
+        for dependency_stage_id in stage.dependencies:
+            manifest = self._artifact_store.get_stage_output_manifest(
+                workspace_id=context.workspace_id,
+                plan_id=context.plan_id,
+                stage_id=dependency_stage_id,
+            )
+            dependency_caches[dependency_stage_id] = None if manifest is None else manifest.cache
+        return dependency_caches

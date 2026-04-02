@@ -11,6 +11,7 @@ from langbridge.runtime.models import (
     CreateDatasetPreviewJobRequest,
     RuntimeMessageRole,
 )
+from langbridge.runtime.application.errors import BusinessValidationError
 from langbridge.runtime.bootstrap import build_configured_local_runtime
 from langbridge.runtime.bootstrap.configured_runtime import ConfiguredLocalRuntimeHostFactory
 from langbridge.runtime.config.models import LocalRuntimeConfig
@@ -298,6 +299,44 @@ def test_local_runtime_config_uses_explicit_source_resource_for_synced_datasets(
     assert config.datasets[0].source is None
 
 
+def test_local_runtime_config_supports_child_resource_paths_and_explicit_flatten() -> None:
+    config = LocalRuntimeConfig.model_validate(
+        {
+            "version": 1,
+            "connectors": [
+                {
+                    "name": "shopify_demo",
+                    "type": "shopify",
+                    "connection": {"access_token": "test-key"},
+                }
+            ],
+            "datasets": [
+                {
+                    "name": "shopify_customers",
+                    "connector": "shopify_demo",
+                    "materialization_mode": "synced",
+                    "sync": {
+                        "resource": "customers",
+                        "flatten": ["default_address"],
+                    },
+                },
+                {
+                    "name": "shopify_product_options",
+                    "connector": "shopify_demo",
+                    "materialization_mode": "synced",
+                    "sync": {"resource": "products.options"},
+                },
+            ],
+        }
+    )
+
+    assert config.datasets[0].sync is not None
+    assert config.datasets[0].sync.resource == "customers"
+    assert config.datasets[0].sync.flatten == ["default_address"]
+    assert config.datasets[1].sync is not None
+    assert config.datasets[1].sync.resource == "products.options"
+
+
 def test_local_runtime_config_rejects_legacy_synced_source_shape() -> None:
     with pytest.raises(ValueError, match="Synced datasets must declare sync config"):
         LocalRuntimeConfig.model_validate(
@@ -418,6 +457,7 @@ datasets:
     assert dataset_model.sync_json == {
         "resource": "customers",
         "strategy": "INCREMENTAL",
+        "sync_on_start": False,
     }
     assert dataset_model.file_config == {
         "format": "parquet",
@@ -1039,7 +1079,7 @@ semantic_models:
         ]
 
 
-def test_configured_local_runtime_syncs_connector_resources(tmp_path: Path) -> None:
+def test_configured_local_runtime_keeps_connector_sync_resources_for_discovery(tmp_path: Path) -> None:
     with mock_stripe_api() as api_base_url, runtime_storage_dirs(tmp_path):
         config_path = write_sync_runtime_config(tmp_path, api_base_url=api_base_url)
         runtime = build_configured_local_runtime(config_path=config_path)
@@ -1059,38 +1099,11 @@ def test_configured_local_runtime_syncs_connector_resources(tmp_path: Path) -> N
         resources = asyncio.run(runtime.list_sync_resources(connector_name="billing_demo"))
         assert any(item["name"] == "customers" for item in resources)
 
-        sync_result = asyncio.run(
-            runtime.sync_connector_resources(
-                connector_name="billing_demo",
-                resources=["customers"],
-            )
-        )
-        assert sync_result["status"] == "succeeded"
-        assert sync_result["resources"][0]["resource_name"] == "customers"
-
         datasets = asyncio.run(runtime.list_datasets())
-        assert len(datasets) == 1
-        assert datasets[0]["materialization_mode"] == "synced"
-        assert datasets[0]["management_mode"] == "runtime_managed"
-        assert datasets[0]["managed"] is False
-        synced_dataset_id = datasets[0]["id"]
-
-        preview = asyncio.run(
-            runtime.query_dataset(
-                request=CreateDatasetPreviewJobRequest(
-                    dataset_id=synced_dataset_id,
-                    workspace_id=runtime.context.workspace_id,
-                    actor_id=runtime.context.actor_id,
-                    requested_limit=10,
-                    enforced_limit=10,
-                )
-            )
-        )
-        assert preview["row_count_preview"] == 2
-        assert preview["rows"][0]["id"] == "cus_001"
+        assert datasets == []
 
 
-def test_configured_local_runtime_reuses_declared_synced_dataset_for_connector_sync(tmp_path: Path) -> None:
+def test_configured_local_runtime_syncs_declared_synced_dataset_from_dataset_surface(tmp_path: Path) -> None:
     with mock_stripe_api() as api_base_url, runtime_storage_dirs(tmp_path):
         config_path = write_sync_runtime_config(
             tmp_path,
@@ -1106,7 +1119,7 @@ def test_configured_local_runtime_reuses_declared_synced_dataset_for_connector_s
                 "id": declared_dataset.id,
                 "name": "billing_customers",
                 "label": declared_dataset.label,
-                "description": "Configured synced dataset awaiting connector sync for resource 'customers'.",
+                "description": "Configured synced dataset awaiting dataset sync for resource path 'customers'.",
                 "connector": "billing_demo",
                 "semantic_model": None,
                 "materialization_mode": "synced",
@@ -1114,6 +1127,7 @@ def test_configured_local_runtime_reuses_declared_synced_dataset_for_connector_s
                 "sync": {
                     "resource": "customers",
                     "strategy": "INCREMENTAL",
+                    "sync_on_start": False,
                 },
                 "status": "pending_sync",
                 "sync_status": "never_synced",
@@ -1129,13 +1143,19 @@ def test_configured_local_runtime_reuses_declared_synced_dataset_for_connector_s
         assert detail_before["sync"] == {
             "resource": "customers",
             "strategy": "INCREMENTAL",
+            "sync_on_start": False,
         }
         assert detail_before["sync_state"]["status"] == "never_synced"
         assert detail_before["storage_uri"] is None
 
+        sync_status_before = asyncio.run(runtime.get_dataset_sync(dataset_ref="billing_customers"))
+        assert sync_status_before["dataset_name"] == "billing_customers"
+        assert sync_status_before["resource_name"] == "customers"
+        assert sync_status_before["sync_state"]["status"] == "never_synced"
+
         with pytest.raises(ExecutionValidationError, match=(
             "Synced dataset 'billing_customers' has not been populated yet. "
-            "Run connector sync for stripe resource 'customers' before querying it."
+            "Run dataset sync for dataset 'billing_customers' \\(resource path 'customers'\\) before querying it."
         )):
             asyncio.run(
                 runtime.query_dataset(
@@ -1156,12 +1176,10 @@ def test_configured_local_runtime_reuses_declared_synced_dataset_for_connector_s
         assert customers["dataset_names"] == ["billing_customers"]
 
         sync_result = asyncio.run(
-            runtime.sync_connector_resources(
-                connector_name="billing_demo",
-                resources=["customers"],
-            )
+            runtime.sync_dataset(dataset_ref="billing_customers")
         )
         assert sync_result["status"] == "succeeded"
+        assert sync_result["dataset_name"] == "billing_customers"
         assert sync_result["resources"][0]["dataset_ids"] == [str(declared_dataset.id)]
         assert sync_result["resources"][0]["dataset_names"] == ["billing_customers"]
 
@@ -1173,6 +1191,7 @@ def test_configured_local_runtime_reuses_declared_synced_dataset_for_connector_s
         assert listed_after[0]["sync"] == {
             "resource": "customers",
             "strategy": "INCREMENTAL",
+            "sync_on_start": False,
         }
         assert listed_after[0]["sync_status"] == "succeeded"
         assert listed_after[0]["management_mode"] == "config_managed"
@@ -1184,6 +1203,7 @@ def test_configured_local_runtime_reuses_declared_synced_dataset_for_connector_s
         assert detail_after["sync"] == {
             "resource": "customers",
             "strategy": "INCREMENTAL",
+            "sync_on_start": False,
         }
         assert detail_after["sync_state"]["status"] == "succeeded"
         assert detail_after["storage_uri"] is not None

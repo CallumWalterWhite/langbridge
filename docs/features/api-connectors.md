@@ -43,15 +43,23 @@ datasets, but the runtime is explicit about what is supported right now.
 
 ## Runtime-Owned Sync
 
-Connector sync is owned by the runtime and exposed through runtime host
+Runtime sync is owned by datasets and exposed through runtime host
 endpoints. The current self-hosted host supports:
 
 - connector listing
 - syncable resource discovery
 - sync state inspection
-- sync execution
+- dataset sync execution
 
 The resulting datasets stay inside the runtime execution model.
+
+The V1 sync model is dataset-owned and explicit:
+
+- connector discovery reports resource structure, but does not create datasets
+- sync only materializes datasets that already exist in config or were intentionally created through runtime dataset APIs
+- `sync.resource` and `source.resource` use canonical dot-separated resource paths such as `orders`, `orders.line_items`, or `accounts.owner`
+- `sync.flatten` and `source.flatten` explicitly flatten supported 1:1 child objects into a parent dataset
+- 1:many children are never flattened and never silently turned into sibling datasets
 
 ## Declarative SaaS Connector Ownership
 
@@ -69,7 +77,7 @@ The current declarative runtime slice is intentionally narrow and runtime-first:
 
 - package manifests define auth, pagination, incremental cursor rules, resource inventory, and connector capability metadata
 - core `langbridge` turns that manifest into an executable `ApiConnector`
-- the existing runtime sync flow materializes those resources into runtime-managed datasets with `materialization_mode: synced`
+- the runtime sync flow materializes declared resource paths into datasets with `materialization_mode: synced`
 - live API datasets can now execute honestly as dataset-declared live sources by fetching resource data into DuckDB-backed local federation
 
 The declarative runtime now covers multiple common SaaS API patterns:
@@ -87,10 +95,29 @@ The runtime is intentionally honest about what it supports today:
 
 - config-defined SQL datasets: supported with `materialization_mode: live`
 - config-defined file datasets: supported with `materialization_mode: live`
-- config-defined synced API datasets: supported with `materialization_mode: synced` and `sync.resource` naming the sync resource
-- runtime-managed connector sync datasets: supported with `materialization_mode: synced`
+- config-defined synced API datasets: supported with `materialization_mode: synced` and `sync.resource` naming the resource path
+- runtime-managed datasets intentionally created through the runtime: supported with `materialization_mode: synced`
 - config-defined synced datasets without a runtime sync path: not supported yet
 - live API/SaaS datasets: supported when the connector exposes a runtime API execution path; Langbridge fetches the dataset-declared API resource into local DuckDB execution rather than pretending SQL pushdown exists
+
+Example synced datasets:
+
+```yaml
+datasets:
+  - name: shopify_customers
+    connector: shopify_demo
+    materialization_mode: synced
+    sync:
+      resource: customers
+      flatten:
+        - default_address
+
+  - name: shopify_product_options
+    connector: shopify_demo
+    materialization_mode: synced
+    sync:
+      resource: products.options
+```
 
 Connector packages under `langbridge-connectors` should stay thin and primarily
 provide package-owned config/schema/plugin wiring plus either:

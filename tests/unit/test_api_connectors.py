@@ -91,8 +91,12 @@ async def test_stripe_connector_handles_bearer_auth_and_has_more_pagination() ->
     result = await connector.extract_resource("customers", limit=2)
 
     assert len(requests) == 2
-    assert result.records[0]["address__city"] == "London"
-    assert result.child_records["customers__subscriptions__data"][0]["id"] == "sub_001"
+    assert result.records[0]["address"]["city"] == "London"
+    assert {child.path for child in result.child_resources or []} >= {
+        "customers.address",
+        "customers.subscriptions",
+        "customers.subscriptions.data",
+    }
     assert result.next_cursor == "cus_001"
 
 
@@ -137,8 +141,13 @@ async def test_hubspot_connector_handles_bearer_auth_and_after_cursor() -> None:
     result = await connector.extract_resource("contacts", limit=1)
 
     assert len(requests) == 2
-    assert result.records[0]["properties__firstname"] == "Ada"
-    assert result.child_records["contacts__associations__companies__results"][0]["id"] == "2"
+    assert result.records[0]["properties"]["firstname"] == "Ada"
+    assert {child.path for child in result.child_resources or []} >= {
+        "contacts.properties",
+        "contacts.associations",
+        "contacts.associations.companies",
+        "contacts.associations.companies.results",
+    }
     assert result.next_cursor == "cursor-3"
 
 
@@ -215,7 +224,7 @@ async def test_shopify_connector_supports_legacy_app_credentials_flow() -> None:
     )
 
     assert len(requests) == 3
-    assert result.records[0]["customer__email"] == "ada@example.com"
+    assert result.records[0]["customer"]["email"] == "ada@example.com"
     assert result.next_cursor == "cursor-2"
 
 @pytest.mark.anyio
@@ -350,5 +359,6 @@ async def test_salesforce_connector_uses_refresh_token_and_query_cursor() -> Non
 
     assert token_requests == 1
     assert query_requests == 1
-    assert result.records[0]["Owner__Name"] == "Ada"
+    assert result.records[0]["Owner"]["Name"] == "Ada"
+    assert {child.path for child in result.child_resources or []} >= {"accounts.Owner"}
     assert result.next_cursor == "/services/data/v61.0/query/01g-test"

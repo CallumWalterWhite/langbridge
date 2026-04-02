@@ -1,14 +1,26 @@
-
 import uuid
 from dataclasses import dataclass
-from pathlib import Path
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
-import httpx
 import pyarrow.parquet as pq
 import pytest
 
+from langbridge.connectors.base.connector import ApiExtractResult, ApiResource
+from langbridge.connectors.base.config import ConnectorRuntimeType
+from langbridge.runtime.models import DatasetMetadata
+from langbridge.runtime.models.metadata import (
+    DatasetMaterializationMode,
+    DatasetSourceKind,
+    DatasetStatus,
+    DatasetStorageKind,
+    DatasetType,
+    LifecycleState,
+    ManagementMode,
+)
+from langbridge.runtime.persistence.db import agent as _db_agent  # noqa: F401
+from langbridge.runtime.persistence.db import semantic as _db_semantic  # noqa: F401
 from langbridge.runtime.persistence.db.connector_sync import ConnectorSyncStateRecord
 from langbridge.runtime.persistence.db.dataset import (
     DatasetColumnRecord,
@@ -17,17 +29,8 @@ from langbridge.runtime.persistence.db.dataset import (
     DatasetRevisionRecord,
 )
 from langbridge.runtime.persistence.db.lineage import LineageEdgeRecord
-from langbridge.runtime.persistence.db import agent as _db_agent  # noqa: F401
-from langbridge.runtime.persistence.db import semantic as _db_semantic  # noqa: F401
-from langbridge.connectors.base.connector import (
-    ApiExtractResult,
-    ApiResource,
-)
-from langbridge.connectors.base.config import ConnectorRuntimeType
-from langbridge.runtime.models import DatasetMetadata
-from langbridge.runtime.models.metadata import LifecycleState, ManagementMode
-from langbridge.runtime.settings import runtime_settings
 from langbridge.runtime.services.dataset_sync_service import ConnectorSyncRuntime
+from langbridge.runtime.settings import runtime_settings
 
 
 SYNC_MODE_INCREMENTAL = "INCREMENTAL"
@@ -39,6 +42,20 @@ SYNC_STATUS_FAILED = "failed"
 @pytest.fixture
 def anyio_backend():
     return "asyncio"
+
+
+@pytest.fixture
+def dataset_storage_dir(tmp_path: Path):
+    original_dataset_dir = runtime_settings.DATASET_FILE_LOCAL_DIR
+    object.__setattr__(
+        runtime_settings,
+        "DATASET_FILE_LOCAL_DIR",
+        str((tmp_path / "datasets").resolve()),
+    )
+    try:
+        yield tmp_path / "datasets"
+    finally:
+        object.__setattr__(runtime_settings, "DATASET_FILE_LOCAL_DIR", original_dataset_dir)
 
 
 @dataclass
@@ -188,13 +205,13 @@ class _FakeLineageEdgeRepository:
         target_id: str,
     ) -> None:
         self.items = [
-          edge
-          for edge in self.items
-          if not (
-              edge.workspace_id == workspace_id
-              and edge.target_type == target_type
-              and edge.target_id == target_id
-          )
+            edge
+            for edge in self.items
+            if not (
+                edge.workspace_id == workspace_id
+                and edge.target_type == target_type
+                and edge.target_id == target_id
+            )
         ]
 
 
@@ -267,11 +284,74 @@ def _resource(
     return ApiResource(
         name=name,
         label=name.title(),
+        path=name,
         primary_key=primary_key,
         cursor_field="page_info" if supports_incremental else None,
         incremental_cursor_field=incremental_cursor_field,
         supports_incremental=supports_incremental,
         default_sync_mode="INCREMENTAL" if supports_incremental else "FULL_REFRESH",
+    )
+
+
+def _declared_synced_dataset(
+    *,
+    workspace_id: uuid.UUID,
+    actor_id: uuid.UUID,
+    connection_id: uuid.UUID,
+    connector_type: ConnectorRuntimeType,
+    name: str,
+    resource: str,
+    flatten: list[str] | None = None,
+) -> DatasetMetadata:
+    now = datetime.now(timezone.utc)
+    sync_config: dict[str, Any] = {
+        "resource": resource,
+        "strategy": SYNC_MODE_INCREMENTAL,
+    }
+    if flatten:
+        sync_config["flatten"] = list(flatten)
+    return DatasetMetadata(
+        id=uuid.uuid4(),
+        workspace_id=workspace_id,
+        connection_id=connection_id,
+        created_by=actor_id,
+        updated_by=actor_id,
+        name=name,
+        sql_alias=name,
+        description=f"Declared synced dataset for resource path '{resource}'.",
+        tags=[],
+        dataset_type=DatasetType.FILE,
+        materialization_mode=DatasetMaterializationMode.SYNCED,
+        source_kind=DatasetSourceKind.API,
+        connector_kind=connector_type.value.lower(),
+        storage_kind=DatasetStorageKind.PARQUET,
+        dialect="duckdb",
+        catalog_name=None,
+        schema_name=None,
+        table_name=name,
+        storage_uri=None,
+        sql_text=None,
+        source=None,
+        sync=sync_config,
+        relation_identity=None,
+        execution_capabilities=None,
+        referenced_dataset_ids=[],
+        federated_plan=None,
+        file_config={
+            "format": "parquet",
+            "managed_dataset": True,
+        },
+        status=DatasetStatus.PENDING_SYNC,
+        revision_id=None,
+        row_count_estimate=None,
+        bytes_estimate=None,
+        last_profiled_at=None,
+        columns=[],
+        policy=None,
+        created_at=now,
+        updated_at=now,
+        management_mode=ManagementMode.CONFIG_MANAGED,
+        lifecycle_state=LifecycleState.ACTIVE,
     )
 
 
@@ -292,17 +372,24 @@ def _parquet_rows(
 
 
 @pytest.mark.anyio
-async def test_connector_sync_runtime_materializes_parent_child_datasets_and_persists_state(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
+async def test_connector_sync_runtime_flattens_only_explicit_one_to_one_children(
+    dataset_storage_dir: Path,
 ) -> None:
     runtime, _, dataset_repository, dataset_revision_repository, lineage_edge_repository = _build_runtime()
 
     workspace_id = uuid.uuid4()
     actor_id = uuid.uuid4()
     connection_id = uuid.uuid4()
-    connector_record = _FakeConnectorRecord(name="Shopify storefront")
-
+    dataset = _declared_synced_dataset(
+        workspace_id=workspace_id,
+        actor_id=actor_id,
+        connection_id=connection_id,
+        connector_type=ConnectorRuntimeType.SHOPIFY,
+        name="shopify_orders",
+        resource="orders",
+        flatten=["customer"],
+    )
+    dataset_repository.add(dataset)
     state = await runtime.get_or_create_state(
         workspace_id=workspace_id,
         connection_id=connection_id,
@@ -310,7 +397,6 @@ async def test_connector_sync_runtime_materializes_parent_child_datasets_and_per
         resource_name="orders",
         sync_mode=SYNC_MODE_INCREMENTAL,
     )
-
     connector = _QueueConnector(
         ApiExtractResult(
             resource="orders",
@@ -319,205 +405,212 @@ async def test_connector_sync_runtime_materializes_parent_child_datasets_and_per
                     "id": 101,
                     "updated_at": "2026-03-01T00:00:00Z",
                     "total_price": "42.00",
+                    "customer": {
+                        "id": "cust_101",
+                        "email": "ada@example.com",
+                    },
+                    "line_items": [
+                        {"id": 9001, "title": "Hat"},
+                    ],
                 }
             ],
             checkpoint_cursor="2026-03-01T00:00:00Z",
-            child_records={
-                "orders__line_items": [
-                    {
-                        "id": 9001,
-                        "_parent_id": 101,
-                        "_child_index": 0,
-                        "title": "Hat",
-                    }
-                ]
-            },
         )
     )
 
-    summary = await runtime.sync_resource(
+    summary = await runtime.sync_dataset(
         workspace_id=workspace_id,
         actor_id=actor_id,
         connection_id=connection_id,
-        connector_record=connector_record,
+        connector_record=_FakeConnectorRecord(name="Shopify storefront"),
         connector_type=ConnectorRuntimeType.SHOPIFY,
+        dataset=dataset,
         resource=_resource(),
         api_connector=connector,
         state=state,
         sync_mode=SYNC_MODE_INCREMENTAL,
     )
 
-    assert summary["records_synced"] == 2
+    assert summary["resource_name"] == "orders"
+    assert summary["records_synced"] == 1
+    assert summary["dataset_names"] == ["shopify_orders"]
     assert state.status == SYNC_STATUS_SUCCEEDED
     assert state.last_cursor == "2026-03-01T00:00:00Z"
-    assert len(summary["dataset_ids"]) == 2
+    assert len(dataset_repository.items) == 1
 
-    datasets = list(dataset_repository.items.values())
-    assert len(datasets) == 2
-    root_dataset = next(
-        dataset
-        for dataset in datasets
-        if (dataset.sync_json or {}).get("resource") == "orders"
-    )
-    child_dataset = next(
-        dataset
-        for dataset in datasets
-        if (dataset.sync_json or {}).get("resource") == "orders__line_items"
-    )
-
-    root_rows = _parquet_rows(
+    rows = _parquet_rows(
         runtime,
         workspace_id=workspace_id,
         connection_id=connection_id,
-        dataset_name=root_dataset.name,
+        dataset_name=dataset.name,
     )
-    child_rows = _parquet_rows(
-        runtime,
-        workspace_id=workspace_id,
-        connection_id=connection_id,
-        dataset_name=child_dataset.name,
-    )
-    assert root_rows == [{"id": 101, "total_price": "42.00", "updated_at": "2026-03-01T00:00:00Z"}]
-    assert child_rows == [{"_child_index": 0, "_parent_id": 101, "id": 9001, "title": "Hat"}]
-    assert root_dataset.materialization_mode == "synced"
-    assert child_dataset.materialization_mode == "synced"
-    assert root_dataset.schema_name is None
-    assert child_dataset.schema_name is None
-
-    assert len(dataset_revision_repository.by_dataset[root_dataset.id]) == 1
-    assert len(dataset_revision_repository.by_dataset[child_dataset.id]) == 1
+    assert rows == [
+        {
+            "customer__email": "ada@example.com",
+            "customer__id": "cust_101",
+            "id": 101,
+            "total_price": "42.00",
+            "updated_at": "2026-03-01T00:00:00Z",
+        }
+    ]
+    assert "line_items" not in rows[0]
+    assert len(dataset_revision_repository.by_dataset[dataset.id]) == 1
     assert any(edge.source_type == "api_resource" for edge in lineage_edge_repository.items)
     assert any(edge.source_type == "file_resource" for edge in lineage_edge_repository.items)
+    assert {child["path"] for child in state.state["child_resources"]} >= {
+        "orders.customer",
+        "orders.line_items",
+    }
 
 
 @pytest.mark.anyio
-async def test_connector_sync_runtime_reuses_declared_synced_dataset_for_matching_resource(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
+async def test_connector_sync_runtime_materializes_explicit_child_resource_path_dataset(
+    dataset_storage_dir: Path,
 ) -> None:
     runtime, _, dataset_repository, _, _ = _build_runtime()
-    original_dataset_dir = runtime_settings.DATASET_FILE_LOCAL_DIR
-    object.__setattr__(
-        runtime_settings,
-        "DATASET_FILE_LOCAL_DIR",
-        str((tmp_path / "datasets").resolve()),
+
+    workspace_id = uuid.uuid4()
+    actor_id = uuid.uuid4()
+    connection_id = uuid.uuid4()
+    dataset = _declared_synced_dataset(
+        workspace_id=workspace_id,
+        actor_id=actor_id,
+        connection_id=connection_id,
+        connector_type=ConnectorRuntimeType.SHOPIFY,
+        name="shopify_order_line_items",
+        resource="orders.line_items",
+    )
+    dataset_repository.add(dataset)
+    state = await runtime.get_or_create_state(
+        workspace_id=workspace_id,
+        connection_id=connection_id,
+        connector_type=ConnectorRuntimeType.SHOPIFY,
+        resource_name="orders.line_items",
+        sync_mode=SYNC_MODE_INCREMENTAL,
+    )
+    connector = _QueueConnector(
+        ApiExtractResult(
+            resource="orders",
+            records=[
+                {
+                    "id": 101,
+                    "updated_at": "2026-03-01T00:00:00Z",
+                    "line_items": [
+                        {"id": 9001, "title": "Hat"},
+                        {"id": 9002, "title": "Scarf"},
+                    ],
+                }
+            ],
+            checkpoint_cursor="2026-03-01T00:00:00Z",
+        )
     )
 
-    try:
-        workspace_id = uuid.uuid4()
-        actor_id = uuid.uuid4()
-        connection_id = uuid.uuid4()
-        now = datetime.now(timezone.utc)
-        declared_dataset = DatasetMetadata(
-            id=uuid.uuid4(),
-            workspace_id=workspace_id,
-            connection_id=connection_id,
-            created_by=actor_id,
-            updated_by=actor_id,
-            name="billing_customers",
-            sql_alias="billing_customers",
-            description="Declared synced dataset.",
-            tags=["managed", "api-connector", "stripe", "resource:customers"],
-            dataset_type="FILE",
-            materialization_mode="synced",
-            source_kind="api",
-            connector_kind="stripe",
-            storage_kind="parquet",
-            dialect="duckdb",
-            catalog_name=None,
-            schema_name=None,
-            table_name="billing_customers",
-            storage_uri=None,
-            sql_text=None,
-            source=None,
-            sync={
-                "resource": "customers",
-                "strategy": "INCREMENTAL",
-            },
-            relation_identity=None,
-            execution_capabilities=None,
-            referenced_dataset_ids=[],
-            federated_plan=None,
-            file_config={
-                "format": "parquet",
-                "managed_dataset": True,
-            },
-            status="pending_sync",
-            revision_id=None,
-            row_count_estimate=None,
-            bytes_estimate=None,
-            last_profiled_at=None,
-            columns=[],
-            policy=None,
-            created_at=now,
-            updated_at=now,
-            management_mode=ManagementMode.CONFIG_MANAGED,
-            lifecycle_state=LifecycleState.ACTIVE,
-        )
-        dataset_repository.add(declared_dataset)
+    summary = await runtime.sync_dataset(
+        workspace_id=workspace_id,
+        actor_id=actor_id,
+        connection_id=connection_id,
+        connector_record=_FakeConnectorRecord(name="Shopify storefront"),
+        connector_type=ConnectorRuntimeType.SHOPIFY,
+        dataset=dataset,
+        resource=_resource(),
+        api_connector=connector,
+        state=state,
+        sync_mode=SYNC_MODE_INCREMENTAL,
+    )
 
-        connector = _QueueConnector(
-            ApiExtractResult(
-                resource="customers",
-                records=[
-                    {"id": "cus_001", "email": "ada@example.com"},
-                    {"id": "cus_002", "email": "grace@example.com"},
-                ],
-                child_records={},
-                next_cursor=None,
-                checkpoint_cursor="1710003600",
-            )
-        )
-        state = await runtime.get_or_create_state(
-            workspace_id=workspace_id,
-            connection_id=connection_id,
-            connector_type=ConnectorRuntimeType.STRIPE,
-            resource_name="customers",
-            sync_mode=SYNC_MODE_INCREMENTAL,
-        )
+    assert summary["resource_name"] == "orders.line_items"
+    assert summary["root_resource_name"] == "orders"
+    assert summary["records_synced"] == 2
+    assert summary["dataset_names"] == ["shopify_order_line_items"]
+    assert len(dataset_repository.items) == 1
 
-        summary = await runtime.sync_resource(
+    rows = _parquet_rows(
+        runtime,
+        workspace_id=workspace_id,
+        connection_id=connection_id,
+        dataset_name=dataset.name,
+    )
+    assert rows == [
+        {"_child_index": 0, "_parent_id": 101, "id": 9001, "title": "Hat"},
+        {"_child_index": 1, "_parent_id": 101, "id": 9002, "title": "Scarf"},
+    ]
+
+
+@pytest.mark.anyio
+async def test_connector_sync_runtime_rejects_flattening_one_to_many_child_path(
+    dataset_storage_dir: Path,
+) -> None:
+    runtime, _, dataset_repository, _, _ = _build_runtime()
+
+    workspace_id = uuid.uuid4()
+    actor_id = uuid.uuid4()
+    connection_id = uuid.uuid4()
+    dataset = _declared_synced_dataset(
+        workspace_id=workspace_id,
+        actor_id=actor_id,
+        connection_id=connection_id,
+        connector_type=ConnectorRuntimeType.SHOPIFY,
+        name="shopify_orders",
+        resource="orders",
+        flatten=["line_items"],
+    )
+    dataset_repository.add(dataset)
+    state = await runtime.get_or_create_state(
+        workspace_id=workspace_id,
+        connection_id=connection_id,
+        connector_type=ConnectorRuntimeType.SHOPIFY,
+        resource_name="orders",
+        sync_mode=SYNC_MODE_INCREMENTAL,
+    )
+    connector = _QueueConnector(
+        ApiExtractResult(
+            resource="orders",
+            records=[
+                {
+                    "id": 101,
+                    "updated_at": "2026-03-01T00:00:00Z",
+                    "line_items": [{"id": 9001, "title": "Hat"}],
+                }
+            ],
+            checkpoint_cursor="2026-03-01T00:00:00Z",
+        )
+    )
+
+    with pytest.raises(ValueError, match="cannot flatten a one-to-many child"):
+        await runtime.sync_dataset(
             workspace_id=workspace_id,
             actor_id=actor_id,
             connection_id=connection_id,
-            connector_record=_FakeConnectorRecord(name="billing_demo"),
-            connector_type=ConnectorRuntimeType.STRIPE,
-            resource=ApiResource(
-                name="customers",
-                label="Customers",
-                primary_key="id",
-                parent_resource=None,
-                cursor_field="created",
-                incremental_cursor_field="created",
-                supports_incremental=True,
-                default_sync_mode=SYNC_MODE_INCREMENTAL,
-            ),
+            connector_record=_FakeConnectorRecord(name="Shopify storefront"),
+            connector_type=ConnectorRuntimeType.SHOPIFY,
+            dataset=dataset,
+            resource=_resource(),
             api_connector=connector,
             state=state,
             sync_mode=SYNC_MODE_INCREMENTAL,
         )
 
-        assert summary["dataset_names"] == ["billing_customers"]
-        assert summary["dataset_ids"] == [str(declared_dataset.id)]
-        updated_dataset = dataset_repository.items[declared_dataset.id]
-        assert updated_dataset.name == "billing_customers"
-        assert updated_dataset.table_name == "billing_customers"
-        assert updated_dataset.status == "published"
-        assert updated_dataset.storage_uri is not None
-        assert len(dataset_repository.items) == 1
-    finally:
-        object.__setattr__(runtime_settings, "DATASET_FILE_LOCAL_DIR", original_dataset_dir)
+    assert dataset_repository.items[dataset.id].storage_uri is None
 
 
 @pytest.mark.anyio
 async def test_connector_sync_runtime_incremental_second_sync_only_upserts_new_records(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
+    dataset_storage_dir: Path,
 ) -> None:
     runtime, _, dataset_repository, _, _ = _build_runtime()
 
     workspace_id = uuid.uuid4()
+    actor_id = uuid.uuid4()
     connection_id = uuid.uuid4()
+    dataset = _declared_synced_dataset(
+        workspace_id=workspace_id,
+        actor_id=actor_id,
+        connection_id=connection_id,
+        connector_type=ConnectorRuntimeType.SHOPIFY,
+        name="shopify_orders",
+        resource="orders",
+    )
+    dataset_repository.add(dataset)
     state = await runtime.get_or_create_state(
         workspace_id=workspace_id,
         connection_id=connection_id,
@@ -534,15 +627,15 @@ async def test_connector_sync_runtime_incremental_second_sync_only_upserts_new_r
                 {"id": 2, "updated_at": "2026-03-01T00:30:00Z", "total_price": "20.00"},
             ],
             checkpoint_cursor="2026-03-01T00:30:00Z",
-            child_records={},
         )
     )
-    await runtime.sync_resource(
+    await runtime.sync_dataset(
         workspace_id=workspace_id,
-        actor_id=uuid.uuid4(),
+        actor_id=actor_id,
         connection_id=connection_id,
         connector_record=_FakeConnectorRecord(name="Shopify"),
         connector_type=ConnectorRuntimeType.SHOPIFY,
+        dataset=dataset,
         resource=_resource(),
         api_connector=first_connector,
         state=state,
@@ -557,15 +650,15 @@ async def test_connector_sync_runtime_incremental_second_sync_only_upserts_new_r
                 {"id": 3, "updated_at": "2026-03-02T01:00:00Z", "total_price": "30.00"},
             ],
             checkpoint_cursor="2026-03-02T01:00:00Z",
-            child_records={},
         )
     )
-    await runtime.sync_resource(
+    await runtime.sync_dataset(
         workspace_id=workspace_id,
         actor_id=uuid.uuid4(),
         connection_id=connection_id,
         connector_record=_FakeConnectorRecord(name="Shopify"),
         connector_type=ConnectorRuntimeType.SHOPIFY,
+        dataset=dataset_repository.items[dataset.id],
         resource=_resource(),
         api_connector=second_connector,
         state=state,
@@ -575,12 +668,11 @@ async def test_connector_sync_runtime_incremental_second_sync_only_upserts_new_r
     assert second_connector.calls[0]["since"] == "2026-03-01T00:30:00Z"
     assert state.last_cursor == "2026-03-02T01:00:00Z"
 
-    root_dataset = next(iter(dataset_repository.items.values()))
     rows = _parquet_rows(
         runtime,
         workspace_id=workspace_id,
         connection_id=connection_id,
-        dataset_name=root_dataset.name,
+        dataset_name=dataset.name,
     )
     assert len(rows) == 3
     by_id = {row["id"]: row for row in rows}
@@ -590,13 +682,22 @@ async def test_connector_sync_runtime_incremental_second_sync_only_upserts_new_r
 
 @pytest.mark.anyio
 async def test_connector_sync_runtime_falls_back_to_full_refresh_for_non_incremental_resources(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
+    dataset_storage_dir: Path,
 ) -> None:
     runtime, _, dataset_repository, _, _ = _build_runtime()
 
     workspace_id = uuid.uuid4()
+    actor_id = uuid.uuid4()
     connection_id = uuid.uuid4()
+    dataset = _declared_synced_dataset(
+        workspace_id=workspace_id,
+        actor_id=actor_id,
+        connection_id=connection_id,
+        connector_type=ConnectorRuntimeType.GOOGLE_ANALYTICS,
+        name="ga_sessions",
+        resource="sessions",
+    )
+    dataset_repository.add(dataset)
     state = await runtime.get_or_create_state(
         workspace_id=workspace_id,
         connection_id=connection_id,
@@ -609,15 +710,15 @@ async def test_connector_sync_runtime_falls_back_to_full_refresh_for_non_increme
         ApiExtractResult(
             resource="sessions",
             records=[{"id": "a", "sessions": 12}, {"id": "b", "sessions": 6}],
-            child_records={},
         )
     )
-    await runtime.sync_resource(
+    await runtime.sync_dataset(
         workspace_id=workspace_id,
-        actor_id=uuid.uuid4(),
+        actor_id=actor_id,
         connection_id=connection_id,
         connector_record=_FakeConnectorRecord(name="Analytics"),
         connector_type=ConnectorRuntimeType.GOOGLE_ANALYTICS,
+        dataset=dataset,
         resource=_resource(
             name="sessions",
             incremental_cursor_field=None,
@@ -632,15 +733,15 @@ async def test_connector_sync_runtime_falls_back_to_full_refresh_for_non_increme
         ApiExtractResult(
             resource="sessions",
             records=[{"id": "c", "sessions": 99}],
-            child_records={},
         )
     )
-    await runtime.sync_resource(
+    await runtime.sync_dataset(
         workspace_id=workspace_id,
         actor_id=uuid.uuid4(),
         connection_id=connection_id,
         connector_record=_FakeConnectorRecord(name="Analytics"),
         connector_type=ConnectorRuntimeType.GOOGLE_ANALYTICS,
+        dataset=dataset_repository.items[dataset.id],
         resource=_resource(
             name="sessions",
             incremental_cursor_field=None,
@@ -651,7 +752,6 @@ async def test_connector_sync_runtime_falls_back_to_full_refresh_for_non_increme
         sync_mode=SYNC_MODE_INCREMENTAL,
     )
 
-    dataset = next(iter(dataset_repository.items.values()))
     rows = _parquet_rows(
         runtime,
         workspace_id=workspace_id,
@@ -666,13 +766,22 @@ async def test_connector_sync_runtime_falls_back_to_full_refresh_for_non_increme
 
 @pytest.mark.anyio
 async def test_connector_sync_runtime_failure_does_not_advance_checkpoint_state(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
+    dataset_storage_dir: Path,
 ) -> None:
-    runtime, _, _, _, _ = _build_runtime()
+    runtime, _, dataset_repository, _, _ = _build_runtime()
 
     workspace_id = uuid.uuid4()
+    actor_id = uuid.uuid4()
     connection_id = uuid.uuid4()
+    dataset = _declared_synced_dataset(
+        workspace_id=workspace_id,
+        actor_id=actor_id,
+        connection_id=connection_id,
+        connector_type=ConnectorRuntimeType.SHOPIFY,
+        name="shopify_orders",
+        resource="orders",
+    )
+    dataset_repository.add(dataset)
     state = await runtime.get_or_create_state(
         workspace_id=workspace_id,
         connection_id=connection_id,
@@ -686,15 +795,15 @@ async def test_connector_sync_runtime_failure_does_not_advance_checkpoint_state(
             resource="orders",
             records=[{"id": 1, "updated_at": "2026-03-01T00:00:00Z"}],
             checkpoint_cursor="2026-03-01T00:00:00Z",
-            child_records={},
         )
     )
-    await runtime.sync_resource(
+    await runtime.sync_dataset(
         workspace_id=workspace_id,
-        actor_id=uuid.uuid4(),
+        actor_id=actor_id,
         connection_id=connection_id,
         connector_record=_FakeConnectorRecord(name="Shopify"),
         connector_type=ConnectorRuntimeType.SHOPIFY,
+        dataset=dataset,
         resource=_resource(),
         api_connector=successful_connector,
         state=state,
@@ -703,12 +812,13 @@ async def test_connector_sync_runtime_failure_does_not_advance_checkpoint_state(
 
     failed_connector = _QueueConnector(RuntimeError("upstream timeout"))
     with pytest.raises(RuntimeError):
-        await runtime.sync_resource(
+        await runtime.sync_dataset(
             workspace_id=workspace_id,
             actor_id=uuid.uuid4(),
             connection_id=connection_id,
             connector_record=_FakeConnectorRecord(name="Shopify"),
             connector_type=ConnectorRuntimeType.SHOPIFY,
+            dataset=dataset_repository.items[dataset.id],
             resource=_resource(),
             api_connector=failed_connector,
             state=state,

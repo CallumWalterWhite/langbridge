@@ -22,8 +22,10 @@ _EXPORTS = {
     ),
     "langbridge.connectors.base.connector": (
         "ApiConnector",
+        "ApiChildResource",
         "ApiExtractResult",
         "ApiResource",
+        "ApiResourceCardinality",
         "ApiSyncResult",
         "AuthError",
         "Connector",
@@ -59,8 +61,16 @@ _EXPORTS = {
     "langbridge.connectors.base.http": (
         "ApiResourceDefinition",
         "HttpApiConnector",
-        "flatten_api_records",
         "parse_link_header_cursor",
+    ),
+    "langbridge.connectors.base.resource_paths": (
+        "ApiMaterializedRows",
+        "api_parent_resource_path",
+        "api_resource_root",
+        "describe_api_child_resources",
+        "materialize_api_resource_rows",
+        "normalize_api_flatten_paths",
+        "normalize_api_resource_path",
     ),
 }
 

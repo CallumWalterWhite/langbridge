@@ -27,7 +27,7 @@ class _SqlQueryService:
 
 
 class _DatasetSyncService:
-    async def sync_resource(self, **kwargs):
+    async def sync_dataset(self, **kwargs):
         return {"kind": "sync", **kwargs}
 
 
@@ -68,13 +68,22 @@ async def test_runtime_host_delegates_to_runtime_services() -> None:
     )
     host = RuntimeHost(
         context=context,
-        providers=RuntimeProviders(),
+        providers=RuntimeProviders(
+            dataset_metadata=object(),
+            connector_metadata=object(),
+            semantic_models=object(),
+            semantic_vector_indexes=object(),
+            sync_state=object(),
+            credentials=object(),
+        ),
         services=RuntimeServices(
+            federated_query_tool=object(),
             dataset_query=_DatasetQueryService(),
             sql_query=_SqlQueryService(),
             dataset_sync=_DatasetSyncService(),
             agent_execution=_AgentExecutionService(),
             semantic_query=_SemanticQueryService(),
+            semantic_vector_search=object(),
         ),
     )
 

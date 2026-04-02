@@ -726,17 +726,14 @@ resources:
     parentId: fld_connectors
     modified: 0
     created: 0
-    url: "{{ _.base_url }}/api/runtime/v1/connectors/{{ _.connector_name }}/sync"
-    name: Run Connector Sync
-    description: POST /api/runtime/v1/connectors/{connector_name}/sync
+    url: "{{ _.base_url }}/api/runtime/v1/datasets/{{ _.dataset_ref }}/sync"
+    name: Run Dataset Sync
+    description: POST /api/runtime/v1/datasets/{dataset_ref}/sync
     method: POST
     body:
       mimeType: application/json
       text: |-
         {
-          "resource_names": [
-            "orders"
-          ],
           "sync_mode": "INCREMENTAL",
           "force_full_refresh": false
         }

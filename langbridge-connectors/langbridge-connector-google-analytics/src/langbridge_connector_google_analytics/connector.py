@@ -12,7 +12,9 @@ from langbridge.connectors.base.errors import AuthError, ConnectorError
 from langbridge.connectors.base.http import (
     ApiResourceDefinition,
     HttpApiConnector,
-    flatten_api_records,
+)
+from langbridge.connectors.base.resource_paths import (
+    describe_api_child_resources,
 )
 
 from .config import GOOGLE_ANALYTICS_SUPPORTED_RESOURCES, GoogleAnalyticsConnectorConfig
@@ -31,6 +33,7 @@ class GoogleAnalyticsApiConnector(HttpApiConnector):
             resource=ApiResource(
                 name="events",
                 label="Events",
+                path="events",
                 primary_key=None,
                 cursor_field="offset",
                 supports_incremental=False,
@@ -41,6 +44,7 @@ class GoogleAnalyticsApiConnector(HttpApiConnector):
             resource=ApiResource(
                 name="pages",
                 label="Pages",
+                path="pages",
                 primary_key=None,
                 cursor_field="offset",
                 supports_incremental=False,
@@ -51,6 +55,7 @@ class GoogleAnalyticsApiConnector(HttpApiConnector):
             resource=ApiResource(
                 name="sessions",
                 label="Sessions",
+                path="sessions",
                 primary_key=None,
                 cursor_field="offset",
                 supports_incremental=False,
@@ -61,6 +66,7 @@ class GoogleAnalyticsApiConnector(HttpApiConnector):
             resource=ApiResource(
                 name="traffic_sources",
                 label="Traffic Sources",
+                path="traffic_sources",
                 primary_key=None,
                 cursor_field="offset",
                 supports_incremental=False,
@@ -122,11 +128,6 @@ class GoogleAnalyticsApiConnector(HttpApiConnector):
             limit=page_size,
         )
         records, row_count = self._records_from_report(payload)
-        flattened_records, child_records = flatten_api_records(
-            resource_name=resource_name,
-            records=records,
-            primary_key=None,
-        )
         next_cursor = None
         if offset + len(records) < row_count:
             next_cursor = str(offset + len(records))
@@ -134,9 +135,14 @@ class GoogleAnalyticsApiConnector(HttpApiConnector):
         return ApiExtractResult(
             resource=resource_name,
             status="success",
-            records=flattened_records,
+            records=records,
             next_cursor=next_cursor,
-            child_records=child_records,
+            child_resources=list(
+                describe_api_child_resources(
+                    resource_path=resource_name,
+                    records=records,
+                )
+            ),
         )
 
     async def _run_report(

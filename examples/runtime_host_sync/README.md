@@ -58,13 +58,12 @@ curl http://localhost:8000/api/runtime/v1/connectors/billing_demo/sync/resources
 You should see `customers` with `status` set to `never_synced` and
 `dataset_names` including `billing_customers`.
 
-## Run A Sync
+## Run Dataset Sync
 
 ```bash
-SYNC_RESPONSE=$(curl -s -X POST http://localhost:8000/api/runtime/v1/connectors/billing_demo/sync \
+SYNC_RESPONSE=$(curl -s -X POST http://localhost:8000/api/runtime/v1/datasets/billing_customers/sync \
   -H "Content-Type: application/json" \
   -d '{
-    "resource_names": ["customers"],
     "sync_mode": "INCREMENTAL"
   }')
 
@@ -102,7 +101,7 @@ curl -X POST "http://localhost:8000/api/runtime/v1/datasets/${DATASET_NAME}/prev
 ```bash
 langbridge connectors list --url http://localhost:8000
 langbridge sync resources --url http://localhost:8000 --connector billing_demo
-langbridge sync run --url http://localhost:8000 --connector billing_demo --resource customers
+langbridge sync run --url http://localhost:8000 --dataset "$DATASET_NAME"
 langbridge sync states --url http://localhost:8000 --connector billing_demo
 langbridge datasets list --url http://localhost:8000
 langbridge datasets preview --url http://localhost:8000 --dataset "$DATASET_NAME" --limit 5
@@ -112,7 +111,7 @@ langbridge datasets preview --url http://localhost:8000 --dataset "$DATASET_NAME
 
 - runtime sync state is workspace-scoped inside the runtime
 - the resulting synced dataset is owned by the runtime, not by a cloud control plane
-- this example shows a config-defined synced dataset that is materialized and refreshed by connector sync
+- this example shows a config-defined synced dataset that is materialized and refreshed from the dataset surface
 - preview/query will fail honestly until the first sync populates the dataset
 - if you later enable host auth, send a bearer token and see `docs/deployment/self-hosted.md`
 - remove all persisted example state with `docker compose down -v`

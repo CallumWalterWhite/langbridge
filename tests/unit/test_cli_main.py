@@ -198,7 +198,11 @@ def test_cli_serve_rejects_unknown_feature(tmp_path: Path, capsys) -> None:
 
 def test_cli_supports_local_sync_commands(tmp_path: Path, capsys) -> None:
     with mock_stripe_api() as api_base_url, runtime_storage_dirs(tmp_path):
-        config_path = write_sync_runtime_config(tmp_path, api_base_url=api_base_url)
+        config_path = write_sync_runtime_config(
+            tmp_path,
+            api_base_url=api_base_url,
+            declared_synced_datasets=[{"name": "billing_customers", "resource": "customers"}],
+        )
 
         exit_code = main(["connectors", "list", "--config", str(config_path)])
         assert exit_code == 0
@@ -211,15 +215,14 @@ def test_cli_supports_local_sync_commands(tmp_path: Path, capsys) -> None:
                 "run",
                 "--config",
                 str(config_path),
-                "--connector",
-                "billing_demo",
-                "--resource",
-                "customers",
+                "--dataset",
+                "billing_customers",
             ]
         )
         assert exit_code == 0
         sync_payload = json.loads(capsys.readouterr().out)
         assert sync_payload["status"] == "succeeded"
+        assert sync_payload["dataset_name"] == "billing_customers"
         assert sync_payload["resources"][0]["resource_name"] == "customers"
 
         exit_code = main(
