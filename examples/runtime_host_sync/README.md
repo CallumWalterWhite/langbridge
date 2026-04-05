@@ -4,7 +4,8 @@ This example runs a self-hosted Langbridge runtime host next to a local
 Stripe-like mock API and syncs the declared `billing_customers` dataset from the
 `customers` resource.
 The declared synced dataset uses `materialization_mode: synced` with
-`sync.resource: customers`.
+`sync.source.resource: customers`, a scheduled `sync.cadence: 5m`, and
+`sync.sync_on_start: true`.
 
 ## What This Example Starts
 
@@ -71,6 +72,16 @@ printf '%s\n' "$SYNC_RESPONSE"
 ```
 
 The sync response returns the declared dataset name in `resources[0].dataset_names[0]`.
+
+## Scheduled Sync Behavior
+
+This example also enables dataset-owned background sync in the runtime host.
+
+- `sync.cadence: 5m` registers a runtime background task named
+  `dataset-sync:billing_customers`
+- `sync.sync_on_start: true` runs the same dataset sync once during runtime host startup
+- supported cadence values in this slice use interval shorthands such as `30s`,
+  `5m`, `1h`, and `1d`
 
 ## Inspect Sync State
 

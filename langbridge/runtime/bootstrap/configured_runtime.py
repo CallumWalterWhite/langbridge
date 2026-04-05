@@ -114,6 +114,7 @@ from langbridge.connectors.base import (
     ApiConnectorFactory,
     ConnectorSyncStrategy,
     ConnectorRuntimeType,
+    SqlConnectorFactory,
     get_connector_config_factory,
     get_connector_plugin,
     list_connector_plugins
@@ -134,6 +135,7 @@ from langbridge.semantic.loader import (
 )
 from langbridge.semantic.model import SemanticModel
 from langbridge.semantic.query import SemanticQuery
+from langbridge.runtime.utils.lineage import stable_payload_hash
 
 
 @dataclass(slots=True, frozen=True)
@@ -261,6 +263,60 @@ def _merge_dataset_tags(*, existing: list[str], required: list[str]) -> list[str
         seen.add(normalized)
         merged.append(tag)
     return merged
+
+
+def _sync_source_key(*, source: DatasetSource) -> str:
+    if source.resource:
+        return f"resource:{str(source.resource).strip()}"
+    if source.table:
+        return f"table:{str(source.table).strip()}"
+    if source.sql:
+        return f"sql:{stable_payload_hash(str(source.sql).strip())}"
+    if source.storage_uri:
+        return f"storage:{str(source.storage_uri).strip()}"
+    raise ValueError("Synced datasets must define sync.source.")
+
+
+def _sync_source_tags(*, connector: ConnectorMetadata, source: DatasetSource) -> list[str]:
+    connector_type = (
+        connector.connector_type_value.lower()
+        if connector.connector_type_value is not None
+        else ""
+    )
+    if source.resource:
+        return [
+            "managed",
+            "api-connector",
+            connector_type,
+            f"resource:{str(source.resource).strip().lower()}",
+        ]
+    if source.table:
+        return [
+            "managed",
+            "database-connector",
+            connector_type,
+            f"table:{str(source.table).strip().lower()}",
+        ]
+    if source.sql:
+        return [
+            "managed",
+            "database-connector",
+            connector_type,
+            "sql-sync",
+        ]
+    return ["managed", connector_type]
+
+
+def _sync_source_description(*, source: DatasetSource) -> str:
+    if source.resource:
+        return f"resource path '{str(source.resource).strip()}'"
+    if source.table:
+        return f"table '{str(source.table).strip()}'"
+    if source.sql:
+        return "SQL query"
+    if source.storage_uri:
+        return f"storage source '{str(source.storage_uri).strip()}'"
+    return "sync source"
 
 
 class ConfiguredLocalRuntimeHost(RuntimeHost):
@@ -1342,7 +1398,8 @@ class ConfiguredLocalRuntimeHost(RuntimeHost):
         bindings: dict[str, list[DatasetMetadata]] = {}
         for dataset in datasets:
             sync_config = dict(dataset.sync_json or {})
-            resource_name = str(sync_config.get("resource") or "").strip()
+            source = dict(sync_config.get("source") or {})
+            resource_name = str(source.get("resource") or "").strip()
             if not resource_name:
                 continue
             bindings.setdefault(resource_name, []).append(dataset)
@@ -1943,7 +2000,7 @@ class ConfiguredLocalRuntimeHostFactory:
     ) -> tuple[dict[str, DatasetMetadata], dict[str, LocalRuntimeDatasetRecord]]:
         datasets: dict[str, DatasetMetadata] = {}
         dataset_records: dict[str, LocalRuntimeDatasetRecord] = {}
-        synced_resource_bindings: set[tuple[uuid.UUID, str]] = set()
+        synced_source_bindings: set[tuple[uuid.UUID, str]] = set()
         now = datetime.now(timezone.utc)
         for dataset in config.datasets:
             materialization_mode = resolve_dataset_materialization_mode(
@@ -1975,16 +2032,42 @@ class ConfiguredLocalRuntimeHostFactory:
             )
             if source_storage_uri is None and source_config is not None and source_config.path:
                 source_storage_uri = Path(str(source_config.path)).resolve().as_uri()
-            sync_resource_name = (
-                normalize_api_resource_path(str(sync_config.resource or "").strip())
-                if sync_config is not None and str(sync_config.resource or "").strip()
-                else ""
-            )
-            sync_flatten_paths = (
-                normalize_api_flatten_paths(sync_config.flatten)
-                if sync_config is not None
-                else []
-            )
+            sync_source_config = sync_config.source if sync_config is not None else None
+            sync_source: DatasetSource | None = None
+            sync_source_key: str | None = None
+            if sync_source_config is not None:
+                sync_source_payload: dict[str, Any] = {}
+                sync_table = str(sync_source_config.table or "").strip()
+                sync_resource = str(sync_source_config.resource or "").strip()
+                sync_sql = str(sync_source_config.sql or "").strip()
+                sync_storage_uri = str(sync_source_config.storage_uri or "").strip() or None
+                if sync_storage_uri is None and sync_source_config.path:
+                    sync_storage_uri = Path(str(sync_source_config.path)).resolve().as_uri()
+                if sync_table:
+                    sync_source_payload["table"] = sync_table
+                elif sync_resource:
+                    sync_source_payload["resource"] = normalize_api_resource_path(sync_resource)
+                    flatten_paths = normalize_api_flatten_paths(sync_source_config.flatten)
+                    if flatten_paths:
+                        sync_source_payload["flatten"] = flatten_paths
+                elif sync_sql:
+                    sync_source_payload["sql"] = sync_sql
+                elif sync_storage_uri:
+                    sync_source_payload["storage_uri"] = sync_storage_uri
+                    requested_format = str(
+                        sync_source_config.format or sync_source_config.file_format or ""
+                    ).strip().lower()
+                    if requested_format:
+                        sync_source_payload["format"] = requested_format
+                    if sync_source_config.header is not None:
+                        sync_source_payload["header"] = sync_source_config.header
+                    if sync_source_config.delimiter is not None:
+                        sync_source_payload["delimiter"] = sync_source_config.delimiter
+                    if sync_source_config.quote is not None:
+                        sync_source_payload["quote"] = sync_source_config.quote
+                if sync_source_payload:
+                    sync_source = DatasetSource.model_validate(sync_source_payload)
+                    sync_source_key = _sync_source_key(source=sync_source)
             requires_connector = (
                 materialization_mode == DatasetMaterializationMode.SYNCED
                 or bool(source_table or source_resource_name or source_sql)
@@ -2017,18 +2100,37 @@ class ConfiguredLocalRuntimeHostFactory:
                         f"Dataset '{dataset.name}' requests materialization_mode 'synced', "
                         f"but connector '{connector.name}' does not support synced datasets."
                     )
-                plugin = ConfiguredLocalRuntimeHostFactory._resolve_connector_plugin_for_type(
-                    connector.connector_type_value
-                )
-                if plugin is None or plugin.api_connector_class is None:
+                if sync_source is None:
                     raise ValueError(
                         f"Dataset '{dataset.name}' requests materialization_mode 'synced', "
-                        f"but connector '{connector.name}' does not expose a runtime sync path yet."
+                        "but is missing sync.source."
                     )
-                if not sync_resource_name:
+                if sync_source.resource:
+                    plugin = ConfiguredLocalRuntimeHostFactory._resolve_connector_plugin_for_type(
+                        connector.connector_type_value
+                    )
+                    if plugin is None or plugin.api_connector_class is None:
+                        raise ValueError(
+                            f"Dataset '{dataset.name}' uses an API sync source, "
+                            f"but connector '{connector.name}' does not expose a runtime API sync path yet."
+                        )
+                elif sync_source.table or sync_source.sql:
+                    if not connector_capabilities.supports_query_pushdown:
+                        raise ValueError(
+                            f"Dataset '{dataset.name}' uses a SQL/table sync source, "
+                            f"but connector '{connector.name}' does not expose SQL query execution."
+                        )
+                    try:
+                        SqlConnectorFactory.get_sql_connector_class_reference(connector.connector_type)
+                    except ValueError as exc:
+                        raise ValueError(
+                            f"Dataset '{dataset.name}' uses a SQL/table sync source, "
+                            f"but connector '{connector.name}' does not expose a SQL sync runtime path yet."
+                        ) from exc
+                else:
                     raise ValueError(
-                        f"Dataset '{dataset.name}' requests materialization_mode 'synced', "
-                        "but is missing sync.resource for the connector resource name."
+                        f"Dataset '{dataset.name}' uses unsupported sync.source shape. "
+                        "Supported synced sources are resource, table, and sql."
                     )
                 sync_strategy = (
                     sync_config.strategy
@@ -2051,23 +2153,23 @@ class ConfiguredLocalRuntimeHostFactory:
                         f"but connector '{connector.name}' does not support incremental sync."
                     )
                 sync_contract = DatasetSyncConfig(
-                    resource=sync_resource_name,
-                    flatten=sync_flatten_paths or None,
+                    source=sync_source.model_dump(mode="json", exclude_none=True),
                     strategy=sync_strategy,
                     cadence=str(sync_config.cadence or "").strip() or None,
+                    sync_on_start=bool(sync_config.sync_on_start),
                     cursor_field=str(sync_config.cursor_field or "").strip() or None,
                     initial_cursor=str(sync_config.initial_cursor or "").strip() or None,
                     lookback_window=str(sync_config.lookback_window or "").strip() or None,
                     backfill_start=str(sync_config.backfill_start or "").strip() or None,
                     backfill_end=str(sync_config.backfill_end or "").strip() or None,
                 )
-                binding_key = (connector.id, sync_resource_name)
-                if binding_key in synced_resource_bindings:
+                binding_key = (connector.id, str(sync_source_key or ""))
+                if binding_key in synced_source_bindings:
                     raise ValueError(
-                        f"Connector '{connector.name}' has multiple datasets bound to sync.resource "
-                        f"'{sync_resource_name}'. Resource paths must be unique per connector."
+                        f"Connector '{connector.name}' has multiple datasets bound to sync.source "
+                        f"'{sync_source_key}'. Sync source keys must be unique per connector."
                     )
-                synced_resource_bindings.add(binding_key)
+                synced_source_bindings.add(binding_key)
             elif connector is not None and not connector_capabilities.supports_live_datasets and requires_connector:
                 raise ValueError(
                     f"Dataset '{dataset.name}' requests materialization_mode 'live', "
@@ -2083,7 +2185,14 @@ class ConfiguredLocalRuntimeHostFactory:
                 dataset_type = DatasetType.FILE
                 sql_text = None
                 storage_kind = DatasetStorageKind.PARQUET
-                source_kind = DatasetSourceKind.API
+                if sync_source is None:
+                    raise ValueError(f"Dataset '{dataset.name}' is missing sync.source.")
+                if sync_source.resource:
+                    source_kind = DatasetSourceKind.API
+                elif sync_source.table or sync_source.sql:
+                    source_kind = DatasetSourceKind.DATABASE
+                else:
+                    source_kind = DatasetSourceKind.FILE
                 dialect = "duckdb"
                 storage_uri = None
                 file_config = {
@@ -2246,7 +2355,8 @@ class ConfiguredLocalRuntimeHostFactory:
                 description=(
                     dataset.description
                     or (
-                        f"Configured synced dataset awaiting dataset sync for resource path '{sync_resource_name}'."
+                        "Configured synced dataset awaiting dataset sync for "
+                        f"{_sync_source_description(source=sync_source)}."
                         if materialization_mode == DatasetMaterializationMode.SYNCED
                         else None
                     )
@@ -2254,12 +2364,7 @@ class ConfiguredLocalRuntimeHostFactory:
                 tags=_merge_dataset_tags(
                     existing=list(dataset.tags),
                     required=(
-                        [
-                            "managed",
-                            "api-connector",
-                            connector.connector_type_value.lower(),
-                            f"resource:{sync_resource_name.strip().lower()}",
-                        ]
+                        _sync_source_tags(connector=connector, source=sync_source)
                         if materialization_mode == DatasetMaterializationMode.SYNCED
                         else []
                     ),
@@ -3024,6 +3129,7 @@ class ConfiguredLocalRuntimeHostFactory:
             dataset_policy_repository=dataset_policy_repository,
             dataset_revision_repository=dataset_revision_repository,
             lineage_edge_repository=lineage_edge_repository,
+            secret_provider_registry=secret_provider_registry,
         )
         agent_execution_service = (
             AgentExecutionService(

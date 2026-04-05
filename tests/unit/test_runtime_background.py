@@ -10,6 +10,8 @@ from langbridge.runtime.hosting import (
     BackgroundTaskSchedule,
     RuntimeBackgroundTaskDefinition,
     RuntimeBackgroundTaskManager,
+    background_task_schedule_from_dataset_cadence,
+    build_dataset_sync_default_task,
     build_semantic_vector_refresh_default_task,
     create_runtime_api_app,
 )
@@ -41,6 +43,20 @@ class RecordingSemanticVectorSearchService:
         return "Semantic vector refresh requires an embedding provider."
 
 
+class RecordingDatasetSyncHost:
+    def __init__(self) -> None:
+        self.calls: list[dict[str, object]] = []
+        self.context = RuntimeContext.build(
+            workspace_id=uuid.uuid4(),
+            actor_id=uuid.uuid4(),
+            roles=["runtime:operator"],
+        )
+
+    async def sync_dataset(self, **kwargs):
+        self.calls.append(dict(kwargs))
+        return {"ok": True}
+
+
 def _build_runtime_host(
     *,
     semantic_vector_search: object | None = None,
@@ -51,9 +67,22 @@ def _build_runtime_host(
             actor_id=uuid.uuid4(),
             roles=["runtime:operator"],
         ),
-        providers=RuntimeProviders(),
+        providers=RuntimeProviders(
+            dataset_metadata=object(),
+            connector_metadata=object(),
+            semantic_models=object(),
+            semantic_vector_indexes=object(),
+            sync_state=object(),
+            credentials=object(),
+        ),
         services=RuntimeServices(
+            federated_query_tool=object(),
+            semantic_query=object(),  # type: ignore[arg-type]
             semantic_vector_search=semantic_vector_search,  # type: ignore[arg-type]
+            sql_query=object(),  # type: ignore[arg-type]
+            dataset_query=object(),  # type: ignore[arg-type]
+            dataset_sync=object(),  # type: ignore[arg-type]
+            agent_execution=object(),  # type: ignore[arg-type]
         ),
     )
 
@@ -203,3 +232,44 @@ def test_runtime_api_app_skips_semantic_vector_refresh_task_when_service_cannot_
 
     task_names = [task.name for task in app.state.runtime_background_tasks.default_tasks]
     assert "semantic-vector-refresh" not in task_names
+
+
+def test_dataset_sync_cadence_builds_interval_schedule() -> None:
+    assert background_task_schedule_from_dataset_cadence("5m") == (
+        BackgroundTaskSchedule.interval(seconds=300)
+    )
+    assert background_task_schedule_from_dataset_cadence("1D") == (
+        BackgroundTaskSchedule.interval(seconds=86400)
+    )
+
+
+def test_dataset_sync_cadence_rejects_invalid_values() -> None:
+    with pytest.raises(
+        ValueError,
+        match="Unsupported dataset sync cadence 'every five minutes'",
+    ):
+        background_task_schedule_from_dataset_cadence("every five minutes")
+
+
+@pytest.mark.anyio
+async def test_dataset_sync_default_task_uses_runtime_host_dataset_sync() -> None:
+    runtime_host = RecordingDatasetSyncHost()
+    manager = RuntimeBackgroundTaskManager(runtime_host=runtime_host)  # type: ignore[arg-type]
+    manager.register_default_task(
+        build_dataset_sync_default_task(
+            dataset_ref="dataset-123",
+            dataset_name="billing_customers",
+            schedule=background_task_schedule_from_dataset_cadence("5m"),
+            run_on_startup=True,
+        )
+    )
+
+    await manager._execute_definition_by_name("dataset-sync:billing_customers")
+
+    assert runtime_host.calls == [
+        {
+            "dataset_ref": "dataset-123",
+            "sync_mode": "INCREMENTAL",
+            "force_full_refresh": False,
+        }
+    ]

@@ -431,11 +431,17 @@ class DatasetExecutionResolver:
             materialization_mode = DatasetExecutionResolver._materialization_mode(dataset)
             if materialization_mode.value == "synced":
                 sync_config = dict(dataset.sync_json or {})
-                resource_name = str(sync_config.get("resource") or "").strip()
-                resource_detail = f" (resource path '{resource_name}')" if resource_name else ""
+                sync_source = dict(sync_config.get("source") or {})
+                source_detail = ""
+                if str(sync_source.get("resource") or "").strip():
+                    source_detail = f" (resource path '{str(sync_source.get('resource')).strip()}')"
+                elif str(sync_source.get("table") or "").strip():
+                    source_detail = f" (table '{str(sync_source.get('table')).strip()}')"
+                elif str(sync_source.get("sql") or "").strip():
+                    source_detail = " (SQL query source)"
                 raise ExecutionValidationError(
                     f"Synced dataset '{dataset.name}' has not been populated yet. "
-                    f"Run dataset sync for dataset '{dataset.name}'{resource_detail} before querying it."
+                    f"Run dataset sync for dataset '{dataset.name}'{source_detail} before querying it."
                 )
             raise ExecutionValidationError(f"FILE dataset '{dataset.id}' is missing storage_uri.")
         return storage_uri

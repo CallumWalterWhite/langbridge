@@ -1,132 +1,85 @@
-
-import importlib.util
+import logging
 import sys
 import types
 
 
-def _find_optional_spec(module_name: str):
-    try:
-        return importlib.util.find_spec(module_name)
-    except ModuleNotFoundError:
-        return None
+def _ensure_opentelemetry_stub() -> None:
+    if "opentelemetry" in sys.modules:
+        return
 
+    class _NoopExporter:
+        def __init__(self, *args, **kwargs) -> None:  # noqa: ANN002, ANN003
+            pass
 
-if _find_optional_spec("redis.asyncio") is None:
-    redis_module = types.ModuleType("redis")
-    redis_asyncio_module = types.ModuleType("redis.asyncio")
-    redis_exceptions_module = types.ModuleType("redis.exceptions")
+    class _NoopProcessor:
+        def __init__(self, *args, **kwargs) -> None:  # noqa: ANN002, ANN003
+            pass
 
-    class _FakeRedis:
-        @classmethod
-        def from_url(cls, *args, **kwargs):
-            return cls()
-
-    class _RedisError(Exception):
-        pass
-
-    class _ResponseError(_RedisError):
-        pass
-
-    redis_asyncio_module.Redis = _FakeRedis
-    redis_module.asyncio = redis_asyncio_module
-    redis_exceptions_module.RedisError = _RedisError
-    redis_exceptions_module.ResponseError = _ResponseError
-    sys.modules["redis"] = redis_module
-    sys.modules["redis.asyncio"] = redis_asyncio_module
-    sys.modules["redis.exceptions"] = redis_exceptions_module
-
-
-if _find_optional_spec("pyarrow") is None:
-    pyarrow_module = types.ModuleType("pyarrow")
-    pyarrow_ipc_module = types.ModuleType("pyarrow.ipc")
-    pyarrow_parquet_module = types.ModuleType("pyarrow.parquet")
-
-    class _FakeArrowBuffer:
-        def to_pybytes(self) -> bytes:
-            return b""
-
-    class _FakeBufferOutputStream:
-        def getvalue(self) -> _FakeArrowBuffer:
-            return _FakeArrowBuffer()
-
-    class _FakeArrowTable:
-        num_rows = 0
-        schema = None
-
-    class _FakeStreamWriter:
-        def __enter__(self):
-            return self
-
-        def __exit__(self, exc_type, exc, tb):
-            return False
-
-        def write_table(self, table) -> None:
-            _ = table
-
-    def _table(*args, **kwargs):
-        return _FakeArrowTable()
-
-    def _new_stream(*args, **kwargs):
-        return _FakeStreamWriter()
-
-    def _read_table(*args, **kwargs):
-        return _FakeArrowTable()
-
-    def _write_table(*args, **kwargs) -> None:
-        return None
-
-    pyarrow_module.Table = _FakeArrowTable
-    pyarrow_module.BufferOutputStream = _FakeBufferOutputStream
-    pyarrow_module.table = _table
-    pyarrow_module.__version__ = "0.0.0"
-    pyarrow_ipc_module.new_stream = _new_stream
-    pyarrow_parquet_module.read_table = _read_table
-    pyarrow_parquet_module.write_table = _write_table
-
-    sys.modules["pyarrow"] = pyarrow_module
-    sys.modules["pyarrow.ipc"] = pyarrow_ipc_module
-    sys.modules["pyarrow.parquet"] = pyarrow_parquet_module
-
-
-if _find_optional_spec("duckdb") is None:
-    duckdb_module = types.ModuleType("duckdb")
-
-    class _FakeDuckDbConnection:
-        def execute(self, *args, **kwargs):
-            return self
-
-        def fetch_arrow_table(self):
-            return sys.modules["pyarrow"].table({})
-
-        def fetchall(self):
-            return []
-
-        def close(self) -> None:
+    class _NoopInstrumentor:
+        def instrument(self, *args, **kwargs) -> None:  # noqa: ANN002, ANN003
             return None
 
-    def _connect(*args, **kwargs):
-        return _FakeDuckDbConnection()
+    class _LoggerProvider:
+        def __init__(self, *args, **kwargs) -> None:  # noqa: ANN002, ANN003
+            pass
 
-    duckdb_module.connect = _connect
-    duckdb_module.DuckDBPyConnection = _FakeDuckDbConnection
-    sys.modules["duckdb"] = duckdb_module
+        def add_log_record_processor(self, *args, **kwargs) -> None:  # noqa: ANN002, ANN003
+            return None
+
+    class _LoggingHandler(logging.Handler):
+        def __init__(self, *args, **kwargs) -> None:  # noqa: ANN002, ANN003
+            super().__init__()
+
+    class _Resource:
+        @classmethod
+        def create(cls, *_args, **_kwargs):  # noqa: ANN002, ANN003
+            return cls()
+
+    class _TracerProvider:
+        def __init__(self, *args, **kwargs) -> None:  # noqa: ANN002, ANN003
+            pass
+
+        def add_span_processor(self, *args, **kwargs) -> None:  # noqa: ANN002, ANN003
+            return None
+
+    opentelemetry = types.ModuleType("opentelemetry")
+    opentelemetry._logs = types.SimpleNamespace(set_logger_provider=lambda *_args, **_kwargs: None)
+    opentelemetry.trace = types.SimpleNamespace(set_tracer_provider=lambda *_args, **_kwargs: None)
+
+    modules = {
+        "opentelemetry": opentelemetry,
+        "opentelemetry.exporter": types.ModuleType("opentelemetry.exporter"),
+        "opentelemetry.exporter.otlp": types.ModuleType("opentelemetry.exporter.otlp"),
+        "opentelemetry.exporter.otlp.proto": types.ModuleType("opentelemetry.exporter.otlp.proto"),
+        "opentelemetry.exporter.otlp.proto.grpc": types.ModuleType("opentelemetry.exporter.otlp.proto.grpc"),
+        "opentelemetry.exporter.otlp.proto.grpc._log_exporter": types.ModuleType("opentelemetry.exporter.otlp.proto.grpc._log_exporter"),
+        "opentelemetry.exporter.otlp.proto.grpc.trace_exporter": types.ModuleType("opentelemetry.exporter.otlp.proto.grpc.trace_exporter"),
+        "opentelemetry.exporter.otlp.proto.http": types.ModuleType("opentelemetry.exporter.otlp.proto.http"),
+        "opentelemetry.exporter.otlp.proto.http._log_exporter": types.ModuleType("opentelemetry.exporter.otlp.proto.http._log_exporter"),
+        "opentelemetry.exporter.otlp.proto.http.trace_exporter": types.ModuleType("opentelemetry.exporter.otlp.proto.http.trace_exporter"),
+        "opentelemetry.instrumentation": types.ModuleType("opentelemetry.instrumentation"),
+        "opentelemetry.instrumentation.logging": types.ModuleType("opentelemetry.instrumentation.logging"),
+        "opentelemetry.sdk": types.ModuleType("opentelemetry.sdk"),
+        "opentelemetry.sdk._logs": types.ModuleType("opentelemetry.sdk._logs"),
+        "opentelemetry.sdk._logs.export": types.ModuleType("opentelemetry.sdk._logs.export"),
+        "opentelemetry.sdk.resources": types.ModuleType("opentelemetry.sdk.resources"),
+        "opentelemetry.sdk.trace": types.ModuleType("opentelemetry.sdk.trace"),
+        "opentelemetry.sdk.trace.export": types.ModuleType("opentelemetry.sdk.trace.export"),
+    }
+
+    modules["opentelemetry.exporter.otlp.proto.grpc._log_exporter"].OTLPLogExporter = _NoopExporter
+    modules["opentelemetry.exporter.otlp.proto.grpc.trace_exporter"].OTLPSpanExporter = _NoopExporter
+    modules["opentelemetry.exporter.otlp.proto.http._log_exporter"].OTLPLogExporter = _NoopExporter
+    modules["opentelemetry.exporter.otlp.proto.http.trace_exporter"].OTLPSpanExporter = _NoopExporter
+    modules["opentelemetry.instrumentation.logging"].LoggingInstrumentor = _NoopInstrumentor
+    modules["opentelemetry.sdk._logs"].LoggerProvider = _LoggerProvider
+    modules["opentelemetry.sdk._logs"].LoggingHandler = _LoggingHandler
+    modules["opentelemetry.sdk._logs.export"].BatchLogRecordProcessor = _NoopProcessor
+    modules["opentelemetry.sdk.resources"].Resource = _Resource
+    modules["opentelemetry.sdk.trace"].TracerProvider = _TracerProvider
+    modules["opentelemetry.sdk.trace.export"].BatchSpanProcessor = _NoopProcessor
+
+    sys.modules.update(modules)
 
 
-if _find_optional_spec("jose") is None:
-    jose_module = types.ModuleType("jose")
-
-    class _JWTError(Exception):
-        pass
-
-    class _JwtFacade:
-        @staticmethod
-        def encode(*args, **kwargs):
-            return "token"
-
-        @staticmethod
-        def decode(*args, **kwargs):
-            return {}
-
-    jose_module.JWTError = _JWTError
-    jose_module.jwt = _JwtFacade()
-    sys.modules["jose"] = jose_module
+_ensure_opentelemetry_stub()

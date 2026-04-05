@@ -23,6 +23,12 @@ from langbridge.orchestrator.runtime.response_formatter import (  # noqa: E402
     ResponseFormatter,
     ResponsePresentation,
 )
+from langbridge.orchestrator.tools.sql_analyst.interfaces import (  # noqa: E402
+    AnalystExecutionOutcome,
+    AnalystOutcomeStage,
+    AnalystOutcomeStatus,
+    AnalystQueryResponse,
+)
 
 
 class _FakeProvider(LLMProvider):
@@ -195,3 +201,50 @@ def test_summarize_response_includes_grounded_analytical_context_for_analyst_mod
     assert "Key analytical facts:" in human_prompt
     assert "Observed facts:" in human_prompt
     assert "Interpret the result instead of restating the table." in human_prompt
+
+
+def test_summarize_response_includes_structured_analyst_outcome_context() -> None:
+    provider = _FakeProvider("Handled failure.")
+    formatter = ResponseFormatter()
+    presentation = ResponsePresentation(
+        prompt_contract=PromptContract(system_prompt="System prompt"),
+        output_schema=OutputSchema(format=OutputFormat.text),
+        guardrails=GuardrailConfig(),
+        response_mode=ResponseMode.analyst,
+    )
+
+    result = asyncio.run(
+        formatter.summarize_response(
+            provider,
+            "Revenue by region",
+            {
+                "analyst_result": AnalystQueryResponse(
+                    analysis_path="dataset",
+                    execution_mode="federated",
+                    asset_type="dataset",
+                    asset_id="dataset-1",
+                    asset_name="sales_dataset",
+                    sql_canonical="select revenue from sales",
+                    sql_executable="select revenue from sales",
+                    dialect="postgres",
+                    error="Canonical SQL failed to parse.",
+                    outcome=AnalystExecutionOutcome(
+                        status=AnalystOutcomeStatus.query_error,
+                        stage=AnalystOutcomeStage.query,
+                        message="Canonical SQL failed to parse.",
+                        recoverable=False,
+                        terminal=True,
+                        retry_attempted=True,
+                        retry_count=1,
+                    ),
+                ),
+                "result": {"columns": ["region", "revenue"], "rows": []},
+            },
+            presentation=presentation,
+        )
+    )
+
+    assert result == "Handled failure."
+    human_prompt = str(provider.calls[0]["messages"][-1].content)
+    assert "Analyst outcome:" in human_prompt
+    assert "status=query_error" in human_prompt

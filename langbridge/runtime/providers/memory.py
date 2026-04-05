@@ -270,7 +270,7 @@ class MemorySyncStateProvider(SyncStateProvider):
             ).lower()
         )
         state.error_message = str(kwargs.get("error_message") or "")
-        key = (state.workspace_id, state.connection_id, state.resource_name)
+        key = (state.workspace_id, state.connection_id, state.source_key)
         self._states[key] = state
 
 

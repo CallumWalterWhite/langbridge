@@ -31,9 +31,10 @@ datasets:
     connector: shopify_demo
     materialization_mode: synced
     sync:
-      resource: customers
-      flatten:
-        - default_address
+      source:
+        resource: customers
+        flatten:
+          - default_address
       strategy: INCREMENTAL
 
   - name: shopify_synced_product_options
@@ -41,7 +42,8 @@ datasets:
     connector: shopify_demo
     materialization_mode: synced
     sync:
-      resource: products.options
+      source:
+        resource: products.options
       strategy: INCREMENTAL
 
   - name: shopify_synced_price_rules
@@ -49,5 +51,6 @@ datasets:
     connector: shopify_demo
     materialization_mode: synced
     sync:
-      resource: price_rules
+      source:
+        resource: price_rules
       strategy: FULL_REFRESH

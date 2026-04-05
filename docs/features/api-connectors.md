@@ -57,8 +57,9 @@ The V1 sync model is dataset-owned and explicit:
 
 - connector discovery reports resource structure, but does not create datasets
 - sync only materializes datasets that already exist in config or were intentionally created through runtime dataset APIs
-- `sync.resource` and `source.resource` use canonical dot-separated resource paths such as `orders`, `orders.line_items`, or `accounts.owner`
-- `sync.flatten` and `source.flatten` explicitly flatten supported 1:1 child objects into a parent dataset
+- live API datasets use `source.resource` and `source.flatten`
+- synced API datasets use `sync.source.resource` and `sync.source.flatten`
+- resource paths use canonical dot-separated names such as `orders`, `orders.line_items`, or `accounts.owner`
 - 1:many children are never flattened and never silently turned into sibling datasets
 
 ## Declarative SaaS Connector Ownership
@@ -95,7 +96,8 @@ The runtime is intentionally honest about what it supports today:
 
 - config-defined SQL datasets: supported with `materialization_mode: live`
 - config-defined file datasets: supported with `materialization_mode: live`
-- config-defined synced API datasets: supported with `materialization_mode: synced` and `sync.resource` naming the resource path
+- config-defined synced API datasets: supported with `materialization_mode: synced` and `sync.source.resource` naming the resource path
+- config-defined synced SQL datasets: supported with `materialization_mode: synced` and either `sync.source.table` or `sync.source.sql`
 - runtime-managed datasets intentionally created through the runtime: supported with `materialization_mode: synced`
 - config-defined synced datasets without a runtime sync path: not supported yet
 - live API/SaaS datasets: supported when the connector exposes a runtime API execution path; Langbridge fetches the dataset-declared API resource into local DuckDB execution rather than pretending SQL pushdown exists
@@ -108,15 +110,17 @@ datasets:
     connector: shopify_demo
     materialization_mode: synced
     sync:
-      resource: customers
-      flatten:
-        - default_address
+      source:
+        resource: customers
+        flatten:
+          - default_address
 
   - name: shopify_product_options
     connector: shopify_demo
     materialization_mode: synced
     sync:
-      resource: products.options
+      source:
+        resource: products.options
 ```
 
 Connector packages under `langbridge-connectors` should stay thin and primarily

@@ -6,7 +6,9 @@ from typing import Any
 import pytest
 
 from langbridge.runtime.persistence.db.dataset import DatasetColumnRecord, DatasetRecord
+from langbridge.runtime.persistence.db.workspace import Workspace  # noqa: F401
 from langbridge.runtime.models import LifecycleState, ManagementMode, SemanticModelMetadata
+from langbridge.orchestrator.definitions.factory import AgentDefinitionFactory
 from langbridge.orchestrator.runtime.agent_orchestrator_factory import (
     AgentOrchestratorFactory,
     AgentToolConfig,
@@ -118,6 +120,7 @@ def _build_dataset(
         source_kind="database",
         connector_kind="postgres",
         storage_kind="table",
+        materialization_mode="live",
         dialect="postgres",
         catalog_name=None,
         schema_name="public",
@@ -354,3 +357,62 @@ async def test_agent_orchestrator_factory_builds_multiple_semantic_tools_from_on
 
     assert len(tools) == 2
     assert {tool.context.asset_name for tool in tools} == {"orders_model", "customers_model"}
+
+
+def test_build_supervisor_orchestrator_wires_response_presentation_from_definition() -> None:
+    definition = AgentDefinitionFactory().create_agent_definition(
+        {
+            "prompt": {"system_prompt": "Factory system prompt"},
+            "memory": {"strategy": "none"},
+            "features": {
+                "bi_copilot_enabled": False,
+                "deep_research_enabled": False,
+                "visualization_enabled": False,
+                "mcp_enabled": False,
+            },
+            "execution": {
+                "mode": "single_step",
+                "response_mode": "explainer",
+                "max_iterations": 1,
+            },
+            "output": {"format": "markdown", "markdown_template": "## Reply"},
+            "guardrails": {
+                "moderation_enabled": True,
+                "regex_denylist": ["secret"],
+                "escalation_message": "Blocked",
+            },
+            "observability": {
+                "log_level": "info",
+                "emit_traces": True,
+                "capture_prompts": True,
+            },
+        }
+    )
+    factory = AgentOrchestratorFactory(
+        semantic_model_store=_SemanticModelStore(entries={}),
+        dataset_repository=None,
+        dataset_column_repository=None,
+        federated_query_tool=None,
+    )
+    tool_config = AgentToolConfig(
+        allow_sql=False,
+        allow_web_search=False,
+        allow_deep_research=False,
+        allow_visualization=False,
+    )
+
+    supervisor = factory._build_supervisor_orchestrator(  # noqa: SLF001
+        definition=definition,
+        llm_provider=_StaticLLM("SELECT 1"),  # type: ignore[arg-type]
+        planning_constraints=factory._build_planning_constraints(tool_config, definition),  # noqa: SLF001
+        analyst_tools=[],
+        event_emitter=None,
+    )
+
+    assert supervisor.response_presentation.prompt_contract is not None
+    assert supervisor.response_presentation.prompt_contract.system_prompt == "Factory system prompt"
+    assert supervisor.response_presentation.output_schema is not None
+    assert supervisor.response_presentation.output_schema.markdown_template == "## Reply"
+    assert supervisor.response_presentation.guardrails is not None
+    assert supervisor.response_presentation.guardrails.escalation_message == "Blocked"
+    assert supervisor.response_presentation.response_mode.value == "explainer"

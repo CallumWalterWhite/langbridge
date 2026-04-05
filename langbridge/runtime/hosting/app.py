@@ -157,6 +157,10 @@ def create_runtime_api_app(
     async def lifespan(_: FastAPI):
         if odbc_server is not None:
             await odbc_server.start()
+        await _register_runtime_dataset_background_tasks(
+            task_manager=task_manager,
+            runtime_host=host,
+        )
         await task_manager.start()
         try:
             if mcp_server is None:
@@ -1274,6 +1278,26 @@ def _resolve_default_background_tasks(
             )
         )
     return tuple(tasks)
+
+
+async def _register_runtime_dataset_background_tasks(
+    *,
+    task_manager: RuntimeBackgroundTaskManager,
+    runtime_host: RuntimeHost,
+) -> None:
+    if not isinstance(runtime_host, ConfiguredLocalRuntimeHost):
+        return
+    existing_names = {
+        str(task.name or "").strip()
+        for task in task_manager.list_tasks()
+        if str(task.name or "").strip()
+    }
+    dataset_tasks = await runtime_host._applications.datasets.build_scheduled_sync_tasks()
+    for task in dataset_tasks:
+        if task.name in existing_names:
+            continue
+        task_manager.register_default_task(task)
+        existing_names.add(task.name)
 
 
 def _normalize_runtime_features(features: Iterable[str] | None) -> tuple[str, ...]:

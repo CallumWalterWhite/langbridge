@@ -1,5 +1,4 @@
 import logging
-import traceback
 import uuid
 from dataclasses import dataclass, field
 from typing import Any, Dict, Optional
@@ -32,6 +31,7 @@ from langbridge.orchestrator.agents.web_search import WebSearchAgent
 from langbridge.orchestrator.definitions import AgentDefinitionModel, ExecutionMode
 from langbridge.orchestrator.definitions.model import ToolType
 from langbridge.orchestrator.llm.provider import LLMProvider
+from langbridge.orchestrator.runtime.response_formatter import ResponsePresentation
 from langbridge.orchestrator.tools.sql_analyst import SqlAnalystTool
 from langbridge.orchestrator.tools.sql_analyst.interfaces import (
     AnalyticalColumn,
@@ -820,24 +820,6 @@ class AgentOrchestratorFactory:
             logger=self._logger,
             event_emitter=event_emitter,
         )
-
-        try:
-            print(SupervisorOrchestrator(
-                llm=llm_provider,
-                analyst_agent=analyst_agent,
-                visual_agent=visual_agent,
-                planning_agent=planning_agent,
-                reasoning_agent=reasoning_agent,
-                deep_research_agent=deep_research_agent,
-                web_search_agent=web_search_agent,
-                logger=self._logger,
-                event_emitter=event_emitter,
-                # response_mode=definition.execution.response_mode,
-            ))
-        except Exception as exc:
-            self._logger.error("Error building SupervisorOrchestrator: %s", exc, exc_info=True)
-            print(traceback.format_exc())
-        
         return SupervisorOrchestrator(
             llm=llm_provider,
             analyst_agent=analyst_agent,
@@ -848,6 +830,7 @@ class AgentOrchestratorFactory:
             web_search_agent=web_search_agent,
             logger=self._logger,
             event_emitter=event_emitter,
+            response_presentation=ResponsePresentation.from_definition(definition),
             response_mode=definition.execution.response_mode,
         )
 

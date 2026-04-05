@@ -10,8 +10,8 @@ model.
   explicit `source.flatten`, and explicit child-resource-path datasets.
 
 - `sync_resource_paths/`
-  Demonstrates synced API datasets with dataset-owned `sync.resource`,
-  explicit `sync.flatten`, explicit child-resource-path datasets, and
+  Demonstrates synced API datasets with dataset-owned `sync.source.resource`,
+  explicit `sync.source.flatten`, explicit child-resource-path datasets, and
   multiple sync commands.
 
 ## Shared Setup

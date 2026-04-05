@@ -64,13 +64,21 @@ export function ResultTable({ result, maxPreviewRows = 12 }) {
             </tr>
           </thead>
           <tbody>
-            {normalizedRows.map((row, rowIndex) => (
-              <tr key={rowIndex}>
-                {row.map((value, valueIndex) => (
-                  <td key={`${rowIndex}-${valueIndex}`}>{formatValue(value)}</td>
-                ))}
+            {normalizedRows.length > 0 ? (
+              normalizedRows.map((row, rowIndex) => (
+                <tr key={rowIndex}>
+                  {row.map((value, valueIndex) => (
+                    <td key={`${rowIndex}-${valueIndex}`}>{formatValue(value)}</td>
+                  ))}
+                </tr>
+              ))
+            ) : (
+              <tr>
+                <td className="result-table-empty-cell" colSpan={visibleColumns.length}>
+                  No preview rows were returned for this result.
+                </td>
               </tr>
-            ))}
+            )}
           </tbody>
         </table>
       </div>

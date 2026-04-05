@@ -2,20 +2,18 @@ import { useDeferredValue, useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { Bot, BrainCircuit, ShieldCheck, Workflow } from "lucide-react";
 
-import { ChartPreview } from "../components/ChartPreview";
-import { ResultTable } from "../components/ResultTable";
 import {
   DetailList,
   PageEmpty,
   Panel,
   SectionTabs,
 } from "../components/PagePrimitives";
+import { RuntimeResultPanel } from "../components/RuntimeResultPanel";
 import { useAsyncData } from "../hooks/useAsyncData";
 import { askAgent, fetchAgent, fetchAgents } from "../lib/runtimeApi";
 import { formatList, formatValue, getErrorMessage } from "../lib/format";
 import {
   buildItemRef,
-  hasRenderableVisualization,
   normalizeTabularResult,
   normalizeVisualizationSpec,
   readAgentAllowedConnectors,
@@ -34,7 +32,7 @@ export function AgentsPage() {
     "Summarize the most relevant runtime signals for this workspace.",
   );
   const [trialResponse, setTrialResponse] = useState(null);
-  const [trialError, setTrialError] = useState("");
+  const [trialError, setTrialError] = useState(null);
   const [trialRunning, setTrialRunning] = useState(false);
   const deferredSearch = useDeferredValue(search);
   const { data, loading, error, reload } = useAsyncData(fetchAgents);
@@ -103,7 +101,7 @@ export function AgentsPage() {
       return;
     }
     setTrialRunning(true);
-    setTrialError("");
+    setTrialError(null);
     setTrialResponse(null);
     try {
       const payload = await askAgent({
@@ -113,7 +111,7 @@ export function AgentsPage() {
       });
       setTrialResponse(payload);
     } catch (caughtError) {
-      setTrialError(getErrorMessage(caughtError));
+      setTrialError(caughtError);
     } finally {
       setTrialRunning(false);
     }
@@ -412,32 +410,32 @@ export function AgentsPage() {
                         ) : null}
                       </div>
                     </form>
-                    {trialError ? <div className="error-banner">{trialError}</div> : null}
-                    {trialResponse ? (
+                    {trialResponse || trialError ? (
                       <>
-                        <div className="callout">
-                          <strong>{trialResponse.summary || "Run completed"}</strong>
-                          <span>
-                            {trialResponse.thread_id
-                              ? `Thread ${trialResponse.thread_id} was created for this quick run.`
-                              : "The runtime returned a direct response."}
-                          </span>
-                        </div>
-                        {trialResult ? (
-                          <>
-                            {trialVisualization &&
-                            hasRenderableVisualization(trialResponse.visualization) ? (
-                              <ChartPreview
-                                title={trialVisualization.title}
-                                result={trialResult}
-                                visualization={trialVisualization}
-                                preferredDimension={trialVisualization.x}
-                                preferredMeasure={trialVisualization.y?.[0]}
-                              />
-                            ) : null}
-                            <ResultTable result={trialResult} maxPreviewRows={12} />
-                          </>
+                        {trialResponse?.thread_id ? (
+                          <div className="callout">
+                            <strong>Quick run thread ready</strong>
+                            <span>{`Thread ${trialResponse.thread_id} was created for this quick run.`}</span>
+                          </div>
                         ) : null}
+                        <RuntimeResultPanel
+                          summary={trialResponse?.summary}
+                          result={trialResult}
+                          visualization={trialVisualization}
+                          status={trialError ? "error" : trialResponse?.status || "ready"}
+                          errorMessage={
+                            trialError
+                              ? getErrorMessage(trialError)
+                              : trialResponse?.error?.message || ""
+                          }
+                          errorStatus={
+                            trialError?.status ||
+                            trialResponse?.error?.status ||
+                            trialResponse?.error?.status_code ||
+                            null
+                          }
+                          maxPreviewRows={12}
+                        />
                       </>
                     ) : (
                       <PageEmpty

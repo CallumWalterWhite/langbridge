@@ -25,7 +25,7 @@ class ConnectorSyncStateRepository(AsyncBaseRepository[ConnectorSyncStateRecord]
                 ConnectorSyncStateRecord.workspace_id == workspace_id,
                 ConnectorSyncStateRecord.connection_id == connection_id,
             )
-            .order_by(ConnectorSyncStateRecord.resource_name.asc(), desc(ConnectorSyncStateRecord.updated_at))
+            .order_by(ConnectorSyncStateRecord.source_key.asc(), desc(ConnectorSyncStateRecord.updated_at))
         )
         return list(result.all())
 
@@ -40,7 +40,7 @@ class ConnectorSyncStateRepository(AsyncBaseRepository[ConnectorSyncStateRecord]
             select(ConnectorSyncStateRecord).where(
                 ConnectorSyncStateRecord.workspace_id == workspace_id,
                 ConnectorSyncStateRecord.connection_id == connection_id,
-                ConnectorSyncStateRecord.resource_name == resource_name,
+                ConnectorSyncStateRecord.source_key == resource_name,
             )
         )
         return result.one_or_none()

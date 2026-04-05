@@ -245,7 +245,7 @@ class _InMemoryConnectorSyncStateRepository:
         ]
         items.sort(
             key=lambda state: (
-                str(state.resource_name or "").lower(),
+                str(state.source_key or "").lower(),
                 state.updated_at or datetime.min.replace(tzinfo=timezone.utc),
             ),
             reverse=False,
@@ -265,7 +265,7 @@ class _InMemoryConnectorSyncStateRepository:
         key = (
             instance.workspace_id,
             instance.connection_id,
-            str(instance.resource_name or "").strip(),
+            str(instance.source_key or "").strip(),
         )
         self._states[key] = instance
         return instance

@@ -68,32 +68,39 @@ datasets:
     label: Order Line Items
     description: Product-level line item facts with product hierarchy and realized margin.
     connector: commerce_warehouse
-    materialization_mode: live
+    materialization_mode: synced
     semantic_model: commerce_performance
     default_time_dimension: order_date
     tags: [commerce, product]
-    source:
-      sql: |
-        SELECT
-          li.line_id,
-          li.order_id,
-          o.order_date,
-          date(substr(o.order_date, 1, 7) || '-01') AS order_month,
-          o.customer_id,
-          o.order_channel,
-          p.product_sku,
-          p.product_name,
-          p.category,
-          p.subcategory,
-          li.quantity,
-          li.unit_price,
-          li.net_line_revenue,
-          li.line_margin
-        FROM order_items AS li
-        JOIN orders AS o
-          ON o.order_id = li.order_id
-        JOIN products AS p
-          ON p.product_sku = li.product_sku
+    sync:
+      strategy: INCREMENTAL
+      cursor_field: order_date
+      initial_cursor: "2025-01-01"
+      sync_on_start: true
+      cadence: 1h
+      source:
+        sql: |
+          SELECT
+            li.line_id,
+            li.line_id AS id,
+            li.order_id,
+            o.order_date,
+            date(substr(o.order_date, 1, 7) || '-01') AS order_month,
+            o.customer_id,
+            o.order_channel,
+            p.product_sku,
+            p.product_name,
+            p.category,
+            p.subcategory,
+            li.quantity,
+            li.unit_price,
+            li.net_line_revenue,
+            li.line_margin
+          FROM order_items AS li
+          JOIN orders AS o
+            ON o.order_id = li.order_id
+          JOIN products AS p
+            ON p.product_sku = li.product_sku
 
   - name: customer_month_revenue
     label: Customer Month Revenue

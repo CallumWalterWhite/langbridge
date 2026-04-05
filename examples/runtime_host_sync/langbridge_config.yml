@@ -30,4 +30,7 @@ datasets:
     connector: billing_demo
     materialization_mode: synced
     sync:
-      resource: customers
+      source:
+        resource: customers
+      cadence: 5m
+      sync_on_start: true

@@ -24,7 +24,9 @@ class ConnectorSyncStateRecord(Base):
         index=True,
     )
     connector_type: Mapped[str] = mapped_column(String(64), nullable=False)
-    resource_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    source_key: Mapped[str] = mapped_column(String(255), nullable=False)
+    source_kind: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    source_json: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
     sync_mode: Mapped[str] = mapped_column(String(32), nullable=False, default="INCREMENTAL")
     last_cursor: Mapped[str | None] = mapped_column(String(255), nullable=True)
     last_sync_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
@@ -51,8 +53,8 @@ class ConnectorSyncStateRecord(Base):
         UniqueConstraint(
             "workspace_id",
             "connection_id",
-            "resource_name",
-            name="uq_connector_sync_states_workspace_connection_resource",
+            "source_key",
+            name="uq_connector_sync_states_workspace_connection_source",
         ),
         Index(
             "ix_connector_sync_states_workspace_connection_updated",
@@ -61,8 +63,8 @@ class ConnectorSyncStateRecord(Base):
             "updated_at",
         ),
         Index(
-            "ix_connector_sync_states_workspace_resource",
+            "ix_connector_sync_states_workspace_source",
             "workspace_id",
-            "resource_name",
+            "source_key",
         ),
     )

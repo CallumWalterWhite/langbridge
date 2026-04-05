@@ -52,9 +52,17 @@ from langbridge.orchestrator.tools.semantic_query_builder import (
 )
 from langbridge.orchestrator.runtime.analysis_grounding import (
     build_analyst_grounding,
-    compose_analyst_summary,
 )
-from langbridge.orchestrator.tools.sql_analyst.interfaces import AnalystQueryResponse
+from langbridge.orchestrator.runtime.response_formatter import (
+    ResponseFormatter,
+    ResponsePresentation,
+)
+from langbridge.orchestrator.tools.sql_analyst.interfaces import (
+    AnalystExecutionOutcome,
+    AnalystOutcomeStage,
+    AnalystOutcomeStatus,
+    AnalystQueryResponse,
+)
 
 
 @dataclass
@@ -92,11 +100,14 @@ class SupervisorOrchestrator:
         question_classifier: Optional[QuestionClassifier] = None,
         entity_resolver: Optional[EntityResolver] = None,
         clarification_manager: Optional[ClarificationManager] = None,
+        response_formatter: Optional[ResponseFormatter] = None,
+        response_presentation: Optional[ResponsePresentation] = None,
         response_mode: ResponseMode = ResponseMode.analyst,
     ) -> None:
+        self.llm = llm
+        self.logger = logger or logging.getLogger(__name__)
         self.analyst_agent = analyst_agent
         self.visual_agent = visual_agent
-        self.logger = logger or logging.getLogger(__name__)
         self.planning_agent = planning_agent
         self.deep_research_agent = deep_research_agent
         self.web_search_agent = web_search_agent
@@ -106,7 +117,9 @@ class SupervisorOrchestrator:
         self.question_classifier = question_classifier or QuestionClassifier(llm=llm, logger=self.logger)
         self.entity_resolver = entity_resolver or EntityResolver(llm=llm, logger=self.logger)
         self.clarification_manager = clarification_manager or ClarificationManager(default_max_turns=2)
-        self.response_mode = response_mode
+        self.response_formatter = response_formatter or ResponseFormatter(logger=self.logger)
+        self.response_presentation = response_presentation or ResponsePresentation(response_mode=response_mode)
+        self.response_mode = self.response_presentation.response_mode
 
     async def run_copilot(
         self,
@@ -333,6 +346,7 @@ class SupervisorOrchestrator:
             "sql_executable": analyst_result.sql_executable,
             "sql_canonical": analyst_result.sql_canonical,
             "error": analyst_result.error,
+            "analyst_outcome": analyst_result.outcome.model_dump(mode="json") if analyst_result.outcome else None,
             "dialect": analyst_result.dialect,
             "analysis_path": analyst_result.analysis_path,
             "execution_mode": analyst_result.execution_mode,
@@ -359,17 +373,20 @@ class SupervisorOrchestrator:
             "iterations": iterations_completed,
             "final_rationale": final_decision.rationale if final_decision else None,
         }
-        summary = self._build_response_summary(
-            user_query=user_query,
-            data_payload=data_payload,
-            visualization=visualization,
-            analyst_result=analyst_result,
-            clarifying_question=artifacts.clarifying_question,
-            web_search_result=web_search_result,
-            research_result=artifacts.research_result or combined_artifacts.research_result,
-            assumptions_applied=assumptions_applied,
-            response_mode=self.response_mode,
-            analyst_grounding=analyst_grounding,
+        summary = await self.response_formatter.summarize_response(
+            self.llm,
+            user_query,
+            {
+                "analyst_result": analyst_result,
+                "result": data_payload,
+                "visualization": visualization,
+                "clarifying_question": artifacts.clarifying_question,
+                "web_search_result": web_search_result,
+                "research_result": artifacts.research_result or combined_artifacts.research_result,
+                "assumptions": assumptions_applied,
+                "diagnostics": diagnostics,
+            },
+            presentation=self.response_presentation,
         )
 
         self.logger.info(
@@ -582,7 +599,7 @@ class SupervisorOrchestrator:
                             question=str(tool_args.get("query") or user_query),
                         ),
                         "duration_ms": duration_ms,
-                        "error": self._coerce_tool_error(analyst_result.error),
+                        "error": self._coerce_tool_error(analyst_result.outcome or analyst_result.error),
                     }
                 )
                 artifacts.analyst_result = analyst_result
@@ -971,6 +988,8 @@ class SupervisorOrchestrator:
             return None
         if isinstance(error, dict):
             return error
+        if isinstance(error, AnalystExecutionOutcome):
+            return error.model_dump(mode="json")
         return {"message": str(error)}
 
     @staticmethod
@@ -1002,6 +1021,8 @@ class SupervisorOrchestrator:
             "execution_time_ms": analyst_result.execution_time_ms,
             "selected_datasets": [dataset.model_dump(mode="json") for dataset in analyst_result.selected_datasets],
         }
+        if analyst_result.outcome:
+            summary["outcome"] = analyst_result.outcome.model_dump(mode="json")
         query_result = analyst_result.result
         if query_result:
             row_count = query_result.rowcount
@@ -1017,204 +1038,9 @@ class SupervisorOrchestrator:
                 summary["source_sql"] = query_result.source_sql
         elif data_payload:
             summary.update(SupervisorOrchestrator._summarize_tabular_payload(data_payload))
-        if not analyst_result.error and data_payload:
+        if not analyst_result.has_error and data_payload:
             summary["analyst_grounding"] = build_analyst_grounding(str(question or ""), data_payload)
         return summary
-
-    @staticmethod
-    def _build_response_summary(
-        *,
-        user_query: str,
-        data_payload: Dict[str, Any],
-        visualization: Dict[str, Any] | None,
-        analyst_result: AnalystQueryResponse,
-        clarifying_question: str | None,
-        web_search_result: WebSearchResult | None = None,
-        research_result: DeepResearchResult | None = None,
-        assumptions_applied: Sequence[str] | None = None,
-        response_mode: ResponseMode = ResponseMode.analyst,
-        analyst_grounding: Dict[str, Any] | None = None,
-    ) -> str:
-        if clarifying_question:
-            return f"I need one clarification before continuing: {clarifying_question}"
-
-        assumptions = [item for item in (assumptions_applied or []) if isinstance(item, str) and item.strip()]
-
-        if research_result:
-            summary = SupervisorOrchestrator._format_research_summary(research_result, user_query=user_query)
-            if assumptions:
-                summary = summary + "\n\nAssumptions: " + "; ".join(assumptions)
-            return summary
-
-        if web_search_result and not data_payload:
-            if web_search_result.answer:
-                summary = web_search_result.answer
-            elif web_search_result.results:
-                summary = f"Found {len(web_search_result.results)} web sources for '{user_query}'."
-            else:
-                follow_up = web_search_result.follow_up_question or "Could you narrow the topic or provide a target source?"
-                summary = (
-                    "I could not find strong enough external sources to answer confidently. "
-                    f"{follow_up}"
-                )
-            if assumptions:
-                summary = summary + " Assumptions: " + "; ".join(assumptions)
-            return summary
-
-        if analyst_result.error:
-            return f"I could not complete that request: {analyst_result.error}"
-
-        rows = data_payload.get("rows") if isinstance(data_payload, dict) else None
-        columns = data_payload.get("columns") if isinstance(data_payload, dict) else None
-        row_count = len(rows) if isinstance(rows, list) else 0
-        col_count = len(columns) if isinstance(columns, list) else 0
-
-        if response_mode == ResponseMode.analyst:
-            grounding = analyst_grounding if isinstance(analyst_grounding, dict) else build_analyst_grounding(
-                user_query,
-                data_payload,
-            )
-            return compose_analyst_summary(
-                grounding,
-                assumptions=assumptions,
-                extra_note=SupervisorOrchestrator._build_visualization_note(
-                    user_query=user_query,
-                    visualization=visualization,
-                ),
-            )
-
-        if row_count == 0:
-            summary = "Completed, but no tabular rows were returned."
-            if assumptions:
-                summary = summary + " Assumptions: " + "; ".join(assumptions)
-            return summary
-
-        requested_chart = SupervisorOrchestrator._detect_requested_chart_type(user_query)
-        if visualization and isinstance(visualization, dict):
-            chart_type_raw = visualization.get("chart_type") or visualization.get("chartType")
-            chart_type = chart_type_raw.lower() if isinstance(chart_type_raw, str) else None
-            options = visualization.get("options") if isinstance(visualization.get("options"), dict) else {}
-            warning = options.get("visualization_warning") if isinstance(options, dict) else None
-            if isinstance(warning, str) and warning.strip():
-                summary = (
-                    f"Found {row_count} rows across {col_count} columns for '{user_query}'. "
-                    f"{warning.strip()}"
-                )
-                if assumptions:
-                    summary = summary + " Assumptions: " + "; ".join(assumptions)
-                return summary
-            if requested_chart and chart_type and chart_type != requested_chart:
-                summary = (
-                    f"Found {row_count} rows across {col_count} columns for '{user_query}'. "
-                    f"I could not prepare the requested {requested_chart} chart from this dataset."
-                )
-                if assumptions:
-                    summary = summary + " Assumptions: " + "; ".join(assumptions)
-                return summary
-            if chart_type and chart_type != "table":
-                summary = (
-                    f"Found {row_count} rows across {col_count} columns for '{user_query}'. "
-                    f"I also prepared a {chart_type} visualization."
-                )
-                if assumptions:
-                    summary = summary + " Assumptions: " + "; ".join(assumptions)
-                return summary
-            if requested_chart and chart_type == "table":
-                summary = (
-                    f"Found {row_count} rows across {col_count} columns for '{user_query}'. "
-                    f"I could not prepare the requested {requested_chart} chart from this dataset."
-                )
-                if assumptions:
-                    summary = summary + " Assumptions: " + "; ".join(assumptions)
-                return summary
-
-        if requested_chart:
-            summary = (
-                f"Found {row_count} rows across {col_count} columns for '{user_query}'. "
-                f"I could not prepare the requested {requested_chart} chart from this dataset."
-            )
-            if assumptions:
-                summary = summary + " Assumptions: " + "; ".join(assumptions)
-            return summary
-
-        summary = f"Found {row_count} rows across {col_count} columns for '{user_query}'."
-        if assumptions:
-            summary = summary + " Assumptions: " + "; ".join(assumptions)
-        return summary
-
-    @staticmethod
-    def _build_visualization_note(
-        *,
-        user_query: str,
-        visualization: Dict[str, Any] | None,
-    ) -> str | None:
-        requested_chart = SupervisorOrchestrator._detect_requested_chart_type(user_query)
-        if not isinstance(visualization, dict) or not visualization:
-            if requested_chart:
-                return f"I could not prepare the requested {requested_chart} chart from this dataset."
-            return None
-
-        chart_type_raw = visualization.get("chart_type") or visualization.get("chartType")
-        chart_type = chart_type_raw.lower() if isinstance(chart_type_raw, str) else None
-        options = visualization.get("options") if isinstance(visualization.get("options"), dict) else {}
-        warning = options.get("visualization_warning") if isinstance(options, dict) else None
-        if isinstance(warning, str) and warning.strip():
-            return warning.strip()
-        if requested_chart and chart_type and chart_type != requested_chart:
-            return f"I could not prepare the requested {requested_chart} chart from this dataset."
-        if requested_chart and chart_type == "table":
-            return f"I could not prepare the requested {requested_chart} chart from this dataset."
-        if chart_type and chart_type != "table":
-            return f"I also prepared a {chart_type} visualization."
-        return None
-
-    @staticmethod
-    def _format_research_summary(result: DeepResearchResult, *, user_query: str) -> str:
-        report = result.report
-        if not report:
-            return result.synthesis or f"Completed deep research for '{user_query}'."
-
-        lines: list[str] = []
-        lines.append("Executive summary:")
-        lines.append(report.executive_summary.strip() or f"Completed deep research for '{user_query}'.")
-
-        lines.append("")
-        lines.append("Key findings:")
-        if report.key_findings:
-            for finding in report.key_findings[:5]:
-                citations = ", ".join(finding.citations) if finding.citations else "no citation"
-                lines.append(f"- {finding.claim} [{finding.confidence}] ({citations})")
-        else:
-            lines.append("- No high-confidence findings could be supported by current evidence.")
-
-        lines.append("")
-        lines.append("Supporting evidence:")
-        if report.supporting_evidence:
-            for finding_id, evidence_ids in list(report.supporting_evidence.items())[:8]:
-                evidence_text = ", ".join(evidence_ids) if evidence_ids else "none"
-                lines.append(f"- {finding_id}: {evidence_text}")
-        else:
-            lines.append("- No explicit evidence mapping was produced.")
-
-        lines.append("")
-        lines.append("Risks/uncertainties:")
-        if report.risks_uncertainties:
-            for risk in report.risks_uncertainties[:4]:
-                lines.append(f"- {risk}")
-        else:
-            lines.append("- None noted.")
-
-        lines.append("")
-        lines.append("What I'd do next:")
-        if report.next_steps:
-            for step in report.next_steps[:4]:
-                lines.append(f"- {step}")
-        else:
-            lines.append("- Gather additional primary sources for unresolved subquestions.")
-        if report.follow_up_question:
-            lines.append(f"- Follow-up needed: {report.follow_up_question}")
-
-        return "\n".join(lines).strip()
 
     @staticmethod
     def _detect_requested_chart_type(question: str) -> str | None:
@@ -1641,6 +1467,14 @@ class SupervisorOrchestrator:
             result=None,
             error=error_message,
             execution_time_ms=None,
+            outcome=AnalystExecutionOutcome(
+                status=AnalystOutcomeStatus.execution_error,
+                stage=AnalystOutcomeStage.execution,
+                message=error_message,
+                original_error=error_message,
+                recoverable=False,
+                terminal=True,
+            ),
         )
 
 

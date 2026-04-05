@@ -314,23 +314,399 @@ export function renderJson(value) {
   return JSON.stringify(value, null, 2);
 }
 
+export function normalizeChartType(value) {
+  const normalized = String(value || "").trim().toLowerCase();
+  if (!normalized) {
+    return "bar";
+  }
+  if (normalized.includes("stack") && normalized.includes("bar")) {
+    return "stacked-bar";
+  }
+  if (normalized.includes("area")) {
+    return "area";
+  }
+  if (normalized.includes("scatter")) {
+    return "scatter";
+  }
+  if (normalized.includes("donut") || normalized.includes("doughnut")) {
+    return "donut";
+  }
+  if (normalized.includes("pie")) {
+    return "pie";
+  }
+  if (normalized.includes("line")) {
+    return "line";
+  }
+  if (normalized.includes("kpi") || normalized.includes("stat") || normalized.includes("metric")) {
+    return "stat";
+  }
+  if (normalized.includes("table")) {
+    return "table";
+  }
+  if (normalized.includes("bar")) {
+    return "bar";
+  }
+  return "bar";
+}
+
 export function normalizeVisualizationSpec(visualization) {
   if (!visualization || typeof visualization !== "object") {
     return null;
   }
   const raw = visualization;
-  const yValue = raw.y ?? raw.y_axis ?? null;
+  const options = raw.options && typeof raw.options === "object" ? raw.options : {};
+  const yValue = raw.y ?? raw.y_axis ?? raw.measure ?? raw.measures ?? null;
+  const rawChartType =
+    raw.chartType ||
+    raw.chart_type ||
+    raw.type ||
+    options.chart_type ||
+    options.type ||
+    "bar";
+  const innerRadiusRaw =
+    options.inner_radius ?? options.innerRadius ?? options.pieInnerRadius ?? null;
+  const innerRadius =
+    typeof innerRadiusRaw === "number" && Number.isFinite(innerRadiusRaw) ? innerRadiusRaw : null;
   return {
     title: raw.title || raw.chart_title || "Runtime chart",
-    chartType: raw.chartType || raw.chart_type || "bar",
-    x: raw.x || raw.x_axis || raw.groupBy || raw.group_by || "",
+    subtitle: raw.subtitle || raw.chart_subtitle || raw.description || options.subtitle || "",
+    chartType: normalizeChartType(rawChartType),
+    x: raw.x || raw.x_axis || "",
     y: Array.isArray(yValue) ? yValue.filter(Boolean) : [yValue].filter(Boolean),
+    groupBy: raw.groupBy || raw.group_by || raw.group || raw.series || "",
+    options,
+    warning:
+      typeof options.visualization_warning === "string"
+        ? options.visualization_warning
+        : typeof raw.visualization_warning === "string"
+          ? raw.visualization_warning
+          : "",
+    stacked:
+      normalizeChartType(rawChartType) === "stacked-bar" ||
+      options.stacked === true ||
+      options.stack === true,
+    donut:
+      normalizeChartType(rawChartType) === "donut" ||
+      innerRadius !== null ||
+      options.variant === "donut",
+    innerRadius,
   };
 }
 
 export function hasRenderableVisualization(visualization) {
   const normalized = normalizeVisualizationSpec(visualization);
   return Boolean(normalized?.chartType && normalized.chartType !== "table");
+}
+
+function normalizeErrorStatus(value) {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value;
+  }
+  if (typeof value === "string" && value.trim()) {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
+}
+
+export function normalizeAnalystOutcome(diagnostics) {
+  if (diagnostics?.analyst_outcome && typeof diagnostics.analyst_outcome === "object") {
+    const raw = diagnostics.analyst_outcome;
+    return {
+      status: String(raw.status || "").trim().toLowerCase() || null,
+      stage: String(raw.stage || "").trim().toLowerCase() || null,
+      message: typeof raw.message === "string" ? raw.message : "",
+      recoverable: Boolean(raw.recoverable),
+      terminal: Boolean(raw.terminal),
+      retryAttempted: Boolean(raw.retry_attempted),
+      retryCount: Number(raw.retry_count || 0),
+      retryRationale: typeof raw.retry_rationale === "string" ? raw.retry_rationale : "",
+      selectedToolName:
+        typeof raw.selected_tool_name === "string" ? raw.selected_tool_name : "",
+      selectedAssetName:
+        typeof raw.selected_asset_name === "string" ? raw.selected_asset_name : "",
+      selectedAssetType:
+        typeof raw.selected_asset_type === "string" ? raw.selected_asset_type : "",
+      recoveryActions: Array.isArray(raw.recovery_actions) ? raw.recovery_actions : [],
+      metadata: raw.metadata && typeof raw.metadata === "object" ? raw.metadata : {},
+    };
+  }
+
+  if (typeof diagnostics?.clarifying_question === "string" && diagnostics.clarifying_question.trim()) {
+    return {
+      status: "needs_clarification",
+      stage: "clarification",
+      message: diagnostics.clarifying_question.trim(),
+      recoverable: true,
+      terminal: false,
+      retryAttempted: false,
+      retryCount: 0,
+      retryRationale: "",
+      selectedToolName: "",
+      selectedAssetName: "",
+      selectedAssetType: "",
+      recoveryActions: [],
+      metadata: {},
+    };
+  }
+
+  return null;
+}
+
+export function deriveRuntimeResultState({
+  status,
+  result,
+  visualization,
+  diagnostics,
+  errorMessage,
+  errorStatus,
+}) {
+  const normalizedResult = result ? normalizeTabularResult(result) : null;
+  const normalizedVisualization = normalizeVisualizationSpec(visualization);
+  const outcome = normalizeAnalystOutcome(diagnostics);
+  const rowCount = Number(normalizedResult?.rowCount ?? normalizedResult?.rows?.length ?? 0);
+  const hasRows = rowCount > 0;
+  const hasChart = hasRenderableVisualization(normalizedVisualization);
+  const message =
+    String(
+      errorMessage ||
+        outcome?.message ||
+        diagnostics?.clarifying_question ||
+        diagnostics?.error ||
+        "",
+    ).trim() || "";
+  const deniedPattern = /\b(access denied|denied|forbidden|unauthori[sz]ed|blocked)\b/i;
+  const requestStatus = String(status || "").trim().toLowerCase();
+  const requestErrorStatus = normalizeErrorStatus(errorStatus);
+  const isAccessDenied =
+    requestErrorStatus === 401 ||
+    requestErrorStatus === 403 ||
+    deniedPattern.test(message);
+
+  if (requestStatus === "pending") {
+    return {
+      kind: "pending",
+      tone: "warning",
+      label: "Running",
+      title: "Waiting for the runtime to finish this turn",
+      description: "The request is still executing.",
+      showChart: false,
+      showTable: false,
+    };
+  }
+
+  if (isAccessDenied) {
+    return {
+      kind: "access_denied",
+      tone: "danger",
+      label: "Access denied",
+      title: "The runtime blocked this request",
+      description: message || "The current actor or agent could not access the requested data.",
+      showChart: false,
+      showTable: false,
+    };
+  }
+
+  switch (outcome?.status) {
+    case "success":
+      return {
+        kind: hasChart ? "success_chart" : "success_rows",
+        tone: "success",
+        label: hasChart ? "Chart ready" : "Rows returned",
+        title: hasChart ? "Structured result with visualization" : "Structured result returned",
+        description: hasChart
+          ? "The runtime returned both a visualization and underlying rows."
+          : "The runtime returned tabular rows for this request.",
+        showChart: hasChart,
+        showTable: Boolean(normalizedResult),
+      };
+    case "empty_result":
+      return {
+        kind: "empty_result",
+        tone: "warning",
+        label: "No rows matched",
+        title: "The request completed without matching rows",
+        description: message || "Try widening the filters or adjusting the question.",
+        showChart: false,
+        showTable: Boolean(normalizedResult),
+      };
+    case "invalid_request":
+      return {
+        kind: "invalid_request",
+        tone: "warning",
+        label: "Invalid request",
+        title: "The runtime could not act on this request",
+        description: message || "Refine the prompt so the analysis target is more specific.",
+        showChart: false,
+        showTable: false,
+      };
+    case "needs_clarification":
+      return {
+        kind: "needs_clarification",
+        tone: "warning",
+        label: "Clarification needed",
+        title: "The runtime needs one more detail before continuing",
+        description: message || "Provide the missing context and retry.",
+        showChart: false,
+        showTable: false,
+      };
+    case "query_error":
+      return {
+        kind: "query_error",
+        tone: "danger",
+        label: "Query error",
+        title: "The runtime could not translate the request into a valid query",
+        description: message || "Adjust the question or inspect the execution notes.",
+        showChart: false,
+        showTable: false,
+      };
+    case "selection_error":
+      return {
+        kind: "invalid_request",
+        tone: "warning",
+        label: "No analytical context",
+        title: "The runtime could not map the request to a dataset or semantic model",
+        description: message || "Try naming the asset, metric, or subject more explicitly.",
+        showChart: false,
+        showTable: false,
+      };
+    case "execution_error":
+      return {
+        kind: "execution_failure",
+        tone: "danger",
+        label: "Execution failed",
+        title: "The runtime could not complete execution",
+        description: message || "Inspect the diagnostics for more detail.",
+        showChart: false,
+        showTable: false,
+      };
+    default:
+      break;
+  }
+
+  if (requestStatus === "error") {
+    return {
+      kind: "execution_failure",
+      tone: "danger",
+      label: "Execution failed",
+      title: "The runtime failed to complete this request",
+      description: message || "No structured result was returned.",
+      showChart: false,
+      showTable: false,
+    };
+  }
+
+  if (message && !outcome && !normalizedResult) {
+    return {
+      kind: "execution_failure",
+      tone: "danger",
+      label: "Execution failed",
+      title: "The runtime completed with an error",
+      description: message,
+      showChart: false,
+      showTable: false,
+    };
+  }
+
+  if (normalizedResult && rowCount === 0) {
+    return {
+      kind: "empty_result",
+      tone: "warning",
+      label: "No rows matched",
+      title: "The request completed without matching rows",
+      description: "Try widening the filters or adjusting the question.",
+      showChart: false,
+      showTable: true,
+    };
+  }
+
+  if (hasChart || hasRows) {
+    return {
+      kind: hasChart ? "success_chart" : "success_rows",
+      tone: "success",
+      label: hasChart ? "Chart ready" : "Rows returned",
+      title: hasChart ? "Structured result with visualization" : "Structured result returned",
+      description: hasChart
+        ? "The runtime returned both a visualization and underlying rows."
+        : "The runtime returned tabular rows for this request.",
+      showChart: hasChart,
+      showTable: Boolean(normalizedResult),
+    };
+  }
+
+  return {
+    kind: "success_summary",
+    tone: "info",
+    label: "Completed",
+    title: "The runtime completed this request",
+    description: "No structured rows or visualization were returned.",
+    showChart: false,
+    showTable: false,
+  };
+}
+
+export function buildDiagnosticsHighlights(diagnostics) {
+  if (!diagnostics || typeof diagnostics !== "object") {
+    return [];
+  }
+  const outcome = normalizeAnalystOutcome(diagnostics);
+  const highlights = [
+    outcome?.status
+      ? { label: "Outcome", value: outcome.status.replaceAll("_", " ") }
+      : null,
+    outcome?.stage ? { label: "Stage", value: outcome.stage.replaceAll("_", " ") } : null,
+    diagnostics?.asset_name ? { label: "Asset", value: diagnostics.asset_name } : null,
+    outcome?.selectedToolName ? { label: "Tool", value: outcome.selectedToolName } : null,
+    outcome?.retryCount > 0
+      ? { label: "Retries", value: String(outcome.retryCount) }
+      : null,
+    diagnostics?.response_mode ? { label: "Mode", value: diagnostics.response_mode } : null,
+    diagnostics?.reasoning?.iterations
+      ? { label: "Iterations", value: String(diagnostics.reasoning.iterations) }
+      : null,
+    diagnostics?.execution_mode ? { label: "Execution", value: diagnostics.execution_mode } : null,
+    diagnostics?.analysis_path ? { label: "Path", value: diagnostics.analysis_path } : null,
+  ];
+
+  return highlights.filter(Boolean);
+}
+
+export function buildDiagnosticsNotes(diagnostics, visualization) {
+  if (!diagnostics || typeof diagnostics !== "object") {
+    return [];
+  }
+  const outcome = normalizeAnalystOutcome(diagnostics);
+  const normalizedVisualization = normalizeVisualizationSpec(visualization);
+  const notes = [];
+
+  if (outcome?.message) {
+    notes.push(outcome.message);
+  }
+  if (outcome?.retryRationale) {
+    notes.push(outcome.retryRationale);
+  }
+  if (Array.isArray(outcome?.recoveryActions) && outcome.recoveryActions.length > 0) {
+    notes.push(
+      `Recovery actions: ${outcome.recoveryActions
+        .map((action) => action?.action)
+        .filter(Boolean)
+        .join(", ")}`,
+    );
+  }
+  if (normalizedVisualization?.warning) {
+    notes.push(normalizedVisualization.warning);
+  }
+  if (Array.isArray(diagnostics?.assumptions_applied) && diagnostics.assumptions_applied.length > 0) {
+    notes.push(`Assumptions: ${diagnostics.assumptions_applied.join("; ")}`);
+  }
+  if (typeof diagnostics?.reasoning?.final_rationale === "string" && diagnostics.reasoning.final_rationale.trim()) {
+    notes.push(diagnostics.reasoning.final_rationale.trim());
+  }
+  if (typeof diagnostics?.clarifying_question === "string" && diagnostics.clarifying_question.trim()) {
+    notes.push(diagnostics.clarifying_question.trim());
+  }
+
+  return [...new Set(notes.filter(Boolean))];
 }
 
 function readAssistantText(message) {
@@ -388,6 +764,8 @@ export function buildConversationTurns(messages, agents) {
         typeof assistantContent.diagnostics === "object"
           ? assistantContent.diagnostics
           : null;
+      const assistantError =
+        assistant?.error && typeof assistant.error === "object" ? assistant.error : null;
       const agentId = String(assistant?.model_snapshot?.agent_id || "");
       return {
         id: String(message.id || createLocalId("turn")),
@@ -397,7 +775,13 @@ export function buildConversationTurns(messages, agents) {
         assistantTable,
         assistantVisualization: assistantContent.visualization || null,
         diagnostics,
-        errorMessage: assistant?.error?.message || "",
+        errorMessage:
+          (typeof assistantError?.message === "string" ? assistantError.message : "") ||
+          (typeof assistant?.error === "string" ? assistant.error : ""),
+        errorStatus:
+          normalizeErrorStatus(assistantError?.status) ||
+          normalizeErrorStatus(assistantError?.status_code) ||
+          null,
         agentId,
         agentLabel: agentLabelById.get(agentId) || null,
         status: assistant?.error ? "error" : assistant ? "ready" : "pending",

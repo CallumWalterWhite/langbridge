@@ -17,8 +17,10 @@ import {
   fetchConnectorResources,
   fetchConnectors,
   fetchDataset,
+  fetchDatasetSync,
   fetchDatasets,
   previewDataset,
+  runDatasetSync,
   updateDataset,
 } from "../lib/runtimeApi";
 import {
@@ -38,6 +40,7 @@ import {
   buildItemRef,
   countUniqueValues,
   downloadTextFile,
+  formatRelativeTime,
   normalizeTabularResult,
   resolveItemByRef,
   toCsvText,
@@ -68,9 +71,12 @@ function buildDatasetEditFormState(detail) {
     detail?.relation_identity && typeof detail.relation_identity === "object"
       ? detail.relation_identity
       : {};
+  const syncConfig = detail?.sync && typeof detail.sync === "object" ? detail.sync : null;
+  const syncSource =
+    syncConfig?.source && typeof syncConfig.source === "object" ? syncConfig.source : {};
   const fileConfig =
     detail?.file_config && typeof detail.file_config === "object" ? detail.file_config : {};
-  const sourceMode = detail?.sync_resource
+  const sourceMode = syncSource.resource
     ? "resource"
     : detail?.sql_text
       ? "sql"
@@ -89,7 +95,7 @@ function buildDatasetEditFormState(detail) {
     materializationMode: detail?.materialization_mode || "live",
     sourceMode,
     table: sourceMode === "table" ? tableName : "",
-    resource: detail?.sync_resource || "",
+    resource: syncSource.resource || "",
     sql: detail?.sql_text || "",
     path: detail?.storage_uri || "",
     format: fileConfig.format || fileConfig.file_format || "csv",
@@ -101,6 +107,9 @@ function buildDatasetEditFormState(detail) {
 }
 
 function toDatasetListItem(dataset) {
+  const syncConfig = dataset?.sync && typeof dataset.sync === "object" ? dataset.sync : null;
+  const syncSource =
+    syncConfig?.source && typeof syncConfig.source === "object" ? syncConfig.source : null;
   return {
     id: dataset.id,
     name: dataset.name,
@@ -110,8 +119,12 @@ function toDatasetListItem(dataset) {
     semantic_model: dataset.semantic_model || null,
     materialization_mode: dataset.materialization_mode,
     status: dataset.status,
-    sync_resource: dataset.sync_resource,
-    last_sync_at: dataset.sync_state?.last_sync_at || null,
+    source: dataset.source || null,
+    sync: syncConfig,
+    sync_resource:
+      syncSource?.resource || syncSource?.table || syncSource?.path || syncSource?.storage_uri || null,
+    sync_status: dataset.sync_status || dataset.sync_state?.status || null,
+    last_sync_at: dataset.last_sync_at || dataset.sync_state?.last_sync_at || null,
     management_mode: dataset.management_mode,
     managed: dataset.managed,
   };
@@ -203,6 +216,198 @@ function getCreateStepState({
   };
 }
 
+function isObject(value) {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function isSyncedDataset(value) {
+  return String(value?.materialization_mode || "").trim().toLowerCase() === "synced";
+}
+
+function getDatasetSyncConfig(value) {
+  return isObject(value?.sync) ? value.sync : null;
+}
+
+function getDatasetSyncState(value) {
+  if (isObject(value?.sync_state)) {
+    return value.sync_state;
+  }
+  const status = value?.sync_status;
+  const lastSyncAt = value?.last_sync_at;
+  if (!status && !lastSyncAt) {
+    return null;
+  }
+  return {
+    status: status || "never_synced",
+    last_sync_at: lastSyncAt || null,
+    last_cursor: value?.last_cursor || null,
+    records_synced: value?.records_synced || 0,
+    bytes_synced: value?.bytes_synced || null,
+    error_message: value?.error_message || null,
+    sync_mode: value?.sync_mode || null,
+    source_key: value?.source_key || null,
+  };
+}
+
+function getDatasetSourceConfig(value) {
+  return isObject(value?.source) ? value.source : null;
+}
+
+function getDatasetSyncSource(value) {
+  const syncConfig = getDatasetSyncConfig(value);
+  if (isObject(syncConfig?.source)) {
+    return syncConfig.source;
+  }
+  const source = getDatasetSourceConfig(value);
+  if (isObject(source) && (source.resource || source.table || source.sql)) {
+    return source;
+  }
+  return null;
+}
+
+function formatLabelValue(value) {
+  const text = String(value || "").trim();
+  if (!text) {
+    return "n/a";
+  }
+  return text
+    .replaceAll("_", " ")
+    .replaceAll("-", " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function formatTitleCaseLabel(value) {
+  return formatLabelValue(value).replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
+function formatBytes(value) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric) || numeric <= 0) {
+    return "n/a";
+  }
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  let current = numeric;
+  let index = 0;
+  while (current >= 1024 && index < units.length - 1) {
+    current /= 1024;
+    index += 1;
+  }
+  return `${current.toLocaleString(undefined, {
+    maximumFractionDigits: current >= 100 ? 0 : current >= 10 ? 1 : 2,
+  })} ${units[index]}`;
+}
+
+function describeSourceBinding(value) {
+  const source = getDatasetSourceConfig(value);
+  if (!source) {
+    return "No live source contract";
+  }
+  if (source.resource) {
+    return `Resource ${source.resource}`;
+  }
+  if (source.table) {
+    return `Table ${source.table}`;
+  }
+  if (source.sql) {
+    return `SQL projection`;
+  }
+  const filePath = source.path || source.storage_uri;
+  if (filePath) {
+    return `File ${filePath}`;
+  }
+  return "No live source contract";
+}
+
+function getSyncSourceDescriptor(value) {
+  const source = getDatasetSyncSource(value);
+  if (!source) {
+    return {
+      label: "Sync source",
+      value: "n/a",
+    };
+  }
+  if (source.resource) {
+    return {
+      label: "Sync resource",
+      value: source.resource,
+    };
+  }
+  if (source.table) {
+    return {
+      label: "Sync table",
+      value: source.table,
+    };
+  }
+  if (source.sql) {
+    return {
+      label: "Sync SQL",
+      value: "Dataset-owned SQL sync",
+    };
+  }
+  return {
+    label: "Sync source",
+    value: "n/a",
+  };
+}
+
+function buildSyncScheduleSummary(syncConfig) {
+  if (!syncConfig) {
+    return [];
+  }
+  const values = [];
+  if (syncConfig.strategy) {
+    values.push(`Strategy ${formatTitleCaseLabel(syncConfig.strategy)}`);
+  }
+  if (syncConfig.cadence) {
+    values.push(`Cadence ${syncConfig.cadence}`);
+  }
+  if (syncConfig.sync_on_start) {
+    values.push("Sync on start");
+  }
+  return values;
+}
+
+function summarizeSyncState(syncState) {
+  if (!syncState) {
+    return "Sync state unavailable.";
+  }
+  const normalizedStatus = String(syncState.status || "never_synced").trim().toLowerCase();
+  if (normalizedStatus === "failed") {
+    return syncState.error_message
+      ? `Latest sync failed: ${syncState.error_message}`
+      : "Latest sync failed.";
+  }
+  if (normalizedStatus === "running") {
+    return "Dataset sync is currently running.";
+  }
+  if (normalizedStatus === "succeeded") {
+    if (syncState.last_sync_at) {
+      return `Last sync ${formatRelativeTime(syncState.last_sync_at)}.`;
+    }
+    return "Dataset sync completed successfully.";
+  }
+  return "Dataset has not been synced yet.";
+}
+
+function DatasetModeBadge({ mode }) {
+  const normalized = isSyncedDataset({ materialization_mode: mode }) ? "synced" : "live";
+  return (
+    <span className={`status-pill dataset-mode-pill ${normalized}`}>
+      {normalized === "synced" ? "synced dataset" : "live dataset"}
+    </span>
+  );
+}
+
+function SyncStatusBadge({ status }) {
+  const normalized = String(status || "never_synced").trim().toLowerCase() || "never_synced";
+  return (
+    <span className={`status-pill sync-status-pill ${normalized}`}>
+      {formatTitleCaseLabel(normalized)}
+    </span>
+  );
+}
+
 export function DatasetsPage() {
   const params = useParams();
   const navigate = useNavigate();
@@ -221,6 +426,9 @@ export function DatasetsPage() {
       item.description,
       item.connector,
       item.semantic_model,
+      item.materialization_mode,
+      item.sync_status,
+      getSyncSourceDescriptor(item).value,
       item.management_mode,
     ]
       .filter(Boolean)
@@ -247,17 +455,34 @@ export function DatasetsPage() {
   const [detail, setDetail] = useState(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailError, setDetailError] = useState("");
+  const [datasetSync, setDatasetSync] = useState(null);
+  const [datasetSyncLoading, setDatasetSyncLoading] = useState(false);
+  const [datasetSyncError, setDatasetSyncError] = useState("");
+  const [syncSubmitting, setSyncSubmitting] = useState(false);
+  const [syncActionError, setSyncActionError] = useState("");
+  const [syncActionSuccess, setSyncActionSuccess] = useState("");
+  const [syncResult, setSyncResult] = useState(null);
   const [preview, setPreview] = useState(null);
   const [previewLoading, setPreviewLoading] = useState(false);
   const [previewError, setPreviewError] = useState("");
   const [previewLimit, setPreviewLimit] = useState("25");
   const boundConnectorCount = countUniqueValues(datasets, (item) => item.connector);
   const boundSemanticModelCount = countUniqueValues(datasets, (item) => item.semantic_model);
+  const syncedDatasetCount = datasets.filter((item) => isSyncedDataset(item)).length;
+  const liveDatasetCount = datasets.filter((item) => !isSyncedDataset(item)).length;
   const schemaColumns = Array.isArray(detail?.columns) ? detail.columns : [];
   const nullableColumns = schemaColumns.filter((column) => column.nullable).length;
   const computedColumns = schemaColumns.filter((column) => column.is_computed).length;
   const policy = detail?.policy && typeof detail.policy === "object" ? detail.policy : null;
   const previewResult = preview ? normalizeTabularResult(preview) : null;
+  const selectedDataset = detail || selected;
+  const selectedIsSynced = isSyncedDataset(selectedDataset);
+  const selectedSyncConfig =
+    getDatasetSyncConfig(datasetSync) || getDatasetSyncConfig(detail) || getDatasetSyncConfig(selected);
+  const selectedSyncState =
+    getDatasetSyncState(datasetSync) || getDatasetSyncState(detail) || getDatasetSyncState(selected);
+  const selectedSyncSourceDescriptor = getSyncSourceDescriptor(datasetSync || detail || selected);
+  const selectedSyncSchedule = buildSyncScheduleSummary(selectedSyncConfig);
   const connectorFamilyOptions = [];
   const seenConnectorFamilies = new Set();
   for (const connector of connectors) {
@@ -322,34 +547,95 @@ export function DatasetsPage() {
   const createSourceSummary = describeCreateSource(createForm, createSourceMode);
   const createReviewTags = splitCsv(createForm.tags);
 
-  async function loadDatasetDetail(target = selected) {
+  async function loadDatasetPreview(target = selected) {
     if (!target) {
-      setDetail(null);
       setPreview(null);
-      return;
+      setPreviewError("");
+      return null;
     }
-    setDetailLoading(true);
-    setDetailError("");
     setPreviewLoading(true);
     setPreviewError("");
     try {
-      const [detailPayload, previewPayload] = await Promise.all([
-        fetchDataset(String(target.id || target.name)),
-        previewDataset(String(target.id || target.name), {
-          limit: Number(previewLimit) > 0 ? Number(previewLimit) : 25,
-        }),
-      ]);
-      setDetail(detailPayload);
+      const previewPayload = await previewDataset(String(target.id || target.name), {
+        limit: Number(previewLimit) > 0 ? Number(previewLimit) : 25,
+      });
       setPreview(previewPayload);
+      return previewPayload;
+    } catch (caughtError) {
+      setPreview(null);
+      setPreviewError(getErrorMessage(caughtError));
+      return null;
+    } finally {
+      setPreviewLoading(false);
+    }
+  }
+
+  async function loadDatasetSyncStatus(target = selected, nextDetail = detail) {
+    const candidate = nextDetail || target;
+    if (!target || !isSyncedDataset(candidate)) {
+      setDatasetSync(null);
+      setDatasetSyncError("");
+      setDatasetSyncLoading(false);
+      return null;
+    }
+
+    setDatasetSyncLoading(true);
+    setDatasetSyncError("");
+    try {
+      const syncPayload = await fetchDatasetSync(String(target.id || target.name));
+      setDatasetSync(syncPayload);
+      return syncPayload;
+    } catch (caughtError) {
+      setDatasetSync(null);
+      setDatasetSyncError(getErrorMessage(caughtError));
+      return null;
+    } finally {
+      setDatasetSyncLoading(false);
+    }
+  }
+
+  async function loadDatasetDetail(target = selected, options = {}) {
+    const { refreshPreview = true, refreshSync = true } = options;
+    if (!target) {
+      setDetail(null);
+      setDetailError("");
+      setDatasetSync(null);
+      setDatasetSyncError("");
+      setPreview(null);
+      setPreviewError("");
+      return null;
+    }
+    setDetailLoading(true);
+    setDetailError("");
+    try {
+      const detailPayload = await fetchDataset(String(target.id || target.name));
+      setDetail(detailPayload);
+      const followUps = [];
+      if (refreshPreview) {
+        followUps.push(loadDatasetPreview(target));
+      }
+      if (refreshSync) {
+        followUps.push(loadDatasetSyncStatus(target, detailPayload));
+      } else if (!isSyncedDataset(detailPayload)) {
+        setDatasetSync(null);
+        setDatasetSyncError("");
+      }
+      await Promise.all(followUps);
+      return detailPayload;
     } catch (caughtError) {
       const message = getErrorMessage(caughtError);
       setDetail(null);
       setDetailError(message);
-      setPreview(null);
-      setPreviewError(message);
+      if (refreshSync) {
+        setDatasetSync(null);
+        setDatasetSyncError("");
+      }
+      if (refreshPreview) {
+        setPreview(null);
+      }
+      return null;
     } finally {
       setDetailLoading(false);
-      setPreviewLoading(false);
     }
   }
 
@@ -532,7 +818,9 @@ export function DatasetsPage() {
         name,
         connector: createForm.connector || null,
         materialization_mode: createForm.materializationMode,
-        source: {},
+        ...(createForm.materializationMode === "synced"
+          ? { sync: { source: {} } }
+          : { source: {} }),
       };
       const description = String(createForm.description || "").trim();
       if (description) {
@@ -570,7 +858,7 @@ export function DatasetsPage() {
         if (!resource) {
           throw new Error("Dataset source.resource is required for synced datasets.");
         }
-        payload.source.resource = resource;
+        payload.sync.source.resource = resource;
       }
 
       const tags = splitCsv(createForm.tags);
@@ -631,7 +919,9 @@ export function DatasetsPage() {
         description: String(editForm.description || "").trim() || null,
         materialization_mode: editForm.materializationMode,
         tags: splitCsv(editForm.tags),
-        source: {},
+        ...(editForm.materializationMode === "synced"
+          ? { sync: { ...(getDatasetSyncConfig(detail) || {}), source: {} } }
+          : { source: {} }),
       };
       const editSourceMode =
         editForm.materializationMode === "synced" ? "resource" : editForm.sourceMode;
@@ -666,7 +956,10 @@ export function DatasetsPage() {
         if (!resource) {
           throw new Error("Dataset source.resource is required for synced datasets.");
         }
-        payload.source.resource = resource;
+        payload.sync.source = {
+          ...(getDatasetSyncConfig(detail)?.source || {}),
+          resource,
+        };
       }
 
       const updated = await updateDataset(String(detail.id || detail.name), payload);
@@ -725,6 +1018,61 @@ export function DatasetsPage() {
     }
   }
 
+  async function handleDatasetSync({ syncMode = "INCREMENTAL", forceFullRefresh = false } = {}) {
+    const target = detail || selected;
+    if (!target || syncSubmitting || !isSyncedDataset(target)) {
+      return;
+    }
+
+    setSyncSubmitting(true);
+    setSyncActionError("");
+    setSyncActionSuccess("");
+    setSyncResult(null);
+    try {
+      const payload = await runDatasetSync(String(target.id || target.name), {
+        sync_mode: forceFullRefresh ? "FULL_REFRESH" : syncMode,
+        force_full_refresh: forceFullRefresh,
+      });
+      setSyncResult(payload);
+      setSyncActionSuccess(payload?.summary || "Dataset sync completed.");
+      await Promise.all([
+        reload(),
+        loadDatasetDetail(target, {
+          refreshPreview: true,
+          refreshSync: true,
+        }),
+      ]);
+    } catch (caughtError) {
+      setSyncActionError(getErrorMessage(caughtError));
+    } finally {
+      setSyncSubmitting(false);
+    }
+  }
+
+  async function handleRefreshSyncStatus() {
+    const target = detail || selected;
+    if (!target || !isSyncedDataset(target)) {
+      return;
+    }
+    setSyncActionError("");
+    setSyncActionSuccess("");
+    setSyncResult(null);
+    await Promise.all([
+      reload(),
+      loadDatasetDetail(target, {
+        refreshPreview: false,
+        refreshSync: true,
+      }),
+    ]);
+  }
+
+  useEffect(() => {
+    setShowEdit(false);
+    setSyncActionError("");
+    setSyncActionSuccess("");
+    setSyncResult(null);
+  }, [selected?.id, selected?.name]);
+
   useEffect(() => {
     void loadDatasetDetail(selected);
   }, [selected?.id, selected?.name]);
@@ -738,6 +1086,8 @@ export function DatasetsPage() {
             <h2>{detail?.label || selected?.label || selected?.name || "Dataset inventory"}</h2>
             <div className="product-command-bar-meta">
               <span className="chip">{formatValue(datasets.length)} datasets</span>
+              <span className="chip">{formatValue(liveDatasetCount)} live</span>
+              <span className="chip">{formatValue(syncedDatasetCount)} synced</span>
               <span className="chip">{formatValue(boundConnectorCount)} connectors</span>
               <span className="chip">{formatValue(boundSemanticModelCount)} semantic links</span>
               <span className="chip">{formatValue(schemaColumns.length)} columns</span>
@@ -792,13 +1142,31 @@ export function DatasetsPage() {
                 >
                   <div className="list-card-topline">
                     <strong>{item.label || item.name}</strong>
-                    <ManagementBadge mode={item.management_mode} />
+                    <div className="dataset-card-badges">
+                      <DatasetModeBadge mode={item.materialization_mode} />
+                      {isSyncedDataset(item) ? <SyncStatusBadge status={item.sync_status} /> : null}
+                      <ManagementBadge mode={item.management_mode} />
+                    </div>
                   </div>
                   <span>
-                    {[item.connector, item.semantic_model, item.materialization_mode]
-                      .filter(Boolean)
-                      .join(" | ") || "No bindings"}
+                    {[item.connector, item.semantic_model].filter(Boolean).join(" | ") || "No bindings"}
                   </span>
+                  {isSyncedDataset(item) ? (
+                    <div className="dataset-sync-note-list">
+                      <span>
+                        {`${getSyncSourceDescriptor(item).label}: ${getSyncSourceDescriptor(item).value}`}
+                      </span>
+                      <span>{summarizeSyncState(getDatasetSyncState(item))}</span>
+                      {buildSyncScheduleSummary(getDatasetSyncConfig(item)).length > 0 ? (
+                        <span>{buildSyncScheduleSummary(getDatasetSyncConfig(item)).join(" | ")}</span>
+                      ) : null}
+                    </div>
+                  ) : (
+                    <div className="dataset-sync-note-list">
+                      <span>{describeSourceBinding(item)}</span>
+                      <span>Live datasets query the source directly and do not expose dataset sync actions.</span>
+                    </div>
+                  )}
                   <small>{describeManagementMode(item.management_mode)}</small>
                 </Link>
               ))}
@@ -822,6 +1190,22 @@ export function DatasetsPage() {
             <div className="callout success">
               <strong>Dataset updated</strong>
               <span>{editSuccess}</span>
+            </div>
+          ) : null}
+          {syncActionSuccess ? (
+            <div className="callout success">
+              <strong>Dataset sync completed</strong>
+              <span>{syncActionSuccess}</span>
+              {Array.isArray(syncResult?.resources) && syncResult.resources.length > 0 ? (
+                <span>
+                  {syncResult.resources
+                    .map((item) => {
+                      const syncTarget = item?.resource_name || item?.source_key || "dataset source";
+                      return `${syncTarget}: ${formatValue(item?.records_synced || 0)} records`;
+                    })
+                    .join(" | ")}
+                </span>
+              ) : null}
             </div>
           ) : null}
 
@@ -1610,7 +1994,12 @@ export function DatasetsPage() {
                     <button
                       className="ghost-button"
                       type="button"
-                      onClick={() => void loadDatasetDetail()}
+                      onClick={() =>
+                        void loadDatasetDetail(selected, {
+                          refreshPreview: true,
+                          refreshSync: true,
+                        })
+                      }
                       disabled={detailLoading || previewLoading}
                     >
                       {detailLoading || previewLoading ? "Refreshing..." : "Refresh detail"}
@@ -1625,10 +2014,12 @@ export function DatasetsPage() {
                 ) : detail ? (
                   <>
                     <div className="inline-notes">
+                      <DatasetModeBadge mode={detail.materialization_mode} />
+                      {selectedIsSynced ? <SyncStatusBadge status={selectedSyncState?.status} /> : null}
                       <span>{detail.connector || "No connector binding"}</span>
                       <span>{detail.semantic_model || "No semantic model binding"}</span>
                       <span>{detail.dataset_type || "runtime dataset"}</span>
-                      <span>{describeManagementMode(detail.management_mode)}</span>
+                      <span>{formatTitleCaseLabel(detail.status)}</span>
                     </div>
                     {Array.isArray(detail.tags) && detail.tags.length > 0 ? (
                       <div className="tag-list">
@@ -1643,13 +2034,13 @@ export function DatasetsPage() {
                       items={[
                         { label: "Name", value: formatValue(detail.name) },
                         { label: "SQL alias", value: formatValue(detail.sql_alias) },
-                        { label: "Connector", value: formatValue(detail.connector) },
-                        { label: "Semantic model", value: formatValue(detail.semantic_model) },
-                        { label: "Type", value: formatValue(detail.dataset_type) },
+                        { label: "Materialization", value: formatTitleCaseLabel(detail.materialization_mode) },
+                        { label: "Dataset status", value: formatTitleCaseLabel(detail.status) },
                         {
                           label: "Management mode",
                           value: formatValue(detail.management_mode),
                         },
+                        { label: "Description", value: formatValue(detail.description) },
                         { label: "Tags", value: formatList(detail.tags) },
                       ]}
                     />
@@ -1668,25 +2059,174 @@ export function DatasetsPage() {
               />
 
               <section className="summary-grid">
-                <Panel title="Bindings and execution" eyebrow="Operational">
+                <Panel title="Identity and management" eyebrow="Runtime">
                   {detail ? (
                     <DetailList
                       items={[
+                        { label: "Name", value: formatValue(detail.name) },
+                        { label: "Label", value: formatValue(detail.label) },
+                        { label: "SQL alias", value: formatValue(detail.sql_alias) },
+                        { label: "Dataset type", value: formatValue(detail.dataset_type) },
+                        { label: "Management mode", value: formatValue(detail.management_mode) },
+                        { label: "Updated", value: formatDateTime(detail.updated_at) },
+                      ]}
+                    />
+                  ) : (
+                    <PageEmpty
+                      title="No identity metadata"
+                      message="Select a dataset to inspect its runtime identity."
+                    />
+                  )}
+                </Panel>
+
+                <Panel title="Bindings and source" eyebrow="Operational">
+                  {detail ? (
+                    <DetailList
+                      items={[
+                        { label: "Connector", value: formatValue(detail.connector) },
+                        { label: "Semantic model", value: formatValue(detail.semantic_model) },
                         { label: "Source kind", value: formatValue(detail.source_kind) },
                         { label: "Storage kind", value: formatValue(detail.storage_kind) },
+                        { label: "Source binding", value: describeSourceBinding(detail) },
                         { label: "Storage URI", value: formatValue(detail.storage_uri) },
                         { label: "Table name", value: formatValue(detail.table_name) },
                         { label: "Dialect", value: formatValue(detail.dialect) },
-                        {
-                          label: "Preview row count",
-                          value: formatValue(preview?.rowCount || preview?.row_count_preview),
-                        },
                       ]}
                     />
                   ) : (
                     <PageEmpty
                       title="No runtime binding"
                       message="Select a dataset to inspect execution metadata."
+                    />
+                  )}
+                </Panel>
+
+                <Panel title={selectedIsSynced ? "Sync operations" : "Materialization"} eyebrow="Runtime">
+                  {detail ? (
+                    selectedIsSynced ? (
+                      <>
+                        <div className="callout">
+                          <strong>
+                            {(detail.management_mode || selected.management_mode) === "config_managed"
+                              ? "Config-managed definition, runtime sync still available"
+                              : "Dataset-owned runtime sync"}
+                          </strong>
+                          <span>
+                            {(detail.management_mode || selected.management_mode) === "config_managed"
+                              ? "This dataset definition stays read-only in the UI, but valid synced datasets can still be refreshed from the runtime."
+                              : "This synced dataset materializes data into runtime storage and can be refreshed directly from this UI."}
+                          </span>
+                        </div>
+                        <div className="panel-actions-inline">
+                          <button
+                            className="primary-button"
+                            type="button"
+                            onClick={() => void handleDatasetSync()}
+                            disabled={syncSubmitting || detailLoading}
+                          >
+                            {syncSubmitting ? "Running sync..." : "Run sync"}
+                          </button>
+                          <button
+                            className="ghost-button"
+                            type="button"
+                            onClick={() =>
+                              void handleDatasetSync({
+                                syncMode: "FULL_REFRESH",
+                                forceFullRefresh: true,
+                              })
+                            }
+                            disabled={syncSubmitting || detailLoading}
+                          >
+                            Full refresh
+                          </button>
+                          <button
+                            className="ghost-button"
+                            type="button"
+                            onClick={() => void handleRefreshSyncStatus()}
+                            disabled={syncSubmitting || datasetSyncLoading || detailLoading}
+                          >
+                            {datasetSyncLoading ? "Refreshing sync..." : "Refresh sync status"}
+                          </button>
+                        </div>
+                        {syncActionError ? <div className="error-banner">{syncActionError}</div> : null}
+                        {datasetSyncError ? <div className="error-banner">{datasetSyncError}</div> : null}
+                        <DetailList
+                          items={[
+                            { label: "Materialization mode", value: formatTitleCaseLabel(detail.materialization_mode) },
+                            {
+                              label: selectedSyncSourceDescriptor.label,
+                              value: formatValue(selectedSyncSourceDescriptor.value),
+                            },
+                            {
+                              label: "Sync status",
+                              value: formatTitleCaseLabel(selectedSyncState?.status || "never_synced"),
+                            },
+                            {
+                              label: "Last sync",
+                              value: formatDateTime(selectedSyncState?.last_sync_at),
+                            },
+                            {
+                              label: "Sync strategy",
+                              value: formatValue(selectedSyncConfig?.strategy),
+                            },
+                            { label: "Cadence", value: formatValue(selectedSyncConfig?.cadence) },
+                            {
+                              label: "Sync on start",
+                              value: formatValue(selectedSyncConfig?.sync_on_start),
+                            },
+                            {
+                              label: "Requested sync mode",
+                              value: formatValue(selectedSyncState?.sync_mode),
+                            },
+                          ]}
+                        />
+                        <div className="dataset-sync-note-list">
+                          <span>{summarizeSyncState(selectedSyncState)}</span>
+                          {selectedSyncState?.last_sync_at ? (
+                            <span>
+                              {`Last sync ${formatRelativeTime(selectedSyncState.last_sync_at)} (${formatDateTime(
+                                selectedSyncState.last_sync_at,
+                              )})`}
+                            </span>
+                          ) : null}
+                          {selectedSyncState?.last_cursor ? (
+                            <span>{`Last cursor ${selectedSyncState.last_cursor}`}</span>
+                          ) : null}
+                          <span>{`Records synced ${formatValue(selectedSyncState?.records_synced || 0)}`}</span>
+                          <span>{`Bytes synced ${formatBytes(selectedSyncState?.bytes_synced)}`}</span>
+                          {selectedSyncSchedule.length > 0 ? <span>{selectedSyncSchedule.join(" | ")}</span> : null}
+                        </div>
+                        {selectedSyncState?.error_message ? (
+                          <div className="callout warning">
+                            <strong>Latest sync error</strong>
+                            <span>{selectedSyncState.error_message}</span>
+                          </div>
+                        ) : null}
+                      </>
+                    ) : (
+                      <>
+                        <div className="callout">
+                          <strong>Live query surface</strong>
+                          <span>
+                            Live datasets query their source directly in this runtime. Dataset sync buttons stay hidden because this dataset does not use the dataset-owned sync contract.
+                          </span>
+                        </div>
+                        <DetailList
+                          items={[
+                            { label: "Materialization mode", value: formatTitleCaseLabel(detail.materialization_mode) },
+                            { label: "Source binding", value: describeSourceBinding(detail) },
+                            {
+                              label: "Preview row count",
+                              value: formatValue(preview?.rowCount || preview?.row_count_preview),
+                            },
+                          ]}
+                        />
+                      </>
+                    )
+                  ) : (
+                    <PageEmpty
+                      title="No operational state"
+                      message="Select a dataset to inspect its sync or live materialization posture."
                     />
                   )}
                 </Panel>
@@ -1699,6 +2239,10 @@ export function DatasetsPage() {
                         { label: "Nullable columns", value: formatValue(nullableColumns) },
                         { label: "Computed columns", value: formatValue(computedColumns) },
                         { label: "Preview limit", value: formatValue(previewLimit) },
+                        {
+                          label: "Preview row count",
+                          value: formatValue(preview?.rowCount || preview?.row_count_preview),
+                        },
                       ]}
                     />
                   ) : (
@@ -1740,15 +2284,17 @@ export function DatasetsPage() {
                       ) : null}
                     </article>
                     <article className="detail-card">
-                      <strong>Semantic binding</strong>
-                      <span>{detail?.semantic_model || "Not attached"}</span>
-                      <button
-                        className="ghost-button"
-                        type="button"
-                        onClick={() => navigate("/semantic-models")}
-                      >
-                        Open semantic models
-                      </button>
+                      <strong>{selectedIsSynced ? selectedSyncSourceDescriptor.label : "Source binding"}</strong>
+                      <span>
+                        {selectedIsSynced
+                          ? selectedSyncSourceDescriptor.value
+                          : describeSourceBinding(detail)}
+                      </span>
+                      <small>
+                        {selectedIsSynced
+                          ? summarizeSyncState(selectedSyncState)
+                          : "Live datasets query this source directly from the runtime."}
+                      </small>
                     </article>
                     <article className="detail-card">
                       <strong>SQL alias</strong>
@@ -1756,11 +2302,17 @@ export function DatasetsPage() {
                       <small>Use this alias from the runtime SQL workspace.</small>
                     </article>
                     <article className="detail-card">
-                      <strong>Policy posture</strong>
+                      <strong>Semantic and policy posture</strong>
                       <span>
-                        {policy ? `${policy.max_rows_preview || "n/a"} preview rows` : "No policy metadata"}
+                        {detail?.semantic_model || "No semantic model binding"}
                       </span>
-                      <small>Runtime UI intentionally excludes cloud revisioning and governance workflows.</small>
+                      <small>
+                        {policy
+                          ? `${policy.max_rows_preview || "n/a"} preview rows | ${
+                              policy.max_export_rows || "n/a"
+                            } export rows`
+                          : "No runtime policy metadata."}
+                      </small>
                     </article>
                   </div>
                 ) : null}
@@ -1812,7 +2364,7 @@ export function DatasetsPage() {
                       <button
                         className="ghost-button"
                         type="button"
-                        onClick={() => void loadDatasetDetail()}
+                        onClick={() => void loadDatasetPreview()}
                         disabled={previewLoading}
                       >
                         {previewLoading ? "Loading..." : "Run preview"}
