@@ -29,6 +29,9 @@ from .interfaces import (
     AnalyticalContext,
     AnalyticalField,
     AnalyticalMetric,
+    AnalystExecutionOutcome,
+    AnalystOutcomeStage,
+    AnalystOutcomeStatus,
     AnalystQueryRequest,
     AnalystQueryResponse,
     FederatedSqlExecutor,
@@ -197,15 +200,21 @@ class SqlAnalystTool:
 
         for attempt in range(max_retries + 1):
             response = await self._execute(request)
-            if not response.error or attempt >= max_retries:
+            outcome = response.outcome
+            if (
+                outcome is None
+                or not outcome.recoverable
+                or outcome.status not in {AnalystOutcomeStatus.query_error, AnalystOutcomeStatus.execution_error}
+                or attempt >= max_retries
+            ):
                 return response
 
             await self._emit_event(
                 event_type="AnalyticalToolExecutionError",
-                message=response.error,
+                message=outcome.message or response.error or "Analytical execution failed.",
                 visibility=AgentEventVisibility.public,
                 details=self._event_details(
-                    error=response.error,
+                    error=outcome.message or response.error,
                     retry_count=attempt,
                     max_retries=max_retries,
                 ),
@@ -213,11 +222,12 @@ class SqlAnalystTool:
             self.logger.warning(
                 "Execution error for asset %s: %s. Retrying (%d/%d)...",
                 self.name,
-                response.error,
+                outcome.message or response.error,
                 attempt + 1,
                 max_retries,
             )
-            request.error_history.append(response.error)
+            if outcome.message:
+                request.error_history.append(outcome.message)
             await asyncio.sleep(RETRY_BACKOFF_SECONDS)
 
         raise RuntimeError(f"Execution failed for asset {self.name} after {max_retries} retries.")
@@ -245,7 +255,14 @@ class SqlAnalystTool:
             return self._build_response(
                 sql_canonical="",
                 sql_executable="",
-                error=f"SQL generation failed: {exc}",
+                outcome=self._build_outcome(
+                    status=AnalystOutcomeStatus.query_error,
+                    stage=AnalystOutcomeStage.query,
+                    message=f"SQL generation failed: {exc}",
+                    original_error=str(exc),
+                    recoverable=True,
+                    terminal=False,
+                ),
                 elapsed_ms=None,
             )
 
@@ -272,7 +289,14 @@ class SqlAnalystTool:
             return self._build_response(
                 sql_canonical=canonical_sql,
                 sql_executable="",
-                error=sql_validation_error,
+                outcome=self._build_outcome(
+                    status=AnalystOutcomeStatus.query_error,
+                    stage=AnalystOutcomeStage.query,
+                    message=sql_validation_error,
+                    original_error=sql_validation_error,
+                    recoverable=True,
+                    terminal=False,
+                ),
                 elapsed_ms=elapsed_ms,
             )
 
@@ -302,7 +326,7 @@ class SqlAnalystTool:
         )
 
         result_payload: QueryResult | None = None
-        execution_error: str | None = None
+        execution_outcome: AnalystExecutionOutcome | None = None
         try:
             result_payload = await self._federated_sql_executor.execute_sql(
                 sql=executable_sql,
@@ -320,7 +344,15 @@ class SqlAnalystTool:
             )
         except Exception as exc:  # pragma: no cover
             self.logger.exception("Federated execution failed for asset %s", self.name)
-            execution_error = f"Execution failed: {exc}"
+            execution_message = f"Execution failed: {exc}"
+            execution_outcome = self._build_outcome(
+                status=AnalystOutcomeStatus.execution_error,
+                stage=AnalystOutcomeStage.execution,
+                message=execution_message,
+                original_error=str(exc),
+                recoverable=self._is_recoverable_execution_error(str(exc)),
+                terminal=False,
+            )
             await self._emit_event(
                 event_type="AnalyticalSqlExecutionFailed",
                 message="Federated analytical query failed.",
@@ -329,11 +361,26 @@ class SqlAnalystTool:
             )
 
         elapsed_ms = int((time.perf_counter() - start_ts) * 1000)
+        if execution_outcome is None:
+            if result_payload and (result_payload.rowcount or len(result_payload.rows)):
+                execution_outcome = self._build_outcome(
+                    status=AnalystOutcomeStatus.success,
+                    stage=AnalystOutcomeStage.result,
+                    terminal=True,
+                )
+            else:
+                execution_outcome = self._build_outcome(
+                    status=AnalystOutcomeStatus.empty_result,
+                    stage=AnalystOutcomeStage.result,
+                    message="No rows matched the query.",
+                    recoverable=True,
+                    terminal=False,
+                )
         return self._build_response(
             sql_canonical=canonical_sql,
             sql_executable=executable_sql,
             result=result_payload,
-            error=execution_error,
+            outcome=execution_outcome,
             elapsed_ms=elapsed_ms,
         )
 
@@ -423,7 +470,7 @@ class SqlAnalystTool:
         sql_canonical: str,
         sql_executable: str,
         result: QueryResult | None = None,
-        error: str | None = None,
+        outcome: AnalystExecutionOutcome | None = None,
         elapsed_ms: int | None = None,
     ) -> AnalystQueryResponse:
         return AnalystQueryResponse(
@@ -437,9 +484,49 @@ class SqlAnalystTool:
             dialect=self.dialect,
             selected_datasets=list(self.context.datasets),
             result=result,
-            error=error,
+            error=outcome.message if outcome else None,
             execution_time_ms=elapsed_ms,
+            outcome=outcome,
         )
+
+    def _build_outcome(
+        self,
+        *,
+        status: AnalystOutcomeStatus,
+        stage: AnalystOutcomeStage,
+        message: str | None = None,
+        original_error: str | None = None,
+        recoverable: bool = False,
+        terminal: bool = True,
+    ) -> AnalystExecutionOutcome:
+        return AnalystExecutionOutcome(
+            status=status,
+            stage=stage,
+            message=message,
+            original_error=original_error,
+            recoverable=recoverable,
+            terminal=terminal,
+            selected_tool_name=self.name,
+            selected_asset_id=self.context.asset_id,
+            selected_asset_name=self.context.asset_name,
+            selected_asset_type=self.context.asset_type,
+        )
+
+    @staticmethod
+    def _is_recoverable_execution_error(error_message: str) -> bool:
+        normalized = str(error_message or "").lower()
+        if not normalized:
+            return False
+        transient_markers = (
+            "timeout",
+            "temporarily unavailable",
+            "temporary",
+            "connection reset",
+            "connection aborted",
+            "try again",
+            "rate limit",
+        )
+        return any(marker in normalized for marker in transient_markers)
 
     async def _emit_event(
         self,

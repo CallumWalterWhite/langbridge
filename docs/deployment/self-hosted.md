@@ -123,6 +123,35 @@ process exits.
 - Existing unversioned runtime metadata databases that already match the current
   schema are stamped into Alembic on the first explicit migrate or auto-apply.
 
+## Scheduled Dataset Sync
+
+The self-hosted runtime host can run dataset-owned sync in-process through the
+existing runtime background task manager. This slice does not add a separate
+worker or queue system.
+
+Example:
+
+```yaml
+datasets:
+  - name: billing_customers
+    connector: billing_demo
+    materialization_mode: synced
+    sync:
+      source:
+        resource: customers
+      cadence: 1h
+      sync_on_start: true
+```
+
+Rules:
+
+- the dataset must be `materialization_mode: synced`
+- the dataset must have a valid dataset-owned sync contract
+- supported `sync.cadence` values are interval shorthands such as `30s`, `5m`,
+  `1h`, and `1d`
+- `sync.sync_on_start: true` runs one sync during runtime host startup
+- scheduled tasks are registered with names like `dataset-sync:billing_customers`
+
 ## Optional Runtime Features
 
 Enable the runtime UI:

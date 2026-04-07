@@ -2,9 +2,8 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Navigate, useNavigate, useParams } from "react-router-dom";
 import { ArrowRight, Bot, Edit3, History, RefreshCw, Sparkles } from "lucide-react";
 
-import { ChartPreview } from "../components/ChartPreview";
-import { ResultTable } from "../components/ResultTable";
 import { DetailList, PageEmpty } from "../components/PagePrimitives";
+import { RuntimeResultPanel } from "../components/RuntimeResultPanel";
 import { useAsyncData } from "../hooks/useAsyncData";
 import {
   askAgent,
@@ -21,8 +20,6 @@ import {
   createLocalId,
   formatRelativeTime,
   hasRenderableVisualization,
-  normalizeVisualizationSpec,
-  renderJson,
 } from "../lib/runtimeUi";
 
 export function ChatPage() {
@@ -176,6 +173,7 @@ export function ChatPage() {
       assistantVisualization: null,
       diagnostics: null,
       errorMessage: "",
+      errorStatus: null,
       agentId: String(selectedAgent?.id || ""),
       agentLabel: selectedAgent?.name || selectedAgentName,
       status: "pending",
@@ -205,6 +203,7 @@ export function ChatPage() {
         ...pendingTurn,
         status: "error",
         errorMessage: getErrorMessage(caughtError),
+        errorStatus: caughtError?.status || null,
       });
       setSubmitError(getErrorMessage(caughtError));
     } finally {
@@ -361,7 +360,6 @@ export function ChatPage() {
             <div className="thread-transcript-scroll">
               <div className="conversation-stack thread-conversation-stack">
                 {displayTurns.map((turn) => {
-                  const visualization = normalizeVisualizationSpec(turn.assistantVisualization);
                   return (
                     <article key={turn.id} className="conversation-turn-shell">
                       <div className="thread-user-row">
@@ -379,47 +377,22 @@ export function ChatPage() {
                               <span>{turn.agentId ? "Agent run" : "Runtime response"}</span>
                             </div>
                             <span className={`message-status-badge ${turn.status}`}>
-                              {turn.status}
+                              {turn.status === "ready" ? "responded" : turn.status}
                             </span>
                           </header>
 
-                          {turn.status === "pending" ? (
-                            <div className="thread-runtime-pending">
-                              Waiting for the runtime to finish this turn...
-                            </div>
-                          ) : turn.status === "error" ? (
-                            <div className="error-banner">
-                              {turn.errorMessage ||
-                                "The runtime failed to complete this request."}
-                            </div>
-                          ) : (
-                            <div className="thread-assistant-body">
-                              <p className="assistant-summary-card">
-                                {turn.assistantSummary || "No summary returned."}
-                              </p>
-                              {turn.assistantTable ? (
-                                <div className="assistant-artifact-stack">
-                                  {visualization &&
-                                  hasRenderableVisualization(turn.assistantVisualization) ? (
-                                    <ChartPreview
-                                      title={visualization.title}
-                                      result={turn.assistantTable}
-                                      visualization={visualization}
-                                      preferredDimension={visualization.x}
-                                      preferredMeasure={visualization.y?.[0]}
-                                    />
-                                  ) : null}
-                                  <ResultTable result={turn.assistantTable} maxPreviewRows={10} />
-                                </div>
-                              ) : null}
-                              {turn.diagnostics ? (
-                                <details className="diagnostics-disclosure">
-                                  <summary>Execution diagnostics</summary>
-                                  <pre className="code-block compact">{renderJson(turn.diagnostics)}</pre>
-                                </details>
-                              ) : null}
-                            </div>
-                          )}
+                          <div className="thread-assistant-body">
+                            <RuntimeResultPanel
+                              summary={turn.assistantSummary}
+                              result={turn.assistantTable}
+                              visualization={turn.assistantVisualization}
+                              diagnostics={turn.diagnostics}
+                              status={turn.status}
+                              errorMessage={turn.errorMessage}
+                              errorStatus={turn.errorStatus}
+                              maxPreviewRows={10}
+                            />
+                          </div>
                         </div>
                       </div>
                     </article>
@@ -579,7 +552,9 @@ export function ChatPage() {
                 <strong>{latestArtifactTurn.agentLabel || "Assistant"}</strong>
                 <span>
                   {[
-                    latestArtifactTurn.assistantVisualization ? "Chart available" : null,
+                    hasRenderableVisualization(latestArtifactTurn.assistantVisualization)
+                      ? "Chart available"
+                      : null,
                     latestArtifactTurn.assistantTable
                       ? `${latestArtifactTurn.assistantTable.rowCount || 0} rows`
                       : null,

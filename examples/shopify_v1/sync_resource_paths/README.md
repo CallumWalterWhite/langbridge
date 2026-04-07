@@ -4,8 +4,8 @@ This example shows the V1 synced API dataset model for Shopify.
 
 ## What It Demonstrates
 
-- a synced parent dataset using `sync.resource: customers`
-- explicit `sync.flatten` for the 1:1 `default_address` child
+- a synced parent dataset using `sync.source.resource: customers`
+- explicit `sync.source.flatten` for the 1:1 `default_address` child
 - an explicit 1:many child-path synced dataset: `products.options`
 - a dynamic Shopify resource path dataset: `price_rules`
 - no silent dataset creation during dataset sync

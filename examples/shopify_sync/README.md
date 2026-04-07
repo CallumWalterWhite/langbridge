@@ -3,7 +3,7 @@
 This example runs a self-hosted Langbridge runtime host configured with the
 declarative Shopify connector and syncs live Shopify Admin API resources into
 declared synced datasets. It now showcases dataset-owned sync configuration:
-each dataset declares its own `materialization_mode` and `sync.resource`.
+each dataset declares its own `materialization_mode` and `sync.source.resource`.
 
 ## What This Example Covers
 
@@ -14,7 +14,7 @@ each dataset declares its own `materialization_mode` and `sync.resource`.
 - a manifest-listed parent dataset resource: `customers`
 - an explicit child resource path dataset: `products.options`
 - a dynamic dataset-selected resource: `price_rules`
-- explicit 1:1 flattening with `sync.flatten`
+- explicit 1:1 flattening with `sync.source.flatten`
 
 ## Prerequisites
 
@@ -137,7 +137,7 @@ curl -X POST http://localhost:8000/api/runtime/v1/datasets/shopify_price_rules/s
   }'
 ```
 
-This works because the dataset controls `sync.resource`, and the Shopify
+This works because the dataset controls `sync.source.resource`, and the Shopify
 connector resolves `/admin/api/2025-01/price_rules.json` dynamically at sync time.
 
 Sync the explicit child resource path dataset:
@@ -198,6 +198,6 @@ langbridge sync states --url http://localhost:8000 --connector shopify_demo
 - nested child resources do not silently create datasets during sync
 - `price_rules` demonstrates dataset-driven dynamic resource resolution for Shopify
 - `shopify_product_options` demonstrates dataset-owned child resource paths
-- `shopify_customers` demonstrates explicit 1:1 flattening with `sync.flatten`
+- `shopify_customers` demonstrates explicit 1:1 flattening with `sync.source.flatten`
 - live materialization is also dataset-owned in the runtime, but this example stays focused on API sync datasets
 - remove local persisted runtime state by deleting `examples/shopify_sync/.langbridge`

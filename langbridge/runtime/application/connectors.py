@@ -501,8 +501,9 @@ class ConnectorApplication:
                 connection_id=connector.id,
             )
             states_by_resource = {
-                str(state.resource_name or "").strip(): state
+                str((state.source_json or {}).get("resource") or "").strip(): state
                 for state in states
+                if str((state.source_json or {}).get("resource") or "").strip()
             }
             datasets = await self._host._dataset_repository.list_for_connection(
                 workspace_id=self._host.context.workspace_id,
@@ -600,7 +601,7 @@ class ConnectorApplication:
                     "connection_id": state.connection_id,
                     "connector_name": connector.name,
                     "connector_type": state.connector_type_value,
-                    "resource_name": state.resource_name,
+                    "resource_name": str((state.source_json or {}).get("resource") or state.source_key),
                     "sync_mode": state.sync_mode_value,
                     "last_cursor": state.last_cursor,
                     "last_sync_at": state.last_sync_at,
@@ -609,12 +610,23 @@ class ConnectorApplication:
                     "error_message": state.error_message,
                     "records_synced": int(state.records_synced or 0),
                     "bytes_synced": state.bytes_synced,
-                    "dataset_ids": [dataset.id for dataset in dataset_bindings.get(state.resource_name, [])],
-                    "dataset_names": [dataset.name for dataset in dataset_bindings.get(state.resource_name, [])],
+                    "dataset_ids": [
+                        dataset.id
+                        for dataset in dataset_bindings.get(
+                            str((state.source_json or {}).get("resource") or ""), []
+                        )
+                    ],
+                    "dataset_names": [
+                        dataset.name
+                        for dataset in dataset_bindings.get(
+                            str((state.source_json or {}).get("resource") or ""), []
+                        )
+                    ],
                     "created_at": state.created_at,
                     "updated_at": state.updated_at,
                 }
                 for state in states
+                if str((state.source_json or {}).get("resource") or "").strip()
             ]
 
     async def sync_connector_resources(

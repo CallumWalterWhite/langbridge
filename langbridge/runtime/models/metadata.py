@@ -12,6 +12,7 @@ from langbridge.connectors.base.config import (
     ConnectorSyncStrategy,
 )
 from langbridge.runtime.models.base import RuntimeModel
+from langbridge.runtime.scheduling import normalize_dataset_sync_cadence
 
 class ManagementMode(str, Enum):
       CONFIG_MANAGED = "config_managed"
@@ -227,9 +228,12 @@ class DatasetSource(RuntimeModel):
         return self
 
 
+class DatasetSyncSource(DatasetSource):
+    pass
+
+
 class DatasetSyncConfig(RuntimeModel):
-    resource: str
-    flatten: list[str] | None = None
+    source: DatasetSyncSource
     strategy: ConnectorSyncStrategy
     cadence: str | None = None
     cursor_field: str | None = None
@@ -247,12 +251,24 @@ class DatasetSyncConfig(RuntimeModel):
             raise ValueError("Dataset sync strategy is required.")
         return normalized
 
+    @field_validator("source", mode="before")
+    @classmethod
+    def _validate_source(cls, value: Any) -> DatasetSyncSource:
+        if value is None or value == "":
+            raise ValueError("Dataset sync source is required.")
+        if isinstance(value, DatasetSyncSource):
+            return value
+        return DatasetSyncSource.model_validate(value)
+
+    @field_validator("cadence", mode="before")
+    @classmethod
+    def _validate_cadence(cls, value: Any) -> str | None:
+        return normalize_dataset_sync_cadence(value)
+
     @model_validator(mode="after")
     def _validate_sync(self) -> "DatasetSyncConfig":
-        resource = str(self.resource or "").strip()
-        if not resource:
-            raise ValueError("Dataset sync config requires resource.")
-        self.resource = resource
+        if self.source is None:
+            raise ValueError("Dataset sync config requires source.")
         return self
 
 

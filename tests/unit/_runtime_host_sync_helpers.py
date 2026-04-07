@@ -101,7 +101,7 @@ def write_sync_runtime_config(
     directory: Path,
     *,
     api_base_url: str,
-    declared_synced_datasets: list[dict[str, str]] | None = None,
+    declared_synced_datasets: list[dict[str, object]] | None = None,
 ) -> Path:
     datasets_block = ""
     if declared_synced_datasets:
@@ -113,9 +113,18 @@ def write_sync_runtime_config(
                     "    connector: billing_demo",
                     "    materialization_mode: synced",
                     "    sync:",
-                    f"      resource: {item['resource']}",
+                    "      source:",
+                    f"        resource: {item['resource']}",
                 ]
             )
+            cadence = str(item.get("cadence") or "").strip()
+            if cadence:
+                dataset_lines.append(f"      cadence: {cadence}")
+            if "sync_on_start" in item:
+                sync_on_start = bool(item.get("sync_on_start"))
+                dataset_lines.append(
+                    f"      sync_on_start: {'true' if sync_on_start else 'false'}"
+                )
         datasets_block = "\n".join(dataset_lines)
     config_path = directory / "langbridge_sync.yml"
     config_path.write_text(

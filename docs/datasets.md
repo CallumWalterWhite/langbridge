@@ -101,15 +101,15 @@ A dataset requesting `materialization_mode: live` must use a connector that
 supports live datasets. A dataset requesting `materialization_mode: synced`
 must use a connector that supports synced datasets. Config-defined synced
 datasets currently require a runtime sync-capable connector and use
-`sync.resource` as the declared connector resource path to materialize.
+`sync.source` as the dataset-owned source contract to materialize.
 
 ## API Resource Paths
 
 For API-backed datasets, the dataset owns the selected resource path.
 
-- `sync.resource: orders` materializes the parent resource
-- `sync.resource: orders.line_items` materializes an explicit child resource path
-- `sync.resource: accounts.owner` materializes an explicit 1:1 child object as its own dataset
+- `sync.source.resource: orders` materializes the parent resource
+- `sync.source.resource: orders.line_items` materializes an explicit child resource path
+- `sync.source.resource: accounts.owner` materializes an explicit 1:1 child object as its own dataset
 
 The runtime does not create additional datasets just because a connector
 discovers nested children during sync. A dataset only exists when it is:
@@ -119,7 +119,7 @@ discovers nested children during sync. A dataset only exists when it is:
 
 ## Explicit Flattening
 
-API flattening is dataset-owned through `sync.flatten` or `source.flatten`.
+API flattening is dataset-owned through `sync.source.flatten` or `source.flatten`.
 
 - flattening is only valid for resource-backed API datasets
 - flattening is explicit, not inferred from connector discovery
@@ -134,10 +134,47 @@ datasets:
     connector: billing_demo
     materialization_mode: synced
     sync:
-      resource: customers
-      flatten:
-        - default_address
+      source:
+        resource: customers
+        flatten:
+          - default_address
 ```
+
+## Scheduled Sync
+
+Synced datasets can register background sync directly from their dataset-owned
+sync contract.
+
+Supported fields:
+
+- `sync.cadence`
+- `sync.sync_on_start`
+
+Supported cadence format in this slice:
+
+- interval shorthands only: `30s`, `5m`, `1h`, `1d`
+
+Example:
+
+```yaml
+datasets:
+  - name: billing_customers
+    connector: billing_demo
+    materialization_mode: synced
+    sync:
+      source:
+        resource: customers
+      cadence: 1h
+      sync_on_start: true
+```
+
+Behavior:
+
+- the runtime host registers a background task named `dataset-sync:<dataset-name>`
+- the scheduled handler runs dataset-owned sync through `sync_dataset(dataset_ref=...)`
+- `sync_on_start: true` triggers one sync during runtime startup even when no cadence is set
+- invalid cadence values are rejected during config/runtime model validation with a
+  message pointing to the supported shorthand format
 
 ## Policies And Guardrails
 

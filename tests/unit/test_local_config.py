@@ -287,7 +287,7 @@ def test_local_runtime_config_uses_explicit_source_resource_for_synced_datasets(
                     "name": "billing_customers",
                     "connector": "billing_demo",
                     "materialization_mode": "synced",
-                    "sync": {"resource": "customers"},
+                    "sync": {"source": {"resource": "customers"}},
                 }
             ],
         }
@@ -295,8 +295,69 @@ def test_local_runtime_config_uses_explicit_source_resource_for_synced_datasets(
 
     assert config.datasets[0].materialization_mode.value == "synced"
     assert config.datasets[0].sync is not None
-    assert config.datasets[0].sync.resource == "customers"
+    assert config.datasets[0].sync.source.resource == "customers"
     assert config.datasets[0].source is None
+
+
+def test_local_runtime_config_normalizes_dataset_sync_schedule_fields() -> None:
+    config = LocalRuntimeConfig.model_validate(
+        {
+            "version": 1,
+            "connectors": [
+                {
+                    "name": "billing_demo",
+                    "type": "stripe",
+                    "connection": {"api_key": "test-key"},
+                }
+            ],
+            "datasets": [
+                {
+                    "name": "billing_customers",
+                    "connector": "billing_demo",
+                    "materialization_mode": "synced",
+                    "sync": {
+                        "source": {"resource": "customers"},
+                        "cadence": "1H",
+                        "sync_on_start": True,
+                    },
+                }
+            ],
+        }
+    )
+
+    assert config.datasets[0].sync is not None
+    assert config.datasets[0].sync.cadence == "1h"
+    assert config.datasets[0].sync.sync_on_start is True
+
+
+def test_local_runtime_config_rejects_invalid_dataset_sync_cadence() -> None:
+    with pytest.raises(
+        ValueError,
+        match="Unsupported dataset sync cadence 'hourly'",
+    ):
+        LocalRuntimeConfig.model_validate(
+            {
+                "version": 1,
+                "connectors": [
+                    {
+                        "name": "billing_demo",
+                        "type": "stripe",
+                        "connection": {"api_key": "test-key"},
+                    }
+                ],
+                "datasets": [
+                    {
+                        "name": "billing_customers",
+                        "connector": "billing_demo",
+                        "materialization_mode": "synced",
+                        "sync": {
+                            "source": {"resource": "customers"},
+                            "cadence": "hourly",
+                        },
+                    }
+                ],
+            }
+        )
 
 
 def test_local_runtime_config_supports_child_resource_paths_and_explicit_flatten() -> None:
@@ -316,25 +377,69 @@ def test_local_runtime_config_supports_child_resource_paths_and_explicit_flatten
                     "connector": "shopify_demo",
                     "materialization_mode": "synced",
                     "sync": {
-                        "resource": "customers",
-                        "flatten": ["default_address"],
+                        "source": {
+                            "resource": "customers",
+                            "flatten": ["default_address"],
+                        },
                     },
                 },
                 {
                     "name": "shopify_product_options",
                     "connector": "shopify_demo",
                     "materialization_mode": "synced",
-                    "sync": {"resource": "products.options"},
+                    "sync": {"source": {"resource": "products.options"}},
                 },
             ],
         }
     )
 
     assert config.datasets[0].sync is not None
-    assert config.datasets[0].sync.resource == "customers"
-    assert config.datasets[0].sync.flatten == ["default_address"]
+    assert config.datasets[0].sync.source.resource == "customers"
+    assert config.datasets[0].sync.source.flatten == ["default_address"]
     assert config.datasets[1].sync is not None
-    assert config.datasets[1].sync.resource == "products.options"
+    assert config.datasets[1].sync.source.resource == "products.options"
+
+
+def test_local_runtime_config_supports_sql_sync_sources() -> None:
+    config = LocalRuntimeConfig.model_validate(
+        {
+            "version": 1,
+            "connectors": [
+                {
+                    "name": "warehouse",
+                    "type": "sqlite",
+                    "connection": {"location": "./example.db"},
+                }
+            ],
+            "datasets": [
+                {
+                    "name": "orders_snapshot",
+                    "connector": "warehouse",
+                    "materialization_mode": "synced",
+                    "sync": {
+                        "source": {"table": "orders"},
+                        "strategy": "incremental",
+                        "cursor_field": "updated_at",
+                    },
+                },
+                {
+                    "name": "orders_report",
+                    "connector": "warehouse",
+                    "materialization_mode": "synced",
+                    "sync": {
+                        "source": {"sql": "SELECT * FROM orders"},
+                        "strategy": "full_refresh",
+                    },
+                },
+            ],
+        }
+    )
+
+    assert config.datasets[0].sync is not None
+    assert config.datasets[0].sync.source.table == "orders"
+    assert config.datasets[0].sync.cursor_field == "updated_at"
+    assert config.datasets[1].sync is not None
+    assert config.datasets[1].sync.source.sql == "SELECT * FROM orders"
 
 
 def test_local_runtime_config_rejects_legacy_synced_source_shape() -> None:
@@ -432,7 +537,8 @@ datasets:
     connector: billing_demo
     materialization_mode: synced
     sync:
-      resource: customers
+      source:
+        resource: customers
 """.strip(),
         encoding="utf-8",
     )
@@ -455,13 +561,56 @@ datasets:
     assert dataset_model.status == "pending_sync"
     assert dataset_model.source_json is None
     assert dataset_model.sync_json == {
-        "resource": "customers",
+        "source": {"resource": "customers"},
         "strategy": "INCREMENTAL",
         "sync_on_start": False,
     }
     assert dataset_model.file_config == {
         "format": "parquet",
         "managed_dataset": True,
+    }
+
+
+def test_configured_local_runtime_keeps_dataset_sync_schedule_contract(
+    tmp_path: Path,
+) -> None:
+    config_path = tmp_path / "langbridge_config.yml"
+    config_path.write_text(
+        """
+version: 1
+connectors:
+  - name: billing_demo
+    type: stripe
+    connection:
+      api_key: test-key
+datasets:
+  - name: billing_customers
+    connector: billing_demo
+    materialization_mode: synced
+    sync:
+      source:
+        resource: customers
+      cadence: 5m
+      sync_on_start: true
+""".strip(),
+        encoding="utf-8",
+    )
+
+    runtime = build_configured_local_runtime(config_path=config_path)
+
+    dataset_record = runtime._datasets["billing_customers"]
+    dataset_model = asyncio.run(
+        runtime.providers.dataset_metadata.get_dataset(
+            workspace_id=runtime.context.workspace_id,
+            dataset_id=dataset_record.id,
+        )
+    )
+
+    assert dataset_model.sync_json == {
+        "source": {"resource": "customers"},
+        "strategy": "INCREMENTAL",
+        "cadence": "5m",
+        "sync_on_start": True,
     }
 
 
@@ -484,7 +633,8 @@ datasets:
     connector: hubspot_demo
     materialization_mode: synced
     sync:
-      resource: custom_objects
+      source:
+        resource: custom_objects
 """.strip(),
         encoding="utf-8",
     )
@@ -519,7 +669,7 @@ datasets:
         build_configured_local_runtime(config_path=config_path)
 
 
-def test_configured_local_runtime_rejects_synced_dataset_with_non_resource_source(
+def test_configured_local_runtime_supports_sql_table_synced_dataset(
     tmp_path: Path,
 ) -> None:
     config_path = tmp_path / "langbridge_config.yml"
@@ -527,22 +677,121 @@ def test_configured_local_runtime_rejects_synced_dataset_with_non_resource_sourc
         """
 version: 1
 connectors:
-  - name: billing_demo
-    type: stripe
+  - name: warehouse
+    type: sqlite
     connection:
-      api_key: test-key
+      location: ./example.db
+    capabilities:
+      supports_synced_datasets: true
+      supports_query_pushdown: true
+      supports_incremental_sync: true
 datasets:
-  - name: billing_customers
-    connector: billing_demo
+  - name: orders_snapshot
+    connector: warehouse
     materialization_mode: synced
-    source:
-      storage_uri: file:///tmp/customers.parquet
-      format: parquet
+    sync:
+      source:
+        table: orders
+      strategy: INCREMENTAL
+      cursor_field: updated_at
 """.strip(),
         encoding="utf-8",
     )
 
-    with pytest.raises(ValueError, match="Synced datasets must declare sync config"):
+    runtime = build_configured_local_runtime(config_path=config_path)
+
+    dataset_record = runtime._datasets["orders_snapshot"]
+    dataset_model = asyncio.run(
+        runtime.providers.dataset_metadata.get_dataset(
+            workspace_id=runtime.context.workspace_id,
+            dataset_id=dataset_record.id,
+        )
+    )
+
+    assert dataset_model is not None
+    assert dataset_model.sync_json == {
+        "source": {"table": "orders"},
+        "strategy": "INCREMENTAL",
+        "cursor_field": "updated_at",
+        "sync_on_start": False,
+    }
+    assert dataset_model.source_kind == "database"
+
+
+def test_configured_local_runtime_supports_sql_query_synced_dataset(
+    tmp_path: Path,
+) -> None:
+    config_path = tmp_path / "langbridge_config.yml"
+    config_path.write_text(
+        """
+version: 1
+connectors:
+  - name: warehouse
+    type: sqlite
+    connection:
+      location: ./example.db
+    capabilities:
+      supports_synced_datasets: true
+      supports_query_pushdown: true
+datasets:
+  - name: orders_report
+    connector: warehouse
+    materialization_mode: synced
+    sync:
+      source:
+        sql: |
+          SELECT *
+          FROM orders
+      strategy: FULL_REFRESH
+""".strip(),
+        encoding="utf-8",
+    )
+
+    runtime = build_configured_local_runtime(config_path=config_path)
+
+    dataset_record = runtime._datasets["orders_report"]
+    dataset_model = asyncio.run(
+        runtime.providers.dataset_metadata.get_dataset(
+            workspace_id=runtime.context.workspace_id,
+            dataset_id=dataset_record.id,
+        )
+    )
+
+    assert dataset_model is not None
+    assert dataset_model.sync_json == {
+        "source": {"sql": "SELECT *\nFROM orders"},
+        "strategy": "FULL_REFRESH",
+        "sync_on_start": False,
+    }
+    assert dataset_model.source_kind == "database"
+
+
+def test_configured_local_runtime_rejects_synced_dataset_with_mixed_live_and_sync_sources(
+    tmp_path: Path,
+) -> None:
+    config_path = tmp_path / "langbridge_config.yml"
+    config_path.write_text(
+        """
+version: 1
+connectors:
+  - name: warehouse
+    type: sqlite
+    connection:
+      location: ./example.db
+datasets:
+  - name: orders_snapshot
+    connector: warehouse
+    materialization_mode: synced
+    source:
+      table: orders_live
+    sync:
+      source:
+        table: orders
+""".strip(),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="Synced datasets must declare sync config, not live source config"):
         build_configured_local_runtime(config_path=config_path)
 
 
@@ -1030,6 +1279,12 @@ semantic_models:
         assert dataset_model.storage_kind == "csv"
         assert dataset_model.storage_uri is not None
         assert dataset_model.file_config == {"format": "csv", "header": True}
+        assert [column.name for column in dataset_model.columns] == [
+            "contact_external_id",
+            "campaign_name",
+            "campaign_channel",
+            "engagement_score",
+        ]
 
         payload = asyncio.run(
             runtime.query_dataset(
@@ -1047,36 +1302,25 @@ semantic_models:
             {
                 "contact_external_id": "CRM-00000001",
                 "campaign_name": "Spring Refresh",
+                "campaign_channel": "email",
+                "engagement_score": 91,
             },
             {
                 "contact_external_id": "CRM-00000002",
                 "campaign_name": "VIP Retention",
+                "campaign_channel": "sms",
+                "engagement_score": 77,
             },
         ]
 
         connectors = asyncio.run(runtime.list_connectors())
-        assert connectors == [
-            {
-                "id": runtime._connectors["campaign_file"].id,
-                "name": "campaign_file",
-                "description": None,
-                "connector_type": "LOCAL_FILESYSTEM",
-                "connector_family": None,
-                "supports_sync": False,
-                "supported_resources": [],
-                "default_sync_strategy": None,
-                "capabilities": {
-                    "supports_live_datasets": True,
-                    "supports_synced_datasets": False,
-                    "supports_incremental_sync": False,
-                    "supports_query_pushdown": False,
-                    "supports_preview": True,
-                    "supports_federated_execution": True,
-                },
-                "management_mode": "config_managed",
-                "managed": True,
-            }
-        ]
+        assert len(connectors) == 1
+        assert connectors[0]["id"] == runtime._connectors["campaign_file"].id
+        assert connectors[0]["name"] == "campaign_file"
+        assert connectors[0]["connector_type"] == "LOCAL_FILESYSTEM"
+        assert connectors[0]["supports_sync"] is False
+        assert connectors[0]["management_mode"] == "config_managed"
+        assert connectors[0]["managed"] is True
 
 
 def test_configured_local_runtime_keeps_connector_sync_resources_for_discovery(tmp_path: Path) -> None:
@@ -1125,7 +1369,7 @@ def test_configured_local_runtime_syncs_declared_synced_dataset_from_dataset_sur
                 "materialization_mode": "synced",
                 "source": None,
                 "sync": {
-                    "resource": "customers",
+                    "source": {"resource": "customers"},
                     "strategy": "INCREMENTAL",
                     "sync_on_start": False,
                 },
@@ -1141,7 +1385,7 @@ def test_configured_local_runtime_syncs_declared_synced_dataset_from_dataset_sur
         assert detail_before["status"] == "pending_sync"
         assert detail_before["source"] is None
         assert detail_before["sync"] == {
-            "resource": "customers",
+            "source": {"resource": "customers"},
             "strategy": "INCREMENTAL",
             "sync_on_start": False,
         }
@@ -1150,7 +1394,8 @@ def test_configured_local_runtime_syncs_declared_synced_dataset_from_dataset_sur
 
         sync_status_before = asyncio.run(runtime.get_dataset_sync(dataset_ref="billing_customers"))
         assert sync_status_before["dataset_name"] == "billing_customers"
-        assert sync_status_before["resource_name"] == "customers"
+        assert sync_status_before["source_key"] == "resource:customers"
+        assert sync_status_before["source"] == {"resource": "customers"}
         assert sync_status_before["sync_state"]["status"] == "never_synced"
 
         with pytest.raises(ExecutionValidationError, match=(
@@ -1189,7 +1434,7 @@ def test_configured_local_runtime_syncs_declared_synced_dataset_from_dataset_sur
         assert listed_after[0]["status"] == "published"
         assert listed_after[0]["source"] is None
         assert listed_after[0]["sync"] == {
-            "resource": "customers",
+            "source": {"resource": "customers"},
             "strategy": "INCREMENTAL",
             "sync_on_start": False,
         }
@@ -1201,7 +1446,7 @@ def test_configured_local_runtime_syncs_declared_synced_dataset_from_dataset_sur
         assert detail_after["status"] == "published"
         assert detail_after["source"] is None
         assert detail_after["sync"] == {
-            "resource": "customers",
+            "source": {"resource": "customers"},
             "strategy": "INCREMENTAL",
             "sync_on_start": False,
         }
@@ -1221,6 +1466,94 @@ def test_configured_local_runtime_syncs_declared_synced_dataset_from_dataset_sur
         )
         assert preview_after["row_count_preview"] == 2
         assert preview_after["rows"][0]["id"] == "cus_001"
+
+
+def test_configured_local_runtime_syncs_predeclared_sql_synced_dataset_with_semantic_columns(
+    tmp_path: Path,
+) -> None:
+    import sqlite3
+
+    db_path = tmp_path / "commerce.db"
+    connection = sqlite3.connect(db_path)
+    cursor = connection.cursor()
+    cursor.executescript(
+        """
+        CREATE TABLE order_items (
+            line_id TEXT PRIMARY KEY,
+            order_date TEXT NOT NULL,
+            quantity INTEGER NOT NULL,
+            net_line_revenue REAL NOT NULL
+        );
+        INSERT INTO order_items VALUES
+            ('li_1', '2026-04-01', 2, 24.5),
+            ('li_2', '2026-04-02', 1, 15.0);
+        """
+    )
+    connection.commit()
+    connection.close()
+
+    config_path = tmp_path / "langbridge_config.yml"
+    config_path.write_text(
+        f"""
+version: 1
+connectors:
+  - name: commerce_warehouse
+    type: sqlite
+    connection:
+      path: {db_path.name}
+    capabilities:
+      supports_synced_datasets: true
+      supports_query_pushdown: true
+datasets:
+  - name: order_line_items
+    connector: commerce_warehouse
+    materialization_mode: synced
+    semantic_model: commerce
+    default_time_dimension: order_date
+    sync:
+      source:
+        table: order_items
+      strategy: FULL_REFRESH
+
+semantic_models:
+  - name: commerce
+    default: true
+    model:
+      version: "1"
+      name: commerce
+      datasets:
+        order_line_items:
+          relation_name: order_line_items
+          dimensions:
+            - name: line_id
+              expression: line_id
+              type: string
+              primary_key: true
+            - name: order_date
+              expression: order_date
+              type: time
+          measures:
+            - name: units_sold
+              expression: quantity
+              type: number
+              aggregation: sum
+            - name: net_line_revenue
+              expression: net_line_revenue
+              type: number
+              aggregation: sum
+""".strip(),
+        encoding="utf-8",
+    )
+
+    with runtime_storage_dirs(tmp_path):
+        runtime = build_configured_local_runtime(config_path=config_path)
+
+        sync_result = asyncio.run(runtime.sync_dataset(dataset_ref="order_line_items"))
+
+        assert sync_result["status"] == "succeeded"
+        detail_after = asyncio.run(runtime.get_dataset(dataset_ref="order_line_items"))
+        assert detail_after["status"] == "published"
+        assert detail_after["sync_state"]["status"] == "succeeded"
 
 
 @pytest.mark.parametrize(

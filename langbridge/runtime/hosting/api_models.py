@@ -195,6 +195,10 @@ class RuntimeDatasetSourceRequest(RuntimeRequestModel):
         return self
 
 
+class RuntimeDatasetSyncSourceRequest(RuntimeDatasetSourceRequest):
+    pass
+
+
 class RuntimeDatasetPolicyRequest(RuntimeRequestModel):
     max_rows_preview: int | None = Field(default=None, ge=1)
     max_export_rows: int | None = Field(default=None, ge=1)
@@ -204,8 +208,7 @@ class RuntimeDatasetPolicyRequest(RuntimeRequestModel):
 
 
 class RuntimeDatasetSyncConfigRequest(RuntimeRequestModel):
-    resource: str
-    flatten: list[str] | None = None
+    source: RuntimeDatasetSyncSourceRequest
     strategy: ConnectorSyncStrategy | None = None
     cadence: str | None = None
     cursor_field: str | None = None
@@ -213,6 +216,7 @@ class RuntimeDatasetSyncConfigRequest(RuntimeRequestModel):
     lookback_window: str | None = None
     backfill_start: str | None = None
     backfill_end: str | None = None
+    sync_on_start: bool = False
 
     @field_validator("strategy", mode="before")
     @classmethod
@@ -223,10 +227,8 @@ class RuntimeDatasetSyncConfigRequest(RuntimeRequestModel):
 
     @model_validator(mode="after")
     def _validate_sync(self) -> "RuntimeDatasetSyncConfigRequest":
-        resource = str(self.resource or "").strip()
-        if not resource:
-            raise ValueError("Dataset sync config requires resource.")
-        self.resource = resource
+        if self.source is None:
+            raise ValueError("Dataset sync config requires source.")
         return self
 
 
@@ -477,7 +479,9 @@ class RuntimeSyncStateSummary(RuntimeModel):
     connection_id: uuid.UUID | None = None
     connector_name: str | None = None
     connector_type: ConnectorRuntimeType | None = None
-    resource_name: str
+    resource_name: str | None = None
+    source_key: str | None = None
+    source: dict[str, Any] = Field(default_factory=dict)
     sync_mode: ConnectorSyncMode | None = None
     last_cursor: str | None = None
     last_sync_at: datetime | None = None
@@ -504,7 +508,8 @@ class RuntimeDatasetSyncStateResponse(RuntimeModel):
     connector_name: str | None = None
     connector_type: ConnectorRuntimeType | None = None
     materialization_mode: DatasetMaterializationMode | None = None
-    resource_name: str
+    source_key: str
+    source: dict[str, Any] = Field(default_factory=dict)
     sync: dict[str, Any] = Field(default_factory=dict)
     sync_state: RuntimeSyncStateSummary | None = None
 
@@ -539,7 +544,9 @@ class RuntimeSyncRequest(RuntimeRequestModel):
 
 
 class RuntimeSyncExecutionResult(RuntimeModel):
-    resource_name: str
+    resource_name: str | None = None
+    source_key: str | None = None
+    source: dict[str, Any] = Field(default_factory=dict)
     sync_mode: ConnectorSyncMode | None = None
     records_synced: int = 0
     bytes_synced: int | None = None

@@ -19,7 +19,7 @@ from langbridge import LangbridgeClient
 from langbridge.runtime import build_configured_local_runtime
 from langbridge.runtime.bootstrap import ConfiguredLocalRuntimeHost
 from langbridge.runtime.context import RuntimeContext
-from langbridge.runtime.hosting import create_runtime_api_app
+from langbridge.runtime.hosting import BackgroundTaskSchedule, create_runtime_api_app
 from langbridge.runtime.hosting.auth import RuntimeAuthConfig, RuntimeAuthMode
 from langbridge.runtime.models import RuntimeMessageRole, RuntimeThreadMessage
 from tests.unit._runtime_host_sync_helpers import (
@@ -1040,7 +1040,7 @@ def test_runtime_host_api_supports_dataset_owned_sync_for_declared_synced_datase
                 "materialization_mode": "synced",
                 "source": None,
                 "sync": {
-                    "resource": "customers",
+                    "source": {"resource": "customers"},
                     "strategy": "INCREMENTAL",
                     "sync_on_start": False,
                 },
@@ -1059,7 +1059,8 @@ def test_runtime_host_api_supports_dataset_owned_sync_for_declared_synced_datase
         dataset_sync_before = client.get("/api/runtime/v1/datasets/billing_customers/sync")
         assert dataset_sync_before.status_code == 200
         assert dataset_sync_before.json()["dataset_name"] == "billing_customers"
-        assert dataset_sync_before.json()["resource_name"] == "customers"
+        assert dataset_sync_before.json()["source_key"] == "resource:customers"
+        assert dataset_sync_before.json()["source"] == {"resource": "customers"}
         assert dataset_sync_before.json()["sync_state"]["status"] == "never_synced"
 
         preview_before = client.post(
@@ -1106,6 +1107,71 @@ def test_runtime_host_api_supports_dataset_owned_sync_for_declared_synced_datase
         dataset_sync_after = client.get("/api/runtime/v1/datasets/billing_customers/sync")
         assert dataset_sync_after.status_code == 200
         assert dataset_sync_after.json()["sync_state"]["status"] == "succeeded"
+
+
+def test_runtime_host_api_registers_dataset_owned_sync_background_tasks(tmp_path: Path) -> None:
+    with mock_stripe_api() as api_base_url, runtime_storage_dirs(tmp_path):
+        config_path = write_sync_runtime_config(
+            tmp_path,
+            api_base_url=api_base_url,
+            declared_synced_datasets=[
+                {
+                    "name": "billing_customers",
+                    "resource": "customers",
+                    "cadence": "5m",
+                }
+            ],
+        )
+        runtime = build_configured_local_runtime(config_path=str(config_path))
+        app = _create_runtime_app(runtime)
+
+        with TestClient(app) as client:
+            manager = client.app.state.runtime_background_tasks
+            task = next(
+                task
+                for task in manager.default_tasks
+                if task.name == "dataset-sync:billing_customers"
+            )
+            assert task.schedule == BackgroundTaskSchedule.interval(seconds=300)
+            assert task.run_on_startup is False
+            assert task.description == (
+                "Sync dataset 'billing_customers' from its dataset-owned sync contract."
+            )
+
+
+def test_runtime_host_api_runs_dataset_sync_on_startup_when_requested(tmp_path: Path) -> None:
+    with mock_stripe_api() as api_base_url, runtime_storage_dirs(tmp_path):
+        config_path = write_sync_runtime_config(
+            tmp_path,
+            api_base_url=api_base_url,
+            declared_synced_datasets=[
+                {
+                    "name": "billing_customers",
+                    "resource": "customers",
+                    "sync_on_start": True,
+                }
+            ],
+        )
+        runtime = build_configured_local_runtime(config_path=str(config_path))
+        app = _create_runtime_app(runtime)
+
+        with TestClient(app) as client:
+            manager = client.app.state.runtime_background_tasks
+            task = next(
+                task
+                for task in manager.default_tasks
+                if task.name == "dataset-sync:billing_customers"
+            )
+            assert task.schedule is None
+            assert task.run_on_startup is True
+
+            dataset_sync = client.get("/api/runtime/v1/datasets/billing_customers/sync")
+            assert dataset_sync.status_code == 200
+            assert dataset_sync.json()["sync_state"]["status"] == "succeeded"
+
+            dataset_detail = client.get("/api/runtime/v1/datasets/billing_customers")
+            assert dataset_detail.status_code == 200
+            assert dataset_detail.json()["status"] == "published"
 
 
 def test_runtime_host_api_creates_runtime_managed_resources_and_exposes_management_mode(
@@ -1369,6 +1435,10 @@ def test_runtime_host_api_supports_connectorless_file_datasets(
     assert payload["connector_id"] is None
     assert payload["source_kind"] == "file"
     assert payload["storage_kind"] == "csv"
+    assert [column["name"] for column in payload["columns"]] == [
+        "order_id",
+        "customer_name",
+    ]
 
     preview = client.post(
         f"/api/runtime/v1/datasets/{payload['id']}/preview",
@@ -1387,6 +1457,10 @@ def test_runtime_host_api_supports_connectorless_file_datasets(
     assert updated.status_code == 200
     assert updated.json()["connector"] is None
     assert updated.json()["description"] == "Uploaded file dataset"
+    assert [column["name"] for column in updated.json()["columns"]] == [
+        "order_id",
+        "customer_name",
+    ]
 
 
 def test_runtime_host_api_rejects_mutating_config_managed_resources(

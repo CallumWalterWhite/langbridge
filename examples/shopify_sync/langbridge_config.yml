@@ -37,9 +37,10 @@ datasets:
     #   flatten:
     #     - default_address
     sync:
-      resource: customers
-      flatten:
-        - default_address
+      source:
+        resource: customers
+        flatten:
+          - default_address
 
   - name: shopify_product_options
     description: Synced child dataset pinned to the explicit Shopify child resource path `products.options`.
@@ -49,7 +50,8 @@ datasets:
     # source:
     #   resource: products.options
     sync:
-      resource: products.options
+      source:
+        resource: products.options
 
   - name: shopify_price_rules
     description: Synced dataset using a dataset-selected dynamic Shopify Admin API resource.
@@ -59,4 +61,5 @@ datasets:
     # source:
     #   resource: price_rules
     sync:
-      resource: price_rules
+      source:
+        resource: price_rules

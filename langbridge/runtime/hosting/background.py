@@ -9,6 +9,7 @@ from typing import Any, Literal
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 
+from langbridge.runtime.scheduling import dataset_sync_cadence_to_seconds
 from langbridge.runtime.services.runtime_host import RuntimeHost
 
 BackgroundTaskKind = Literal["default", "custom"]
@@ -439,6 +440,50 @@ def build_connector_sync_default_task(
     )
 
 
+def background_task_schedule_from_dataset_cadence(cadence: str) -> BackgroundTaskSchedule:
+    return BackgroundTaskSchedule.interval(
+        seconds=dataset_sync_cadence_to_seconds(cadence)
+    )
+
+
+def build_dataset_sync_default_task(
+    *,
+    dataset_ref: str,
+    dataset_name: str,
+    schedule: BackgroundTaskSchedule | None = None,
+    name: str | None = None,
+    sync_mode: str = "INCREMENTAL",
+    force_full_refresh: bool = False,
+    run_on_startup: bool = False,
+    description: str | None = None,
+) -> RuntimeBackgroundTaskDefinition:
+    normalized_dataset_ref = str(dataset_ref or "").strip()
+    if not normalized_dataset_ref:
+        raise ValueError("Dataset sync background tasks require a dataset_ref.")
+    normalized_dataset_name = str(dataset_name or "").strip()
+    if not normalized_dataset_name:
+        raise ValueError("Dataset sync background tasks require a dataset_name.")
+    task_name = name or f"dataset-sync:{normalized_dataset_name}"
+
+    async def _handler(context: BackgroundTaskExecutionContext) -> Any:
+        sync_method = getattr(context.runtime_host, "sync_dataset", None)
+        if sync_method is None:
+            raise RuntimeError("Runtime host does not expose sync_dataset().")
+        return await sync_method(
+            dataset_ref=normalized_dataset_ref,
+            sync_mode=sync_mode,
+            force_full_refresh=force_full_refresh,
+        )
+
+    return RuntimeBackgroundTaskDefinition.default(
+        name=task_name,
+        handler=_handler,
+        schedule=schedule,
+        run_on_startup=run_on_startup,
+        description=description or f"Sync dataset '{normalized_dataset_name}'.",
+    )
+
+
 def build_semantic_vector_refresh_default_task(
     *,
     schedule: BackgroundTaskSchedule,
@@ -509,6 +554,8 @@ __all__ = [
     "BackgroundTaskSchedule",
     "RuntimeBackgroundTaskDefinition",
     "RuntimeBackgroundTaskManager",
+    "background_task_schedule_from_dataset_cadence",
     "build_connector_sync_default_task",
+    "build_dataset_sync_default_task",
     "build_semantic_vector_refresh_default_task",
 ]

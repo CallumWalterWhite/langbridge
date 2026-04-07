@@ -9,6 +9,7 @@ from langbridge.orchestrator.tools.sql_analyst.interfaces import (
     AnalyticalColumn,
     AnalyticalContext,
     AnalyticalDatasetBinding,
+    AnalystOutcomeStatus,
     AnalystQueryRequest,
     QueryResult,
 )
@@ -140,6 +141,8 @@ def test_sql_analyst_tool_executes_dataset_context_through_federation() -> None:
     response = tool.run(AnalystQueryRequest(question="How many orders?"))
 
     assert response.error is None
+    assert response.outcome is not None
+    assert response.outcome.status == AnalystOutcomeStatus.success
     assert response.analysis_path == "dataset"
     assert response.execution_mode == "federated"
     assert response.asset_name == "orders_dataset"
@@ -173,6 +176,8 @@ def test_sql_analyst_tool_applies_limit_before_federated_execution() -> None:
     response = tool.run(AnalystQueryRequest(question="List orders", limit=10))
 
     assert response.error is None
+    assert response.outcome is not None
+    assert response.outcome.status == AnalystOutcomeStatus.success
     assert response.sql_executable == "SELECT order_id FROM orders LIMIT 10"
     assert executor.calls[0]["sql"] == "SELECT order_id FROM orders LIMIT 10"
     assert executor.calls[0]["max_rows"] == 10
@@ -209,6 +214,8 @@ def test_sql_analyst_tool_uses_runtime_semantic_vector_search_hints() -> None:
     response = tool.run(AnalystQueryRequest(question="How many orders came from the French market?"))
 
     assert response.error is None
+    assert response.outcome is not None
+    assert response.outcome.status == AnalystOutcomeStatus.success
     assert semantic_search.calls == [
         {
             "workspace_id": workspace_id,

@@ -11,6 +11,7 @@ from langbridge.runtime.models.metadata import (
     DatasetMaterializationMode,
     SecretReference,
 )
+from langbridge.runtime.scheduling import normalize_dataset_sync_cadence
 
 
 class LocalRuntimeConnectorConfig(BaseModel):
@@ -58,6 +59,10 @@ class LocalRuntimeDatasetSourceConfig(BaseModel):
         return self
 
 
+class LocalRuntimeDatasetSyncSourceConfig(LocalRuntimeDatasetSourceConfig):
+    pass
+
+
 class LocalRuntimeDatasetPolicyConfig(BaseModel):
     model_config = ConfigDict(extra="allow")
 
@@ -71,8 +76,7 @@ class LocalRuntimeDatasetPolicyConfig(BaseModel):
 class LocalRuntimeDatasetSyncConfig(BaseModel):
     model_config = ConfigDict(extra="allow")
 
-    resource: str
-    flatten: list[str] | None = None
+    source: LocalRuntimeDatasetSyncSourceConfig
     strategy: ConnectorSyncStrategy | None = None
     cadence: str | None = None
     cursor_field: str | None = None
@@ -84,10 +88,9 @@ class LocalRuntimeDatasetSyncConfig(BaseModel):
 
     @model_validator(mode="after")
     def _validate_sync(self) -> "LocalRuntimeDatasetSyncConfig":
-        resource = str(self.resource or "").strip()
-        if not resource:
-            raise ValueError("Dataset sync config requires resource.")
-        self.resource = resource
+        if self.source is None:
+            raise ValueError("Dataset sync config requires source.")
+        self.cadence = normalize_dataset_sync_cadence(self.cadence)
         return self
 
 
@@ -263,6 +266,7 @@ class ResolvedLocalRuntimeMetadataStoreConfig:
 
 ConnectorConfig = LocalRuntimeConnectorConfig
 DatasetSourceConfig = LocalRuntimeDatasetSourceConfig
+DatasetSyncSourceConfig = LocalRuntimeDatasetSyncSourceConfig
 DatasetSyncConfig = LocalRuntimeDatasetSyncConfig
 DatasetPolicyConfig = LocalRuntimeDatasetPolicyConfig
 DatasetConfig = LocalRuntimeDatasetConfig

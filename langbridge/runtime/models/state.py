@@ -8,6 +8,7 @@ from pydantic import Field, field_validator
 
 from langbridge.connectors.base.config import ConnectorRuntimeType
 from langbridge.runtime.models.base import RuntimeModel
+from langbridge.runtime.models.metadata import DatasetSourceKind
 
 
 class ConnectorSyncMode(str, Enum):
@@ -48,7 +49,9 @@ class ConnectorSyncState(RuntimeModel):
     workspace_id: uuid.UUID
     connection_id: uuid.UUID
     connector_type: ConnectorRuntimeType
-    resource_name: str
+    source_key: str
+    source_kind: DatasetSourceKind | None = None
+    source: dict[str, Any] = Field(default_factory=dict)
     sync_mode: ConnectorSyncMode = ConnectorSyncMode.INCREMENTAL
     last_cursor: str | None = None
     last_sync_at: datetime | None = None
@@ -90,6 +93,10 @@ class ConnectorSyncState(RuntimeModel):
         return self.connector_type.value
 
     @property
+    def source_kind_value(self) -> str | None:
+        return None if self.source_kind is None else self.source_kind.value
+
+    @property
     def sync_mode_value(self) -> str:
         return self.sync_mode.value
 
@@ -100,6 +107,14 @@ class ConnectorSyncState(RuntimeModel):
     @property
     def state_json(self) -> dict[str, Any]:
         return dict(self.state)
+
+    @property
+    def source_json(self) -> dict[str, Any]:
+        return dict(self.source)
+
+    @property
+    def resource_name(self) -> str:
+        return self.source_key
 
 
 class SqlJob(RuntimeModel):
