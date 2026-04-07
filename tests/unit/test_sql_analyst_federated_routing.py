@@ -7,6 +7,7 @@ from langbridge.orchestrator.tools.sql_analyst.interfaces import (
     AnalyticalDatasetBinding,
     AnalyticalField,
     AnalyticalMetric,
+    AnalystOutcomeStatus,
     AnalystQueryRequest,
     QueryResult,
 )
@@ -94,6 +95,8 @@ def test_sql_analyst_tool_executes_semantic_model_context_through_federation() -
     response = tool.run(AnalystQueryRequest(question="Join orders and customers", limit=50))
 
     assert response.error is None
+    assert response.outcome is not None
+    assert response.outcome.status == AnalystOutcomeStatus.success
     assert response.asset_type == "semantic_model"
     assert response.execution_mode == "federated"
     assert response.result is not None
@@ -122,6 +125,8 @@ def test_sql_analyst_tool_returns_parse_error_for_invalid_sql() -> None:
     response = tool.run(AnalystQueryRequest(question="Break the parser"))
 
     assert response.error is not None
+    assert response.outcome is not None
+    assert response.outcome.status == AnalystOutcomeStatus.query_error
     assert "failed to parse" in response.error.lower()
     assert executor.calls == []
 
@@ -158,6 +163,8 @@ def test_sql_analyst_tool_casts_temporal_semantic_dimensions_in_predicates() -> 
     response = tool.run(AnalystQueryRequest(question="Quarterly sales by country"))
 
     assert response.error is None
+    assert response.outcome is not None
+    assert response.outcome.status == AnalystOutcomeStatus.success
     assert response.sql_canonical.count('CAST(orders.order_date AS TIMESTAMP)') == 2
     assert "SUM(orders.net_revenue) AS total_net_sales" in response.sql_canonical
     assert executor.calls[0]["sql"].count('CAST(orders.order_date AS TIMESTAMP)') == 2
@@ -189,6 +196,8 @@ def test_sql_analyst_tool_expands_semantic_measure_expressions() -> None:
     response = tool.run(AnalystQueryRequest(question="Top countries by net sales"))
 
     assert response.error is None
+    assert response.outcome is not None
+    assert response.outcome.status == AnalystOutcomeStatus.success
     assert "orders.net_sales" not in response.sql_canonical
     assert "SUM(orders.net_revenue) AS total_net_sales" in response.sql_canonical
 
@@ -224,4 +233,6 @@ def test_sql_analyst_tool_casts_temporal_dataset_columns_in_predicates() -> None
     response = tool.run(AnalystQueryRequest(question="Current month countries"))
 
     assert response.error is None
+    assert response.outcome is not None
+    assert response.outcome.status == AnalystOutcomeStatus.success
     assert 'CAST(orders.order_date AS TIMESTAMP) >= DATE_TRUNC(\'MONTH\', CURRENT_DATE)' in response.sql_canonical

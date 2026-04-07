@@ -83,6 +83,8 @@ def normalize_runtime_config(
                 connector.connection[path_key] = _resolve_relative_path(base_dir, path_value)
 
     for dataset in config.datasets:
+        if dataset.source is None:
+            continue
         if dataset.source.path:
             dataset.source.path = _resolve_relative_path(base_dir, dataset.source.path)
         if dataset.source.storage_uri and "://" not in str(dataset.source.storage_uri):

@@ -1,13 +1,21 @@
-# Langbridge Declarative Shopify Connector
+# Langbridge Shopify Connector
 
-This package provides a thin declarative Shopify Admin connector backed by the
-shared `langbridge.connectors.saas.declarative` runtime.
+This package owns the Shopify connector plugin for Langbridge.
 
-It covers a narrow commerce slice:
+It preserves the runtime-owned sync behavior that previously lived in core
+`langbridge` while loading through the package/plugin surface.
 
+Supported resources:
+
+- `orders`
 - `customers`
-- `draft_orders`
-- `locations`
+- `products`
 
-The package owns only Shopify-specific manifest/config/plugin wiring plus
-shop-domain base URL derivation. Core `langbridge` owns the declarative runtime.
+The package supports either:
+
+- a direct Shopify Admin API access token
+- the legacy Shopify app client id/client secret flow
+
+It still uses the shared `langbridge.connectors.saas.declarative` runtime for
+manifest-driven HTTP execution, but owns the Shopify-specific auth and config
+compatibility layer.

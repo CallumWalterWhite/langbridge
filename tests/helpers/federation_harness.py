@@ -8,7 +8,6 @@ from typing import Any
 import pandas as pd
 import pyarrow as pa
 
-from langbridge.federation.connectors import MockArrowRemoteSource
 from langbridge.federation.executor import ArtifactStore
 from langbridge.federation.models import (
     FederationWorkflow,
@@ -22,6 +21,7 @@ from langbridge.federation.planner import FederatedPlanner
 from langbridge.federation.service import FederatedQueryService
 from langbridge.semantic.model import SemanticModel
 
+from tests.federation.mock import MockArrowRemoteSource
 from tests.helpers.semantic_harness import SemanticHarness
 from tests.helpers.sql_normalize import normalize_rows, normalize_sql
 

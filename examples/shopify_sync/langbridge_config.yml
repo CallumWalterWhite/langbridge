@@ -25,3 +25,41 @@ connectors:
       access_token:
         provider_type: env
         identifier: SHOPIFY_ACCESS_TOKEN
+
+datasets:
+  - name: shopify_customers
+    description: Synced parent dataset for Shopify customers with explicit 1:1 address flattening.
+    connector: shopify_demo
+    materialization_mode: synced
+    # materialization_mode: live
+    # source:
+    #   resource: customers
+    #   flatten:
+    #     - default_address
+    sync:
+      source:
+        resource: customers
+        flatten:
+          - default_address
+
+  - name: shopify_product_options
+    description: Synced child dataset pinned to the explicit Shopify child resource path `products.options`.
+    connector: shopify_demo
+    materialization_mode: synced
+    # materialization_mode: live
+    # source:
+    #   resource: products.options
+    sync:
+      source:
+        resource: products.options
+
+  - name: shopify_price_rules
+    description: Synced dataset using a dataset-selected dynamic Shopify Admin API resource.
+    connector: shopify_demo
+    # materialization_mode: live
+    materialization_mode: synced
+    # source:
+    #   resource: price_rules
+    sync:
+      source:
+        resource: price_rules

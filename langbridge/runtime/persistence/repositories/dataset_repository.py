@@ -168,8 +168,7 @@ class DatasetRepository(AsyncBaseRepository[DatasetRecord]):
         )
         for row in result.all():
             mode = getattr(row, "materialization_mode", None)
-            file_config = getattr(row, "file_config_json", None) or {}
-            if mode == DatasetMaterializationMode.SYNCED.value or bool(file_config.get("managed_dataset")):
+            if mode == DatasetMaterializationMode.SYNCED.value:
                 return row
         return None
 

@@ -18,7 +18,7 @@ class Connector(Base):
     secret_references_json = Column(JSON, nullable=True)
     access_policy_json = Column(JSON, nullable=True)
     supported_resources_json = Column(JSON, nullable=True)
-    sync_strategy = Column(String(50), nullable=True)
+    default_sync_strategy = Column("sync_strategy", String(50), nullable=True)
     capabilities_json = Column(JSON, nullable=True)
     is_managed = Column(Boolean, default=False, nullable=False)
     created_by_actor_id = Column(UUID(as_uuid=True), nullable=True, index=True)

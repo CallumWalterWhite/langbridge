@@ -21,7 +21,9 @@ register_connector_plugin(
         connector_family=ConnectorFamily.DATABASE,
         capabilities=ConnectorCapabilities(
             supports_live_datasets=True,
+            supports_incremental_sync=True,
             supports_query_pushdown=True,
+            supports_synced_datasets=True,
             supports_preview=True,
             supports_federated_execution=True,
         ),

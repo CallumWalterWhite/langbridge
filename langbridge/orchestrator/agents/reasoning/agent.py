@@ -13,6 +13,7 @@ from langbridge.orchestrator.agents.planner import (
     RouteName,
 )
 from langbridge.orchestrator.agents.planner.router import _extract_signals
+from langbridge.orchestrator.tools.sql_analyst.interfaces import AnalystOutcomeStatus
 
 @dataclass
 class ReasoningDecision:
@@ -56,6 +57,23 @@ class ReasoningAgent:
     @staticmethod
     def _has_structured_data(artifacts: PlanExecutionArtifacts) -> bool:
         return bool(artifacts.analyst_result and artifacts.analyst_result.result)
+
+    @staticmethod
+    def _analyst_outcome_status(artifacts: PlanExecutionArtifacts) -> str | None:
+        analyst_result = artifacts.analyst_result
+        if not analyst_result or not analyst_result.outcome:
+            return None
+        return analyst_result.outcome.status.value
+
+    @staticmethod
+    def _analyst_error(artifacts: PlanExecutionArtifacts) -> str | None:
+        analyst_result = artifacts.analyst_result
+        if not analyst_result:
+            return None
+        outcome = analyst_result.outcome
+        if outcome and not outcome.is_error:
+            return None
+        return (outcome.message if outcome else None) or analyst_result.error
 
     @staticmethod
     def _has_web_results(artifacts: PlanExecutionArtifacts) -> bool:
@@ -258,7 +276,11 @@ class ReasoningAgent:
             columns = list(artifacts.analyst_result.result.columns or [])
             rows = list(artifacts.analyst_result.result.rows or [])
 
-        analyst_error = artifacts.analyst_result.error if artifacts.analyst_result else None
+        analyst_error = self._analyst_error(artifacts)
+        analyst_outcome = self._analyst_outcome_status(artifacts)
+        analyst_terminal = bool(
+            artifacts.analyst_result and artifacts.analyst_result.outcome and artifacts.analyst_result.outcome.terminal
+        )
         web_count = len(artifacts.web_search_result.results) if artifacts.web_search_result else 0
         research_findings = (
             len(artifacts.research_result.findings) if artifacts.research_result else 0
@@ -279,6 +301,8 @@ class ReasoningAgent:
             "columns": columns,
             "sample_values": sample_values,
             "analyst_error": analyst_error,
+            "analyst_outcome": analyst_outcome,
+            "analyst_terminal": analyst_terminal,
             "web_results_count": web_count,
             "research_findings_count": research_findings,
             "research_synthesis": research_synthesis[:240],
@@ -521,17 +545,35 @@ class ReasoningAgent:
         has_research = self._has_research_results(artifacts)
         has_data = has_structured_data or has_web_results or has_research
 
-        analyst_error = artifacts.analyst_result and artifacts.analyst_result.error
+        analyst_error = self._analyst_error(artifacts)
+        analyst_outcome = artifacts.analyst_result.outcome if artifacts.analyst_result else None
+        if (
+            analyst_outcome
+            and analyst_outcome.terminal
+            and analyst_outcome.status in {
+                AnalystOutcomeStatus.access_denied,
+                AnalystOutcomeStatus.invalid_request,
+                AnalystOutcomeStatus.selection_error,
+                AnalystOutcomeStatus.query_error,
+                AnalystOutcomeStatus.execution_error,
+                AnalystOutcomeStatus.needs_clarification,
+            }
+        ):
+            return ReasoningDecision(
+                continue_planning=False,
+                rationale=f"Terminal analyst outcome ({analyst_outcome.status.value}); returning final response.",
+            )
+
         if not decision.continue_planning and analyst_error and not (has_web_results or has_research):
             force_route = self._pick_fallback_route(plan.route)
             rationale = "Retrying due to analyst error."
-            self.logger.debug("%s Error: %s", rationale, artifacts.analyst_result.error)
+            self.logger.debug("%s Error: %s", rationale, analyst_error)
             return self._build_retry_decision(
                 plan=plan,
                 rationale=rationale,
                 force_route=force_route,
                 retry_flag="retry_due_to_error",
-                detail=str(artifacts.analyst_result.error),
+                detail=str(analyst_error),
             )
 
         if not decision.continue_planning and not has_data:
@@ -640,7 +682,8 @@ class ReasoningAgent:
             self.logger.debug(rationale)
             return ReasoningDecision(continue_planning=False, rationale=rationale)
 
-        analyst_error = artifacts.analyst_result and artifacts.analyst_result.error
+        analyst_error = self._analyst_error(artifacts)
+        analyst_outcome = artifacts.analyst_result.outcome if artifacts.analyst_result else None
 
         if iteration + 1 >= self.max_iterations:
             rationale = "Max reasoning iterations reached; finalising current response."
@@ -650,6 +693,22 @@ class ReasoningAgent:
         if self._is_repeated_analyst_error(diagnostics=diagnostics, analyst_error=analyst_error):
             rationale = "Repeated analyst error detected; stopping retries."
             self.logger.debug("%s Error: %s", rationale, analyst_error)
+            return ReasoningDecision(continue_planning=False, rationale=rationale)
+
+        if (
+            analyst_outcome
+            and analyst_outcome.terminal
+            and analyst_outcome.status in {
+                AnalystOutcomeStatus.access_denied,
+                AnalystOutcomeStatus.invalid_request,
+                AnalystOutcomeStatus.selection_error,
+                AnalystOutcomeStatus.query_error,
+                AnalystOutcomeStatus.execution_error,
+                AnalystOutcomeStatus.needs_clarification,
+            }
+        ):
+            rationale = f"Analyst returned terminal outcome {analyst_outcome.status.value}; stopping further planning."
+            self.logger.debug(rationale)
             return ReasoningDecision(continue_planning=False, rationale=rationale)
 
         llm_decision = self._evaluate_with_llm(
@@ -703,13 +762,13 @@ class ReasoningAgent:
         if analyst_error and not (has_web_results or has_research):
             force_route = self._pick_fallback_route(plan.route)
             rationale = "Retrying due to analyst error."
-            self.logger.debug("%s Error: %s", rationale, artifacts.analyst_result.error)
+            self.logger.debug("%s Error: %s", rationale, analyst_error)
             return self._build_retry_decision(
                 plan=plan,
                 rationale=rationale,
                 force_route=force_route,
                 retry_flag="retry_due_to_error",
-                detail=str(artifacts.analyst_result.error),
+                detail=str(analyst_error),
             )
 
         if not has_data:

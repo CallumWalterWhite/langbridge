@@ -3,11 +3,14 @@ from .config import (
     SHOPIFY_MANIFEST,
     SHOPIFY_SUPPORTED_RESOURCES,
     SHOPIFY_SYNC_STRATEGY,
+    ShopifyConnectorConfig,
+    ShopifyConnectorConfigFactory,
+    ShopifyConnectorConfigSchemaFactory,
     ShopifyDeclarativeConnectorConfig,
     ShopifyDeclarativeConnectorConfigFactory,
     ShopifyDeclarativeConnectorConfigSchemaFactory,
 )
-from .connector import ShopifyDeclarativeApiConnector
+from .connector import ShopifyApiConnector, ShopifyDeclarativeApiConnector
 from .examples import DeclarativeDatasetExampleSet, load_dataset_examples
 from .plugin import PLUGIN, get_connector_plugin, register_plugin
 
@@ -18,6 +21,10 @@ __all__ = [
     "SHOPIFY_MANIFEST",
     "SHOPIFY_SUPPORTED_RESOURCES",
     "SHOPIFY_SYNC_STRATEGY",
+    "ShopifyApiConnector",
+    "ShopifyConnectorConfig",
+    "ShopifyConnectorConfigFactory",
+    "ShopifyConnectorConfigSchemaFactory",
     "ShopifyDeclarativeApiConnector",
     "ShopifyDeclarativeConnectorConfig",
     "ShopifyDeclarativeConnectorConfigFactory",

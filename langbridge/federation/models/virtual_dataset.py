@@ -1,4 +1,5 @@
 ﻿from typing import Any
+from enum import Enum
 from uuid import UUID
 
 from pydantic import BaseModel, Field, model_validator
@@ -18,9 +19,32 @@ class DatasetExecutionDescriptor(BaseModel):
     source_kind: str
     connector_kind: str | None = None
     storage_kind: str
+    source: dict[str, Any] | None = None
+    sync: dict[str, Any] | None = None
     relation_identity: dict[str, Any] = Field(default_factory=dict)
     execution_capabilities: dict[str, Any] = Field(default_factory=dict)
     metadata: dict[str, Any] = Field(default_factory=dict)
+    freshness: "DatasetFreshnessDescriptor | None" = None
+
+
+class DatasetFreshnessPolicy(str, Enum):
+    REVISION = "revision"
+    VOLATILE = "volatile"
+    UNKNOWN = "unknown"
+
+
+class DatasetFreshnessDescriptor(BaseModel):
+    policy: DatasetFreshnessPolicy = DatasetFreshnessPolicy.UNKNOWN
+    freshness_key: str | None = None
+    revision_id: UUID | None = None
+    revision_hash: str | None = None
+    reason: str | None = None
+
+    @model_validator(mode="after")
+    def _validate_descriptor(self) -> "DatasetFreshnessDescriptor":
+        if self.policy == DatasetFreshnessPolicy.REVISION and not str(self.freshness_key or "").strip():
+            raise ValueError("Revision-backed dataset freshness requires freshness_key.")
+        return self
 
 
 class VirtualTableBinding(BaseModel):
@@ -41,6 +65,8 @@ class VirtualTableBinding(BaseModel):
 
     @property
     def full_name(self) -> str:
+        if self.schema_name is not None and self.schema_name in self.table:
+            return self.table
         parts = [self.catalog, self.schema_name, self.table]
         return ".".join([part for part in parts if part])
 
@@ -66,6 +92,13 @@ class VirtualDataset(BaseModel):
         if not self.tables:
             raise ValueError("VirtualDataset requires at least one table binding.")
         return self
+    
+    @property
+    def virtual_tables(self) -> dict[str, VirtualTableBinding]:
+        return {
+            table_key.lower(): binding
+            for table_key, binding in self.tables.items()
+        }
 
 
 class FederationWorkflow(BaseModel):
@@ -76,3 +109,6 @@ class FederationWorkflow(BaseModel):
     partition_count: int = 8
     max_stage_retries: int = 2
     stage_parallelism: int = 4
+
+
+DatasetExecutionDescriptor.model_rebuild()

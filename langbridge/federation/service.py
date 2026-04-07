@@ -6,6 +6,7 @@ import pyarrow as pa
 
 from langbridge.federation.connectors import RemoteSource
 from langbridge.federation.executor import ArtifactStore, LocalStageDispatcher, StageExecutor, StageScheduler
+from langbridge.federation.executor.cache_context import StageCacheResolver
 from langbridge.federation.models import (
     FederatedExplainPlan,
     FederationWorkflow,
@@ -80,7 +81,15 @@ class FederatedQueryService:
                 source_dialects=source_dialects,
             )
 
-        stage_executor = StageExecutor(artifact_store=self._artifact_store, sources=sources)
+        cache_resolver = StageCacheResolver(
+            workflow=workflow,
+            plan=planning.physical_plan,
+        )
+        stage_executor = StageExecutor(
+            artifact_store=self._artifact_store,
+            cache_resolver=cache_resolver,
+            sources=sources,
+        )
         dispatcher = LocalStageDispatcher(stage_executor=stage_executor)
         scheduler = StageScheduler(dispatcher=dispatcher, stage_parallelism=workflow.stage_parallelism)
         scheduler_result = await scheduler.run(plan=planning.physical_plan, workspace_id=workspace_id)

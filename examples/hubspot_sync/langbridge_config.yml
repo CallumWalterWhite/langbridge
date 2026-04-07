@@ -22,3 +22,20 @@ connectors:
       access_token:
         provider_type: env
         identifier: HUBSPOT_ACCESS_TOKEN
+
+datasets:
+  - name: hubspot_contacts
+    description: Synced dataset pinned to the manifest-listed HubSpot contacts resource.
+    connector: hubspot_demo
+    materialization_mode: synced
+    sync:
+      source:
+        resource: contacts
+
+  - name: hubspot_custom_objects
+    description: Synced dataset using a dataset-selected dynamic HubSpot CRM object resource.
+    connector: hubspot_demo
+    materialization_mode: synced
+    sync:
+      source:
+        resource: custom_objects

@@ -43,15 +43,24 @@ datasets, but the runtime is explicit about what is supported right now.
 
 ## Runtime-Owned Sync
 
-Connector sync is owned by the runtime and exposed through runtime host
+Runtime sync is owned by datasets and exposed through runtime host
 endpoints. The current self-hosted host supports:
 
 - connector listing
 - syncable resource discovery
 - sync state inspection
-- sync execution
+- dataset sync execution
 
 The resulting datasets stay inside the runtime execution model.
+
+The V1 sync model is dataset-owned and explicit:
+
+- connector discovery reports resource structure, but does not create datasets
+- sync only materializes datasets that already exist in config or were intentionally created through runtime dataset APIs
+- live API datasets use `source.resource` and `source.flatten`
+- synced API datasets use `sync.source.resource` and `sync.source.flatten`
+- resource paths use canonical dot-separated names such as `orders`, `orders.line_items`, or `accounts.owner`
+- 1:many children are never flattened and never silently turned into sibling datasets
 
 ## Declarative SaaS Connector Ownership
 
@@ -69,7 +78,8 @@ The current declarative runtime slice is intentionally narrow and runtime-first:
 
 - package manifests define auth, pagination, incremental cursor rules, resource inventory, and connector capability metadata
 - core `langbridge` turns that manifest into an executable `ApiConnector`
-- the existing runtime sync flow materializes those resources into runtime-managed datasets with `materialization_mode: synced`
+- the runtime sync flow materializes declared resource paths into datasets with `materialization_mode: synced`
+- live API datasets can now execute honestly as dataset-declared live sources by fetching resource data into DuckDB-backed local federation
 
 The declarative runtime now covers multiple common SaaS API patterns:
 
@@ -86,14 +96,42 @@ The runtime is intentionally honest about what it supports today:
 
 - config-defined SQL datasets: supported with `materialization_mode: live`
 - config-defined file datasets: supported with `materialization_mode: live`
-- config-defined synced API datasets: supported with `materialization_mode: synced` and `source.resource` naming the sync resource
-- runtime-managed connector sync datasets: supported with `materialization_mode: synced`
+- config-defined synced API datasets: supported with `materialization_mode: synced` and `sync.source.resource` naming the resource path
+- config-defined synced SQL datasets: supported with `materialization_mode: synced` and either `sync.source.table` or `sync.source.sql`
+- runtime-managed datasets intentionally created through the runtime: supported with `materialization_mode: synced`
 - config-defined synced datasets without a runtime sync path: not supported yet
-- live API/SaaS datasets: not implemented yet unless a connector eventually exposes a real live execution path
+- live API/SaaS datasets: supported when the connector exposes a runtime API execution path; Langbridge fetches the dataset-declared API resource into local DuckDB execution rather than pretending SQL pushdown exists
+
+Example synced datasets:
+
+```yaml
+datasets:
+  - name: shopify_customers
+    connector: shopify_demo
+    materialization_mode: synced
+    sync:
+      source:
+        resource: customers
+        flatten:
+          - default_address
+
+  - name: shopify_product_options
+    connector: shopify_demo
+    materialization_mode: synced
+    sync:
+      source:
+        resource: products.options
+```
 
 Connector packages under `langbridge-connectors` should stay thin and primarily
-provide manifest files, package-specific config/schema adapters, and a package-owned
-connector class that points at the core declarative runtime.
+provide package-owned config/schema/plugin wiring plus either:
+
+- manifest files that point at the core declarative runtime
+- package-owned connector logic where the runtime behavior is not yet a clean declarative fit
+
+Where a connector package exists, the runtime should resolve that package as the
+authoritative connector implementation. Core `langbridge` now retains only the
+shared SaaS runtime contracts and declarative execution helpers.
 
 ## Current Declarative Connector Packages
 
@@ -102,6 +140,8 @@ The current package set under `langbridge-connectors` is:
 - `langbridge-connector-stripe`
 - `langbridge-connector-shopify`
 - `langbridge-connector-hubspot`
+- `langbridge-connector-google-analytics`
+- `langbridge-connector-salesforce`
 - `langbridge-connector-github`
 - `langbridge-connector-jira`
 - `langbridge-connector-asana`

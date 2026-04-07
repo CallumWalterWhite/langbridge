@@ -8,7 +8,7 @@ examples:
   - name: stripe_customers
     description: Materialize the built-in customers resource by key.
     connector: stripe
-    connector_sync:
+    sync:
       resource_key: customers
       sync_mode: INCREMENTAL
       params:
@@ -17,7 +17,7 @@ examples:
   - name: stripe_invoices
     description: Materialize another manifest-defined Stripe resource through the same declarative runtime.
     connector: stripe
-    connector_sync:
+    sync:
       resource_key: invoices
       sync_mode: INCREMENTAL
       params:

@@ -237,7 +237,7 @@ class ConnectorSummary(_AwaitableModel):
     connector_family: str | None = None
     supports_sync: bool = False
     supported_resources: list[str] = Field(default_factory=list)
-    sync_strategy: str | None = None
+    default_sync_strategy: str | None = None
     capabilities: dict[str, Any] = Field(default_factory=dict)
     managed: bool = False
 
@@ -308,6 +308,8 @@ class SyncRunResourceResult(_AwaitableModel):
 
 class SyncRunResult(_AwaitableModel):
     status: str
+    dataset_id: uuid.UUID | None = None
+    dataset_name: str | None = None
     connector_id: uuid.UUID | None = None
     connector_name: str | None = None
     sync_mode: str | None = None
@@ -421,11 +423,10 @@ class _SdkAdapter(Protocol):
         connector_name: str,
     ) -> SyncStateListResult: ...
 
-    def sync_connector(
+    def sync_dataset(
         self,
         *,
-        connector_name: str,
-        resource_names: list[str],
+        dataset_ref: str,
         sync_mode: str,
         force_full_refresh: bool,
         timeout_s: float,
@@ -780,11 +781,10 @@ class RuntimeHostApiAdapter(_BaseHttpApiAdapter, _SdkAdapter):
             total=payload.total,
         )
 
-    def sync_connector(
+    def sync_dataset(
         self,
         *,
-        connector_name: str,
-        resource_names: list[str],
+        dataset_ref: str,
         sync_mode: str,
         force_full_refresh: bool,
         timeout_s: float,
@@ -793,9 +793,8 @@ class RuntimeHostApiAdapter(_BaseHttpApiAdapter, _SdkAdapter):
         payload = RuntimeSyncResponse.model_validate(
             self._request(
                 "POST",
-                f"/api/runtime/v1/connectors/{connector_name}/sync",
+                f"/api/runtime/v1/datasets/{dataset_ref}/sync",
                 json={
-                    "resource_names": list(resource_names or []),
                     "sync_mode": str(sync_mode or "INCREMENTAL").strip().upper() or "INCREMENTAL",
                     "force_full_refresh": bool(force_full_refresh),
                 },
@@ -1066,11 +1065,10 @@ class RemoteApiAdapter(_BaseHttpApiAdapter, _SdkAdapter):
             "Use LangbridgeClient.remote(...) against a runtime host, or LangbridgeClient.for_runtime_host(...)."
         )
 
-    def sync_connector(
+    def sync_dataset(
         self,
         *,
-        connector_name: str,
-        resource_names: list[str],
+        dataset_ref: str,
         sync_mode: str,
         force_full_refresh: bool,
         timeout_s: float,
@@ -1417,24 +1415,22 @@ class LocalRuntimeAdapter(_SdkAdapter):
         items = [SyncStateResult.model_validate(item) for item in (payload or [])]
         return SyncStateListResult(items=items, total=len(items))
 
-    def sync_connector(
+    def sync_dataset(
         self,
         *,
-        connector_name: str,
-        resource_names: list[str],
+        dataset_ref: str,
         sync_mode: str,
         force_full_refresh: bool,
         timeout_s: float,
         poll_interval_s: float,
     ) -> SyncRunResult:
-        sync_method = getattr(self._runtime_host, "sync_connector_resources", None)
+        sync_method = getattr(self._runtime_host, "sync_dataset", None)
         if sync_method is None:
-            raise ValueError("Local runtime host does not expose sync_connector_resources().")
+            raise ValueError("Local runtime host does not expose sync_dataset().")
         try:
             payload = _run_awaitable(
                 sync_method(
-                    connector_name=connector_name,
-                    resources=list(resource_names or []),
+                    dataset_ref=dataset_ref,
                     sync_mode=sync_mode,
                     force_full_refresh=force_full_refresh,
                 )
@@ -1442,7 +1438,7 @@ class LocalRuntimeAdapter(_SdkAdapter):
         except Exception as exc:
             return SyncRunResult(
                 status="failed",
-                connector_name=connector_name,
+                dataset_name=dataset_ref,
                 sync_mode=str(sync_mode or "INCREMENTAL").strip().upper() or "INCREMENTAL",
                 error=str(exc),
             )
@@ -1478,16 +1474,14 @@ class _SyncClient:
     def run(
         self,
         *,
-        connector_name: str,
-        resource_names: list[str] | tuple[str, ...],
+        dataset: str | uuid.UUID,
         sync_mode: str = "INCREMENTAL",
         force_full_refresh: bool = False,
         timeout_s: float = 300.0,
         poll_interval_s: float = 0.5,
     ) -> SyncRunResult:
-        return self._owner._adapter.sync_connector(
-            connector_name=connector_name,
-            resource_names=[str(item) for item in resource_names],
+        return self._owner._adapter.sync_dataset(
+            dataset_ref=str(dataset),
             sync_mode=sync_mode,
             force_full_refresh=force_full_refresh,
             timeout_s=timeout_s,

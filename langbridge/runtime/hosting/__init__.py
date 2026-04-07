@@ -7,7 +7,9 @@ __all__ = [
     "BackgroundTaskSchedule",
     "RuntimeBackgroundTaskDefinition",
     "RuntimeBackgroundTaskManager",
+    "background_task_schedule_from_dataset_cadence",
     "build_connector_sync_default_task",
+    "build_dataset_sync_default_task",
     "build_semantic_vector_refresh_default_task",
     "create_runtime_api_app",
     "run_runtime_api",
@@ -39,10 +41,20 @@ def __getattr__(name: str) -> Any:
         from langbridge.runtime.hosting.background import RuntimeBackgroundTaskManager
 
         return RuntimeBackgroundTaskManager
+    if name == "background_task_schedule_from_dataset_cadence":
+        from langbridge.runtime.hosting.background import (
+            background_task_schedule_from_dataset_cadence,
+        )
+
+        return background_task_schedule_from_dataset_cadence
     if name == "build_connector_sync_default_task":
         from langbridge.runtime.hosting.background import build_connector_sync_default_task
 
         return build_connector_sync_default_task
+    if name == "build_dataset_sync_default_task":
+        from langbridge.runtime.hosting.background import build_dataset_sync_default_task
+
+        return build_dataset_sync_default_task
     if name == "build_semantic_vector_refresh_default_task":
         from langbridge.runtime.hosting.background import build_semantic_vector_refresh_default_task
 

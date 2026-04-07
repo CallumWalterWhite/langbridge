@@ -1,9 +1,9 @@
-"""SaaS API connector implementations."""
+"""Shared SaaS connector runtime contracts.
+
+Concrete SaaS connectors are package-owned under ``langbridge-connectors``.
+Core ``langbridge`` retains only the shared declarative runtime and helpers.
+"""
 
 __all__ = [
     "declarative",
-    "google_analytics",
-    "hubspot",
-    "salesforce",
-    "shopify",
 ]

@@ -1,3 +1,4 @@
+from pydantic import model_validator
 
 from langbridge.connectors.base.config import (
     BaseConnectorConfig,
@@ -10,7 +11,6 @@ from langbridge.connectors.base.config import (
     ConnectorSyncStrategy,
 )
 from langbridge.connectors.saas.declarative import (
-    build_declarative_config_entries,
     build_declarative_plugin_metadata,
     load_declarative_connector_manifest,
 )
@@ -21,21 +21,36 @@ _MANIFEST = load_declarative_connector_manifest(
 )
 
 
-class ShopifyDeclarativeConnectorConfig(BaseConnectorConfig):
-    access_token: str
+class ShopifyConnectorConfig(BaseConnectorConfig):
     shop_domain: str
+    access_token: str | None = None
+    shopify_app_client_id: str | None = None
+    shopify_app_client_secret: str | None = None
     api_base_url: str | None = None
 
+    @model_validator(mode="after")
+    def _validate_auth(self) -> "ShopifyConnectorConfig":
+        if str(self.access_token or "").strip():
+            return self
+        if str(self.shopify_app_client_id or "").strip() and str(
+            self.shopify_app_client_secret or ""
+        ).strip():
+            return self
+        raise ValueError(
+            "Provide either access_token or both shopify_app_client_id and "
+            "shopify_app_client_secret."
+        )
 
-class ShopifyDeclarativeConnectorConfigFactory(BaseConnectorConfigFactory):
+
+class ShopifyConnectorConfigFactory(BaseConnectorConfigFactory):
     type = ConnectorRuntimeType.SHOPIFY
 
     @classmethod
     def create(cls, config: dict) -> BaseConnectorConfig:
-        return ShopifyDeclarativeConnectorConfig(**config)
+        return ShopifyConnectorConfig(**config)
 
 
-class ShopifyDeclarativeConnectorConfigSchemaFactory(BaseConnectorConfigSchemaFactory):
+class ShopifyConnectorConfigSchemaFactory(BaseConnectorConfigSchemaFactory):
     type = ConnectorRuntimeType.SHOPIFY
 
     @classmethod
@@ -43,8 +58,10 @@ class ShopifyDeclarativeConnectorConfigSchemaFactory(BaseConnectorConfigSchemaFa
         return ConnectorConfigSchema(
             name=_MANIFEST.display_name,
             description=(
-                f"{_MANIFEST.description} The package derives the shop-specific Admin API "
-                "base URL from `shop_domain` unless `api_base_url` is explicitly overridden."
+                f"{_MANIFEST.description} The package supports either a direct Admin API "
+                "access token or the legacy app client id/secret flow and derives the "
+                "shop-specific Admin API base URL from `shop_domain` unless "
+                "`api_base_url` is explicitly overridden."
             ),
             version=_MANIFEST.schema_version,
             config=[
@@ -55,17 +72,33 @@ class ShopifyDeclarativeConnectorConfigSchemaFactory(BaseConnectorConfigSchemaFa
                     type="string",
                     required=True,
                 ),
-                *build_declarative_config_entries(
-                    _MANIFEST,
-                    token_description="Shopify Admin API access token.",
-                    include_base_url=False,
+                ConnectorConfigEntrySchema(
+                    field="access_token",
+                    label="Access Token",
+                    description="Preferred Shopify Admin API access token.",
+                    type="password",
+                    required=False,
+                ),
+                ConnectorConfigEntrySchema(
+                    field="shopify_app_client_id",
+                    label="Shopify App Client ID",
+                    description="Legacy Shopify app client id used to obtain an access token.",
+                    type="string",
+                    required=False,
+                ),
+                ConnectorConfigEntrySchema(
+                    field="shopify_app_client_secret",
+                    label="Shopify App Client Secret",
+                    description="Legacy Shopify app client secret used to obtain an access token.",
+                    type="password",
+                    required=False,
                 ),
                 ConnectorConfigEntrySchema(
                     field="api_base_url",
                     label="API Base URL",
                     description=(
                         "Optional Shopify Admin API base URL override. Defaults to "
-                        "`https://{shop_domain}/admin/api/2026-01`."
+                        "`https://{shop_domain}/admin/api/2025-01`."
                     ),
                     type="string",
                     required=False,
@@ -95,9 +128,31 @@ SHOPIFY_AUTH_SCHEMA = (
     ConnectorAuthFieldSchema(
         field="access_token",
         label="Access Token",
-        description="Shopify Admin API access token.",
+        description="Preferred Shopify Admin API access token.",
         type="password",
-        required=True,
+        required=False,
+        secret=True,
+    ),
+    ConnectorAuthFieldSchema(
+        field="shopify_app_client_id",
+        label="Shopify App Client ID",
+        description="Legacy Shopify app client id used to obtain an access token.",
+        type="string",
+        required=False,
+        secret=False,
+    ),
+    ConnectorAuthFieldSchema(
+        field="shopify_app_client_secret",
+        label="Shopify App Client Secret",
+        description="Legacy Shopify app client secret used to obtain an access token.",
+        type="password",
+        required=False,
         secret=True,
     ),
 )
+
+# Backward-compatible aliases while the package migrates away from the
+# earlier declarative-only naming.
+ShopifyDeclarativeConnectorConfig = ShopifyConnectorConfig
+ShopifyDeclarativeConnectorConfigFactory = ShopifyConnectorConfigFactory
+ShopifyDeclarativeConnectorConfigSchemaFactory = ShopifyConnectorConfigSchemaFactory

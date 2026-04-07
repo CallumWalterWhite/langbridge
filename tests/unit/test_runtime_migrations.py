@@ -15,6 +15,7 @@ from langbridge.runtime.persistence.migrations import (
     RuntimeMetadataMigrationRequiredError,
     build_runtime_metadata_alembic_config,
     migrate_runtime_metadata_store,
+    resolve_runtime_repo_root,
 )
 
 
@@ -124,6 +125,14 @@ def test_runtime_metadata_migrations_use_normalized_postgres_sync_url() -> None:
     assert alembic_config.get_main_option("sqlalchemy.url") == metadata_store.sync_url
 
 
+def test_runtime_metadata_uses_packaged_alembic_assets() -> None:
+    repo_root = resolve_runtime_repo_root()
+
+    assert repo_root.name == "persistence"
+    assert (repo_root / "alembic.ini").exists()
+    assert (repo_root / "alembic" / "env.py").exists()
+
+
 def test_runtime_host_auto_migrates_sqlite_metadata_store_by_default(tmp_path: Path) -> None:
     config_path = _write_runtime_config(tmp_path, auto_apply=True)
 
@@ -164,3 +173,36 @@ def test_runtime_migrate_stamps_existing_unversioned_current_schema(tmp_path: Pa
     assert result.stamped_legacy_schema is True
     assert result.current_revision == result.head_revision
     assert _sqlite_alembic_revision(_sqlite_metadata_path(config_path)) == result.head_revision
+
+
+def test_runtime_migrate_restamps_current_schema_from_superseded_revision(tmp_path: Path) -> None:
+    config_path = _write_runtime_config(tmp_path)
+    config = load_runtime_config(config_path)
+    metadata_store = resolve_metadata_store_config(
+        config_path=config_path,
+        metadata_store=config.runtime.metadata_store,
+    )
+    engine = create_engine_for_url(metadata_store.sync_url or "")
+    try:
+        initialize_database(engine)
+    finally:
+        engine.dispose()
+
+    metadata_db = _sqlite_metadata_path(config_path)
+    connection = sqlite3.connect(metadata_db)
+    try:
+        connection.execute("CREATE TABLE alembic_version (version_num VARCHAR(32) NOT NULL)")
+        connection.execute(
+            "INSERT INTO alembic_version (version_num) VALUES (?)",
+            ("67a2742aa6ff",),
+        )
+        connection.commit()
+    finally:
+        connection.close()
+
+    result = migrate_runtime_metadata_store(metadata_store)
+
+    assert result.stamped_legacy_schema is False
+    assert result.upgraded is False
+    assert result.current_revision == result.head_revision
+    assert _sqlite_alembic_revision(metadata_db) == result.head_revision

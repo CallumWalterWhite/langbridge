@@ -4,7 +4,7 @@ from datetime import datetime
 from enum import Enum
 from typing import Any, Literal
 
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
 
 from langbridge.connectors.base.config import (
     ConnectorFamily,
@@ -12,6 +12,7 @@ from langbridge.connectors.base.config import (
     ConnectorSyncStrategy,
 )
 from langbridge.runtime.models.base import RuntimeModel
+from langbridge.runtime.scheduling import normalize_dataset_sync_cadence
 
 class ManagementMode(str, Enum):
       CONFIG_MANAGED = "config_managed"
@@ -41,15 +42,7 @@ class ConnectionPolicy(RuntimeModel):
     redaction_rules: dict[str, str] = Field(default_factory=dict)
 
 
-class ConnectionMetadata(RuntimeModel):
-    host: str | None = None
-    port: int | None = None
-    database: str | None = None
-    schema_name: str | None = Field(default=None, alias="schema")
-    warehouse: str | None = None
-    role: str | None = None
-    account: str | None = None
-    user: str | None = None
+class ConnectionMetadata(RuntimeModel, extra="allow"):
     extra: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -100,7 +93,7 @@ class ConnectorMetadata(RuntimeModel):
     secret_references: dict[str, SecretReference] = Field(default_factory=dict)
     connection_policy: ConnectionPolicy | None = None
     supported_resources: list[str] = Field(default_factory=list)
-    sync_strategy: ConnectorSyncStrategy | None = None
+    default_sync_strategy: ConnectorSyncStrategy | None = None
     capabilities: ConnectorCapabilities | None = None
     is_managed: bool = False
     created_by: uuid.UUID | None = None
@@ -118,9 +111,9 @@ class ConnectorMetadata(RuntimeModel):
     def _validate_connector_family(cls, value: Any) -> ConnectorFamily | None:
         return _normalize_enum_value(ConnectorFamily, value, case="upper")
 
-    @field_validator("sync_strategy", mode="before")
+    @field_validator("default_sync_strategy", mode="before")
     @classmethod
-    def _validate_sync_strategy(cls, value: Any) -> ConnectorSyncStrategy | None:
+    def _validate_default_sync_strategy(cls, value: Any) -> ConnectorSyncStrategy | None:
         return _normalize_enum_value(ConnectorSyncStrategy, value, case="upper")
 
     @property
@@ -134,8 +127,12 @@ class ConnectorMetadata(RuntimeModel):
         return self.connector_family.value.lower()
 
     @property
-    def sync_strategy_value(self) -> str | None:
-        return None if self.sync_strategy is None else self.sync_strategy.value
+    def default_sync_strategy_value(self) -> str | None:
+        return (
+            None
+            if self.default_sync_strategy is None
+            else self.default_sync_strategy.value
+        )
 
     @property
     def capabilities_json(self) -> dict[str, Any] | None:
@@ -191,6 +188,7 @@ class DatasetSourceKind(str, Enum):
 
 class DatasetStorageKind(str, Enum):
     TABLE = "table"
+    MEMORY = "memory"
     PARQUET = "parquet"
     CSV = "csv"
     JSON = "json"
@@ -203,9 +201,81 @@ class DatasetMaterializationMode(str, Enum):
     SYNCED = "synced"
 
 
+class DatasetSource(RuntimeModel):
+    table: str | None = None
+    resource: str | None = None
+    flatten: list[str] | None = None
+    sql: str | None = None
+    storage_uri: str | None = None
+    format: str | None = None
+    header: bool | None = None
+    delimiter: str | None = None
+    quote: str | None = None
+
+    @model_validator(mode="after")
+    def _validate_source(self) -> "DatasetSource":
+        has_table = bool(str(self.table or "").strip())
+        has_resource = bool(str(self.resource or "").strip())
+        has_sql = bool(str(self.sql or "").strip())
+        has_file = bool(str(self.storage_uri or "").strip())
+        configured_modes = sum((has_table, has_resource, has_sql, has_file))
+        if configured_modes != 1:
+            raise ValueError(
+                "Dataset source must define exactly one of table, resource, sql, or storage_uri."
+            )
+        if self.flatten and not has_resource:
+            raise ValueError("Dataset source flatten paths are only valid for resource-backed API datasets.")
+        return self
+
+
+class DatasetSyncSource(DatasetSource):
+    pass
+
+
+class DatasetSyncConfig(RuntimeModel):
+    source: DatasetSyncSource
+    strategy: ConnectorSyncStrategy
+    cadence: str | None = None
+    cursor_field: str | None = None
+    initial_cursor: str | None = None
+    lookback_window: str | None = None
+    backfill_start: str | None = None
+    backfill_end: str | None = None
+    sync_on_start: bool = False
+
+    @field_validator("strategy", mode="before")
+    @classmethod
+    def _validate_strategy(cls, value: Any) -> ConnectorSyncStrategy:
+        normalized = _normalize_enum_value(ConnectorSyncStrategy, value, case="upper")
+        if normalized is None:
+            raise ValueError("Dataset sync strategy is required.")
+        return normalized
+
+    @field_validator("source", mode="before")
+    @classmethod
+    def _validate_source(cls, value: Any) -> DatasetSyncSource:
+        if value is None or value == "":
+            raise ValueError("Dataset sync source is required.")
+        if isinstance(value, DatasetSyncSource):
+            return value
+        return DatasetSyncSource.model_validate(value)
+
+    @field_validator("cadence", mode="before")
+    @classmethod
+    def _validate_cadence(cls, value: Any) -> str | None:
+        return normalize_dataset_sync_cadence(value)
+
+    @model_validator(mode="after")
+    def _validate_sync(self) -> "DatasetSyncConfig":
+        if self.source is None:
+            raise ValueError("Dataset sync config requires source.")
+        return self
+
+
 class DatasetType(str, Enum):
     TABLE = "TABLE"
     SQL = "SQL"
+    API = "API"
     FILE = "FILE"
     FEDERATED = "FEDERATED"
 
@@ -252,7 +322,9 @@ class DatasetMetadata(RuntimeModel):
     description: str | None = None
     tags: list[str] = Field(default_factory=list)
     dataset_type: DatasetType
-    materialization_mode: DatasetMaterializationMode | None = None
+    materialization_mode: DatasetMaterializationMode
+    source: DatasetSource | None = None
+    sync: DatasetSyncConfig | None = None
     source_kind: DatasetSourceKind | None = None
     connector_kind: str | None = None
     storage_kind: DatasetStorageKind | None = None
@@ -292,8 +364,29 @@ class DatasetMetadata(RuntimeModel):
     def _validate_materialization_mode(
         cls,
         value: Any,
-    ) -> DatasetMaterializationMode | None:
-        return _normalize_enum_value(DatasetMaterializationMode, value, case="lower")
+    ) -> DatasetMaterializationMode:
+        normalized = _normalize_enum_value(DatasetMaterializationMode, value, case="lower")
+        if normalized is None:
+            raise ValueError("materialization_mode is required.")
+        return normalized
+
+    @field_validator("source", mode="before")
+    @classmethod
+    def _validate_source(cls, value: Any) -> DatasetSource | None:
+        if value is None or value == "":
+            return None
+        if isinstance(value, DatasetSource):
+            return value
+        return DatasetSource.model_validate(value)
+
+    @field_validator("sync", mode="before")
+    @classmethod
+    def _validate_sync(cls, value: Any) -> DatasetSyncConfig | None:
+        if value is None or value == "":
+            return None
+        if isinstance(value, DatasetSyncConfig):
+            return value
+        return DatasetSyncConfig.model_validate(value)
 
     @field_validator("source_kind", mode="before")
     @classmethod
@@ -313,6 +406,20 @@ class DatasetMetadata(RuntimeModel):
             return DatasetStatus.PUBLISHED
         return normalized
 
+    @model_validator(mode="after")
+    def _validate_materialization_contract(self) -> "DatasetMetadata":
+        if self.materialization_mode == DatasetMaterializationMode.LIVE:
+            if self.source is None:
+                raise ValueError("Live datasets must define source.")
+            if self.sync is not None:
+                raise ValueError("Live datasets must not define sync config.")
+            return self
+        if self.sync is None:
+            raise ValueError("Synced datasets must define sync config.")
+        if self.source is not None:
+            raise ValueError("Synced datasets must not define live source config.")
+        return self
+
     @property
     def tags_json(self) -> list[str]:
         return list(self.tags)
@@ -324,6 +431,14 @@ class DatasetMetadata(RuntimeModel):
     @property
     def materialization_mode_value(self) -> str | None:
         return None if self.materialization_mode is None else self.materialization_mode.value
+
+    @property
+    def source_json(self) -> dict[str, Any] | None:
+        return None if self.source is None else self.source.model_dump(mode="json", exclude_none=True)
+
+    @property
+    def sync_json(self) -> dict[str, Any] | None:
+        return None if self.sync is None else self.sync.model_dump(mode="json", exclude_none=True)
 
     @property
     def source_kind_value(self) -> str | None:

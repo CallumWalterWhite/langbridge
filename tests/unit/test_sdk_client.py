@@ -139,7 +139,7 @@ class _FakeRuntimeHost:
                 "connector_family": "api",
                 "supports_sync": True,
                 "supported_resources": ["customers"],
-                "sync_strategy": "INCREMENTAL",
+                "default_sync_strategy": "INCREMENTAL",
                 "capabilities": {
                     "supports_live_datasets": False,
                     "supports_synced_datasets": True,
@@ -179,37 +179,35 @@ class _FakeRuntimeHost:
             }
         ]
 
-    async def sync_connector_resources(
+    async def sync_dataset(
         self,
         *,
-        connector_name: str,
-        resources: list[str],
+        dataset_ref: str,
         sync_mode: str,
         force_full_refresh: bool,
     ):
         self.sync_calls.append(
             {
-                "connector_name": connector_name,
-                "resources": list(resources),
+                "dataset_ref": dataset_ref,
                 "sync_mode": sync_mode,
                 "force_full_refresh": force_full_refresh,
             }
         )
         return {
             "status": "succeeded",
-            "connector_name": connector_name,
+            "dataset_name": dataset_ref,
+            "connector_name": "billing_demo",
             "sync_mode": sync_mode,
             "resources": [
                 {
-                    "resource_name": resource_name,
+                    "resource_name": "customers",
                     "sync_mode": sync_mode,
                     "records_synced": 2,
                     "dataset_ids": [],
-                    "dataset_names": [f"{connector_name}_{resource_name}"],
+                    "dataset_names": [dataset_ref],
                 }
-                for resource_name in resources
             ],
-            "summary": f"Connector sync completed for {len(resources)} resource(s).",
+            "summary": f"Dataset sync completed for '{dataset_ref}'.",
         }
 
     async def aclose(self) -> None:
@@ -788,8 +786,7 @@ def test_local_sdk_sync_clients_use_runtime_host() -> None:
     resources = client.sync.resources(connector_name="billing_demo")
     states = client.sync.states(connector_name="billing_demo")
     run = client.sync.run(
-        connector_name="billing_demo",
-        resource_names=["customers"],
+        dataset="billing_demo_customers",
     )
 
     assert connectors.total == 1
@@ -801,11 +798,11 @@ def test_local_sdk_sync_clients_use_runtime_host() -> None:
     assert states.total == 1
     assert states.items[0].dataset_names == ["stripe_demo_customers"]
     assert run.status == "succeeded"
+    assert run.dataset_name == "billing_demo_customers"
     assert run.resources[0].dataset_names == ["billing_demo_customers"]
     assert runtime_host.sync_calls == [
         {
-            "connector_name": "billing_demo",
-            "resources": ["customers"],
+            "dataset_ref": "billing_demo_customers",
             "sync_mode": "INCREMENTAL",
             "force_full_refresh": False,
         }
@@ -850,6 +847,7 @@ connectors:
 datasets:
   - name: shopify_orders
     connector: commerce_demo
+    materialization_mode: live
     semantic_model: commerce_performance
     default_time_dimension: order_date
     source:

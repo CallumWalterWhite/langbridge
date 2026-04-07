@@ -27,8 +27,10 @@ if TYPE_CHECKING:
         ApiConnector,
         Connector,
         ManagedVectorDB,
+        ManagedStorageConnector,
         NoSqlConnector,
         SqlConnector,
+        StorageConnector,
         VecotorDBConnector,
     )
 
@@ -44,17 +46,12 @@ _BUILTIN_PLUGIN_MODULES = (
     "langbridge.connectors.sql.sqlserver",
     "langbridge.connectors.vector.faiss",
     "langbridge.connectors.vector.qdrant",
-    "langbridge.connectors.saas.shopify",
-    "langbridge.connectors.saas.hubspot",
-    "langbridge.connectors.saas.google_analytics",
-    "langbridge.connectors.saas.salesforce",
-    "langbridge_connector_shopify.plugin",
-    "langbridge_connector_hubspot.plugin",
-    "langbridge_connector_github.plugin",
-    "langbridge_connector_jira.plugin",
-    "langbridge_connector_asana.plugin",
-    "langbridge_connector_stripe.plugin",
+    "langbridge.connectors.storage.local",
+    "langbridge.connectors.storage.s3",
+    "langbridge.connectors.storage.gcs",
+    "langbridge.connectors.storage.azure_blob",
 )
+
 _BUILTIN_CONNECTOR_MODULES = (
     "langbridge.connectors.builtin.postgres.connector",
     "langbridge.connectors.builtin.mysql.connector",
@@ -67,6 +64,10 @@ _BUILTIN_CONNECTOR_MODULES = (
     "langbridge.connectors.sql.sqlserver.connector",
     "langbridge.connectors.vector.faiss.connector",
     "langbridge.connectors.vector.qdrant.connector",
+    "langbridge.connectors.storage.local.connector",
+    "langbridge.connectors.storage.s3.connector",
+    "langbridge.connectors.storage.gcs.connector",
+    "langbridge.connectors.storage.azure_blob.connector",
     *_BUILTIN_PLUGIN_MODULES,
 )
 
@@ -86,6 +87,21 @@ def _ensure_repo_connector_src_paths() -> None:
             sys.path.insert(0, src_path)
 
 
+def _iter_repo_connector_package_modules() -> tuple[str, ...]:
+    repo_connectors_dir = Path(__file__).resolve().parents[2] / "langbridge-connectors"
+    if not repo_connectors_dir.exists():
+        return ()
+
+    module_names: list[str] = []
+    for package_dir in sorted(repo_connectors_dir.glob("*/src/langbridge_connector_*")):
+        if not package_dir.is_dir():
+            continue
+        if not (package_dir / "__init__.py").exists():
+            continue
+        module_names.append(package_dir.name)
+    return tuple(module_names)
+
+
 def _register_builtin_plugins_from_modules() -> None:
     _ensure_repo_connector_src_paths()
 
@@ -102,6 +118,44 @@ def _register_builtin_plugins_from_modules() -> None:
             logger.warning("Skipping connector plugin module %s: %s", module_path, exc)
 
 
+def _register_repo_connector_plugins() -> None:
+    _ensure_repo_connector_src_paths()
+
+    for module_path in _iter_repo_connector_package_modules():
+        try:
+            _register_loaded_plugin(import_module(module_path))
+        except Exception as exc:
+            logger.warning("Skipping repo connector package %s: %s", module_path, exc)
+
+
+def _register_loaded_plugin(loaded: object) -> None:
+    if isinstance(loaded, ConnectorPlugin):
+        _plugin_registry.register(loaded)
+        return
+
+    if isinstance(loaded, type) and issubclass(loaded, ConnectorPlugin):
+        _plugin_registry.register(loaded())  # type: ignore[call-arg]
+        return
+
+    plugin_factory = loaded if callable(loaded) else getattr(loaded, "get_connector_plugin", None)
+    if not callable(plugin_factory):
+        raise TypeError("did not load a supported plugin object")
+
+    plugin = plugin_factory()
+    if not isinstance(plugin, ConnectorPlugin):
+        raise TypeError(f"returned an invalid plugin: {plugin!r}")
+    _plugin_registry.register(plugin)
+
+
+def _register_packaged_plugins() -> None:
+    _ensure_repo_connector_src_paths()
+
+    for entry_point in entry_points(group="langbridge.connectors"):
+        try:
+            _register_loaded_plugin(entry_point.load())
+        except Exception as exc:
+            logger.warning("Skipping entry point %s: %s", entry_point.name, exc)
+
 def ensure_builtin_plugins_loaded() -> None:
     global _builtin_plugins_loaded
 
@@ -109,11 +163,13 @@ def ensure_builtin_plugins_loaded() -> None:
         return
 
     _register_builtin_plugins_from_modules()
+    _register_repo_connector_plugins()
 
     _builtin_plugins_loaded = True
 
 
 def ensure_builtin_connectors_loaded() -> None:
+    pass
     global _builtin_connectors_loaded
 
     if _builtin_connectors_loaded:
@@ -128,9 +184,9 @@ def ensure_builtin_connectors_loaded() -> None:
             logger.warning("Skipping connector module %s: %s", module_path, exc)
 
     # Re-register plugin metadata in canonical override order after connector
-    # modules load, because connector imports can register older built-in
-    # plugins and mask repo-scoped declarative packages.
+    # modules load so repo-scoped connector packages stay authoritative.
     _register_builtin_plugins_from_modules()
+    _register_repo_connector_plugins()
 
     _builtin_connectors_loaded = True
 
@@ -141,7 +197,7 @@ def ensure_entrypoint_plugins_loaded() -> None:
     if _entrypoint_plugins_loaded:
         return
 
-    _plugin_registry.load_entrypoints()
+    _register_packaged_plugins()
     _entrypoint_plugins_loaded = True
 
 
@@ -151,7 +207,7 @@ class ConnectorPlugin:
     connector_family: ConnectorFamily
     supported_resources: tuple[str, ...] = ()
     auth_schema: tuple[ConnectorAuthFieldSchema, ...] = ()
-    sync_strategy: ConnectorSyncStrategy | None = None
+    default_sync_strategy: ConnectorSyncStrategy | None = None
     capabilities: ConnectorCapabilities = field(default_factory=ConnectorCapabilities)
     config_factory: Type[BaseConnectorConfigFactory] | None = None
     config_schema_factory: Type[BaseConnectorConfigSchemaFactory] | None = None
@@ -398,6 +454,57 @@ class VectorDBConnectorFactory:
         return connector_class(config=config, logger=logger)
 
 
+class StorageConnectorFactory:
+    """Factory for creating storage connectors."""
+
+    @staticmethod
+    def get_storage_connector_class_reference(
+        connector_type: ConnectorRuntimeType,
+    ) -> Type[StorageConnector]:
+        from langbridge.connectors.base.connector import StorageConnector
+
+        ensure_builtin_connectors_loaded()
+        subclasses = _iter_subclasses(StorageConnector)
+        for subclass in subclasses:
+            if getattr(subclass, "RUNTIME_TYPE", None) == connector_type:
+                return subclass
+        raise ValueError(f"No storage connector found for runtime type: {connector_type}")
+
+    @staticmethod
+    def get_managed_storage_connector_class_reference(
+        connector_type: ConnectorRuntimeType,
+    ) -> Type[ManagedStorageConnector]:
+        from langbridge.connectors.base.connector import ManagedStorageConnector
+
+        ensure_builtin_connectors_loaded()
+        subclasses = _iter_subclasses(ManagedStorageConnector)
+        for subclass in subclasses:
+            if getattr(subclass, "RUNTIME_TYPE", None) == connector_type:
+                return subclass
+        raise ValueError(f"No managed storage connector found for runtime type: {connector_type}")
+
+    @staticmethod
+    def create_storage_connector(
+        connector_type: ConnectorRuntimeType,
+        config: BaseConnectorConfig,
+        logger: Logger,
+    ) -> StorageConnector:
+        connector_class = StorageConnectorFactory.get_storage_connector_class_reference(
+            connector_type
+        )
+        return connector_class(config=config, logger=logger)
+
+
+def _iter_subclasses(base_class: type) -> list[type]:
+    discovered: list[type] = []
+    stack = list(base_class.__subclasses__())
+    while stack:
+        subclass = stack.pop()
+        discovered.append(subclass)
+        stack.extend(subclass.__subclasses__())
+    return discovered
+
+
 class ConnectorInstanceRegistry:
     """Registry for managing connector instances."""
 
@@ -421,6 +528,7 @@ __all__ = [
     "ConnectorPluginRegistry",
     "NoSqlConnectorFactory",
     "SqlConnectorFactory",
+    "StorageConnectorFactory",
     "VectorDBConnectorFactory",
     "ensure_builtin_connectors_loaded",
     "ensure_entrypoint_plugins_loaded",

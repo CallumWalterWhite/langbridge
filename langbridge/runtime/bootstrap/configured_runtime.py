@@ -10,7 +10,9 @@ from typing import Any, Mapping
 
 import yaml
 
+from langbridge.plugins.connectors import ConnectorPlugin
 from langbridge.runtime.application import build_runtime_applications
+from langbridge.runtime.application.connectors import _extract_connection_metadata
 from langbridge.runtime.config import load_runtime_config, resolve_metadata_store_config
 from langbridge.runtime.config.models import (
     LocalRuntimeAgentConfig,
@@ -35,9 +37,14 @@ from langbridge.runtime.utils.connector_runtime import (
     build_connector_runtime_payload,
     resolve_connector_capabilities,
 )
+from langbridge.connectors.base.resource_paths import (
+    normalize_api_flatten_paths,
+    normalize_api_resource_path,
+)
 from langbridge.runtime.utils.datasets import (
     build_dataset_execution_capabilities,
     build_dataset_relation_identity,
+    infer_file_storage_kind,
     resolve_dataset_materialization_mode,
 )
 from langbridge.runtime.context import RuntimeContext
@@ -74,8 +81,10 @@ from langbridge.runtime.models import (
     DatasetMaterializationMode,
     DatasetMetadata,
     DatasetPolicyMetadata,
+    DatasetSource,
     DatasetSourceKind,
     DatasetStorageKind,
+    DatasetSyncConfig,
     LLMConnectionSecret,
     RuntimeAgentDefinition,
     RuntimeThread,
@@ -94,6 +103,7 @@ from langbridge.runtime.providers import (
 )
 from langbridge.runtime.security import SecretProviderRegistry
 from langbridge.runtime.services.agent_execution_service import AgentExecutionService
+from langbridge.runtime.services.dataset_execution import describe_file_source_schema
 from langbridge.runtime.services.dataset_query_service import DatasetQueryService
 from langbridge.runtime.services.dataset_sync_service import ConnectorSyncRuntime
 from langbridge.runtime.services.runtime_host import (
@@ -103,10 +113,12 @@ from langbridge.runtime.services.runtime_host import (
 )
 from langbridge.connectors.base import (
     ApiConnectorFactory,
-    ConnectorFamily,
+    ConnectorSyncStrategy,
     ConnectorRuntimeType,
+    SqlConnectorFactory,
     get_connector_config_factory,
     get_connector_plugin,
+    list_connector_plugins
 )
 from langbridge.runtime.services.semantic_query_execution_service import (
     SemanticQueryExecutionService,
@@ -124,6 +136,7 @@ from langbridge.semantic.loader import (
 )
 from langbridge.semantic.model import SemanticModel
 from langbridge.semantic.query import SemanticQuery
+from langbridge.runtime.utils.lineage import stable_payload_hash
 
 
 @dataclass(slots=True, frozen=True)
@@ -132,7 +145,7 @@ class LocalRuntimeDatasetRecord:
     name: str
     label: str
     description: str | None
-    connector_name: str
+    connector_name: str | None
     relation_name: str
     semantic_model_name: str | None
     default_time_dimension: str | None
@@ -216,7 +229,10 @@ def _relation_parts(relation_name: str) -> tuple[str | None, str | None, str]:
 def _connector_runtime_type(connector_type: str | ConnectorRuntimeType) -> ConnectorRuntimeType:
     if isinstance(connector_type, ConnectorRuntimeType):
         return connector_type
-    return ConnectorRuntimeType(str(connector_type or "").strip().upper())
+    normalized = str(connector_type or "").strip().upper()
+    if normalized == "FILE":
+        normalized = ConnectorRuntimeType.LOCAL_FILESYSTEM.value
+    return ConnectorRuntimeType(normalized)
 
 
 def _connector_dialect(connector_type: str | ConnectorRuntimeType) -> str:
@@ -250,19 +266,58 @@ def _merge_dataset_tags(*, existing: list[str], required: list[str]) -> list[str
     return merged
 
 
-def _extract_connection_metadata(payload: Mapping[str, Any]) -> ConnectionMetadata | None:
-    known_keys = {"host", "port", "database", "schema", "warehouse", "role", "account", "user"}
-    metadata_payload: dict[str, Any] = {}
-    extra_payload: dict[str, Any] = {}
-    for key, value in payload.items():
-        if key in known_keys:
-            metadata_payload[key] = value
-        else:
-            extra_payload[key] = value
-    if not metadata_payload and not extra_payload:
-        return None
-    metadata_payload["extra"] = extra_payload
-    return ConnectionMetadata.model_validate(metadata_payload)
+def _sync_source_key(*, source: DatasetSource) -> str:
+    if source.resource:
+        return f"resource:{str(source.resource).strip()}"
+    if source.table:
+        return f"table:{str(source.table).strip()}"
+    if source.sql:
+        return f"sql:{stable_payload_hash(str(source.sql).strip())}"
+    if source.storage_uri:
+        return f"storage:{str(source.storage_uri).strip()}"
+    raise ValueError("Synced datasets must define sync.source.")
+
+
+def _sync_source_tags(*, connector: ConnectorMetadata, source: DatasetSource) -> list[str]:
+    connector_type = (
+        connector.connector_type_value.lower()
+        if connector.connector_type_value is not None
+        else ""
+    )
+    if source.resource:
+        return [
+            "managed",
+            "api-connector",
+            connector_type,
+            f"resource:{str(source.resource).strip().lower()}",
+        ]
+    if source.table:
+        return [
+            "managed",
+            "database-connector",
+            connector_type,
+            f"table:{str(source.table).strip().lower()}",
+        ]
+    if source.sql:
+        return [
+            "managed",
+            "database-connector",
+            connector_type,
+            "sql-sync",
+        ]
+    return ["managed", connector_type]
+
+
+def _sync_source_description(*, source: DatasetSource) -> str:
+    if source.resource:
+        return f"resource path '{str(source.resource).strip()}'"
+    if source.table:
+        return f"table '{str(source.table).strip()}'"
+    if source.sql:
+        return "SQL query"
+    if source.storage_uri:
+        return f"storage source '{str(source.storage_uri).strip()}'"
+    return "sync source"
 
 
 class ConfiguredLocalRuntimeHost(RuntimeHost):
@@ -283,6 +338,7 @@ class ConfiguredLocalRuntimeHost(RuntimeHost):
         dataset_repository: DatasetCatalogStore,
         dataset_column_repository: DatasetColumnStore,
         dataset_policy_repository: DatasetPolicyStore,
+        lineage_edge_repository: Any,
         connector_sync_state_repository: ConnectorSyncStateStore,
         secret_provider_registry: SecretProviderRegistry,
         thread_repository: ThreadStore,
@@ -303,6 +359,7 @@ class ConfiguredLocalRuntimeHost(RuntimeHost):
         self._dataset_repository = dataset_repository
         self._dataset_column_repository = dataset_column_repository
         self._dataset_policy_repository = dataset_policy_repository
+        self._lineage_edge_repository = lineage_edge_repository
         self._connector_sync_state_repository = connector_sync_state_repository
         self._secret_provider_registry = secret_provider_registry
         self._api_connector_factory = ApiConnectorFactory()
@@ -348,6 +405,7 @@ class ConfiguredLocalRuntimeHost(RuntimeHost):
             dataset_repository=self._dataset_repository,
             dataset_column_repository=self._dataset_column_repository,
             dataset_policy_repository=self._dataset_policy_repository,
+            lineage_edge_repository=self._lineage_edge_repository,
             connector_sync_state_repository=self._connector_sync_state_repository,
             secret_provider_registry=self._secret_provider_registry,
             thread_repository=self._thread_repository,
@@ -398,6 +456,24 @@ class ConfiguredLocalRuntimeHost(RuntimeHost):
     async def create_dataset(self, *, request) -> dict[str, Any]:
         return await self._applications.datasets.create_dataset(request=request)
 
+    async def update_dataset(
+        self,
+        *,
+        dataset_ref: str,
+        request,
+    ) -> dict[str, Any]:
+        return await self._applications.datasets.update_dataset(
+            dataset_ref=dataset_ref,
+            request=request,
+        )
+
+    async def delete_dataset(
+        self,
+        *,
+        dataset_ref: str,
+    ) -> dict[str, Any]:
+        return await self._applications.datasets.delete_dataset(dataset_ref=dataset_ref)
+
     async def list_semantic_models(self) -> list[dict[str, Any]]:
         return await self._applications.semantic.list_semantic_models()
 
@@ -411,8 +487,46 @@ class ConfiguredLocalRuntimeHost(RuntimeHost):
     async def create_semantic_model(self, *, request) -> dict[str, Any]:
         return await self._applications.semantic.create_semantic_model(request=request)
 
+    async def update_semantic_model(
+        self,
+        *,
+        model_ref: str,
+        request,
+    ) -> dict[str, Any]:
+        return await self._applications.semantic.update_semantic_model(
+            model_ref=model_ref,
+            request=request,
+        )
+
+    async def delete_semantic_model(
+        self,
+        *,
+        model_ref: str,
+    ) -> dict[str, Any]:
+        return await self._applications.semantic.delete_semantic_model(model_ref=model_ref)
+
     async def query_dataset(self, *, request) -> dict[str, Any]:
         return await self._applications.datasets.query_dataset(request=request)
+
+    async def get_dataset_sync(
+        self,
+        *,
+        dataset_ref: str,
+    ) -> dict[str, Any]:
+        return await self._applications.datasets.get_dataset_sync(dataset_ref=dataset_ref)
+
+    async def sync_dataset(
+        self,
+        *,
+        dataset_ref: str,
+        sync_mode: str = "INCREMENTAL",
+        force_full_refresh: bool = False,
+    ) -> dict[str, Any]:
+        return await self._applications.datasets.sync_dataset(
+            dataset_ref=dataset_ref,
+            sync_mode=sync_mode,
+            force_full_refresh=force_full_refresh,
+        )
 
     async def query_semantic(self, *args: Any, **kwargs: Any) -> Any:
         return await self._applications.semantic.query_semantic(*args, **kwargs)
@@ -714,8 +828,45 @@ class ConfiguredLocalRuntimeHost(RuntimeHost):
     async def list_connectors(self) -> list[dict[str, Any]]:
         return await self._applications.connectors.list_connectors()
 
+    async def list_connector_types(self) -> list[dict[str, Any]]:
+        return await self._applications.connectors.list_connector_types()
+
+    async def get_connector_type_config(
+        self,
+        *,
+        connector_type: str,
+    ) -> dict[str, Any]:
+        return await self._applications.connectors.get_connector_type_config(
+            connector_type=connector_type
+        )
+
+    async def get_connector(
+        self,
+        *,
+        connector_name: str,
+    ) -> dict[str, Any]:
+        return await self._applications.connectors.get_connector(connector_name=connector_name)
+
     async def create_connector(self, *, request) -> dict[str, Any]:
         return await self._applications.connectors.create_connector(request=request)
+
+    async def update_connector(
+        self,
+        *,
+        connector_name: str,
+        request,
+    ) -> dict[str, Any]:
+        return await self._applications.connectors.update_connector(
+            connector_name=connector_name,
+            request=request,
+        )
+
+    async def delete_connector(
+        self,
+        *,
+        connector_name: str,
+    ) -> dict[str, Any]:
+        return await self._applications.connectors.delete_connector(connector_name=connector_name)
 
     async def list_sync_resources(
         self,
@@ -847,9 +998,19 @@ class ConfiguredLocalRuntimeHost(RuntimeHost):
         if hasattr(connector_provider, "upsert"):
             connector_provider.upsert(connector)
 
+    def _remove_runtime_connector(self, *, connector_name: str, connector_id: uuid.UUID) -> None:
+        self._connectors.pop(connector_name, None)
+        connector_provider = self.providers.connector_metadata
+        if hasattr(connector_provider, "remove"):
+            connector_provider.remove(connector_id=connector_id)
+
     def _upsert_runtime_dataset_record(self, record: LocalRuntimeDatasetRecord) -> None:
         self._datasets[record.name] = record
         self._datasets_by_id[record.id] = record
+
+    def _remove_runtime_dataset_record(self, *, dataset_name: str, dataset_id: uuid.UUID) -> None:
+        self._datasets.pop(dataset_name, None)
+        self._datasets_by_id.pop(dataset_id, None)
 
     def _upsert_runtime_semantic_model_record(
         self,
@@ -863,6 +1024,28 @@ class ConfiguredLocalRuntimeHost(RuntimeHost):
         semantic_store = getattr(self.services.agent_execution, "_semantic_model_store", None)
         if hasattr(semantic_store, "upsert"):
             semantic_store.upsert(metadata)
+
+    def _remove_runtime_semantic_model_record(
+        self,
+        *,
+        model_name: str,
+        model_id: uuid.UUID,
+    ) -> None:
+        self._semantic_models.pop(model_name, None)
+        if self._default_semantic_model_name == model_name:
+            self._default_semantic_model_name = next(iter(self._semantic_models), None)
+        semantic_provider = self.providers.semantic_models
+        if hasattr(semantic_provider, "remove"):
+            semantic_provider.remove(
+                workspace_id=self.context.workspace_id,
+                semantic_model_id=model_id,
+            )
+        semantic_store = getattr(self.services.agent_execution, "_semantic_model_store", None)
+        if hasattr(semantic_store, "remove"):
+            semantic_store.remove(
+                workspace_id=self.context.workspace_id,
+                semantic_model_id=model_id,
+            )
 
     def _semantic_model_metadata_from_record(
         self,
@@ -1139,6 +1322,9 @@ class ConfiguredLocalRuntimeHost(RuntimeHost):
                 if dataset is not None:
                     normalized["dataset_name"] = dataset.name
         return normalized
+    
+    def _get_connector_plugins(self) -> list[ConnectorPlugin]:
+        return list_connector_plugins()
 
     def _get_connector_plugin(self, connector: ConnectorMetadata):
         return self._resolve_connector_plugin_for_type(connector.connector_type_value)
@@ -1162,10 +1348,8 @@ class ConfiguredLocalRuntimeHost(RuntimeHost):
 
     def _connector_supports_sync(self, connector: ConnectorMetadata) -> bool:
         plugin = self._get_connector_plugin(connector)
-        capabilities = self._connector_capabilities(connector)
         return bool(
             plugin is not None
-            and capabilities.supports_synced_datasets
             and plugin.api_connector_class is not None
         )
 
@@ -1214,11 +1398,9 @@ class ConfiguredLocalRuntimeHost(RuntimeHost):
     ) -> dict[str, list[DatasetMetadata]]:
         bindings: dict[str, list[DatasetMetadata]] = {}
         for dataset in datasets:
-            file_config = dict(dataset.file_config_json or {})
-            sync_meta = file_config.get("connector_sync")
-            if not isinstance(sync_meta, Mapping):
-                continue
-            resource_name = str(sync_meta.get("resource_name") or "").strip()
+            sync_config = dict(dataset.sync_json or {})
+            source = dict(sync_config.get("source") or {})
+            resource_name = str(source.get("resource") or "").strip()
             if not resource_name:
                 continue
             bindings.setdefault(resource_name, []).append(dataset)
@@ -1261,10 +1443,12 @@ class ConfiguredLocalRuntimeHost(RuntimeHost):
     async def _get_max_date(
         self,
         *,
-        connector_name: str,
+        connector_name: str | None,
         relation_name: str,
         column_name: str,
     ) -> date | None:
+        if not str(connector_name or "").strip():
+            return None
         result = await self.execute_sql_text(
             query=f"SELECT MAX({column_name}) AS max_value FROM {relation_name}",
             connection_name=connector_name,
@@ -1361,6 +1545,7 @@ class ConfiguredLocalRuntimeHostFactory:
             dataset_repository=resources.dataset_repository,
             dataset_column_repository=resources.dataset_column_repository,
             dataset_policy_repository=resources.dataset_policy_repository,
+            lineage_edge_repository=resources.lineage_edge_repository,
             connector_sync_state_repository=resources.connector_sync_state_repository,
             secret_provider_registry=resources.secret_provider_registry,
             thread_repository=resources.thread_repository,
@@ -1749,6 +1934,8 @@ class ConfiguredLocalRuntimeHostFactory:
             connector_type=connector_type.value,
             plugin=plugin,
         )
+        config_factory = get_connector_config_factory(connector_type) if connector_type != ConnectorRuntimeType.LOCAL_FILESYSTEM else None
+        metadata_keys = config_factory.get_metadata_keys() if config_factory is not None else set()
         return ConnectorMetadata(
             id=connector_id,
             name=connector.name,
@@ -1761,7 +1948,7 @@ class ConfiguredLocalRuntimeHostFactory:
             ),
             workspace_id=context.workspace_id,
             config={"config": connection_payload},
-            connection_metadata=_extract_connection_metadata(merged_connection),
+            connection_metadata=_extract_connection_metadata(merged_connection, metadata_keys),
             secret_references=dict(connector.secrets or {}),
             connection_policy=(
                 ConnectionPolicy.model_validate(connector.policy)
@@ -1769,9 +1956,9 @@ class ConfiguredLocalRuntimeHostFactory:
                 else None
             ),
             supported_resources=list(plugin.supported_resources) if plugin is not None else [],
-            sync_strategy=(
-                plugin.sync_strategy
-                if plugin is not None and plugin.sync_strategy is not None
+            default_sync_strategy=(
+                plugin.default_sync_strategy
+                if plugin is not None and plugin.default_sync_strategy is not None
                 else None
             ),
             capabilities=capabilities,
@@ -1814,72 +2001,182 @@ class ConfiguredLocalRuntimeHostFactory:
     ) -> tuple[dict[str, DatasetMetadata], dict[str, LocalRuntimeDatasetRecord]]:
         datasets: dict[str, DatasetMetadata] = {}
         dataset_records: dict[str, LocalRuntimeDatasetRecord] = {}
+        synced_source_bindings: set[tuple[uuid.UUID, str]] = set()
         now = datetime.now(timezone.utc)
         for dataset in config.datasets:
-            connector = connectors.get(dataset.connector)
-            if connector is None:
-                raise ValueError(f"Dataset '{dataset.name}' references unknown connector '{dataset.connector}'.")
-            connector_capabilities = ConfiguredLocalRuntimeHostFactory._resolve_connector_capabilities_from_record(
-                connector
-            )
             materialization_mode = resolve_dataset_materialization_mode(
                 explicit_materialization_mode=dataset.materialization_mode,
             )
-
-            source_table = str(dataset.source.table or "").strip()
-            sync_resource_name = str(dataset.source.resource or "").strip()
-            source_sql = str(dataset.source.sql or "").strip()
-            source_storage_uri = str(dataset.source.storage_uri or "").strip() or None
-            if source_storage_uri is None and dataset.source.path:
-                source_storage_uri = Path(str(dataset.source.path)).resolve().as_uri()
-            if materialization_mode == DatasetMaterializationMode.LIVE and not connector_capabilities.supports_live_datasets:
+            connector = (
+                connectors.get(dataset.connector)
+                if str(dataset.connector or "").strip()
+                else None
+            )
+            source_config = dataset.source
+            sync_config = dataset.sync
+            source_table = str(source_config.table or "").strip() if source_config is not None else ""
+            source_resource_name = (
+                normalize_api_resource_path(str(source_config.resource or "").strip())
+                if source_config is not None and str(source_config.resource or "").strip()
+                else ""
+            )
+            source_flatten_paths = (
+                normalize_api_flatten_paths(source_config.flatten)
+                if source_config is not None
+                else []
+            )
+            source_sql = str(source_config.sql or "").strip() if source_config is not None else ""
+            source_storage_uri = (
+                str(source_config.storage_uri or "").strip() or None
+                if source_config is not None
+                else None
+            )
+            if source_storage_uri is None and source_config is not None and source_config.path:
+                source_storage_uri = Path(str(source_config.path)).resolve().as_uri()
+            sync_source_config = sync_config.source if sync_config is not None else None
+            sync_source: DatasetSource | None = None
+            sync_source_key: str | None = None
+            if sync_source_config is not None:
+                sync_source_payload: dict[str, Any] = {}
+                sync_table = str(sync_source_config.table or "").strip()
+                sync_resource = str(sync_source_config.resource or "").strip()
+                sync_sql = str(sync_source_config.sql or "").strip()
+                sync_storage_uri = str(sync_source_config.storage_uri or "").strip() or None
+                if sync_storage_uri is None and sync_source_config.path:
+                    sync_storage_uri = Path(str(sync_source_config.path)).resolve().as_uri()
+                if sync_table:
+                    sync_source_payload["table"] = sync_table
+                elif sync_resource:
+                    sync_source_payload["resource"] = normalize_api_resource_path(sync_resource)
+                    flatten_paths = normalize_api_flatten_paths(sync_source_config.flatten)
+                    if flatten_paths:
+                        sync_source_payload["flatten"] = flatten_paths
+                elif sync_sql:
+                    sync_source_payload["sql"] = sync_sql
+                elif sync_storage_uri:
+                    sync_source_payload["storage_uri"] = sync_storage_uri
+                    requested_format = str(
+                        sync_source_config.format or sync_source_config.file_format or ""
+                    ).strip().lower()
+                    if requested_format:
+                        sync_source_payload["format"] = requested_format
+                    if sync_source_config.header is not None:
+                        sync_source_payload["header"] = sync_source_config.header
+                    if sync_source_config.delimiter is not None:
+                        sync_source_payload["delimiter"] = sync_source_config.delimiter
+                    if sync_source_config.quote is not None:
+                        sync_source_payload["quote"] = sync_source_config.quote
+                if sync_source_payload:
+                    sync_source = DatasetSource.model_validate(sync_source_payload)
+                    sync_source_key = _sync_source_key(source=sync_source)
+            requires_connector = (
+                materialization_mode == DatasetMaterializationMode.SYNCED
+                or bool(source_table or source_resource_name or source_sql)
+            )
+            if requires_connector and connector is None:
                 raise ValueError(
-                    f"Dataset '{dataset.name}' requests materialization_mode 'live', "
-                    f"but connector '{connector.name}' does not support live datasets."
+                    f"Dataset '{dataset.name}' requires connector '{dataset.connector}'."
                 )
+            if connector is not None and dataset.connector and connector.name != dataset.connector:
+                raise ValueError(f"Dataset '{dataset.name}' references unknown connector '{dataset.connector}'.")
+            connector_capabilities = (
+                ConfiguredLocalRuntimeHostFactory._resolve_connector_capabilities_from_record(
+                    connector
+                )
+                if connector is not None
+                else ConnectorCapabilities()
+            )
+            connector_kind = (
+                connector.connector_type_value.lower()
+                if connector is not None and connector.connector_type is not None
+                else None
+            )
+            live_source: DatasetSource | None = None
+            sync_contract: DatasetSyncConfig | None = None
             if materialization_mode == DatasetMaterializationMode.SYNCED:
+                if connector is None:
+                    raise ValueError(f"Dataset '{dataset.name}' requires a connector for synced datasets.")
                 if not connector_capabilities.supports_synced_datasets:
                     raise ValueError(
                         f"Dataset '{dataset.name}' requests materialization_mode 'synced', "
                         f"but connector '{connector.name}' does not support synced datasets."
                     )
-                plugin = ConfiguredLocalRuntimeHostFactory._resolve_connector_plugin_for_type(
-                    connector.connector_type_value
+                if sync_source is None:
+                    raise ValueError(
+                        f"Dataset '{dataset.name}' requests materialization_mode 'synced', "
+                        "but is missing sync.source."
+                    )
+                if sync_source.resource:
+                    plugin = ConfiguredLocalRuntimeHostFactory._resolve_connector_plugin_for_type(
+                        connector.connector_type_value
+                    )
+                    if plugin is None or plugin.api_connector_class is None:
+                        raise ValueError(
+                            f"Dataset '{dataset.name}' uses an API sync source, "
+                            f"but connector '{connector.name}' does not expose a runtime API sync path yet."
+                        )
+                elif sync_source.table or sync_source.sql:
+                    if not connector_capabilities.supports_query_pushdown:
+                        raise ValueError(
+                            f"Dataset '{dataset.name}' uses a SQL/table sync source, "
+                            f"but connector '{connector.name}' does not expose SQL query execution."
+                        )
+                    try:
+                        SqlConnectorFactory.get_sql_connector_class_reference(connector.connector_type)
+                    except ValueError as exc:
+                        raise ValueError(
+                            f"Dataset '{dataset.name}' uses a SQL/table sync source, "
+                            f"but connector '{connector.name}' does not expose a SQL sync runtime path yet."
+                        ) from exc
+                else:
+                    raise ValueError(
+                        f"Dataset '{dataset.name}' uses unsupported sync.source shape. "
+                        "Supported synced sources are resource, table, and sql."
+                    )
+                sync_strategy = (
+                    sync_config.strategy
+                    if sync_config is not None and sync_config.strategy is not None
+                    else connector.default_sync_strategy
+                ) or ConnectorSyncStrategy.FULL_REFRESH
+                if sync_strategy not in {
+                    ConnectorSyncStrategy.FULL_REFRESH,
+                    ConnectorSyncStrategy.INCREMENTAL,
+                }:
+                    raise ValueError(
+                        f"Dataset '{dataset.name}' requests unsupported sync strategy '{sync_strategy.value}'."
+                    )
+                if (
+                    sync_strategy == ConnectorSyncStrategy.INCREMENTAL
+                    and not connector_capabilities.supports_incremental_sync
+                ):
+                    raise ValueError(
+                        f"Dataset '{dataset.name}' requests incremental sync, "
+                        f"but connector '{connector.name}' does not support incremental sync."
+                    )
+                sync_contract = DatasetSyncConfig(
+                    source=sync_source.model_dump(mode="json", exclude_none=True),
+                    strategy=sync_strategy,
+                    cadence=str(sync_config.cadence or "").strip() or None,
+                    sync_on_start=bool(sync_config.sync_on_start),
+                    cursor_field=str(sync_config.cursor_field or "").strip() or None,
+                    initial_cursor=str(sync_config.initial_cursor or "").strip() or None,
+                    lookback_window=str(sync_config.lookback_window or "").strip() or None,
+                    backfill_start=str(sync_config.backfill_start or "").strip() or None,
+                    backfill_end=str(sync_config.backfill_end or "").strip() or None,
                 )
-                if plugin is None or plugin.api_connector_class is None:
+                binding_key = (connector.id, str(sync_source_key or ""))
+                if binding_key in synced_source_bindings:
                     raise ValueError(
-                        f"Dataset '{dataset.name}' requests materialization_mode 'synced', "
-                        f"but connector '{connector.name}' does not expose a runtime sync path yet."
+                        f"Connector '{connector.name}' has multiple datasets bound to sync.source "
+                        f"'{sync_source_key}'. Sync source keys must be unique per connector."
                     )
-                if source_sql or source_storage_uri:
-                    raise ValueError(
-                        f"Dataset '{dataset.name}' requests materialization_mode 'synced', "
-                        "but synced datasets must use source.resource to name the connector resource to materialize."
-                    )
-                if not sync_resource_name:
-                    raise ValueError(
-                        f"Dataset '{dataset.name}' requests materialization_mode 'synced', "
-                        "but is missing source.resource for the connector resource name."
-                    )
-                supported_resources = {
-                    str(item or "").strip()
-                    for item in (connector.supported_resources or [])
-                    if str(item or "").strip()
-                }
-                if supported_resources and sync_resource_name not in supported_resources:
-                    raise ValueError(
-                        f"Dataset '{dataset.name}' requests synced resource '{sync_resource_name}', "
-                        f"but connector '{connector.name}' only exposes: {', '.join(sorted(supported_resources))}."
-                    )
-            if (
-                materialization_mode == DatasetMaterializationMode.LIVE
-                and (source_table or source_sql)
-                and not connector_capabilities.supports_query_pushdown
-            ):
+                synced_source_bindings.add(binding_key)
+            elif connector is not None and not connector_capabilities.supports_live_datasets and requires_connector:
                 raise ValueError(
-                    f"Dataset '{dataset.name}' uses a live table/sql source, "
-                    f"but connector '{connector.name}' does not expose live query pushdown."
+                    f"Dataset '{dataset.name}' requests materialization_mode 'live', "
+                    f"but connector '{connector.name}' does not support live datasets."
                 )
+
             dataset_id = _stable_uuid("dataset", f"{config_path}:{dataset.name}")
             if materialization_mode == DatasetMaterializationMode.SYNCED:
                 catalog_name = None
@@ -1889,22 +2186,63 @@ class ConfiguredLocalRuntimeHostFactory:
                 dataset_type = DatasetType.FILE
                 sql_text = None
                 storage_kind = DatasetStorageKind.PARQUET
-                source_kind = DatasetSourceKind.API
+                if sync_source is None:
+                    raise ValueError(f"Dataset '{dataset.name}' is missing sync.source.")
+                if sync_source.resource:
+                    source_kind = DatasetSourceKind.API
+                elif sync_source.table or sync_source.sql:
+                    source_kind = DatasetSourceKind.DATABASE
+                else:
+                    source_kind = DatasetSourceKind.FILE
                 dialect = "duckdb"
                 storage_uri = None
                 file_config = {
-                        "format": "parquet",
-                        "managed_dataset": True,
-                        "connector_sync": {
-                            "connector_id": str(connector.id),
-                            "connector_type": connector.connector_type_value,
-                            "connector_family": connector.connector_family_value,
-                            "resource_name": sync_resource_name,
-                            "root_resource_name": sync_resource_name,
-                            "parent_resource_name": None,
-                        },
-                    }
+                    "format": "parquet",
+                    "managed_dataset": True,
+                }
+            elif source_resource_name:
+                if connector is None:
+                    raise ValueError(
+                        f"Dataset '{dataset.name}' requires a connector for live API resource sources."
+                    )
+                plugin = ConfiguredLocalRuntimeHostFactory._resolve_connector_plugin_for_type(
+                    connector.connector_type_value
+                )
+                if plugin is None or plugin.api_connector_class is None:
+                    raise ValueError(
+                        f"Dataset '{dataset.name}' uses a live API resource source, "
+                        f"but connector '{connector.name}' does not expose a live API execution path yet."
+                    )
+                if not connector_capabilities.supports_federated_execution:
+                    raise ValueError(
+                        f"Dataset '{dataset.name}' uses a live API resource source, "
+                        f"but connector '{connector.name}' does not support federated execution."
+                    )
+                catalog_name = None
+                schema_name = None
+                table_name = _dataset_sql_alias(dataset.name)
+                relation_name = table_name
+                dataset_type = DatasetType.API
+                sql_text = None
+                storage_kind = DatasetStorageKind.MEMORY
+                source_kind = DatasetSourceKind.API
+                dialect = "duckdb"
+                storage_uri = None
+                file_config = None
+                live_source = DatasetSource(
+                    resource=source_resource_name,
+                    flatten=source_flatten_paths or None,
+                )
             elif source_table:
+                if connector is None:
+                    raise ValueError(
+                        f"Dataset '{dataset.name}' requires a connector for live table sources."
+                    )
+                if not connector_capabilities.supports_query_pushdown:
+                    raise ValueError(
+                        f"Dataset '{dataset.name}' uses a live table/sql source, "
+                        f"but connector '{connector.name}' does not expose live query pushdown."
+                    )
                 catalog_name, schema_name, table_name = _relation_parts(source_table)
                 relation_name = source_table
                 dataset_type = DatasetType.TABLE
@@ -1914,12 +2252,22 @@ class ConfiguredLocalRuntimeHostFactory:
                 dialect = _connector_dialect(connector.connector_type or "")
                 storage_uri = None
                 file_config = None
+                live_source = DatasetSource(table=source_table)
             else:
                 catalog_name = None
                 schema_name = None
                 table_name = _dataset_sql_alias(dataset.name)
                 relation_name = table_name
                 if source_sql:
+                    if connector is None:
+                        raise ValueError(
+                            f"Dataset '{dataset.name}' requires a connector for live sql sources."
+                        )
+                    if not connector_capabilities.supports_query_pushdown:
+                        raise ValueError(
+                            f"Dataset '{dataset.name}' uses a live table/sql source, "
+                            f"but connector '{connector.name}' does not expose live query pushdown."
+                        )
                     dataset_type = DatasetType.SQL
                     sql_text = source_sql
                     storage_kind = DatasetStorageKind.VIEW
@@ -1927,6 +2275,7 @@ class ConfiguredLocalRuntimeHostFactory:
                     dialect = _connector_dialect(connector.connector_type or "")
                     storage_uri = None
                     file_config = None
+                    live_source = DatasetSource(sql=source_sql)
                 else:
                     dataset_type = DatasetType.FILE
                     sql_text = None
@@ -1935,12 +2284,17 @@ class ConfiguredLocalRuntimeHostFactory:
                         raise ValueError(
                             f"Dataset '{dataset.name}' must define source.path or source.storage_uri for file-backed datasets."
                         )
+                    connector_config = (
+                        ((connector.config or {}).get("config") or {})
+                        if connector is not None
+                        else {}
+                    )
                     file_format = str(
-                        dataset.source.format
-                        or dataset.source.file_format
-                        or (((connector.config or {}).get("config") or {}).get("format"))
-                        or (((connector.config or {}).get("config") or {}).get("file_format"))
-                        or ""
+                        (source_config.format if source_config is not None else None)
+                        or (source_config.file_format if source_config is not None else None)
+                        or connector_config.get("format")
+                        or connector_config.get("file_format")
+                        or infer_file_storage_kind(file_config=None, storage_uri=storage_uri).value
                     ).strip().lower()
                     if file_format not in {"csv", "parquet"}:
                         raise ValueError(
@@ -1952,16 +2306,30 @@ class ConfiguredLocalRuntimeHostFactory:
                     file_config = {
                         "format": file_format,
                     }
-                    if dataset.source.header is not None:
-                        file_config["header"] = dataset.source.header
-                    if dataset.source.delimiter is not None:
-                        file_config["delimiter"] = dataset.source.delimiter
-                    if dataset.source.quote is not None:
-                        file_config["quote"] = dataset.source.quote
+                    if source_config is not None and source_config.header is not None:
+                        file_config["header"] = source_config.header
+                    if source_config is not None and source_config.delimiter is not None:
+                        file_config["delimiter"] = source_config.delimiter
+                    if source_config is not None and source_config.quote is not None:
+                        file_config["quote"] = source_config.quote
+                    live_source_payload = {
+                        "storage_uri": storage_uri,
+                        "format": file_format,
+                        "header": source_config.header if source_config is not None else None,
+                        "delimiter": source_config.delimiter if source_config is not None else None,
+                        "quote": source_config.quote if source_config is not None else None,
+                    }
+                    live_source = DatasetSource.model_validate(
+                        {
+                            key: value
+                            for key, value in live_source_payload.items()
+                            if value is not None
+                        }
+                    )
 
             relation_identity = build_dataset_relation_identity(
                 dataset_id=dataset_id,
-                connector_id=connector.id,
+                connector_id=None if connector is None else connector.id,
                 dataset_name=dataset.name,
                 catalog_name=catalog_name,
                 schema_name=schema_name,
@@ -1979,7 +2347,7 @@ class ConfiguredLocalRuntimeHostFactory:
             datasets[dataset.name] = DatasetMetadata(
                 id=dataset_id,
                 workspace_id=context.workspace_id,
-                connection_id=connector.id,
+                connection_id=None if connector is None else connector.id,
                 owner_id=context.actor_id,
                 created_by=context.actor_id,
                 updated_by=context.actor_id,
@@ -1988,7 +2356,8 @@ class ConfiguredLocalRuntimeHostFactory:
                 description=(
                     dataset.description
                     or (
-                        f"Configured synced dataset awaiting connector sync for resource '{sync_resource_name}'."
+                        "Configured synced dataset awaiting dataset sync for "
+                        f"{_sync_source_description(source=sync_source)}."
                         if materialization_mode == DatasetMaterializationMode.SYNCED
                         else None
                     )
@@ -1996,20 +2365,17 @@ class ConfiguredLocalRuntimeHostFactory:
                 tags=_merge_dataset_tags(
                     existing=list(dataset.tags),
                     required=(
-                        [
-                            "managed",
-                            "api-connector",
-                            connector.connector_type_value.lower(),
-                            f"resource:{sync_resource_name.strip().lower()}",
-                        ]
+                        _sync_source_tags(connector=connector, source=sync_source)
                         if materialization_mode == DatasetMaterializationMode.SYNCED
                         else []
                     ),
                 ),
                 dataset_type=dataset_type,
                 materialization_mode=materialization_mode,
+                source=live_source,
+                sync=sync_contract,
                 source_kind=source_kind,
-                connector_kind=(connector.connector_type_value.lower() if connector.connector_type is not None else None),
+                connector_kind=connector_kind,
                 storage_kind=storage_kind,
                 dialect=dialect,
                 catalog_name=catalog_name,
@@ -2051,7 +2417,7 @@ class ConfiguredLocalRuntimeHostFactory:
                 name=dataset.name,
                 label=dataset.label or dataset.name.replace("_", " ").title(),
                 description=dataset.description,
-                connector_name=dataset.connector,
+                connector_name=None if connector is None else connector.name,
                 relation_name=relation_name,
                 semantic_model_name=dataset.semantic_model,
                 default_time_dimension=dataset.default_time_dimension,
@@ -2457,6 +2823,41 @@ class ConfiguredLocalRuntimeHostFactory:
         return normalized_values
 
     @staticmethod
+    def _build_file_dataset_bootstrap_columns(
+        *,
+        dataset: DatasetMetadata,
+    ) -> list[DatasetColumnMetadata]:
+        if dataset.dataset_type != DatasetType.FILE or not dataset.storage_uri:
+            return []
+        try:
+            described_columns = describe_file_source_schema(
+                storage_uri=str(dataset.storage_uri),
+                file_config=dict(dataset.file_config_json or {}),
+            )
+        except Exception as exc:
+            logging.getLogger(__name__).warning(
+                "Failed to infer file columns for dataset %s during bootstrap: %s",
+                dataset.name,
+                exc,
+            )
+            return []
+
+        return [
+            DatasetColumnMetadata(
+                id=_stable_uuid("dataset-column", f"{dataset.id}:{column.name}"),
+                dataset_id=dataset.id,
+                workspace_id=dataset.workspace_id,
+                name=column.name,
+                data_type=column.data_type,
+                nullable=column.nullable,
+                ordinal_position=index,
+                created_at=dataset.created_at,
+                updated_at=dataset.updated_at,
+            )
+            for index, column in enumerate(described_columns)
+        ]
+
+    @staticmethod
     def _build_dataset_repository_records(
         *,
         datasets: dict[str, DatasetMetadata],
@@ -2492,9 +2893,13 @@ class ConfiguredLocalRuntimeHostFactory:
             policies_by_dataset[dataset.id] = policy_record
 
             seen_columns: set[str] = set()
-            dataset_columns: list[DatasetColumnMetadata] = []
-            ordinal = 0
-            if str(dataset.source_kind or "").lower() != "file":
+            dataset_columns = ConfiguredLocalRuntimeHostFactory._build_file_dataset_bootstrap_columns(
+                dataset=dataset
+            )
+            for column in dataset_columns:
+                seen_columns.add(column.name.lower())
+            ordinal = len(dataset_columns)
+            if not dataset_columns:
                 for semantic_model in semantic_models.values():
                     if semantic_model.semantic_model is None:
                         continue
@@ -2764,6 +3169,7 @@ class ConfiguredLocalRuntimeHostFactory:
             dataset_policy_repository=dataset_policy_repository,
             dataset_revision_repository=dataset_revision_repository,
             lineage_edge_repository=lineage_edge_repository,
+            secret_provider_registry=secret_provider_registry,
         )
         agent_execution_service = (
             AgentExecutionService(

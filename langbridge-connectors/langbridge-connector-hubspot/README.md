@@ -1,14 +1,17 @@
-# Langbridge Declarative HubSpot Connector
+# Langbridge HubSpot Connector
 
-This package provides a thin declarative HubSpot CRM connector backed by core
-`langbridge.connectors.saas.declarative` runtime infrastructure.
+This package owns the HubSpot connector plugin for Langbridge.
 
-It covers a narrow but practical CRM slice:
+It keeps the connector package thin while preserving the runtime behavior that
+used to live in core `langbridge`.
+
+Supported resources:
 
 - `contacts`
 - `companies`
 - `deals`
+- `tickets`
 
-The package owns only HubSpot-specific manifest/config/plugin wiring. Core
-`langbridge` owns manifest validation, auth/config helpers, and declarative HTTP
-runtime execution.
+The package still uses core `langbridge.connectors.saas.declarative` runtime
+infrastructure, but now owns the HubSpot-specific manifest, config compatibility
+surface, and plugin registration.

@@ -3,11 +3,14 @@ from .config import (
     HUBSPOT_MANIFEST,
     HUBSPOT_SUPPORTED_RESOURCES,
     HUBSPOT_SYNC_STRATEGY,
+    HubSpotConnectorConfig,
+    HubSpotConnectorConfigFactory,
+    HubSpotConnectorConfigSchemaFactory,
     HubSpotDeclarativeConnectorConfig,
     HubSpotDeclarativeConnectorConfigFactory,
     HubSpotDeclarativeConnectorConfigSchemaFactory,
 )
-from .connector import HubSpotDeclarativeApiConnector
+from .connector import HubSpotApiConnector, HubSpotDeclarativeApiConnector
 from .examples import DeclarativeDatasetExampleSet, load_dataset_examples
 from .plugin import PLUGIN, get_connector_plugin, register_plugin
 
@@ -17,6 +20,10 @@ __all__ = [
     "HUBSPOT_MANIFEST",
     "HUBSPOT_SUPPORTED_RESOURCES",
     "HUBSPOT_SYNC_STRATEGY",
+    "HubSpotApiConnector",
+    "HubSpotConnectorConfig",
+    "HubSpotConnectorConfigFactory",
+    "HubSpotConnectorConfigSchemaFactory",
     "HubSpotDeclarativeApiConnector",
     "HubSpotDeclarativeConnectorConfig",
     "HubSpotDeclarativeConnectorConfigFactory",

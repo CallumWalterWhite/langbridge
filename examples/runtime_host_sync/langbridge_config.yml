@@ -29,5 +29,8 @@ datasets:
     description: Declared synced dataset for Stripe customers.
     connector: billing_demo
     materialization_mode: synced
-    source:
-      resource: customers
+    sync:
+      source:
+        resource: customers
+      cadence: 5m
+      sync_on_start: true

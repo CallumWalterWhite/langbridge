@@ -6,6 +6,8 @@ from langbridge.runtime.models import (
     DatasetMetadata,
     DatasetPolicyMetadata,
     DatasetRevision,
+    DatasetSource,
+    DatasetSyncConfig,
 )
 from langbridge.runtime.models.metadata import LifecycleState, ManagementMode
 from langbridge.runtime.persistence.db.dataset import (
@@ -133,6 +135,14 @@ def from_dataset_record(value: Any | None) -> DatasetMetadata | None:
         tags=list(getattr(value, "tags", None) or getattr(value, "tags_json", None) or []),
         dataset_type=getattr(value, "dataset_type"),
         materialization_mode=getattr(value, "materialization_mode", None),
+        source=(
+            getattr(value, "source", None)
+            or getattr(value, "source_json", None)
+        ),
+        sync=(
+            getattr(value, "sync", None)
+            or getattr(value, "sync_json", None)
+        ),
         source_kind=getattr(value, "source_kind", None),
         connector_kind=getattr(value, "connector_kind", None),
         storage_kind=getattr(value, "storage_kind", None),
@@ -190,6 +200,24 @@ def to_dataset_record(value: DatasetMetadata | DatasetRecord) -> DatasetRecord:
         tags_json=list(value.tags),
         dataset_type=value.dataset_type_value,
         materialization_mode=value.materialization_mode_value,
+        source_json=(
+            None
+            if value.source is None
+            else (
+                value.source_json
+                if isinstance(value.source, DatasetSource)
+                else DatasetSource.model_validate(value.source).model_dump(mode="json")
+            )
+        ),
+        sync_json=(
+            None
+            if value.sync is None
+            else (
+                value.sync_json
+                if isinstance(value.sync, DatasetSyncConfig)
+                else DatasetSyncConfig.model_validate(value.sync).model_dump(mode="json")
+            )
+        ),
         source_kind=value.source_kind_value,
         connector_kind=value.connector_kind,
         storage_kind=value.storage_kind_value,

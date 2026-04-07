@@ -1,11 +1,11 @@
 import {
-  BI_STUDIO_STORAGE_KEY,
+  DASHBOARD_BUILDER_STORAGE_KEY,
   buildColumnsFromRows,
   createLocalId,
   readAgentJson,
 } from "./runtimeUi";
 
-export const BI_PALETTES = [
+export const DASHBOARD_BUILDER_PALETTES = [
   { id: "emerald", label: "Emerald", colors: ["#10a37f", "#0f8f6c", "#0ea5e9", "#f59e0b"] },
   { id: "ocean", label: "Ocean", colors: ["#0369a1", "#0ea5e9", "#14b8a6", "#7dd3fc"] },
   { id: "sunset", label: "Sunset", colors: ["#f97316", "#fb7185", "#f43f5e", "#f59e0b"] },
@@ -13,7 +13,7 @@ export const BI_PALETTES = [
   { id: "orchard", label: "Orchard", colors: ["#65a30d", "#84cc16", "#22c55e", "#166534"] },
 ];
 
-export const BI_FILTER_OPERATORS = [
+export const DASHBOARD_BUILDER_FILTER_OPERATORS = [
   { value: "equals", label: "Equals" },
   { value: "notequals", label: "Not equals" },
   { value: "contains", label: "Contains" },
@@ -27,14 +27,14 @@ export const BI_FILTER_OPERATORS = [
   { value: "notset", label: "Is not set" },
 ];
 
-export const BI_DATE_FILTER_OPERATORS = [
+export const DASHBOARD_BUILDER_DATE_FILTER_OPERATORS = [
   { value: "indaterange", label: "In date range" },
   { value: "notindaterange", label: "Not in date range" },
   { value: "set", label: "Is set" },
   { value: "notset", label: "Is not set" },
 ];
 
-export const BI_TIME_GRAINS = [
+export const DASHBOARD_BUILDER_TIME_GRAINS = [
   { value: "", label: "No grain" },
   { value: "day", label: "Day" },
   { value: "week", label: "Week" },
@@ -43,17 +43,26 @@ export const BI_TIME_GRAINS = [
   { value: "year", label: "Year" },
 ];
 
-export const BI_TIME_PRESETS = [
+export const DASHBOARD_BUILDER_TIME_PRESETS = [
+  { value: "no_filter", label: "No filter" },
   { value: "today", label: "Today" },
   { value: "yesterday", label: "Yesterday" },
   { value: "last_7_days", label: "Last 7 days" },
   { value: "last_30_days", label: "Last 30 days" },
   { value: "month_to_date", label: "Month to date" },
   { value: "year_to_date", label: "Year to date" },
+  { value: "custom_between", label: "Custom: Between" },
+  { value: "custom_before", label: "Custom: Before date" },
+  { value: "custom_after", label: "Custom: After date" },
+  { value: "custom_on", label: "Custom: On date" },
 ];
 
 const DATE_LIKE_TYPES = new Set(["date", "datetime", "timestamp", "time"]);
 const VALUELESS_OPERATORS = new Set(["set", "notset"]);
+const YEAR_PATTERN = /^\d{4}$/;
+const YEAR_MONTH_PATTERN = /^\d{4}-(0[1-9]|1[0-2])$/;
+const ISO_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+const DATE_RANGE_OPERATORS = new Set(["indaterange", "notindaterange"]);
 
 function normalizeSelectedMembers(...sources) {
   const values = [];
@@ -78,8 +87,8 @@ function normalizeSelectedMembers(...sources) {
   return Array.from(new Set(values));
 }
 
-export function getBiPalette(paletteId) {
-  return BI_PALETTES.find((item) => item.id === paletteId) || BI_PALETTES[0];
+export function getDashboardBuilderPalette(paletteId) {
+  return DASHBOARD_BUILDER_PALETTES.find((item) => item.id === paletteId) || DASHBOARD_BUILDER_PALETTES[0];
 }
 
 export function createFilterDraft(seed = {}) {
@@ -99,7 +108,7 @@ export function createOrderDraft(seed = {}) {
   };
 }
 
-export function createBiWidget(seed = {}) {
+export function createDashboardBuilderWidget(seed = {}) {
   const dimensions = normalizeSelectedMembers(seed.dimensions, seed.dimension);
   const measures = normalizeSelectedMembers(seed.measures, seed.measure);
 
@@ -126,7 +135,7 @@ export function createBiWidget(seed = {}) {
     chartX: seed.chartX || dimensions[0] || "",
     chartY: seed.chartY || measures[0] || "",
     visualConfig: {
-      paletteId: seed.visualConfig?.paletteId || BI_PALETTES[0].id,
+      paletteId: seed.visualConfig?.paletteId || DASHBOARD_BUILDER_PALETTES[0].id,
       showDataLabels: Boolean(seed.visualConfig?.showDataLabels),
       showGrid: seed.visualConfig?.showGrid ?? true,
       showLegend: Boolean(seed.visualConfig?.showLegend),
@@ -143,11 +152,11 @@ export function createBiWidget(seed = {}) {
   };
 }
 
-export function createBiBoard(seed = {}) {
+export function createDashboardBuilderBoard(seed = {}) {
   const widgets =
     Array.isArray(seed.widgets) && seed.widgets.length > 0
-      ? seed.widgets.map((item) => createBiWidget(item))
-      : [createBiWidget()];
+      ? seed.widgets.map((item) => createDashboardBuilderWidget(item))
+      : [createDashboardBuilderWidget()];
   const globalFilters =
     Array.isArray(seed.globalFilters) && seed.globalFilters.length > 0
       ? seed.globalFilters.map((item) => createFilterDraft(item))
@@ -167,12 +176,12 @@ export function createBiBoard(seed = {}) {
   };
 }
 
-export function loadBiStudioState(readStoredJson) {
-  const stored = readStoredJson(BI_STUDIO_STORAGE_KEY, null);
+export function loadDashboardBuilderState(readStoredJson) {
+  const stored = readStoredJson(DASHBOARD_BUILDER_STORAGE_KEY, null);
   const boards = Array.isArray(stored?.boards)
-    ? stored.boards.map((item) => createBiBoard(item))
+    ? stored.boards.map((item) => createDashboardBuilderBoard(item))
     : [];
-  const normalizedBoards = boards.length > 0 ? boards : [createBiBoard()];
+  const normalizedBoards = boards.length > 0 ? boards : [createDashboardBuilderBoard()];
   const preferredActiveBoardId = String(stored?.activeBoardId || "");
   return {
     boards: normalizedBoards,
@@ -193,8 +202,8 @@ export function isDateLikeField(field, fieldTypesByValue) {
 
 export function getFilterOperators(field, fieldTypesByValue) {
   return isDateLikeField(field, fieldTypesByValue)
-    ? BI_DATE_FILTER_OPERATORS
-    : BI_FILTER_OPERATORS;
+    ? DASHBOARD_BUILDER_DATE_FILTER_OPERATORS
+    : DASHBOARD_BUILDER_FILTER_OPERATORS;
 }
 
 export function getDefaultFilterOperator(field, fieldTypesByValue) {
@@ -203,6 +212,102 @@ export function getDefaultFilterOperator(field, fieldTypesByValue) {
 
 export function isValuelessFilter(operator) {
   return VALUELESS_OPERATORS.has(String(operator || "").trim().toLowerCase());
+}
+
+export function ensureOperatorForField(operator, field, fieldTypesByValue) {
+  const normalized = String(operator || "").trim().toLowerCase();
+  const operators = getFilterOperators(field, fieldTypesByValue);
+  if (operators.some((item) => item.value === normalized)) {
+    return normalized;
+  }
+  return getDefaultFilterOperator(field, fieldTypesByValue);
+}
+
+export function usesDateRangePresetInput(field, fieldTypesByValue, operator) {
+  return (
+    isDateLikeField(field, fieldTypesByValue) &&
+    DATE_RANGE_OPERATORS.has(String(operator || "").trim().toLowerCase())
+  );
+}
+
+export function getFilterValuePlaceholder(field, fieldTypesByValue, operator) {
+  if (!isDateLikeField(field, fieldTypesByValue)) {
+    return "Value";
+  }
+  const normalizedOperator = String(operator || "").trim().toLowerCase();
+  if (normalizedOperator === "indaterange" || normalizedOperator === "notindaterange") {
+    return "YYYY-MM-DD,YYYY-MM-DD or last_30_days";
+  }
+  if (normalizedOperator === "beforedate" || normalizedOperator === "afterdate") {
+    return "YYYY-MM-DD";
+  }
+  return "YYYY-MM-DD or YYYY";
+}
+
+export function parseDateRangeFilterValues(rawValues) {
+  const trimmed = String(rawValues || "").trim();
+  if (!trimmed) {
+    return { preset: "no_filter", from: "", to: "" };
+  }
+  if (DASHBOARD_BUILDER_TIME_PRESETS.some((preset) => preset.value === trimmed)) {
+    return { preset: trimmed, from: "", to: "" };
+  }
+  if (trimmed.startsWith("before:")) {
+    return { preset: "custom_before", from: trimmed.slice("before:".length), to: "" };
+  }
+  if (trimmed.startsWith("after:")) {
+    return { preset: "custom_after", from: trimmed.slice("after:".length), to: "" };
+  }
+  if (trimmed.startsWith("on:")) {
+    return { preset: "custom_on", from: trimmed.slice("on:".length), to: "" };
+  }
+
+  const parts = trimmed
+    .split(",")
+    .map((part) => part.trim())
+    .filter(Boolean);
+  if (parts.length === 2 && ISO_DATE_PATTERN.test(parts[0]) && ISO_DATE_PATTERN.test(parts[1])) {
+    return { preset: "custom_between", from: parts[0], to: parts[1] };
+  }
+  if (parts.length === 1 && ISO_DATE_PATTERN.test(parts[0])) {
+    return { preset: "custom_on", from: parts[0], to: "" };
+  }
+
+  const range = normalizeYearOrMonthRange(trimmed);
+  if (range) {
+    return { preset: "custom_between", from: range[0], to: range[1] };
+  }
+
+  return { preset: "no_filter", from: "", to: "" };
+}
+
+export function serializeDateRangeFilterValues(state) {
+  const preset = String(state?.preset || "").trim();
+  if (!preset || preset === "no_filter") {
+    return "";
+  }
+  if (
+    DASHBOARD_BUILDER_TIME_PRESETS.some(
+      (item) =>
+        item.value === preset &&
+        !["custom_between", "custom_before", "custom_after", "custom_on"].includes(item.value),
+    )
+  ) {
+    return preset;
+  }
+  if (preset === "custom_between") {
+    return state?.from && state?.to ? `${state.from},${state.to}` : "";
+  }
+  if (preset === "custom_before") {
+    return state?.from ? `before:${state.from}` : "";
+  }
+  if (preset === "custom_after") {
+    return state?.from ? `after:${state.from}` : "";
+  }
+  if (preset === "custom_on") {
+    return state?.from ? `on:${state.from}` : "";
+  }
+  return "";
 }
 
 export function normalizeFilterForField(filter, field, fieldTypesByValue) {
@@ -235,7 +340,15 @@ export function resolveWidgetTimeRange(widget) {
   if (!preset) {
     return undefined;
   }
-  if (BI_TIME_PRESETS.some((item) => item.value === preset)) {
+  if (
+    DASHBOARD_BUILDER_TIME_PRESETS.some(
+      (item) =>
+        item.value === preset &&
+        !["no_filter", "custom_between", "custom_before", "custom_after", "custom_on"].includes(
+          item.value,
+        ),
+    )
+  ) {
     return preset;
   }
   const from = String(widget?.timeRangeFrom || "").trim();
@@ -255,7 +368,7 @@ export function resolveWidgetTimeRange(widget) {
   return undefined;
 }
 
-export function buildBiQueryPayload(board, widget) {
+export function buildDashboardBuilderQueryPayload(board, widget) {
   const measures = normalizeSelectedMembers(widget?.measures, widget?.measure);
   const dimensions = normalizeSelectedMembers(widget?.dimensions, widget?.dimension);
   const filters = [
@@ -304,7 +417,7 @@ export function buildBiQueryPayload(board, widget) {
   };
 }
 
-export function enrichBiResult(response) {
+export function enrichDashboardBuilderResult(response) {
   const rows = Array.isArray(response?.data) ? response.data : [];
   return {
     columns: buildColumnsFromRows(rows),
@@ -351,7 +464,7 @@ export function applyCopilotSuggestion({
               fieldLookup.has(value),
             );
 
-            return createBiWidget({
+            return createDashboardBuilderWidget({
               title: item.title || `Widget ${index + 1}`,
               description: item.description || "",
               chartType: item.chart_type || item.chartType || "bar",
@@ -369,6 +482,20 @@ function splitFilterValues(rawValues) {
     .split(",")
     .map((value) => value.trim())
     .filter(Boolean);
+}
+
+function normalizeYearOrMonthRange(value) {
+  if (YEAR_PATTERN.test(value)) {
+    return [`${value}-01-01`, `${value}-12-31`];
+  }
+  if (YEAR_MONTH_PATTERN.test(value)) {
+    const [yearString, monthString] = value.split("-");
+    const year = Number(yearString);
+    const month = Number(monthString);
+    const lastDay = new Date(Date.UTC(year, month, 0)).getUTCDate();
+    return [`${value}-01`, `${value}-${String(lastDay).padStart(2, "0")}`];
+  }
+  return null;
 }
 
 function normalizeChartType(value) {

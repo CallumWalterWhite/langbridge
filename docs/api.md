@@ -38,6 +38,8 @@ The self-hosted runtime host serves:
 - `GET /api/runtime/v1/health`
 - `GET /api/runtime/v1/info`
 - `GET /api/runtime/v1/datasets`
+- `GET /api/runtime/v1/datasets/{dataset_ref}/sync`
+- `POST /api/runtime/v1/datasets/{dataset_ref}/sync`
 - `POST /api/runtime/v1/datasets/{dataset_ref}/preview`
 - `POST /api/runtime/v1/semantic/query`
 - `POST /api/runtime/v1/sql/query`
@@ -45,7 +47,6 @@ The self-hosted runtime host serves:
 - `GET /api/runtime/v1/connectors`
 - `GET /api/runtime/v1/connectors/{connector_name}/sync/resources`
 - `GET /api/runtime/v1/connectors/{connector_name}/sync/states`
-- `POST /api/runtime/v1/connectors/{connector_name}/sync`
 
 When the `ui` feature is enabled, the host also serves:
 

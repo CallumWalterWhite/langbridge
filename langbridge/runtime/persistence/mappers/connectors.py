@@ -90,7 +90,7 @@ def from_connector_record(value: Any | None) -> ConnectorMetadata | None:
             or getattr(value, "supported_resources_json", None)
             or []
         ),
-        sync_strategy=getattr(value, "sync_strategy", None),
+        default_sync_strategy=getattr(value, "default_sync_strategy", None),
         capabilities=capabilities,
         is_managed=bool(getattr(value, "is_managed", False)),
         created_by=getattr(value, "created_by", None) or getattr(value, "created_by_actor_id", None),
@@ -127,7 +127,7 @@ def to_connector_record(value: ConnectorMetadata | Connector) -> Connector:
             else value.connection_policy.model_dump(exclude_none=True)
         ),
         supported_resources_json=list(value.supported_resources or []),
-        sync_strategy=value.sync_strategy_value,
+        default_sync_strategy=value.default_sync_strategy_value,
         capabilities_json=value.capabilities_json,
         is_managed=value.is_managed,
         created_by_actor_id=value.created_by,
@@ -150,7 +150,11 @@ def from_connector_sync_state_record(value: Any | None) -> ConnectorSyncState | 
         workspace_id=getattr(value, "workspace_id"),
         connection_id=getattr(value, "connection_id"),
         connector_type=getattr(value, "connector_type"),
-        resource_name=str(getattr(value, "resource_name")),
+        source_key=str(getattr(value, "source_key")),
+        source_kind=getattr(value, "source_kind", None),
+        source=dict(
+            getattr(value, "source", None) or getattr(value, "source_json", None) or {}
+        ),
         sync_mode=getattr(value, "sync_mode", None),
         last_cursor=getattr(value, "last_cursor", None),
         last_sync_at=getattr(value, "last_sync_at", None),
@@ -177,7 +181,9 @@ def to_connector_sync_state_record(
         workspace_id=value.workspace_id,
         connection_id=value.connection_id,
         connector_type=value.connector_type_value,
-        resource_name=value.resource_name,
+        source_key=value.source_key,
+        source_kind=value.source_kind_value,
+        source_json=value.source_json,
         sync_mode=value.sync_mode_value,
         last_cursor=value.last_cursor,
         last_sync_at=value.last_sync_at,

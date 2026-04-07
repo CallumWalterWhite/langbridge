@@ -1,9 +1,11 @@
 
 import re
 import uuid
+from dataclasses import dataclass
 from collections.abc import Mapping
 from typing import Any
 
+from langbridge.runtime.execution import DuckDbExecutionEngine, ExecutionEngine
 from .errors import ExecutionRuntimeError, ExecutionValidationError
 from langbridge.runtime.models.metadata import (
     DatasetMaterializationMode,
@@ -26,6 +28,8 @@ from langbridge.runtime.utils.sql import enforce_read_only_sql
 from langbridge.runtime.utils.storage_uri import resolve_local_storage_path
 from langbridge.federation.models import (
     DatasetExecutionDescriptor,
+    DatasetFreshnessDescriptor,
+    DatasetFreshnessPolicy,
     FederationWorkflow,
     VirtualDataset,
     VirtualRelationship,
@@ -51,7 +55,7 @@ class DatasetExecutionResolver:
         dataset: DatasetMetadata,
     ) -> tuple[FederationWorkflow, str, str]:
         dataset_type = dataset.dataset_type
-        if dataset_type in {DatasetType.TABLE, DatasetType.SQL, DatasetType.FILE}:
+        if dataset_type in {DatasetType.TABLE, DatasetType.SQL, DatasetType.API, DatasetType.FILE}:
             binding, dialect = self._build_binding_from_dataset_record(dataset=dataset)
             workflow = self._build_workflow_from_bindings(
                 workflow_id=f"workflow_dataset_{dataset.id.hex[:12]}",
@@ -208,6 +212,33 @@ class DatasetExecutionResolver:
             )
             return binding, dialect
 
+        if dataset_type == DatasetType.API:
+            if dataset.connection_id is None:
+                raise ExecutionValidationError("Executable API datasets require a connection_id.")
+            source = dict(dataset.source_json or {})
+            resource_name = str(source.get("resource") or "").strip()
+            flatten_paths = list(source.get("flatten") or [])
+            if not resource_name:
+                raise ExecutionValidationError("API dataset is missing source.resource.")
+            binding = VirtualTableBinding(
+                table_key=resolved_table_key,
+                source_id=f"api_{dataset.connection_id.hex[:12]}",
+                connector_id=dataset.connection_id,
+                schema=logical_schema_name,
+                table=logical_table,
+                catalog=catalog_name,
+                metadata={
+                    "dataset_id": str(dataset.id),
+                    "source_kind": dataset_descriptor.source_kind,
+                    "storage_kind": dataset_descriptor.storage_kind,
+                    "materialization_mode": materialization_mode,
+                    "api_resource": resource_name,
+                    "api_flatten": flatten_paths,
+                },
+                dataset_descriptor=dataset_descriptor,
+            )
+            return binding, "duckdb"
+
         if dataset_type == DatasetType.FILE:
             storage_uri = self._resolve_file_storage_uri(dataset)
             file_format = self._resolve_file_format(dataset, storage_uri=storage_uri)
@@ -271,13 +302,17 @@ class DatasetExecutionResolver:
                 dataset_id=dataset_ref,
                 table_key=table_key,
             )
-            binding, dialect = self._build_binding_from_dataset_record(
-                dataset=child_dataset,
-                table_key=table_key,
-                logical_schema=self._string_or_none(table_entry.get("schema")),
-                logical_table_name=self._string_or_none(table_entry.get("table") or table_entry.get("name")),
-                catalog_name=self._string_or_none(table_entry.get("catalog")),
-            )
+            try:
+                binding, dialect = self._build_binding_from_dataset_record(
+                    dataset=child_dataset,
+                    table_key=table_key,
+                    logical_schema=self._string_or_none(table_entry.get("schema")),
+                    logical_table_name=self._string_or_none(table_entry.get("table") or table_entry.get("name")),
+                    catalog_name=self._string_or_none(table_entry.get("catalog")),
+                )
+            except ExecutionValidationError:
+                # Ignore execution validation errors for individual tables to allow partial execution of federated datasets
+                continue
             table_bindings[table_key] = binding
             dialects.append(dialect)
             consumed_ids.add(dataset_ref)
@@ -290,7 +325,11 @@ class DatasetExecutionResolver:
                 dataset_id=child_dataset_id,
                 table_key=str(child_dataset_id),
             )
-            binding, dialect = self._build_binding_from_dataset_record(dataset=child_dataset)
+            try:
+                binding, dialect = self._build_binding_from_dataset_record(dataset=child_dataset)
+            except ExecutionValidationError:
+                # Ignore execution validation errors for individual tables to allow partial execution of federated datasets
+                continue
             table_bindings[binding.table_key] = binding
             dialects.append(dialect)
 
@@ -392,14 +431,19 @@ class DatasetExecutionResolver:
         )
         if not storage_uri:
             materialization_mode = DatasetExecutionResolver._materialization_mode(dataset)
-            sync_meta = file_config.get("connector_sync") if isinstance(file_config.get("connector_sync"), Mapping) else {}
             if materialization_mode.value == "synced":
-                resource_name = str(sync_meta.get("resource_name") or "").strip()
-                connector_name = str(sync_meta.get("connector_type") or "").strip().lower() or "connector"
-                resource_detail = f" resource '{resource_name}'" if resource_name else ""
+                sync_config = dict(dataset.sync_json or {})
+                sync_source = dict(sync_config.get("source") or {})
+                source_detail = ""
+                if str(sync_source.get("resource") or "").strip():
+                    source_detail = f" (resource path '{str(sync_source.get('resource')).strip()}')"
+                elif str(sync_source.get("table") or "").strip():
+                    source_detail = f" (table '{str(sync_source.get('table')).strip()}')"
+                elif str(sync_source.get("sql") or "").strip():
+                    source_detail = " (SQL query source)"
                 raise ExecutionValidationError(
                     f"Synced dataset '{dataset.name}' has not been populated yet. "
-                    f"Run connector sync for {connector_name}{resource_detail} before querying it."
+                    f"Run dataset sync for dataset '{dataset.name}'{source_detail} before querying it."
                 )
             raise ExecutionValidationError(f"FILE dataset '{dataset.id}' is missing storage_uri.")
         return storage_uri
@@ -603,13 +647,80 @@ class DatasetExecutionResolver:
             source_kind=source_kind.value,
             connector_kind=connector_kind,
             storage_kind=storage_kind.value,
+            source=getattr(dataset, "source_json", None),
+            sync=getattr(dataset, "sync_json", None),
             relation_identity=relation_identity.model_dump(mode="json"),
             execution_capabilities=capabilities.model_dump(mode="json"),
             metadata={
                 "description": dataset.description,
                 "tags": list(dataset.tags_json or []),
             },
+            freshness=DatasetExecutionResolver._build_dataset_freshness_descriptor(dataset),
         )
+
+    @staticmethod
+    def _build_dataset_freshness_descriptor(dataset: Any) -> DatasetFreshnessDescriptor:
+        materialization_mode = DatasetExecutionResolver._materialization_mode(dataset)
+        revision_id = getattr(dataset, "revision_id", None)
+        revision_hash = getattr(dataset, "revision_hash", None)
+
+        if materialization_mode == DatasetMaterializationMode.SYNCED:
+            if revision_id is not None:
+                return DatasetFreshnessDescriptor(
+                    policy=DatasetFreshnessPolicy.REVISION,
+                    freshness_key=f"dataset-revision:{revision_id}",
+                    revision_id=revision_id,
+                    revision_hash=str(revision_hash) if revision_hash is not None else None,
+                    reason="Synced datasets are cacheable only for a specific dataset revision.",
+                )
+            return DatasetFreshnessDescriptor(
+                policy=DatasetFreshnessPolicy.UNKNOWN,
+                reason="Synced dataset is missing revision metadata, so federation stage cache is bypassed.",
+            )
+
+        return DatasetFreshnessDescriptor(
+            policy=DatasetFreshnessPolicy.VOLATILE,
+            reason="Live datasets bypass federation stage cache.",
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class FileSchemaColumn:
+    name: str
+    data_type: str
+    nullable: bool = True
+
+
+def describe_file_source_schema(
+    *,
+    storage_uri: str,
+    file_config: dict[str, Any] | None = None,
+    execution_engine: ExecutionEngine | None = None,
+) -> list[FileSchemaColumn]:
+    source_sql = build_file_scan_sql(storage_uri=storage_uri, file_config=file_config)
+    engine = execution_engine or DuckDbExecutionEngine()
+    connection = engine.open_connection()
+    try:
+        describe_rows = connection.execute(f"DESCRIBE SELECT * FROM {source_sql}").fetchall()
+    finally:
+        connection.close()
+
+    columns: list[FileSchemaColumn] = []
+    for row in describe_rows:
+        if len(row) < 2:
+            continue
+        name = str(row[0] or "").strip()
+        data_type = str(row[1] or "unknown").strip() or "unknown"
+        if not name:
+            continue
+        columns.append(
+            FileSchemaColumn(
+                name=name,
+                data_type=data_type,
+                nullable=_describe_nullable(row[2] if len(row) > 2 else None),
+            )
+        )
+    return columns
 
 
 def build_file_scan_sql(*, storage_uri: str, file_config: dict[str, Any] | None = None) -> str:
@@ -655,3 +766,14 @@ def build_binding_for_dataset(
 
 def synthetic_file_connector_id(dataset_id: uuid.UUID) -> uuid.UUID:
     return uuid.uuid5(uuid.NAMESPACE_DNS, f"langbridge-file-dataset:{dataset_id}")
+
+
+def _describe_nullable(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    normalized = str(value or "").strip().lower()
+    if normalized in {"no", "false", "not null", "0"}:
+        return False
+    if normalized in {"yes", "true", "null", "nullable", "1"}:
+        return True
+    return True

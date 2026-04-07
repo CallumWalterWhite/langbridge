@@ -112,6 +112,40 @@ export function fetchConnectors() {
   return runtimeRequest("/api/runtime/v1/connectors");
 }
 
+export function fetchConnectorTypes() {
+  return runtimeRequest("/api/runtime/v1/connector/types");
+}
+
+export function fetchConnectorTypeConfig(connectorType) {
+  return runtimeRequest(
+    `/api/runtime/v1/connector/type/${encodeURIComponent(connectorType)}/config`,
+  );
+}
+
+export function fetchConnector(connectorName) {
+  return runtimeRequest(`/api/runtime/v1/connectors/${encodeURIComponent(connectorName)}`);
+}
+
+export function createConnector(payload) {
+  return runtimeRequest("/api/runtime/v1/connectors", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function updateConnector(connectorName, payload) {
+  return runtimeRequest(`/api/runtime/v1/connectors/${encodeURIComponent(connectorName)}`, {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function deleteConnector(connectorName) {
+  return runtimeRequest(`/api/runtime/v1/connectors/${encodeURIComponent(connectorName)}`, {
+    method: "DELETE",
+  });
+}
+
 export function fetchConnectorResources(connectorName) {
   return runtimeRequest(
     `/api/runtime/v1/connectors/${encodeURIComponent(connectorName)}/sync/resources`,
@@ -124,8 +158,12 @@ export function fetchConnectorStates(connectorName) {
   );
 }
 
-export function runConnectorSync(connectorName, payload) {
-  return runtimeRequest(`/api/runtime/v1/connectors/${encodeURIComponent(connectorName)}/sync`, {
+export function fetchDatasetSync(datasetRef) {
+  return runtimeRequest(`/api/runtime/v1/datasets/${encodeURIComponent(datasetRef)}/sync`);
+}
+
+export function runDatasetSync(datasetRef, payload) {
+  return runtimeRequest(`/api/runtime/v1/datasets/${encodeURIComponent(datasetRef)}/sync`, {
     method: "POST",
     body: JSON.stringify(payload),
   });
@@ -133,6 +171,26 @@ export function runConnectorSync(connectorName, payload) {
 
 export function fetchDatasets() {
   return runtimeRequest("/api/runtime/v1/datasets");
+}
+
+export function createDataset(payload) {
+  return runtimeRequest("/api/runtime/v1/datasets", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function updateDataset(datasetRef, payload) {
+  return runtimeRequest(`/api/runtime/v1/datasets/${encodeURIComponent(datasetRef)}`, {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function deleteDataset(datasetRef) {
+  return runtimeRequest(`/api/runtime/v1/datasets/${encodeURIComponent(datasetRef)}`, {
+    method: "DELETE",
+  });
 }
 
 export function fetchDataset(datasetRef) {
@@ -148,6 +206,26 @@ export function previewDataset(datasetRef, payload = { limit: 25 }) {
 
 export function fetchSemanticModels() {
   return runtimeRequest("/api/runtime/v1/semantic-models");
+}
+
+export function createSemanticModel(payload) {
+  return runtimeRequest("/api/runtime/v1/semantic-models", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function updateSemanticModel(modelRef, payload) {
+  return runtimeRequest(`/api/runtime/v1/semantic-models/${encodeURIComponent(modelRef)}`, {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function deleteSemanticModel(modelRef) {
+  return runtimeRequest(`/api/runtime/v1/semantic-models/${encodeURIComponent(modelRef)}`, {
+    method: "DELETE",
+  });
 }
 
 export function fetchSemanticModel(modelRef) {

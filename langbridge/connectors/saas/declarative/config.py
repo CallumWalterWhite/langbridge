@@ -115,14 +115,15 @@ def build_declarative_plugin_metadata(
         connector_family=resolved_connector_family,
         supported_resources=list(manifest.resource_keys),
         auth_schema=list(resolved_auth_schema),
-        sync_strategy=sync_strategy,
+        default_sync_strategy=sync_strategy,
         capabilities=ConnectorCapabilities(
-            supports_live_datasets=False,
+            supports_live_datasets=True,
             supports_synced_datasets=True,
             supports_incremental_sync=sync_strategy in {
                 ConnectorSyncStrategy.INCREMENTAL,
                 ConnectorSyncStrategy.WINDOWED_INCREMENTAL,
             },
+            supports_federated_execution=True,
         ),
     )
 

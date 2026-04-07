@@ -36,15 +36,19 @@ class ConnectorRuntimeType(str, Enum):
     GOOGLE_ANALYTICS = "GOOGLE_ANALYTICS"
     SALESFORCE = "SALESFORCE"
     
-    # Non-exhaustive list of file types - we can expand this as needed
-    FILE = "FILE"
+    LOCAL_FILESYSTEM = "LOCAL_FILESYSTEM"
+    S3 = "S3"
+    _S3 = "S3"
+    GCS = "GCS"
+    AZURE_BLOB = "AZURE_BLOB"
 
 
 class ConnectorFamily(str, Enum):
     DATABASE = "DATABASE"
+    NOSQL = "NOSQL"
     API = "API"
     VECTOR_DB = "VECTOR_DB"
-
+    STORAGE = "STORAGE"
 
 class ConnectorSyncStrategy(str, Enum):
     FULL_REFRESH = "FULL_REFRESH"
@@ -88,7 +92,7 @@ class ConnectorPluginMetadata(_Base):
     connector_family: ConnectorFamily
     supported_resources: List[str] = Field(default_factory=list)
     auth_schema: List[ConnectorAuthFieldSchema] = Field(default_factory=list)
-    sync_strategy: ConnectorSyncStrategy | None = None
+    default_sync_strategy: ConnectorSyncStrategy | None = None
     capabilities: ConnectorCapabilities = Field(default_factory=ConnectorCapabilities)
 
 

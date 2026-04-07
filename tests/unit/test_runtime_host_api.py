@@ -19,7 +19,7 @@ from langbridge import LangbridgeClient
 from langbridge.runtime import build_configured_local_runtime
 from langbridge.runtime.bootstrap import ConfiguredLocalRuntimeHost
 from langbridge.runtime.context import RuntimeContext
-from langbridge.runtime.hosting import create_runtime_api_app
+from langbridge.runtime.hosting import BackgroundTaskSchedule, create_runtime_api_app
 from langbridge.runtime.hosting.auth import RuntimeAuthConfig, RuntimeAuthMode
 from langbridge.runtime.models import RuntimeMessageRole, RuntimeThreadMessage
 from tests.unit._runtime_host_sync_helpers import (
@@ -73,6 +73,7 @@ connectors:
 datasets:
   - name: shopify_orders
     connector: commerce_demo
+    materialization_mode: live
     semantic_model: commerce_performance
     default_time_dimension: order_date
     source:
@@ -306,17 +307,20 @@ connectors:
 datasets:
   - name: shopify_orders
     connector: commerce_demo
+    materialization_mode: live
     semantic_model: commerce_performance
     default_time_dimension: order_date
     source:
       table: orders_enriched
   - name: shopify_customers
     connector: commerce_demo
+    materialization_mode: live
     semantic_model: commerce_performance
     source:
       table: customer_profiles
   - name: campaign_touchpoints
     connector: commerce_demo
+    materialization_mode: live
     semantic_model: marketing_performance
     source:
       table: campaign_touchpoints
@@ -932,7 +936,43 @@ def test_runtime_host_api_lifespan_closes_runtime_host(tmp_path: Path) -> None:
     assert controller.closed is True
 
 
-def test_runtime_host_api_supports_connector_sync(tmp_path: Path) -> None:
+def test_runtime_host_api_exposes_connector_type_config_schema(tmp_path: Path) -> None:
+    runtime = _build_runtime(tmp_path)
+    client = TestClient(_create_runtime_app(runtime))
+
+    response = client.get("/api/runtime/v1/connector/type/sqlite/config")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["connector_type"] == "SQLITE"
+    assert payload["name"] == "Sqlite"
+    assert payload["plugin_metadata"]["connector_type"] == "SQLITE"
+    assert payload["plugin_metadata"]["connector_family"] == "DATABASE"
+    assert payload["config"] == [
+        {
+            "field": "location",
+            "value": None,
+            "label": "Location",
+            "required": True,
+            "default": None,
+            "description": "Sqlite Location",
+            "type": "string",
+            "value_list": None,
+        }
+    ]
+
+
+def test_runtime_host_api_rejects_unknown_connector_type_config_requests(tmp_path: Path) -> None:
+    runtime = _build_runtime(tmp_path)
+    client = TestClient(_create_runtime_app(runtime))
+
+    response = client.get("/api/runtime/v1/connector/type/not_real/config")
+
+    assert response.status_code == 400
+    assert "not_real" in response.json()["detail"].lower()
+
+
+def test_runtime_host_api_keeps_connector_sync_discovery_but_not_connector_sync_execution(tmp_path: Path) -> None:
     with mock_stripe_api() as api_base_url, runtime_storage_dirs(tmp_path):
         config_path = write_sync_runtime_config(tmp_path, api_base_url=api_base_url)
         runtime = build_configured_local_runtime(config_path=str(config_path))
@@ -942,7 +982,9 @@ def test_runtime_host_api_supports_connector_sync(tmp_path: Path) -> None:
         info = client.get("/api/runtime/v1/info")
         assert info.status_code == 200
         assert "connectors.list" in info.json()["capabilities"]
-        assert "sync.run" in info.json()["capabilities"]
+        assert "connectors.sync.resources" in info.json()["capabilities"]
+        assert "connectors.sync.states" in info.json()["capabilities"]
+        assert "datasets.sync.run" in info.json()["capabilities"]
 
         connectors = client.get("/api/runtime/v1/connectors")
         assert connectors.status_code == 200
@@ -961,42 +1003,20 @@ def test_runtime_host_api_supports_connector_sync(tmp_path: Path) -> None:
 
         sync = client.post(
             "/api/runtime/v1/connectors/billing_demo/sync",
-            json={
-                "resource_names": ["customers"],
-                "sync_mode": "INCREMENTAL",
-            },
+            json={"resource_names": ["customers"], "sync_mode": "INCREMENTAL"},
         )
-        assert sync.status_code == 200
-        sync_payload = sync.json()
-        assert sync_payload["status"] == "succeeded"
-        assert sync_payload["resources"][0]["resource_name"] == "customers"
-        assert sync_payload["resources"][0]["records_synced"] == 2
+        assert sync.status_code == 404
 
         datasets = client.get("/api/runtime/v1/datasets")
         assert datasets.status_code == 200
-        assert datasets.json()["total"] == 1
-        synced_dataset_name = datasets.json()["items"][0]["name"]
-        assert datasets.json()["items"][0]["management_mode"] == "runtime_managed"
-        assert datasets.json()["items"][0]["managed"] is False
-
-        preview = client.post(
-            f"/api/runtime/v1/datasets/{synced_dataset_name}/preview",
-            json={"limit": 5},
-        )
-        assert preview.status_code == 200
-        assert preview.json()["status"] == "succeeded"
-        assert preview.json()["row_count_preview"] == 2
-        assert preview.json()["rows"][0]["id"] == "cus_001"
+        assert datasets.json()["total"] == 0
 
         states = client.get("/api/runtime/v1/connectors/billing_demo/sync/states")
         assert states.status_code == 200
-        assert states.json()["total"] == 1
-        assert states.json()["items"][0]["resource_name"] == "customers"
-        assert states.json()["items"][0]["status"] == "succeeded"
-        assert states.json()["items"][0]["dataset_names"] == [synced_dataset_name]
+        assert states.json()["total"] == 0
 
 
-def test_runtime_host_api_supports_declared_synced_datasets_before_and_after_sync(tmp_path: Path) -> None:
+def test_runtime_host_api_supports_dataset_owned_sync_for_declared_synced_datasets(tmp_path: Path) -> None:
     with mock_stripe_api() as api_base_url, runtime_storage_dirs(tmp_path):
         config_path = write_sync_runtime_config(
             tmp_path,
@@ -1014,12 +1034,17 @@ def test_runtime_host_api_supports_declared_synced_datasets_before_and_after_syn
                     "id": str(runtime._datasets["billing_customers"].id),
                     "name": "billing_customers",
                     "label": runtime._datasets["billing_customers"].label,
-                    "description": "Configured synced dataset awaiting connector sync for resource 'customers'.",
+                "description": "Configured synced dataset awaiting dataset sync for resource path 'customers'.",
                 "connector": "billing_demo",
                 "semantic_model": None,
                 "materialization_mode": "synced",
+                "source": None,
+                "sync": {
+                    "source": {"resource": "customers"},
+                    "strategy": "INCREMENTAL",
+                    "sync_on_start": False,
+                },
                 "status": "pending_sync",
-                "sync_resource": "customers",
                 "sync_status": "never_synced",
                 "last_sync_at": None,
                 "management_mode": "config_managed",
@@ -1031,6 +1056,13 @@ def test_runtime_host_api_supports_declared_synced_datasets_before_and_after_syn
         assert dataset_detail_before.status_code == 200
         assert dataset_detail_before.json()["sync_state"]["status"] == "never_synced"
 
+        dataset_sync_before = client.get("/api/runtime/v1/datasets/billing_customers/sync")
+        assert dataset_sync_before.status_code == 200
+        assert dataset_sync_before.json()["dataset_name"] == "billing_customers"
+        assert dataset_sync_before.json()["source_key"] == "resource:customers"
+        assert dataset_sync_before.json()["source"] == {"resource": "customers"}
+        assert dataset_sync_before.json()["sync_state"]["status"] == "never_synced"
+
         preview_before = client.post(
             "/api/runtime/v1/datasets/billing_customers/preview",
             json={"limit": 5},
@@ -1038,7 +1070,7 @@ def test_runtime_host_api_supports_declared_synced_datasets_before_and_after_syn
         assert preview_before.status_code == 400
         assert preview_before.json()["detail"] == (
             "Synced dataset 'billing_customers' has not been populated yet. "
-            "Run connector sync for stripe resource 'customers' before querying it."
+            "Run dataset sync for dataset 'billing_customers' (resource path 'customers') before querying it."
         )
 
         resources = client.get("/api/runtime/v1/connectors/billing_demo/sync/resources")
@@ -1047,13 +1079,13 @@ def test_runtime_host_api_supports_declared_synced_datasets_before_and_after_syn
         assert customers["dataset_names"] == ["billing_customers"]
 
         sync = client.post(
-            "/api/runtime/v1/connectors/billing_demo/sync",
+            "/api/runtime/v1/datasets/billing_customers/sync",
             json={
-                "resource_names": ["customers"],
                 "sync_mode": "INCREMENTAL",
             },
         )
         assert sync.status_code == 200
+        assert sync.json()["dataset_name"] == "billing_customers"
         assert sync.json()["resources"][0]["dataset_names"] == ["billing_customers"]
 
         datasets_after = client.get("/api/runtime/v1/datasets")
@@ -1071,6 +1103,75 @@ def test_runtime_host_api_supports_declared_synced_datasets_before_and_after_syn
         assert preview_after.status_code == 200
         assert preview_after.json()["status"] == "succeeded"
         assert preview_after.json()["row_count_preview"] == 2
+
+        dataset_sync_after = client.get("/api/runtime/v1/datasets/billing_customers/sync")
+        assert dataset_sync_after.status_code == 200
+        assert dataset_sync_after.json()["sync_state"]["status"] == "succeeded"
+
+
+def test_runtime_host_api_registers_dataset_owned_sync_background_tasks(tmp_path: Path) -> None:
+    with mock_stripe_api() as api_base_url, runtime_storage_dirs(tmp_path):
+        config_path = write_sync_runtime_config(
+            tmp_path,
+            api_base_url=api_base_url,
+            declared_synced_datasets=[
+                {
+                    "name": "billing_customers",
+                    "resource": "customers",
+                    "cadence": "5m",
+                }
+            ],
+        )
+        runtime = build_configured_local_runtime(config_path=str(config_path))
+        app = _create_runtime_app(runtime)
+
+        with TestClient(app) as client:
+            manager = client.app.state.runtime_background_tasks
+            task = next(
+                task
+                for task in manager.default_tasks
+                if task.name == "dataset-sync:billing_customers"
+            )
+            assert task.schedule == BackgroundTaskSchedule.interval(seconds=300)
+            assert task.run_on_startup is False
+            assert task.description == (
+                "Sync dataset 'billing_customers' from its dataset-owned sync contract."
+            )
+
+
+def test_runtime_host_api_runs_dataset_sync_on_startup_when_requested(tmp_path: Path) -> None:
+    with mock_stripe_api() as api_base_url, runtime_storage_dirs(tmp_path):
+        config_path = write_sync_runtime_config(
+            tmp_path,
+            api_base_url=api_base_url,
+            declared_synced_datasets=[
+                {
+                    "name": "billing_customers",
+                    "resource": "customers",
+                    "sync_on_start": True,
+                }
+            ],
+        )
+        runtime = build_configured_local_runtime(config_path=str(config_path))
+        app = _create_runtime_app(runtime)
+
+        with TestClient(app) as client:
+            manager = client.app.state.runtime_background_tasks
+            task = next(
+                task
+                for task in manager.default_tasks
+                if task.name == "dataset-sync:billing_customers"
+            )
+            assert task.schedule is None
+            assert task.run_on_startup is True
+
+            dataset_sync = client.get("/api/runtime/v1/datasets/billing_customers/sync")
+            assert dataset_sync.status_code == 200
+            assert dataset_sync.json()["sync_state"]["status"] == "succeeded"
+
+            dataset_detail = client.get("/api/runtime/v1/datasets/billing_customers")
+            assert dataset_detail.status_code == 200
+            assert dataset_detail.json()["status"] == "published"
 
 
 def test_runtime_host_api_creates_runtime_managed_resources_and_exposes_management_mode(
@@ -1223,6 +1324,172 @@ def test_runtime_host_api_create_endpoints_do_not_override_config_managed_resour
     assert semantic_detail.status_code == 200
     assert semantic_detail.json()["management_mode"] == "config_managed"
     assert semantic_detail.json()["managed"] is True
+
+
+def test_runtime_host_api_updates_and_deletes_runtime_managed_resources(
+    tmp_path: Path,
+) -> None:
+    runtime = _build_runtime(tmp_path)
+    client = TestClient(_create_runtime_app(runtime))
+    created = _create_runtime_managed_resources(client, tmp_path)
+
+    connector_update = client.patch(
+        "/api/runtime/v1/connectors/runtime_demo",
+        json={
+            "description": "Updated runtime connector",
+            "connection": {"path": str((tmp_path / "example.db").resolve())},
+            "metadata": {"schema": "main"},
+        },
+    )
+    assert connector_update.status_code == 200
+    assert connector_update.json()["description"] == "Updated runtime connector"
+    assert connector_update.json()["management_mode"] == "runtime_managed"
+    assert connector_update.json()["metadata"]["extra"]["schema"] == "main"
+
+    connector_detail = client.get("/api/runtime/v1/connectors/runtime_demo")
+    assert connector_detail.status_code == 200
+    assert connector_detail.json()["metadata"]["extra"]["schema"] == "main"
+
+    dataset_update = client.patch(
+        "/api/runtime/v1/datasets/runtime_orders",
+        json={
+            "description": "Updated runtime dataset",
+            "materialization_mode": "live",
+            "source": {"sql": "SELECT country, net_revenue FROM orders_enriched"},
+            "tags": ["runtime", "edited"],
+        },
+    )
+    assert dataset_update.status_code == 200
+    assert dataset_update.json()["description"] == "Updated runtime dataset"
+    assert dataset_update.json()["sql_text"] == "SELECT country, net_revenue FROM orders_enriched"
+    assert dataset_update.json()["management_mode"] == "runtime_managed"
+    assert "edited" in dataset_update.json()["tags"]
+
+    semantic_payload = created["semantic_model"]["content_json"]
+    semantic_payload["description"] = "Updated runtime semantic model"
+    semantic_update = client.patch(
+        "/api/runtime/v1/semantic-models/runtime_orders_model",
+        json={
+            "description": "Updated runtime semantic model",
+            "datasets": ["runtime_orders"],
+            "model": semantic_payload,
+        },
+    )
+    assert semantic_update.status_code == 200
+    assert semantic_update.json()["description"] == "Updated runtime semantic model"
+    assert semantic_update.json()["management_mode"] == "runtime_managed"
+
+    delete_semantic = client.delete("/api/runtime/v1/semantic-models/runtime_orders_model")
+    assert delete_semantic.status_code == 200
+    assert delete_semantic.json()["deleted"] is True
+    assert client.get("/api/runtime/v1/semantic-models/runtime_orders_model").status_code == 404
+
+    delete_dataset = client.delete("/api/runtime/v1/datasets/runtime_orders")
+    assert delete_dataset.status_code == 200
+    assert delete_dataset.json()["deleted"] is True
+    assert client.get("/api/runtime/v1/datasets/runtime_orders").status_code == 404
+
+    delete_connector = client.delete("/api/runtime/v1/connectors/runtime_demo")
+    assert delete_connector.status_code == 200
+    assert delete_connector.json()["deleted"] is True
+    connectors = {
+        item["name"]: item
+        for item in client.get("/api/runtime/v1/connectors").json()["items"]
+    }
+    assert "runtime_demo" not in connectors
+
+
+def test_runtime_host_api_supports_connectorless_file_datasets(
+    tmp_path: Path,
+) -> None:
+    csv_path = tmp_path / "uploaded_orders.csv"
+    csv_path.write_text(
+        "\n".join(
+            [
+                "order_id,customer_name",
+                "1,Ada",
+                "2,Grace",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    runtime = _build_runtime(tmp_path)
+    client = TestClient(_create_runtime_app(runtime))
+
+    created = client.post(
+        "/api/runtime/v1/datasets",
+        json={
+            "name": "uploaded_orders",
+            "connector": None,
+            "materialization_mode": "live",
+            "source": {
+                "path": str(csv_path),
+                "header": True,
+            },
+        },
+    )
+    assert created.status_code == 201
+    payload = created.json()
+    assert payload["connector"] is None
+    assert payload["connector_id"] is None
+    assert payload["source_kind"] == "file"
+    assert payload["storage_kind"] == "csv"
+    assert [column["name"] for column in payload["columns"]] == [
+        "order_id",
+        "customer_name",
+    ]
+
+    preview = client.post(
+        f"/api/runtime/v1/datasets/{payload['id']}/preview",
+        json={"limit": 2},
+    )
+    assert preview.status_code == 200
+    assert preview.json()["rows"] == [
+        {"order_id": 1, "customer_name": "Ada"},
+        {"order_id": 2, "customer_name": "Grace"},
+    ]
+
+    updated = client.patch(
+        "/api/runtime/v1/datasets/uploaded_orders",
+        json={"description": "Uploaded file dataset"},
+    )
+    assert updated.status_code == 200
+    assert updated.json()["connector"] is None
+    assert updated.json()["description"] == "Uploaded file dataset"
+    assert [column["name"] for column in updated.json()["columns"]] == [
+        "order_id",
+        "customer_name",
+    ]
+
+
+def test_runtime_host_api_rejects_mutating_config_managed_resources(
+    tmp_path: Path,
+) -> None:
+    runtime = _build_runtime(tmp_path)
+    client = TestClient(_create_runtime_app(runtime))
+
+    connector_update = client.patch(
+        "/api/runtime/v1/connectors/commerce_demo",
+        json={"description": "Should fail"},
+    )
+    assert connector_update.status_code == 400
+    assert "config_managed" in connector_update.json()["detail"]
+
+    dataset_delete = client.delete("/api/runtime/v1/datasets/shopify_orders")
+    assert dataset_delete.status_code == 400
+    assert "config_managed" in dataset_delete.json()["detail"]
+
+    semantic_update = client.patch(
+        "/api/runtime/v1/semantic-models/commerce_performance",
+        json={
+            "description": "Should fail",
+            "datasets": ["shopify_orders"],
+            "model": {"version": "1", "name": "commerce_performance", "datasets": {}},
+        },
+    )
+    assert semantic_update.status_code == 400
+    assert "config_managed" in semantic_update.json()["detail"]
 
 
 def test_runtime_host_api_sqlite_persists_runtime_managed_resources_across_restart(

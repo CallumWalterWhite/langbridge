@@ -17,6 +17,7 @@ from langbridge.runtime.hosting.auth import (
     RuntimeAuthPrincipal,
     RuntimeAuthResolver,
 )
+from langbridge.runtime.hosting.odbc import RuntimeOdbcEndpoint, RuntimeOdbcEndpointConfig
 from langbridge.runtime.hosting.background import (
     BackgroundTaskSchedule,
     RuntimeBackgroundTaskDefinition,
@@ -27,7 +28,7 @@ from langbridge.runtime.bootstrap import (
     ConfiguredLocalRuntimeHost,
     build_configured_local_runtime,
 )
-from langbridge.runtime.application.errors import ApplicationError
+from langbridge.runtime.application.errors import ApplicationError, BusinessValidationError
 from langbridge.runtime.models.jobs import (
     CreateDatasetPreviewJobRequest,
     CreateSqlJobRequest,
@@ -46,18 +47,24 @@ from langbridge.runtime.hosting.api_models import (
     RuntimeAuthBootstrapRequest,
     RuntimeAuthLoginRequest,
     RuntimeConnectorCreateRequest,
+    RuntimeConnectorConfigSchemaResponse,
     RuntimeConnectorListResponse,
     RuntimeConnectorSummary,
+    RuntimeConnectorTypesListResponse,
     RuntimeDatasetCreateRequest,
     RuntimeDatasetListResponse,
     RuntimeDatasetPreviewRequest,
     RuntimeDatasetPreviewResponse,
+    RuntimeDatasetSyncRequest,
+    RuntimeDatasetSyncStateResponse,
+    RuntimeConnectorUpdateRequest,
+    RuntimeDatasetUpdateRequest,
     RuntimeInfoResponse,
     RuntimeSemanticModelCreateRequest,
     RuntimeSemanticModelListResponse,
+    RuntimeSemanticModelUpdateRequest,
     RuntimeSemanticQueryRequest,
     RuntimeSemanticQueryResponse,
-    RuntimeSyncRequest,
     RuntimeSyncResourceListResponse,
     RuntimeSyncResponse,
     RuntimeSyncStateListResponse,
@@ -70,6 +77,8 @@ from langbridge.runtime.hosting.api_models import (
 _CONFIG_PATH_ENV = "LANGBRIDGE_RUNTIME_CONFIG_PATH"
 _FEATURES_ENV = "LANGBRIDGE_RUNTIME_FEATURES"
 _DEBUG_ENV = "LANGBRIDGE_RUNTIME_DEBUG"
+_ODBC_HOST_ENV = "LANGBRIDGE_RUNTIME_ODBC_HOST"
+_ODBC_PORT_ENV = "LANGBRIDGE_RUNTIME_ODBC_PORT"
 _SEMANTIC_VECTOR_REFRESH_TASK_NAME = "semantic-vector-refresh"
 _RUNTIME_LOG_FORMAT = "%(asctime)s %(levelname)s [%(name)s] %(message)s"
 _DEBUG_HANDLER_MARKER = "_langbridge_runtime_debug_handler"
@@ -82,6 +91,8 @@ def create_runtime_api_app(
     auth_config: RuntimeAuthConfig | None = None,
     features: Iterable[str] | None = None,
     debug: bool = False,
+    odbc_host: str | None = None,
+    odbc_port: int | None = None,
     default_background_tasks: Iterable[RuntimeBackgroundTaskDefinition] | None = None,
     background_tasks: Iterable[RuntimeBackgroundTaskDefinition] | None = None,
     background_task_manager: RuntimeBackgroundTaskManager | None = None,
@@ -95,6 +106,7 @@ def create_runtime_api_app(
     enabled_features = _normalize_runtime_features(features)
     mcp_enabled = "mcp" in enabled_features
     ui_enabled = "ui" in enabled_features
+    odbc_enabled = "odbc" in enabled_features
     auth_resolver = RuntimeAuthResolver(
         config=auth_config
         or RuntimeAuthConfig.from_env(
@@ -123,6 +135,7 @@ def create_runtime_api_app(
             task_manager.register_custom_task(task)
     mcp_server = None
     mcp_app = None
+    odbc_server = None
     if mcp_enabled:
         mcp_server, mcp_app = build_runtime_mcp_server(
             runtime_host=host,
@@ -130,9 +143,24 @@ def create_runtime_api_app(
             mount_path=DEFAULT_MCP_MOUNT_PATH,
             debug=debug,
         )
+    if odbc_enabled:
+        odbc_server = RuntimeOdbcEndpoint(
+            runtime_host=host,
+            auth_config=auth_resolver.config,
+            config=RuntimeOdbcEndpointConfig.from_env(
+                host=odbc_host,
+                port=odbc_port,
+            ),
+        )
 
     @asynccontextmanager
     async def lifespan(_: FastAPI):
+        if odbc_server is not None:
+            await odbc_server.start()
+        await _register_runtime_dataset_background_tasks(
+            task_manager=task_manager,
+            runtime_host=host,
+        )
         await task_manager.start()
         try:
             if mcp_server is None:
@@ -147,6 +175,8 @@ def create_runtime_api_app(
                 yield
         finally:
             await task_manager.stop()
+            if odbc_server is not None:
+                await odbc_server.close()
             await _close_runtime_host(host)
 
     app = FastAPI(
@@ -161,6 +191,7 @@ def create_runtime_api_app(
     app.state.runtime_auth = auth_resolver
     app.state.runtime_background_tasks = task_manager
     app.state.runtime_debug = bool(debug)
+    app.state.runtime_odbc = odbc_server
 
     if mcp_enabled:
         @app.middleware("http")
@@ -363,11 +394,18 @@ def create_runtime_api_app(
             "datasets.list",
             "datasets.get",
             "datasets.create",
+            "datasets.update",
+            "datasets.delete",
             "datasets.preview",
+            "connectors.get",
             "connectors.create",
+            "connectors.update",
+            "connectors.delete",
             "semantic_models.list",
             "semantic_models.get",
             "semantic_models.create",
+            "semantic_models.update",
+            "semantic_models.delete",
             "semantic.query",
             "sql.query",
             "agents.list",
@@ -398,15 +436,18 @@ def create_runtime_api_app(
         if any(bool(item.get("supports_sync")) for item in connector_items):
             capabilities.extend(
                 [
-                    "sync.resources",
-                    "sync.states",
-                    "sync.run",
+                    "connectors.sync.resources",
+                    "connectors.sync.states",
+                    "datasets.sync.get",
+                    "datasets.sync.run",
                 ]
             )
         if ui_enabled:
             capabilities.append("ui")
         if mcp_enabled:
             capabilities.append("mcp")
+        if odbc_enabled:
+            capabilities.append("odbc")
         return RuntimeInfoResponse(
             runtime_mode="configured_local",
             config_path=str(configured_host._config_path),
@@ -437,6 +478,30 @@ def create_runtime_api_app(
                 status_code=_runtime_mutation_status_code(str(exc)),
                 detail=str(exc),
             ) from exc
+
+    @app.patch("/api/runtime/v1/datasets/{dataset_ref}")
+    async def update_dataset(
+        request: Request,
+        dataset_ref: str,
+        body: RuntimeDatasetUpdateRequest,
+    ) -> dict[str, Any]:
+        configured_host = await _resolve_request_host(request)
+        try:
+            return await configured_host.update_dataset(dataset_ref=dataset_ref, request=body)
+        except (ValueError, ApplicationError) as exc:
+            detail = str(exc)
+            status_code = 404 if _is_missing_runtime_resource(detail) else _runtime_mutation_status_code(detail)
+            raise HTTPException(status_code=status_code, detail=detail) from exc
+
+    @app.delete("/api/runtime/v1/datasets/{dataset_ref}")
+    async def delete_dataset(request: Request, dataset_ref: str) -> dict[str, Any]:
+        configured_host = await _resolve_request_host(request)
+        try:
+            return await configured_host.delete_dataset(dataset_ref=dataset_ref)
+        except (ValueError, ApplicationError) as exc:
+            detail = str(exc)
+            status_code = 404 if _is_missing_runtime_resource(detail) else _runtime_mutation_status_code(detail)
+            raise HTTPException(status_code=status_code, detail=detail) from exc
 
     @app.get("/api/runtime/v1/datasets/{dataset_ref}")
     async def get_dataset(request: Request, dataset_ref: str) -> dict[str, Any]:
@@ -490,6 +555,49 @@ def create_runtime_api_app(
             bytes_scanned=payload.get("bytes_scanned"),
             generated_sql=payload.get("generated_sql"),
         )
+
+    @app.get(
+        "/api/runtime/v1/datasets/{dataset_ref}/sync",
+        response_model=RuntimeDatasetSyncStateResponse,
+    )
+    async def get_dataset_sync(
+        request: Request,
+        dataset_ref: str,
+    ) -> RuntimeDatasetSyncStateResponse:
+        configured_host = await _resolve_request_host(request)
+        try:
+            payload = await configured_host.get_dataset_sync(dataset_ref=dataset_ref)
+        except (ValueError, BusinessValidationError) as exc:
+            detail = str(exc)
+            status_code = 404 if _is_missing_runtime_resource(detail) else 400
+            raise HTTPException(status_code=status_code, detail=detail) from exc
+        return RuntimeDatasetSyncStateResponse.model_validate(payload)
+
+    @app.post(
+        "/api/runtime/v1/datasets/{dataset_ref}/sync",
+        response_model=RuntimeSyncResponse,
+    )
+    async def sync_dataset(
+        request: Request,
+        dataset_ref: str,
+        body: RuntimeDatasetSyncRequest,
+    ) -> RuntimeSyncResponse:
+        configured_host = await _resolve_request_host(request)
+        try:
+            payload = await configured_host.sync_dataset(
+                dataset_ref=dataset_ref,
+                sync_mode=body.sync_mode,
+                force_full_refresh=bool(body.force_full_refresh),
+            )
+        except (ValueError, BusinessValidationError, ExecutionValidationError) as exc:
+            detail = str(exc)
+            status_code = 404 if _is_missing_runtime_resource(detail) else 400
+            raise HTTPException(status_code=status_code, detail=detail) from exc
+        except HTTPException:
+            raise
+        except Exception as exc:
+            _raise_runtime_internal_server_error("dataset sync", exc)
+        return RuntimeSyncResponse.model_validate(payload)
 
     @app.post("/api/runtime/v1/semantic/query", response_model=RuntimeSemanticQueryResponse)
     async def query_semantic(
@@ -552,6 +660,30 @@ def create_runtime_api_app(
                 status_code=_runtime_mutation_status_code(str(exc)),
                 detail=str(exc),
             ) from exc
+
+    @app.patch("/api/runtime/v1/semantic-models/{model_ref}")
+    async def update_semantic_model(
+        request: Request,
+        model_ref: str,
+        body: RuntimeSemanticModelUpdateRequest,
+    ) -> dict[str, Any]:
+        configured_host = await _resolve_request_host(request)
+        try:
+            return await configured_host.update_semantic_model(model_ref=model_ref, request=body)
+        except (ValueError, ApplicationError) as exc:
+            detail = str(exc)
+            status_code = 404 if _is_missing_semantic_resource(detail) else _runtime_mutation_status_code(detail)
+            raise HTTPException(status_code=status_code, detail=detail) from exc
+
+    @app.delete("/api/runtime/v1/semantic-models/{model_ref}")
+    async def delete_semantic_model(request: Request, model_ref: str) -> dict[str, Any]:
+        configured_host = await _resolve_request_host(request)
+        try:
+            return await configured_host.delete_semantic_model(model_ref=model_ref)
+        except (ValueError, ApplicationError) as exc:
+            detail = str(exc)
+            status_code = 404 if _is_missing_semantic_resource(detail) else _runtime_mutation_status_code(detail)
+            raise HTTPException(status_code=status_code, detail=detail) from exc
 
     @app.get("/api/runtime/v1/semantic-models/{model_ref}")
     async def get_semantic_model(request: Request, model_ref: str) -> dict[str, Any]:
@@ -674,6 +806,38 @@ def create_runtime_api_app(
         configured_host = await _resolve_request_host(request)
         items = await configured_host.list_connectors()
         return RuntimeConnectorListResponse(items=items, total=len(items))
+    
+    
+    @app.get("/api/runtime/v1/connector/types", response_model=RuntimeConnectorTypesListResponse)
+    async def list_connector_types(request: Request) -> RuntimeConnectorTypesListResponse:
+        configured_host = await _resolve_request_host(request)
+        items = await configured_host.list_connector_types()
+        return RuntimeConnectorTypesListResponse(items=items, total=len(items))
+
+    @app.get(
+        "/api/runtime/v1/connector/type/{connector_type}/config",
+        response_model=RuntimeConnectorConfigSchemaResponse,
+    )
+    async def get_connector_type_config(
+        request: Request,
+        connector_type: str,
+    ) -> RuntimeConnectorConfigSchemaResponse:
+        configured_host = await _resolve_request_host(request)
+        try:
+            payload = await configured_host.get_connector_type_config(
+                connector_type=connector_type
+            )
+        except BusinessValidationError as exc:
+            raise HTTPException(status_code=400, detail=exc.message) from exc
+        return RuntimeConnectorConfigSchemaResponse.model_validate(payload)
+
+    @app.get("/api/runtime/v1/connectors/{connector_name}")
+    async def get_connector(request: Request, connector_name: str) -> dict[str, Any]:
+        configured_host = await _resolve_request_host(request)
+        try:
+            return await configured_host.get_connector(connector_name=connector_name)
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
 
     @app.post(
         "/api/runtime/v1/connectors",
@@ -693,6 +857,30 @@ def create_runtime_api_app(
                 detail=str(exc),
             ) from exc
         return RuntimeConnectorSummary.model_validate(payload)
+
+    @app.patch("/api/runtime/v1/connectors/{connector_name}")
+    async def update_connector(
+        request: Request,
+        connector_name: str,
+        body: RuntimeConnectorUpdateRequest,
+    ) -> dict[str, Any]:
+        configured_host = await _resolve_request_host(request)
+        try:
+            return await configured_host.update_connector(connector_name=connector_name, request=body)
+        except (ValueError, ApplicationError) as exc:
+            detail = str(exc)
+            status_code = 404 if _is_missing_runtime_resource(detail) else _runtime_mutation_status_code(detail)
+            raise HTTPException(status_code=status_code, detail=detail) from exc
+
+    @app.delete("/api/runtime/v1/connectors/{connector_name}")
+    async def delete_connector(request: Request, connector_name: str) -> dict[str, Any]:
+        configured_host = await _resolve_request_host(request)
+        try:
+            return await configured_host.delete_connector(connector_name=connector_name)
+        except (ValueError, ApplicationError) as exc:
+            detail = str(exc)
+            status_code = 404 if _is_missing_runtime_resource(detail) else _runtime_mutation_status_code(detail)
+            raise HTTPException(status_code=status_code, detail=detail) from exc
 
     @app.get(
         "/api/runtime/v1/connectors/{connector_name}/sync/resources",
@@ -717,29 +905,6 @@ def create_runtime_api_app(
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         return RuntimeSyncStateListResponse(items=items, total=len(items))
-
-    @app.post(
-        "/api/runtime/v1/connectors/{connector_name}/sync",
-        response_model=RuntimeSyncResponse,
-    )
-    async def sync_connector(
-        request: Request,
-        connector_name: str,
-        body: RuntimeSyncRequest,
-    ) -> RuntimeSyncResponse:
-        configured_host = await _resolve_request_host(request)
-        try:
-            payload = await configured_host.sync_connector_resources(
-                connector_name=connector_name,
-                resources=list(body.resource_names or []),
-                sync_mode=body.sync_mode,
-                force_full_refresh=bool(body.force_full_refresh),
-            )
-        except HTTPException:
-            raise
-        except Exception as exc:
-            _raise_runtime_internal_server_error("connector sync", exc)
-        return RuntimeSyncResponse.model_validate(payload)
 
     if ui_enabled:
         @app.get("/api/runtime/ui/v1/summary")
@@ -813,6 +978,8 @@ def create_runtime_api_app_from_env() -> FastAPI:
         config_path=config_path,
         features=_parse_runtime_features_env(os.getenv(_FEATURES_ENV)),
         debug=_parse_runtime_debug_env(os.getenv(_DEBUG_ENV)),
+        odbc_host=os.getenv(_ODBC_HOST_ENV),
+        odbc_port=_parse_runtime_port_env(os.getenv(_ODBC_PORT_ENV)),
     )
 
 
@@ -964,6 +1131,13 @@ def _parse_runtime_debug_env(value: str | None) -> bool:
     return str(value or "").strip().lower() in {"1", "true", "yes", "on", "debug"}
 
 
+def _parse_runtime_port_env(value: str | None) -> int | None:
+    normalized = str(value or "").strip()
+    if not normalized:
+        return None
+    return int(normalized)
+
+
 def _require_local_auth_manager(auth_resolver: RuntimeAuthResolver):
     if auth_resolver.local_auth is None:
         raise HTTPException(
@@ -1104,6 +1278,26 @@ def _resolve_default_background_tasks(
             )
         )
     return tuple(tasks)
+
+
+async def _register_runtime_dataset_background_tasks(
+    *,
+    task_manager: RuntimeBackgroundTaskManager,
+    runtime_host: RuntimeHost,
+) -> None:
+    if not isinstance(runtime_host, ConfiguredLocalRuntimeHost):
+        return
+    existing_names = {
+        str(task.name or "").strip()
+        for task in task_manager.list_tasks()
+        if str(task.name or "").strip()
+    }
+    dataset_tasks = await runtime_host._applications.datasets.build_scheduled_sync_tasks()
+    for task in dataset_tasks:
+        if task.name in existing_names:
+            continue
+        task_manager.register_default_task(task)
+        existing_names.add(task.name)
 
 
 def _normalize_runtime_features(features: Iterable[str] | None) -> tuple[str, ...]:

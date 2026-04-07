@@ -55,7 +55,7 @@ def test_plugin_maps_manifest_to_existing_langbridge_plugin_surface():
     assert plugin.connector_type.value == "STRIPE"
     assert plugin.connector_family.value == "API"
     assert plugin.supported_resources == ("customers", "charges", "invoices")
-    assert plugin.sync_strategy.value == "INCREMENTAL"
+    assert plugin.default_sync_strategy.value == "INCREMENTAL"
     assert plugin.api_connector_class is connector_module.StripeDeclarativeApiConnector
     assert [field.field for field in plugin.auth_schema] == ["api_key", "account_id"]
     assert [entry.field for entry in schema.config] == ["api_key", "account_id", "api_base_url"]
@@ -77,10 +77,10 @@ def test_dataset_examples_validate_manifest_resource_shapes():
     payload = examples_module.load_dataset_examples()
 
     assert payload.connector.package == "langbridge-connector-stripe"
-    assert payload.examples[0].connector_sync.resource_key == "customers"
-    assert payload.examples[0].connector_sync.resource is None
-    assert payload.examples[1].connector_sync.resource_key == "invoices"
-    assert payload.examples[1].connector_sync.resource is None
+    assert payload.examples[0].sync.resource_key == "customers"
+    assert payload.examples[0].sync.resource is None
+    assert payload.examples[1].sync.resource_key == "invoices"
+    assert payload.examples[1].sync.resource is None
 
 
 def test_package_pyproject_declares_langbridge_connector_entrypoint():

@@ -48,6 +48,7 @@ connectors:
 datasets:
   - name: shopify_orders
     connector: commerce_demo
+    materialization_mode: live
     semantic_model: commerce_performance
     source:
       table: orders_enriched
@@ -133,13 +134,15 @@ def test_cli_serve_delegates_to_runtime_api(tmp_path: Path, monkeypatch) -> None
     config_path = _write_config(tmp_path)
     captured: dict[str, object] = {}
 
-    def fake_run_runtime_api(*, config_path, host, port, features, debug, reload):
+    def fake_run_runtime_api(*, config_path, host, port, features, debug, reload, odbc_host, odbc_port):
         captured["config_path"] = config_path
         captured["host"] = host
         captured["port"] = port
         captured["features"] = features
         captured["debug"] = debug
         captured["reload"] = reload
+        captured["odbc_host"] = odbc_host
+        captured["odbc_port"] = odbc_port
 
     monkeypatch.setattr("langbridge.cli.main.run_runtime_api", fake_run_runtime_api)
 
@@ -153,7 +156,11 @@ def test_cli_serve_delegates_to_runtime_api(tmp_path: Path, monkeypatch) -> None
             "--port",
             "9100",
             "--features",
-            "ui,mcp",
+            "ui,mcp,odbc",
+            "--odbc-host",
+            "0.0.0.0",
+            "--odbc-port",
+            "15432",
             "--debug",
             "--reload",
         ]
@@ -164,9 +171,11 @@ def test_cli_serve_delegates_to_runtime_api(tmp_path: Path, monkeypatch) -> None
         "config_path": str(config_path),
         "host": "0.0.0.0",
         "port": 9100,
-        "features": ["ui", "mcp"],
+        "features": ["ui", "mcp", "odbc"],
         "debug": True,
         "reload": True,
+        "odbc_host": "0.0.0.0",
+        "odbc_port": 15432,
     }
 
 
@@ -189,7 +198,11 @@ def test_cli_serve_rejects_unknown_feature(tmp_path: Path, capsys) -> None:
 
 def test_cli_supports_local_sync_commands(tmp_path: Path, capsys) -> None:
     with mock_stripe_api() as api_base_url, runtime_storage_dirs(tmp_path):
-        config_path = write_sync_runtime_config(tmp_path, api_base_url=api_base_url)
+        config_path = write_sync_runtime_config(
+            tmp_path,
+            api_base_url=api_base_url,
+            declared_synced_datasets=[{"name": "billing_customers", "resource": "customers"}],
+        )
 
         exit_code = main(["connectors", "list", "--config", str(config_path)])
         assert exit_code == 0
@@ -202,15 +215,14 @@ def test_cli_supports_local_sync_commands(tmp_path: Path, capsys) -> None:
                 "run",
                 "--config",
                 str(config_path),
-                "--connector",
-                "billing_demo",
-                "--resource",
-                "customers",
+                "--dataset",
+                "billing_customers",
             ]
         )
         assert exit_code == 0
         sync_payload = json.loads(capsys.readouterr().out)
         assert sync_payload["status"] == "succeeded"
+        assert sync_payload["dataset_name"] == "billing_customers"
         assert sync_payload["resources"][0]["resource_name"] == "customers"
 
         exit_code = main(

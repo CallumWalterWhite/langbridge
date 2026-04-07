@@ -8,7 +8,7 @@ examples:
   - name: asana_projects
     description: Materialize workspace projects through the shared declarative runtime.
     connector: asana
-    connector_sync:
+    sync:
       resource_key: projects
       sync_mode: FULL_REFRESH
       params:
@@ -17,7 +17,7 @@ examples:
   - name: asana_users
     description: Materialize workspace users with the same declarative auth and pagination contract.
     connector: asana
-    connector_sync:
+    sync:
       resource_key: users
       sync_mode: FULL_REFRESH
       params:

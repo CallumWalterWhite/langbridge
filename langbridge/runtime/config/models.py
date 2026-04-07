@@ -5,11 +5,13 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from langbridge.connectors.base.config import ConnectorSyncStrategy
 from langbridge.runtime.models.metadata import (
     ConnectorCapabilities,
     DatasetMaterializationMode,
     SecretReference,
 )
+from langbridge.runtime.scheduling import normalize_dataset_sync_cadence
 
 
 class LocalRuntimeConnectorConfig(BaseModel):
@@ -31,6 +33,7 @@ class LocalRuntimeDatasetSourceConfig(BaseModel):
 
     table: str | None = None
     resource: str | None = None
+    flatten: list[str] | None = None
     sql: str | None = None
     path: str | None = None
     storage_uri: str | None = None
@@ -51,7 +54,13 @@ class LocalRuntimeDatasetSourceConfig(BaseModel):
             raise ValueError(
                 "Dataset source must define exactly one of table, resource, sql, or path/storage_uri."
             )
+        if self.flatten and not has_resource:
+            raise ValueError("Dataset source flatten paths are only valid for resource-backed API datasets.")
         return self
+
+
+class LocalRuntimeDatasetSyncSourceConfig(LocalRuntimeDatasetSourceConfig):
+    pass
 
 
 class LocalRuntimeDatasetPolicyConfig(BaseModel):
@@ -64,15 +73,37 @@ class LocalRuntimeDatasetPolicyConfig(BaseModel):
     allow_dml: bool = False
 
 
+class LocalRuntimeDatasetSyncConfig(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    source: LocalRuntimeDatasetSyncSourceConfig
+    strategy: ConnectorSyncStrategy | None = None
+    cadence: str | None = None
+    cursor_field: str | None = None
+    initial_cursor: str | None = None
+    lookback_window: str | None = None
+    backfill_start: str | None = None
+    backfill_end: str | None = None
+    sync_on_start: bool = False
+
+    @model_validator(mode="after")
+    def _validate_sync(self) -> "LocalRuntimeDatasetSyncConfig":
+        if self.source is None:
+            raise ValueError("Dataset sync config requires source.")
+        self.cadence = normalize_dataset_sync_cadence(self.cadence)
+        return self
+
+
 class LocalRuntimeDatasetConfig(BaseModel):
     model_config = ConfigDict(extra="allow")
 
     name: str
     label: str | None = None
     description: str | None = None
-    connector: str
-    materialization_mode: DatasetMaterializationMode = DatasetMaterializationMode.LIVE
-    source: LocalRuntimeDatasetSourceConfig
+    connector: str | None = None
+    materialization_mode: DatasetMaterializationMode
+    source: LocalRuntimeDatasetSourceConfig | None = None
+    sync: LocalRuntimeDatasetSyncConfig | None = None
     semantic_model: str | None = None
     default_time_dimension: str | None = None
     tags: list[str] = Field(default_factory=list)
@@ -80,33 +111,17 @@ class LocalRuntimeDatasetConfig(BaseModel):
 
     @model_validator(mode="after")
     def _validate_materialization_mode_source(self) -> "LocalRuntimeDatasetConfig":
-        resource_name = str(self.source.resource or "").strip()
-        table_name = str(self.source.table or "").strip()
-        sql = str(self.source.sql or "").strip()
-        storage_uri = str(self.source.storage_uri or "").strip()
-        path = str(self.source.path or "").strip()
-
         if self.materialization_mode == DatasetMaterializationMode.SYNCED:
-            if sql or storage_uri or path:
-                raise ValueError(
-                    "Synced datasets must declare source.resource with the connector resource name."
-                )
-            if resource_name:
-                return self
-            if table_name:
-                # Temporary compatibility: normalize legacy synced source.table configs
-                # into the canonical explicit source.resource field.
-                self.source.resource = table_name
-                self.source.table = None
-                return self
-            raise ValueError(
-                "Synced datasets must declare source.resource with the connector resource name."
-            )
+            if self.source is not None:
+                raise ValueError("Synced datasets must declare sync config, not live source config.")
+            if self.sync is None:
+                raise ValueError("Synced datasets must declare sync config.")
+            return self
 
-        if resource_name:
-            raise ValueError(
-                "Live datasets cannot use source.resource; use source.table, source.sql, or source.path/source.storage_uri."
-            )
+        if self.sync is not None:
+            raise ValueError("Live datasets must not declare sync config.")
+        if self.source is None:
+            raise ValueError("Live datasets must declare source.")
         return self
 
 
@@ -251,6 +266,8 @@ class ResolvedLocalRuntimeMetadataStoreConfig:
 
 ConnectorConfig = LocalRuntimeConnectorConfig
 DatasetSourceConfig = LocalRuntimeDatasetSourceConfig
+DatasetSyncSourceConfig = LocalRuntimeDatasetSyncSourceConfig
+DatasetSyncConfig = LocalRuntimeDatasetSyncConfig
 DatasetPolicyConfig = LocalRuntimeDatasetPolicyConfig
 DatasetConfig = LocalRuntimeDatasetConfig
 SemanticModelConfig = LocalRuntimeSemanticModelConfig

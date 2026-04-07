@@ -143,8 +143,7 @@ class _InMemoryDatasetRepository:
             if dataset.dataset_type != DatasetType.FILE:
                 continue
             mode = dataset.materialization_mode
-            file_config = dict(dataset.file_config_json or {})
-            if mode != DatasetMaterializationMode.SYNCED and not bool(file_config.get("managed_dataset")):
+            if mode != DatasetMaterializationMode.SYNCED:
                 continue
             if str(dataset.table_name or "").strip().lower() == normalized_table:
                 return dataset
@@ -246,7 +245,7 @@ class _InMemoryConnectorSyncStateRepository:
         ]
         items.sort(
             key=lambda state: (
-                str(state.resource_name or "").lower(),
+                str(state.source_key or "").lower(),
                 state.updated_at or datetime.min.replace(tzinfo=timezone.utc),
             ),
             reverse=False,
@@ -266,7 +265,7 @@ class _InMemoryConnectorSyncStateRepository:
         key = (
             instance.workspace_id,
             instance.connection_id,
-            str(instance.resource_name or "").strip(),
+            str(instance.source_key or "").strip(),
         )
         self._states[key] = instance
         return instance

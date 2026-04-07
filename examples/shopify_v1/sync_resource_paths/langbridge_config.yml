@@ -1,0 +1,56 @@
+version: 1
+
+runtime:
+  mode: local
+  metadata_store:
+    type: sqlite
+    path: .langbridge/metadata.db
+  execution:
+    engine: duckdb
+    duckdb:
+      path: .langbridge/duckdb/runtime.duckdb
+      temp_directory: .langbridge/tmp
+      threads: 4
+
+connectors:
+  - name: shopify_demo
+    type: shopify
+    description: Shopify synced dataset example using explicit resource paths.
+    connection: {}
+    secrets:
+      shop_domain:
+        provider_type: env
+        identifier: SHOPIFY_SHOP_DOMAIN
+      access_token:
+        provider_type: env
+        identifier: SHOPIFY_ACCESS_TOKEN
+
+datasets:
+  - name: shopify_synced_customers
+    description: Synced parent dataset for customers with explicit 1:1 address flattening.
+    connector: shopify_demo
+    materialization_mode: synced
+    sync:
+      source:
+        resource: customers
+        flatten:
+          - default_address
+      strategy: INCREMENTAL
+
+  - name: shopify_synced_product_options
+    description: Synced explicit child dataset for the 1:many `products.options` path.
+    connector: shopify_demo
+    materialization_mode: synced
+    sync:
+      source:
+        resource: products.options
+      strategy: INCREMENTAL
+
+  - name: shopify_synced_price_rules
+    description: Synced dynamic Shopify resource using an explicit dataset-owned resource path.
+    connector: shopify_demo
+    materialization_mode: synced
+    sync:
+      source:
+        resource: price_rules
+      strategy: FULL_REFRESH
