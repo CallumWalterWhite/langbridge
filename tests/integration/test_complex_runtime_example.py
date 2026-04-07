@@ -66,6 +66,9 @@ def test_complex_runtime_example_boots_and_executes_queries(tmp_path: Path) -> N
             assert sales_preview.status == "succeeded"
             assert len(sales_preview.rows) == 3
 
+            line_item_sync = client.sync.run(dataset="order_line_items")
+            assert line_item_sync.status == "succeeded"
+
             commerce_result = client.semantic.query(
                 "commerce_performance",
                 measures=[

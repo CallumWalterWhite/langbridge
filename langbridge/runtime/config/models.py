@@ -3,7 +3,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from langbridge.connectors.base.config import ConnectorSyncStrategy
 from langbridge.runtime.models.metadata import (
@@ -85,6 +85,15 @@ class LocalRuntimeDatasetSyncConfig(BaseModel):
     backfill_start: str | None = None
     backfill_end: str | None = None
     sync_on_start: bool = False
+
+    @field_validator("strategy", mode="before")
+    @classmethod
+    def _validate_strategy(cls, value: Any) -> ConnectorSyncStrategy | None:
+        if value is None or value == "":
+            return None
+        if isinstance(value, ConnectorSyncStrategy):
+            return value
+        return ConnectorSyncStrategy(str(getattr(value, "value", value)).strip().upper())
 
     @model_validator(mode="after")
     def _validate_sync(self) -> "LocalRuntimeDatasetSyncConfig":

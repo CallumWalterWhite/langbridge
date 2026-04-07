@@ -3,6 +3,7 @@ import asyncio
 import uuid
 
 from langbridge.runtime.models import DatasetMetadata, LifecycleState, ManagementMode
+from langbridge.runtime.security import SecretProviderRegistry
 from langbridge.runtime.services.sql_query_service import SqlQueryService
 
 
@@ -43,6 +44,8 @@ def _dataset(
         name=name,
         sql_alias=sql_alias,
         dataset_type="TABLE",
+        materialization_mode="live",
+        source={"table": table_name},
         source_kind="database",
         storage_kind="table",
         dialect="postgres",
@@ -75,8 +78,13 @@ def test_sql_query_service_defaults_to_all_eligible_workspace_datasets() -> None
         supports_sql_federation=False,
     )
     service = SqlQueryService(
-        sql_job_result_artifact_store=None,
         dataset_repository=_DatasetRepository([sales, crm, ignored]),
+        secret_provider_registry=SecretProviderRegistry(),
+        federated_query_tool=None,
+        connector_provider=None,
+        dataset_provider=None,
+        credential_provider=None,
+        sql_job_result_artifact_store=None,
     )
 
     selected, datasets_by_id = asyncio.run(
@@ -100,8 +108,13 @@ def test_sql_query_service_selected_datasets_is_a_subset_selector() -> None:
     sales = _dataset(workspace_id=workspace_id, name="Sales Orders", sql_alias="sales orders")
     crm = _dataset(workspace_id=workspace_id, name="CRM Contacts", sql_alias="")
     service = SqlQueryService(
-        sql_job_result_artifact_store=None,
         dataset_repository=_DatasetRepository([sales, crm]),
+        secret_provider_registry=SecretProviderRegistry(),
+        federated_query_tool=None,
+        connector_provider=None,
+        dataset_provider=None,
+        credential_provider=None,
+        sql_job_result_artifact_store=None,
     )
 
     selected, _datasets_by_id = asyncio.run(
@@ -121,8 +134,13 @@ def test_sql_query_service_derives_stable_unique_aliases_for_collisions() -> Non
     primary = _dataset(workspace_id=workspace_id, name="Sales Orders", sql_alias="sales-orders")
     duplicate = _dataset(workspace_id=workspace_id, name="Sales Orders Clone", sql_alias="sales_orders")
     service = SqlQueryService(
-        sql_job_result_artifact_store=None,
         dataset_repository=_DatasetRepository([primary, duplicate]),
+        secret_provider_registry=SecretProviderRegistry(),
+        federated_query_tool=None,
+        connector_provider=None,
+        dataset_provider=None,
+        credential_provider=None,
+        sql_job_result_artifact_store=None,
     )
 
     selected, _datasets_by_id = asyncio.run(

@@ -586,8 +586,14 @@ class DatasetExecutionResolver:
 
     @staticmethod
     def _materialization_mode(dataset: Any) -> DatasetMaterializationMode:
+        raw_mode = getattr(dataset, "materialization_mode", None)
+        if raw_mode is None or raw_mode == "":
+            raw_sync = getattr(dataset, "sync", None) or getattr(dataset, "sync_json", None)
+            if not (raw_sync is None or raw_sync == "" or (isinstance(raw_sync, dict) and not raw_sync)):
+                return DatasetMaterializationMode.SYNCED
+            return DatasetMaterializationMode.LIVE
         return resolve_dataset_materialization_mode(
-            explicit_materialization_mode=getattr(dataset, "materialization_mode", None),
+            explicit_materialization_mode=raw_mode,
         )
 
     @staticmethod

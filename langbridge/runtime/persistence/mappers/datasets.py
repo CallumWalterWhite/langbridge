@@ -112,6 +112,8 @@ def from_dataset_record(value: Any | None) -> DatasetMetadata | None:
     if isinstance(value, DatasetMetadata):
         return value
     columns_raw = getattr(value, "columns", None) or []
+    materialization_mode = _infer_dataset_record_materialization_mode(value)
+    source = _infer_dataset_record_source(value, materialization_mode=materialization_mode)
     return DatasetMetadata(
         id=getattr(value, "id"),
         workspace_id=getattr(value, "workspace_id"),
@@ -134,11 +136,8 @@ def from_dataset_record(value: Any | None) -> DatasetMetadata | None:
         description=getattr(value, "description", None),
         tags=list(getattr(value, "tags", None) or getattr(value, "tags_json", None) or []),
         dataset_type=getattr(value, "dataset_type"),
-        materialization_mode=getattr(value, "materialization_mode", None),
-        source=(
-            getattr(value, "source", None)
-            or getattr(value, "source_json", None)
-        ),
+        materialization_mode=materialization_mode,
+        source=source,
         sync=(
             getattr(value, "sync", None)
             or getattr(value, "sync_json", None)
@@ -183,6 +182,56 @@ def from_dataset_record(value: Any | None) -> DatasetMetadata | None:
         management_mode=ManagementMode(str(getattr(value, "management_mode", "runtime_managed")).lower()),
         lifecycle_state=LifecycleState(str(getattr(value, "lifecycle_state", "active")).lower())
     )
+
+
+def _infer_dataset_record_materialization_mode(value: Any) -> Any:
+    explicit = getattr(value, "materialization_mode", None)
+    if not _is_blank_value(explicit):
+        return explicit
+    sync = getattr(value, "sync", None) or getattr(value, "sync_json", None)
+    if not _is_blank_value(sync):
+        return "synced"
+    return "live"
+
+
+def _infer_dataset_record_source(
+    value: Any,
+    *,
+    materialization_mode: Any,
+) -> Any:
+    explicit = getattr(value, "source", None) or getattr(value, "source_json", None)
+    if not _is_blank_value(explicit):
+        return explicit
+
+    if str(materialization_mode or "").strip().lower() == "synced":
+        return None
+
+    storage_uri = str(getattr(value, "storage_uri", None) or "").strip()
+    if storage_uri:
+        source = {"storage_uri": storage_uri}
+        file_config = getattr(value, "file_config", None) or getattr(value, "file_config_json", None) or {}
+        if isinstance(file_config, dict):
+            for key in ("format", "file_format", "header", "delimiter", "quote"):
+                if file_config.get(key) is not None:
+                    source[key] = file_config[key]
+        return source
+
+    sql_text = str(getattr(value, "sql_text", None) or "").strip()
+    if sql_text:
+        return {"sql": sql_text}
+
+    table_name = str(getattr(value, "table_name", None) or "").strip()
+    if table_name:
+        return {"table": table_name}
+    return None
+
+
+def _is_blank_value(value: Any) -> bool:
+    if value is None or value == "":
+        return True
+    if isinstance(value, dict) and not value:
+        return True
+    return False
 
 
 def to_dataset_record(value: DatasetMetadata | DatasetRecord) -> DatasetRecord:

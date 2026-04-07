@@ -110,17 +110,20 @@ connectors:
 datasets:
   - name: shopify_orders
     connector: commerce_demo
+    materialization_mode: live
     semantic_model: commerce_performance
     default_time_dimension: order_date
     source:
       table: orders_enriched
   - name: shopify_customers
     connector: commerce_demo
+    materialization_mode: live
     semantic_model: commerce_performance
     source:
       table: customer_profiles
   - name: campaign_touchpoints
     connector: commerce_demo
+    materialization_mode: live
     semantic_model: marketing_performance
     source:
       table: campaign_touchpoints

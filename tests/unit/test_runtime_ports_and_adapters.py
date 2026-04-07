@@ -276,8 +276,10 @@ async def test_memory_providers_support_ephemeral_runtime_access_patterns() -> N
             id=state_id,
             workspace_id=workspace_id,
             connection_id=connection_id,
-            connector_type="FILE",
-            resource_name="customers",
+            connector_type="LOCAL_FILESYSTEM",
+            source_key="customers",
+            source_kind="file",
+            source={"storage_uri": "file:///tmp/customers.parquet"},
         ),
     )
 

@@ -297,7 +297,9 @@ class SyncStateListResult(_AwaitableModel):
 
 
 class SyncRunResourceResult(_AwaitableModel):
-    resource_name: str
+    resource_name: str | None = None
+    source_key: str | None = None
+    source: dict[str, Any] = Field(default_factory=dict)
     sync_mode: str | None = None
     records_synced: int = 0
     bytes_synced: int | None = None
