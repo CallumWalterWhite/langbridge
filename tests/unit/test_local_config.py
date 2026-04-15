@@ -69,6 +69,9 @@ semantic_models:
               expression: revenue
               type: number
               aggregation: sum
+      metrics:
+        revenue_total:
+          expression: orders.revenue
 
 llm_connections:
   - name: local_openai
@@ -171,6 +174,19 @@ def test_configured_local_runtime_defaults_metadata_store_to_sqlite(tmp_path: Pa
     assert runtime._metadata_store.path == expected_path
     assert expected_path.exists()
     assert runtime._dataset_repository.__class__.__name__ == "RepositoryDatasetCatalogStore"
+
+
+def test_configured_local_runtime_normalizes_model_level_metrics() -> None:
+    with TemporaryDirectory() as temp_dir:
+        config_path = _write_config(Path(temp_dir))
+        runtime = build_configured_local_runtime(config_path=config_path)
+
+    semantic_models = runtime._resolve_semantic_models(["commerce"])
+
+    assert runtime._normalize_semantic_members(
+        members=["country", "revenue_total"],
+        semantic_models=semantic_models,
+    ) == ["orders.country", "revenue_total"]
 
 
 def test_configured_local_runtime_supports_explicit_in_memory_metadata_store(tmp_path: Path) -> None:

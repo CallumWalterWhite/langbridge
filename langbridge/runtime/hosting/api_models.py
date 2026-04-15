@@ -12,6 +12,7 @@ from langbridge.connectors.base.config import (
     ConnectorSyncStrategy,
 )
 from langbridge.runtime.models.base import RuntimeModel, RuntimeRequestModel
+from langbridge.runtime.models.federation_diagnostics import RuntimeFederationDiagnostics
 from langbridge.runtime.models.metadata import (
     ConnectorCapabilities,
     DatasetMaterializationMode,
@@ -19,6 +20,7 @@ from langbridge.runtime.models.metadata import (
     DatasetType,
     ManagementMode,
 )
+from langbridge.runtime.models.jobs import SqlQueryRequest, SqlQueryScope
 from langbridge.runtime.models.state import ConnectorSyncMode, ConnectorSyncStatus
 
 
@@ -378,38 +380,21 @@ class RuntimeSemanticQueryResponse(RuntimeModel):
     annotations: list[dict[str, Any]] = Field(default_factory=list)
     metadata: list[dict[str, Any]] | None = None
     generated_sql: str | None = None
+    federation_diagnostics: RuntimeFederationDiagnostics | None = None
     error: str | None = None
 
 
-class RuntimeSqlQueryRequest(RuntimeRequestModel):
-    query: str = Field(..., min_length=1)
-    connection_id: uuid.UUID | None = None
-    connection_name: str | None = None
-    selected_datasets: list[uuid.UUID] = Field(default_factory=list)
-    query_dialect: str = "tsql"
-    params: dict[str, Any] = Field(default_factory=dict)
-    requested_limit: int | None = Field(default=None, ge=1)
-    requested_timeout_seconds: int | None = Field(default=None, ge=1)
-    explain: bool = False
-
-    @model_validator(mode="after")
-    def _validate_sql_mode(self) -> "RuntimeSqlQueryRequest":
-        normalized: list[uuid.UUID] = []
-        for dataset_id in self.selected_datasets:
-            if dataset_id not in normalized:
-                normalized.append(dataset_id)
-        self.selected_datasets = normalized
-
-        if self.connection_id is not None and self.connection_name:
-            raise ValueError("Specify only one of connection_id or connection_name for direct SQL requests.")
-        if (self.connection_id is not None or self.connection_name) and self.selected_datasets:
-            raise ValueError("selected_datasets cannot be combined with explicit direct SQL requests.")
-        return self
+class RuntimeSqlQueryRequest(SqlQueryRequest):
+    pass
 
 
 class RuntimeSqlQueryResponse(RuntimeModel):
     sql_job_id: uuid.UUID | None = None
+    query_scope: SqlQueryScope
     status: str
+    semantic_model_id: uuid.UUID | None = None
+    semantic_model_ids: list[uuid.UUID] = Field(default_factory=list)
+    connector_id: uuid.UUID | None = None
     columns: list[dict[str, Any]] = Field(default_factory=list)
     rows: list[dict[str, Any]] = Field(default_factory=list)
     row_count_preview: int = 0
@@ -420,6 +405,7 @@ class RuntimeSqlQueryResponse(RuntimeModel):
     error: dict[str, Any] | None = None
     query: str | None = None
     generated_sql: str | None = None
+    federation_diagnostics: RuntimeFederationDiagnostics | None = None
 
 
 class RuntimeAgentAskRequest(RuntimeRequestModel):
@@ -434,7 +420,9 @@ class RuntimeAgentAskRequest(RuntimeRequestModel):
 class RuntimeAgentAskResponse(RuntimeModel):
     thread_id: uuid.UUID | None = None
     status: str
+    run_id: uuid.UUID | None = None
     job_id: uuid.UUID | None = None
+    message_id: uuid.UUID | None = None
     summary: str | None = None
     result: Any | None = None
     visualization: Any | None = None

@@ -1123,7 +1123,7 @@ class ConnectorSyncRuntime:
     ) -> Path:
         return (
             Path(settings.DATASET_FILE_LOCAL_DIR)
-            / "api-connectors"
+            / "materialized"
             / str(workspace_id)
             / str(connection_id)
             / f"{dataset_name}.parquet"

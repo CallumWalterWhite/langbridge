@@ -135,6 +135,54 @@ def test_time_typed_dimension_is_cast_before_date_comparison() -> None:
     assert "0 + INTERVAL" not in sql
 
 
+def test_time_dimension_uses_underlying_column_expression_in_snowflake() -> None:
+    model = SemanticModel.model_validate(
+        {
+            "version": "1.0",
+            "name": "product_performance",
+            "datasets": {
+                "product_returns": {
+                    "relation_name": "product_returns",
+                    "dimensions": [
+                        {
+                            "name": "strike_date",
+                            "expression": "STRIKE_DATE",
+                            "type": "time",
+                        }
+                    ],
+                    "measures": [
+                        {
+                            "name": "periodic_return",
+                            "expression": "RETURN",
+                            "type": "number",
+                            "aggregation": "avg",
+                        }
+                    ],
+                }
+            },
+        }
+    )
+    query = SemanticQuery.model_validate(
+        {
+            "measures": ["product_returns.periodic_return"],
+            "timeDimensions": [{"dimension": "product_returns.strike_date", "granularity": "year"}],
+            "filters": [
+                {
+                    "member": "product_returns.strike_date",
+                    "operator": "lte",
+                    "values": ["2025-12-31"],
+                }
+            ],
+        }
+    )
+
+    sql = SemanticQueryEngine().compile(query, model, dialect="snowflake").sql
+
+    assert 'CAST(t0."STRIKE_DATE" AS TIMESTAMP)' in sql
+    assert 't0."STRIKE_DATE" <= \'2025-12-31\'' in sql
+    assert 't0."strike_date"' not in sql
+
+
 def test_measure_expression_uses_underlying_column_name_not_measure_name() -> None:
     model = SemanticModel(
         version="1.0",
@@ -164,3 +212,75 @@ def test_measure_expression_uses_underlying_column_name_not_measure_name() -> No
 
     assert 'SUM(t0."net_revenue") AS "shopify_orders__net_sales"' in sql
     assert 'SUM(t0."net_sales")' not in sql
+
+
+def test_metric_can_use_group_safe_dimension_lookup_via_any_value() -> None:
+    model = SemanticModel.model_validate(
+        {
+            "version": "1.0",
+            "name": "returns",
+            "datasets": {
+                "returns": {
+                    "relation_name": "returns",
+                    "dimensions": [
+                        {"name": "fund_id", "expression": "fund_id", "type": "string"},
+                        {"name": "frequency", "expression": "frequency", "type": "string"},
+                    ],
+                    "measures": [
+                        {
+                            "name": "amount",
+                            "expression": "amount",
+                            "type": "number",
+                            "aggregation": "sum",
+                        }
+                    ],
+                }
+            },
+            "metrics": {
+                "annualised_amount": {
+                    "expression": (
+                        "CASE "
+                        "WHEN ANY_VALUE(returns.frequency) ILIKE 'MONTHLY' THEN SUM(returns.amount) * 12 "
+                        "ELSE SUM(returns.amount) "
+                        "END"
+                    )
+                }
+            },
+        }
+    )
+    query = SemanticQuery.model_validate(
+        {
+            "measures": ["annualised_amount"],
+            "dimensions": ["returns.fund_id"],
+        }
+    )
+
+    sql = SemanticQueryEngine().compile(query, model, dialect="snowflake").sql
+
+    assert "ANY_VALUE(t0.frequency) ILIKE 'MONTHLY'" in sql
+    assert 'GROUP BY t0."fund_id"' in sql
+    assert 'GROUP BY t0."fund_id", t0."frequency"' not in sql
+
+
+def test_ilike_filter_compiles_to_portable_case_insensitive_like() -> None:
+    model = SemanticModel(
+        version="1.0",
+        tables={
+            "orders": Table(
+                name="orders",
+                dimensions=[Dimension(name="status", expression="status", type="string")],
+                measures=[Measure(name="amount", expression="amount", type="number", aggregation="sum")],
+            )
+        },
+    )
+    query = SemanticQuery.model_validate(
+        {
+            "measures": ["orders.amount"],
+            "filters": [{"member": "orders.status", "operator": "ilike", "values": ["Fulfilled%"]}],
+        }
+    )
+
+    sql = SemanticQueryEngine().compile(query, model, dialect="snowflake").sql
+
+    assert "LOWER(" in sql
+    assert "LIKE LOWER('Fulfilled%')" in sql

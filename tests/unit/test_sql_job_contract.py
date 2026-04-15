@@ -6,6 +6,7 @@ from pydantic import ValidationError
 from langbridge.runtime.hosting.api_models import RuntimeSqlQueryRequest
 from langbridge.runtime.models.jobs import (
     CreateSqlJobRequest,
+    SqlQueryScope,
     SqlWorkbenchMode,
 )
 
@@ -63,6 +64,7 @@ def test_sql_job_contract_accepts_dataset_backed_federated_execution() -> None:
 
 def test_runtime_sql_query_request_accepts_direct_sql_payload() -> None:
     payload = RuntimeSqlQueryRequest(
+        query_scope=SqlQueryScope.source,
         query="SELECT 1",
         connection_id=uuid.uuid4(),
         query_dialect="postgres",
@@ -70,6 +72,7 @@ def test_runtime_sql_query_request_accepts_direct_sql_payload() -> None:
 
     assert payload.query == "SELECT 1"
     assert payload.query_dialect == "postgres"
+    assert payload.query_scope == SqlQueryScope.source
 
 
 def test_runtime_sql_job_defaults_to_direct_sql_workbench_mode() -> None:
@@ -90,8 +93,27 @@ def test_runtime_sql_job_defaults_to_direct_sql_workbench_mode() -> None:
 def test_runtime_sql_query_request_rejects_selected_datasets_for_direct_sql() -> None:
     with pytest.raises(ValidationError):
         RuntimeSqlQueryRequest(
+            query_scope=SqlQueryScope.source,
             query="SELECT 1",
             connection_name="commerce_demo",
+            selected_datasets=[uuid.uuid4()],
+        )
+
+
+def test_runtime_sql_query_request_rejects_connection_for_dataset_scope() -> None:
+    with pytest.raises(ValidationError):
+        RuntimeSqlQueryRequest(
+            query_scope=SqlQueryScope.dataset,
+            query="SELECT * FROM sales_orders",
+            connection_name="commerce_demo",
+        )
+
+
+def test_runtime_sql_query_request_rejects_dataset_selector_for_semantic_scope() -> None:
+    with pytest.raises(ValidationError):
+        RuntimeSqlQueryRequest(
+            query_scope=SqlQueryScope.semantic,
+            query="SELECT region FROM commerce_performance",
             selected_datasets=[uuid.uuid4()],
         )
 

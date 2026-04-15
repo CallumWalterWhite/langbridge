@@ -322,6 +322,17 @@ class ResponseFormatter:
             lines.append(f"selected_tool={outcome.selected_tool_name}")
         if outcome.selected_asset_name:
             lines.append(f"selected_asset={outcome.selected_asset_name}")
+        if outcome.attempted_query_scope is not None:
+            lines.append(f"attempted_scope={outcome.attempted_query_scope.value}")
+        if outcome.final_query_scope is not None:
+            lines.append(f"final_scope={outcome.final_query_scope.value}")
+        if outcome.fallback_from_query_scope is not None and outcome.fallback_to_query_scope is not None:
+            lines.append(
+                "scope_fallback="
+                f"{outcome.fallback_from_query_scope.value}->{outcome.fallback_to_query_scope.value}"
+            )
+        if outcome.fallback_reason:
+            lines.append(f"fallback_reason={outcome.fallback_reason}")
         if outcome.message:
             lines.append(f"message={outcome.message}")
         if outcome.retry_rationale:

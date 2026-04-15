@@ -1,3 +1,5 @@
+import { parseRuntimeDate, getRuntimeTimestamp } from "./format";
+
 export const SQL_HISTORY_STORAGE_KEY = "langbridge.runtime_ui.sql_history";
 export const SQL_SAVED_STORAGE_KEY = "langbridge.runtime_ui.sql_saved";
 export const DASHBOARD_BUILDER_STORAGE_KEY = "langbridge.runtime_ui.dashboard_builder";
@@ -8,12 +10,12 @@ GROUP BY country
 ORDER BY net_sales DESC`;
 
 export const DEFAULT_CHAT_MESSAGE =
-  "Summarize the current runtime state and call out any operational issues.";
+  "What is the most important thing to investigate in this runtime right now?";
 
 export const SQL_TEMPLATES = [
   {
     label: "Revenue by country",
-    description: "Federated runtime query against the default orders dataset.",
+    description: "Dataset SQL query against the default orders dataset.",
     query: `SELECT country, SUM(net_revenue) AS net_sales
 FROM shopify_orders
 GROUP BY country
@@ -28,8 +30,8 @@ ORDER BY order_date DESC
 LIMIT 25`,
   },
   {
-    label: "Connector direct SQL",
-    description: "Starter pattern for direct connector workbench queries.",
+    label: "Source SQL",
+    description: "Starter pattern for source-scoped connector workbench queries.",
     query: `SELECT country, SUM(net_revenue) AS net_sales
 FROM orders_enriched
 GROUP BY country
@@ -38,9 +40,9 @@ ORDER BY net_sales DESC`,
 ];
 
 export const CHAT_STARTERS = [
-  "Summarize runtime health and the most important operational signals.",
-  "What datasets and semantic models are currently available in this runtime?",
-  "Recommend the next connector or sync action worth checking.",
+  "What changed recently in this runtime, and where should I focus first?",
+  "Which semantic models and datasets should I use to answer revenue questions?",
+  "Show the highest-value runtime signal or operational issue worth checking next.",
 ];
 
 export function createLocalId(prefix = "item") {
@@ -84,7 +86,7 @@ export function formatRelativeTime(value) {
   if (!value) {
     return "just now";
   }
-  const date = new Date(value);
+  const date = parseRuntimeDate(value);
   if (Number.isNaN(date.getTime())) {
     return String(value);
   }
@@ -850,7 +852,7 @@ export function buildActivityFeed(payload) {
       kind: "Dataset",
       description:
         dataset.description ||
-        `${dataset.connector || "Runtime"} dataset ready for SQL, Dashboard Builder, and agent use.`,
+        `${dataset.connector || "Runtime"} dataset ready for query workspace, dashboards, and agent execution.`,
       timestamp: dataset.updated_at || dataset.created_at,
     });
   });
@@ -862,7 +864,7 @@ export function buildActivityFeed(payload) {
       title: model.name,
       kind: "Semantic model",
       description:
-        model.description || "Semantic model available for runtime query and dashboard-builder flows.",
+        model.description || "Semantic model available for ask flows, query workspace, and dashboard execution.",
       timestamp: model.updated_at || model.updatedAt || model.created_at,
     });
   });
@@ -874,7 +876,7 @@ export function buildActivityFeed(payload) {
       title: agent.name,
       kind: "Agent",
       description:
-        agent.description || "Runtime agent definition ready for threads and quick runs.",
+        agent.description || "Runtime agent definition ready for ask flows and guided execution.",
       timestamp: agent.updated_at || agent.updatedAt || agent.created_at,
     });
   });
@@ -894,8 +896,8 @@ export function buildActivityFeed(payload) {
 
   return items
     .sort((left, right) => {
-      const leftTime = new Date(left.timestamp || 0).getTime();
-      const rightTime = new Date(right.timestamp || 0).getTime();
+      const leftTime = getRuntimeTimestamp(left.timestamp || 0);
+      const rightTime = getRuntimeTimestamp(right.timestamp || 0);
       return rightTime - leftTime;
     })
     .slice(0, 8);

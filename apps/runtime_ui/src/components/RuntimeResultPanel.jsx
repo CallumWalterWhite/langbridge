@@ -1,6 +1,8 @@
-import { Maximize2, X } from "lucide-react";
+import { AlignRight, Maximize2, X } from "lucide-react";
 import { useEffect, useId, useState } from "react";
 import { createPortal } from "react-dom";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 
 import { formatValue } from "../lib/format";
 import {
@@ -72,6 +74,40 @@ function buildStatePills({ result, visualization, diagnostics }) {
   return pills;
 }
 
+const SUMMARY_MARKDOWN_COMPONENTS = {
+  a({ href, children, ...props }) {
+    return (
+      <a href={href} target="_blank" rel="noreferrer" {...props}>
+        {children}
+      </a>
+    );
+  },
+  table({ children }) {
+    return (
+      <div className="table-wrap">
+        <table className="result-table">{children}</table>
+      </div>
+    );
+  },
+  code({ inline, className, children, ...props }) {
+    if (inline) {
+      return (
+        <code className="summary-inline-code" {...props}>
+          {children}
+        </code>
+      );
+    }
+    return (
+      <code className={className} {...props}>
+        {children}
+      </code>
+    );
+  },
+  pre({ children }) {
+    return <pre className="code-block">{children}</pre>;
+  },
+};
+
 export function RuntimeResultPanel({
   summary,
   result,
@@ -82,6 +118,7 @@ export function RuntimeResultPanel({
   errorStatus = null,
   maxPreviewRows = 12,
   diagnosticsLabel = "Execution diagnostics",
+  variant = "default",
 }) {
   const normalizedResult = result ? normalizeTabularResult(result) : null;
   const normalizedVisualization = normalizeVisualizationSpec(visualization);
@@ -111,6 +148,9 @@ export function RuntimeResultPanel({
   const showTable =
     Boolean(normalizedResult) &&
     (state.showTable || normalizedVisualization?.chartType === "table");
+  const compactChatSuccess =
+    variant === "chat" &&
+    (state.kind === "success_rows" || state.kind === "success_chart");
 
   useEffect(() => {
     if (!diagnosticsFullscreen) {
@@ -133,7 +173,11 @@ export function RuntimeResultPanel({
     };
   }, [diagnosticsFullscreen]);
 
-  const diagnosticsContent = (
+  function openDiagnosticsFullscreen() {
+    setDiagnosticsFullscreen(true);
+  }
+
+  const diagnosticsSummaryContent = (
     <>
       {diagnosticsHighlights.length > 0 ? (
         <div className="diagnostics-highlight-grid">
@@ -145,6 +189,11 @@ export function RuntimeResultPanel({
           ))}
         </div>
       ) : null}
+      {diagnosticsHighlights.length === 0 && diagnosticsNotes.length === 0 ? (
+        <p className="diagnostics-inline-note">
+          Open fullscreen to inspect the raw runtime diagnostics payload for this execution.
+        </p>
+      ) : null}
       {diagnosticsNotes.length > 0 ? (
         <div className="diagnostics-note-list">
           {diagnosticsNotes.map((note) => (
@@ -152,36 +201,72 @@ export function RuntimeResultPanel({
           ))}
         </div>
       ) : null}
+      <div className="diagnostics-inline-actions">
+        <button
+          type="button"
+          className="diagnostics-inline-open"
+          onClick={openDiagnosticsFullscreen}
+        >
+          Open raw diagnostics fullscreen
+        </button>
+
+        <button
+          type="button"
+          className="diagnostics-inline-open"
+          onClick={() => {
+            navigator.clipboard.writeText(renderJson(diagnostics));
+          }}
+        >
+          Copy diagnostics JSON
+        </button>
+      </div>
+    </>
+  );
+
+  const diagnosticsFullscreenContent = (
+    <>
+      {diagnosticsSummaryContent}
       <pre className="code-block compact">{renderJson(diagnostics)}</pre>
     </>
   );
 
   return (
-    <div className="runtime-result-stack">
-      <div className={`runtime-result-state runtime-result-state--${state.tone}`}>
-        <div className="runtime-result-state-copy">
-          <span className="runtime-result-state-label">{state.label}</span>
-          <strong>{state.title}</strong>
-          <p>{state.description}</p>
-        </div>
-        {statePills.length > 0 ? (
-          <div className="runtime-result-state-pills">
-            {statePills.map((item) => (
-              <span key={item}>{item}</span>
-            ))}
+    <div className={`runtime-result-stack ${variant === "chat" ? "runtime-result-stack--chat" : ""}`}>
+      {!compactChatSuccess ? (
+        <div className={`runtime-result-state runtime-result-state--${state.tone}`}>
+          <div className="runtime-result-state-copy">
+            <span className="runtime-result-state-label">{state.label}</span>
+            <strong>{state.title}</strong>
+            <p>{state.description}</p>
           </div>
-        ) : null}
-      </div>
+          {statePills.length > 0 ? (
+            <div className="runtime-result-state-pills">
+              {statePills.map((item) => (
+                <span key={item}>{item}</span>
+              ))}
+            </div>
+          ) : null}
+        </div>
+      ) : null}
 
       {summaryText ? (
-        <section className="runtime-result-section">
-          <div className="runtime-result-section-head">
-            <div>
-              <h4>Answer</h4>
-              <p>Summary returned by the runtime for this request.</p>
+        <section className={`runtime-result-section ${variant === "chat" ? "runtime-result-section--chat-answer" : ""}`}>
+          {variant !== "chat" ? (
+            <div className="runtime-result-section-head">
+              <div>
+                <h4>Answer</h4>
+                <p>Summary returned by the runtime for this request.</p>
+              </div>
             </div>
+          ) : null}
+          <div className="assistant-summary-card assistant-summary-markdown">
+            <ReactMarkdown
+              remarkPlugins={[remarkGfm]}
+              components={SUMMARY_MARKDOWN_COMPONENTS}
+            >
+              {summaryText}
+            </ReactMarkdown>
           </div>
-          <p className="assistant-summary-card">{summaryText}</p>
         </section>
       ) : null}
 
@@ -238,14 +323,14 @@ export function RuntimeResultPanel({
                   onClick={(event) => {
                     event.preventDefault();
                     event.stopPropagation();
-                    setDiagnosticsFullscreen(true);
+                    openDiagnosticsFullscreen();
                   }}
                 >
                   <Maximize2 className="button-icon" aria-hidden="true" />
                 </button>
               </span>
             </summary>
-            {diagnosticsContent}
+            {diagnosticsSummaryContent}
           </details>
           {diagnosticsFullscreen && typeof document !== "undefined"
             ? createPortal(
@@ -277,7 +362,7 @@ export function RuntimeResultPanel({
                         <X className="button-icon" aria-hidden="true" />
                       </button>
                     </div>
-                    <div className="diagnostics-fullscreen-body">{diagnosticsContent}</div>
+                    <div className="diagnostics-fullscreen-body">{diagnosticsFullscreenContent}</div>
                   </div>
                 </div>,
                 document.body,

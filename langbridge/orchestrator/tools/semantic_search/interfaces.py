@@ -45,7 +45,16 @@ class SemanticSearchResultCollection(BaseModel):
     
     def to_prompt_strings(self) -> list[str]:
         """Formats all results for inclusion in prompts."""
-        return [f"ID: {res.identifier}, Score: {res.score:.4f}, Metadata: {res.metadata}" for res in self.results]
+        prompts: list[str] = []
+        for res in self.results:
+            metadata = dict(res.metadata or {})
+            column = str(metadata.get("column") or "").strip()
+            value = str(metadata.get("value") or "").strip()
+            if column and value:
+                prompts.append(f"Column: {column}, Value: {value} (Score: {res.score:.4f})")
+                continue
+            prompts.append(f"ID: {res.identifier}, Score: {res.score:.4f}, Metadata: {metadata}")
+        return prompts
     
 class ColumnValueSearchResultCollection(BaseModel):
     """Collection of column value semantic search results."""

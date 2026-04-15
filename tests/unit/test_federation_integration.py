@@ -63,14 +63,6 @@ async def test_cross_source_join_executes_with_arrow(tmp_path) -> None:
     service = FederatedQueryService(
         artifact_store=ArtifactStore(base_dir=str(tmp_path / "artifacts")),
     )
-    service.register_workspace(
-        workspace_id=workspace_id,
-        workflow=workflow,
-        sources={
-            "src_orders": MockArrowRemoteSource(source_id="src_orders", tables={"orders": orders}),
-            "src_customers": MockArrowRemoteSource(source_id="src_customers", tables={"customers": customers}),
-        },
-    )
 
     handle = await service.execute(
         query=(
@@ -81,6 +73,11 @@ async def test_cross_source_join_executes_with_arrow(tmp_path) -> None:
         ),
         dialect="tsql",
         workspace_id=workspace_id,
+        workflow=workflow,
+        sources={
+            "src_orders": MockArrowRemoteSource(source_id="src_orders", tables={"orders": orders}),
+            "src_customers": MockArrowRemoteSource(source_id="src_customers", tables={"customers": customers}),
+        }
     )
     table = await service.fetch_arrow(handle)
 

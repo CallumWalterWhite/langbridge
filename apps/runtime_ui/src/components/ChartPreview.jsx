@@ -1,3 +1,5 @@
+import { useState } from "react";
+
 import { resolveChartDataKey } from "../lib/chartFieldMapping";
 import { formatValue } from "../lib/format";
 import { normalizeChartType } from "../lib/runtimeUi";
@@ -297,31 +299,100 @@ function describeChartKind(chartType) {
   );
 }
 
-function ChartEmpty({ title, chartType, message }) {
+function buildTooltipModel({ x, y, width, height, eyebrow, title, value, details = [], color }) {
+  return {
+    xPercent: Math.max(8, Math.min(92, (x / width) * 100)),
+    yPercent: Math.max(10, Math.min(86, (y / height) * 100)),
+    eyebrow: String(eyebrow || "").trim(),
+    title: String(title || "").trim(),
+    value: String(value || "").trim(),
+    details: details.filter(Boolean).map((item) => String(item)),
+    color: color || DEFAULT_PALETTE[0],
+  };
+}
+
+function ChartTooltip({ tooltip }) {
+  if (!tooltip) {
+    return null;
+  }
   return (
-    <div className="chart-panel">
-      <div className="chart-panel-header">
-        <div>
-          <h3>{title || "Chart preview"}</h3>
+    <div
+      className="chart-tooltip"
+      style={{
+        left: `${tooltip.xPercent}%`,
+        top: `${tooltip.yPercent}%`,
+        "--chart-tooltip-accent": tooltip.color,
+      }}
+      role="status"
+      aria-live="polite"
+    >
+      {tooltip.eyebrow ? <span className="chart-tooltip-eyebrow">{tooltip.eyebrow}</span> : null}
+      {tooltip.title ? <strong>{tooltip.title}</strong> : null}
+      {tooltip.value ? <span className="chart-tooltip-value">{tooltip.value}</span> : null}
+      {tooltip.details.length > 0 ? (
+        <div className="chart-tooltip-details">
+          {tooltip.details.map((item) => (
+            <span key={item}>{item}</span>
+          ))}
         </div>
-        <span className="chart-kind">{describeChartKind(chartType || "table")}</span>
-      </div>
-      <div className="empty-box">{message}</div>
+      ) : null}
     </div>
   );
 }
 
-function ChartLegend({ series, palette }) {
+function ChartPanelShell({ title, subtitle, chartType, tooltip, onPointerLeave, style, children }) {
+  return (
+    <div className="chart-panel" style={style}>
+      <div className="chart-panel-header">
+        <div>
+          <h3>{title || "Chart preview"}</h3>
+          {subtitle ? <p>{subtitle}</p> : null}
+        </div>
+        <span className="chart-kind">{describeChartKind(chartType)}</span>
+      </div>
+      <div className="chart-visual-region" onMouseLeave={onPointerLeave}>
+        {children}
+        <ChartTooltip tooltip={tooltip} />
+      </div>
+    </div>
+  );
+}
+
+function ChartEmpty({ title, chartType, message }) {
+  return (
+    <ChartPanelShell title={title} chartType={chartType || "table"}>
+      <div className="empty-box">{message}</div>
+    </ChartPanelShell>
+  );
+}
+
+function ChartLegend({
+  series,
+  palette,
+  activeKey = "",
+  onToggleKey,
+  onHoverKey,
+  onClearHover,
+}) {
   if (!Array.isArray(series) || series.length <= 1) {
     return null;
   }
   return (
     <div className="chart-legend">
       {series.map((item, index) => (
-        <span key={item.key}>
+        <button
+          key={item.key}
+          type="button"
+          className={`chart-legend-item ${activeKey && activeKey !== item.key ? "muted" : "active"}`}
+          onClick={() => onToggleKey?.(item.key)}
+          onMouseEnter={() => onHoverKey?.(item.key)}
+          onMouseLeave={() => onClearHover?.()}
+          onFocus={() => onHoverKey?.(item.key)}
+          onBlur={() => onClearHover?.()}
+        >
           <i style={{ backgroundColor: palette[index % palette.length] }} aria-hidden="true" />
           {truncateLabel(item.label, 20)}
-        </span>
+        </button>
       ))}
     </div>
   );
@@ -336,7 +407,19 @@ function AxisLabels({ xLabel, yLabel }) {
   );
 }
 
-function BarLikeChart({ model, palette, chartType, xLabel, yLabel }) {
+function BarLikeChart({
+  model,
+  palette,
+  chartType,
+  xLabel,
+  yLabel,
+  activeSeriesKey = "",
+  onDatumHover,
+  onDatumLeave,
+  onToggleSeries,
+  onHoverSeries,
+  onClearHoverSeries,
+}) {
   const width = 720;
   const height = 320;
   const padding = { top: 24, right: 24, bottom: 76, left: 64 };
@@ -355,6 +438,8 @@ function BarLikeChart({ model, palette, chartType, xLabel, yLabel }) {
   const band = chartWidth / Math.max(model.categories.length, 1);
   const groupWidth = band * 0.72;
   const categoryOffset = padding.left + (band - groupWidth) / 2;
+  const emphasisKey = String(activeSeriesKey || "").trim();
+  const resolvedEmphasisKey = model.series.some((series) => series.key === emphasisKey) ? emphasisKey : "";
 
   return (
     <div className="chart-canvas-shell">
@@ -393,6 +478,7 @@ function BarLikeChart({ model, palette, chartType, xLabel, yLabel }) {
             return (
               <g key={category}>
                 {values.map((value, seriesIndex) => {
+                  const series = model.series[seriesIndex];
                   const barHeight = (Math.max(value, 0) / maxValue) * chartHeight;
                   const y = padding.top + chartHeight - runningHeight - barHeight;
                   runningHeight += barHeight;
@@ -405,6 +491,41 @@ function BarLikeChart({ model, palette, chartType, xLabel, yLabel }) {
                       height={Math.max(barHeight, 2)}
                       rx="10"
                       fill={palette[seriesIndex % palette.length]}
+                      className="chart-bar-mark"
+                      opacity={!resolvedEmphasisKey || resolvedEmphasisKey === series.key ? 0.96 : 0.2}
+                      tabIndex={0}
+                      onMouseEnter={() =>
+                        onDatumHover?.(
+                          buildTooltipModel({
+                            x: groupX + groupWidth / 2,
+                            y,
+                            width,
+                            height,
+                            eyebrow: series.label,
+                            title: category,
+                            value: formatValue(value),
+                            details: [`${xLabel}: ${category}`, `${yLabel}: ${formatValue(value)}`],
+                            color: palette[seriesIndex % palette.length],
+                          }),
+                        )
+                      }
+                      onMouseLeave={onDatumLeave}
+                      onFocus={() =>
+                        onDatumHover?.(
+                          buildTooltipModel({
+                            x: groupX + groupWidth / 2,
+                            y,
+                            width,
+                            height,
+                            eyebrow: series.label,
+                            title: category,
+                            value: formatValue(value),
+                            details: [`${xLabel}: ${category}`, `${yLabel}: ${formatValue(value)}`],
+                            color: palette[seriesIndex % palette.length],
+                          }),
+                        )
+                      }
+                      onBlur={onDatumLeave}
                     />
                   );
                 })}
@@ -424,6 +545,7 @@ function BarLikeChart({ model, palette, chartType, xLabel, yLabel }) {
           return (
             <g key={category}>
               {values.map((value, seriesIndex) => {
+                const series = model.series[seriesIndex];
                 const barHeight = (Math.max(value, 0) / maxValue) * chartHeight;
                 const x = groupX + seriesIndex * barWidth;
                 const y = padding.top + chartHeight - barHeight;
@@ -436,6 +558,41 @@ function BarLikeChart({ model, palette, chartType, xLabel, yLabel }) {
                     height={Math.max(barHeight, 2)}
                     rx="10"
                     fill={palette[seriesIndex % palette.length]}
+                    className="chart-bar-mark"
+                    opacity={!resolvedEmphasisKey || resolvedEmphasisKey === series.key ? 0.96 : 0.2}
+                    tabIndex={0}
+                    onMouseEnter={() =>
+                      onDatumHover?.(
+                        buildTooltipModel({
+                          x: x + Math.max(barWidth - 6, 10) / 2,
+                          y,
+                          width,
+                          height,
+                          eyebrow: series.label,
+                          title: category,
+                          value: formatValue(value),
+                          details: [`${xLabel}: ${category}`, `${yLabel}: ${formatValue(value)}`],
+                          color: palette[seriesIndex % palette.length],
+                        }),
+                      )
+                    }
+                    onMouseLeave={onDatumLeave}
+                    onFocus={() =>
+                      onDatumHover?.(
+                        buildTooltipModel({
+                          x: x + Math.max(barWidth - 6, 10) / 2,
+                          y,
+                          width,
+                          height,
+                          eyebrow: series.label,
+                          title: category,
+                          value: formatValue(value),
+                          details: [`${xLabel}: ${category}`, `${yLabel}: ${formatValue(value)}`],
+                          color: palette[seriesIndex % palette.length],
+                        }),
+                      )
+                    }
+                    onBlur={onDatumLeave}
                   />
                 );
               })}
@@ -451,7 +608,14 @@ function BarLikeChart({ model, palette, chartType, xLabel, yLabel }) {
           );
         })}
       </svg>
-      <ChartLegend series={model.series} palette={palette} />
+      <ChartLegend
+        series={model.series}
+        palette={palette}
+        activeKey={resolvedEmphasisKey}
+        onToggleKey={onToggleSeries}
+        onHoverKey={onHoverSeries}
+        onClearHover={onClearHoverSeries}
+      />
       <AxisLabels xLabel={xLabel} yLabel={yLabel} />
     </div>
   );
@@ -475,7 +639,19 @@ function buildLinePath(points, { baseline = null } = {}) {
   return commands.join(" ");
 }
 
-function LineLikeChart({ model, palette, chartType, xLabel, yLabel }) {
+function LineLikeChart({
+  model,
+  palette,
+  chartType,
+  xLabel,
+  yLabel,
+  activeSeriesKey = "",
+  onDatumHover,
+  onDatumLeave,
+  onToggleSeries,
+  onHoverSeries,
+  onClearHoverSeries,
+}) {
   const width = 720;
   const height = 320;
   const padding = { top: 24, right: 24, bottom: 72, left: 64 };
@@ -497,6 +673,8 @@ function LineLikeChart({ model, palette, chartType, xLabel, yLabel }) {
       label: model.categories[index],
     })),
   }));
+  const emphasisKey = String(activeSeriesKey || "").trim();
+  const resolvedEmphasisKey = model.series.some((series) => series.key === emphasisKey) ? emphasisKey : "";
 
   return (
     <div className="chart-canvas-shell">
@@ -542,8 +720,9 @@ function LineLikeChart({ model, palette, chartType, xLabel, yLabel }) {
               <path
                 d={buildLinePath(series.points, { baseline: padding.top + chartHeight })}
                 fill={palette[seriesIndex % palette.length]}
-                fillOpacity="0.18"
+                fillOpacity={!resolvedEmphasisKey || resolvedEmphasisKey === series.key ? "0.18" : "0.04"}
                 stroke="none"
+                className="chart-area-path"
               />
             ) : null}
             <path
@@ -553,26 +732,91 @@ function LineLikeChart({ model, palette, chartType, xLabel, yLabel }) {
               strokeWidth="3"
               strokeLinecap="round"
               strokeLinejoin="round"
+              className="chart-line-path"
+              opacity={!resolvedEmphasisKey || resolvedEmphasisKey === series.key ? 1 : 0.22}
+              onMouseEnter={() => onHoverSeries?.(series.key)}
+              onMouseLeave={() => onClearHoverSeries?.()}
             />
             {series.points.map((point) => (
-              <circle
-                key={`${series.key}-${point.label}`}
-                cx={point.x}
-                cy={point.y}
-                r="4"
-                fill={palette[seriesIndex % palette.length]}
-              />
+              <g key={`${series.key}-${point.label}`}>
+                <circle
+                  cx={point.x}
+                  cy={point.y}
+                  r={!resolvedEmphasisKey || resolvedEmphasisKey === series.key ? "4.5" : "3.5"}
+                  fill={palette[seriesIndex % palette.length]}
+                  opacity={!resolvedEmphasisKey || resolvedEmphasisKey === series.key ? 1 : 0.28}
+                  className="chart-point-mark"
+                />
+                <circle
+                  cx={point.x}
+                  cy={point.y}
+                  r="12"
+                  fill="transparent"
+                  tabIndex={0}
+                  onMouseEnter={() =>
+                    onDatumHover?.(
+                      buildTooltipModel({
+                        x: point.x,
+                        y: point.y,
+                        width,
+                        height,
+                        eyebrow: series.label,
+                        title: point.label,
+                        value: formatValue(point.value),
+                        details: [`${xLabel}: ${point.label}`, `${yLabel}: ${formatValue(point.value)}`],
+                        color: palette[seriesIndex % palette.length],
+                      }),
+                    )
+                  }
+                  onMouseLeave={onDatumLeave}
+                  onFocus={() =>
+                    onDatumHover?.(
+                      buildTooltipModel({
+                        x: point.x,
+                        y: point.y,
+                        width,
+                        height,
+                        eyebrow: series.label,
+                        title: point.label,
+                        value: formatValue(point.value),
+                        details: [`${xLabel}: ${point.label}`, `${yLabel}: ${formatValue(point.value)}`],
+                        color: palette[seriesIndex % palette.length],
+                      }),
+                    )
+                  }
+                  onBlur={onDatumLeave}
+                />
+              </g>
             ))}
           </g>
         ))}
       </svg>
-      <ChartLegend series={model.series} palette={palette} />
+      <ChartLegend
+        series={model.series}
+        palette={palette}
+        activeKey={resolvedEmphasisKey}
+        onToggleKey={onToggleSeries}
+        onHoverKey={onHoverSeries}
+        onClearHover={onClearHoverSeries}
+      />
       <AxisLabels xLabel={xLabel} yLabel={yLabel} />
     </div>
   );
 }
 
-function ScatterChart({ points, xLabel, yLabel, groupKey, palette }) {
+function ScatterChart({
+  points,
+  xLabel,
+  yLabel,
+  groupKey,
+  palette,
+  activeGroupKey = "",
+  onDatumHover,
+  onDatumLeave,
+  onToggleSeries,
+  onHoverSeries,
+  onClearHoverSeries,
+}) {
   const width = 720;
   const height = 320;
   const padding = { top: 24, right: 24, bottom: 72, left: 64 };
@@ -582,6 +826,8 @@ function ScatterChart({ points, xLabel, yLabel, groupKey, palette }) {
   const maxY = Math.max(...points.map((point) => point.y), 1);
   const groups = [...new Set(points.map((point) => point.group))];
   const ticks = [0.25, 0.5, 0.75, 1];
+  const emphasisKey = String(activeGroupKey || "").trim();
+  const resolvedEmphasisKey = groups.includes(emphasisKey) ? emphasisKey : "";
 
   return (
     <div className="chart-canvas-shell">
@@ -621,20 +867,65 @@ function ScatterChart({ points, xLabel, yLabel, groupKey, palette }) {
           const y = padding.top + chartHeight - (point.y / maxY) * chartHeight;
           const groupIndex = Math.max(groups.indexOf(point.group), 0);
           return (
-            <circle
-              key={`${point.group}-${point.label}-${index}`}
-              cx={x}
-              cy={y}
-              r="6"
-              fill={palette[groupIndex % palette.length]}
-              fillOpacity="0.82"
-            />
+            <g key={`${point.group}-${point.label}-${index}`}>
+              <circle
+                cx={x}
+                cy={y}
+                r={!resolvedEmphasisKey || resolvedEmphasisKey === point.group ? "6.5" : "5"}
+                fill={palette[groupIndex % palette.length]}
+                fillOpacity={!resolvedEmphasisKey || resolvedEmphasisKey === point.group ? "0.82" : "0.18"}
+                className="chart-scatter-mark"
+              />
+              <circle
+                cx={x}
+                cy={y}
+                r="14"
+                fill="transparent"
+                tabIndex={0}
+                onMouseEnter={() =>
+                  onDatumHover?.(
+                    buildTooltipModel({
+                      x,
+                      y,
+                      width,
+                      height,
+                      eyebrow: point.group,
+                      title: point.label,
+                      value: `${formatValue(point.x)} / ${formatValue(point.y)}`,
+                      details: [`${xLabel}: ${formatValue(point.x)}`, `${yLabel}: ${formatValue(point.y)}`],
+                      color: palette[groupIndex % palette.length],
+                    }),
+                  )
+                }
+                onMouseLeave={onDatumLeave}
+                onFocus={() =>
+                  onDatumHover?.(
+                    buildTooltipModel({
+                      x,
+                      y,
+                      width,
+                      height,
+                      eyebrow: point.group,
+                      title: point.label,
+                      value: `${formatValue(point.x)} / ${formatValue(point.y)}`,
+                      details: [`${xLabel}: ${formatValue(point.x)}`, `${yLabel}: ${formatValue(point.y)}`],
+                      color: palette[groupIndex % palette.length],
+                    }),
+                  )
+                }
+                onBlur={onDatumLeave}
+              />
+            </g>
           );
         })}
       </svg>
       <ChartLegend
         series={groups.map((group) => ({ key: group, label: group }))}
         palette={palette}
+        activeKey={resolvedEmphasisKey}
+        onToggleKey={onToggleSeries}
+        onHoverKey={onHoverSeries}
+        onClearHover={onClearHoverSeries}
       />
       <AxisLabels
         xLabel={xLabel}
@@ -674,25 +965,101 @@ function describeDonutArc(cx, cy, outerRadius, innerRadius, startAngle, endAngle
   ].join(" ");
 }
 
-function PieChart({ slices, palette, chartType, measureKey, title }) {
+function PieChart({
+  slices,
+  palette,
+  chartType,
+  measureKey,
+  title,
+  activeSliceKey = "",
+  onHoverSliceKey,
+  onClearHoverSliceKey,
+  onToggleSlice,
+  onTooltipChange,
+  onTooltipClear,
+}) {
   const total = slices.reduce((sum, slice) => sum + slice.value, 0) || 1;
   const cx = 140;
   const cy = 140;
   const outerRadius = 108;
   const innerRadius = chartType === "donut" ? 58 : 0;
   let currentAngle = 0;
+  const emphasisKey = String(activeSliceKey || "").trim();
+  const resolvedEmphasisKey = slices.some((slice) => slice.label === emphasisKey) ? emphasisKey : "";
 
   return (
     <div className="chart-pie-layout">
       <svg className="chart-pie" viewBox="0 0 280 280" role="img">
         {slices.map((slice, index) => {
           const angle = (slice.value / total) * 360;
+          const startAngle = currentAngle;
+          const endAngle = currentAngle + angle;
           const path =
             chartType === "donut"
-              ? describeDonutArc(cx, cy, outerRadius, innerRadius, currentAngle, currentAngle + angle)
-              : describeArc(cx, cy, outerRadius, currentAngle, currentAngle + angle);
-          currentAngle += angle;
-          return <path key={slice.label} d={path} fill={palette[index % palette.length]} />;
+              ? describeDonutArc(cx, cy, outerRadius, innerRadius, startAngle, endAngle)
+              : describeArc(cx, cy, outerRadius, startAngle, endAngle);
+          currentAngle = endAngle;
+          const middleAngle = startAngle + angle / 2;
+          const outerPoint = polarToCartesian(cx, cy, outerRadius - 12, middleAngle);
+          return (
+            <path
+              key={slice.label}
+              d={path}
+              fill={palette[index % palette.length]}
+              opacity={!resolvedEmphasisKey || resolvedEmphasisKey === slice.label ? 0.96 : 0.22}
+              className="chart-pie-slice"
+              stroke="rgba(255,255,255,0.92)"
+              strokeWidth={!resolvedEmphasisKey || resolvedEmphasisKey === slice.label ? 2 : 1}
+              tabIndex={0}
+              onMouseEnter={() => {
+                onHoverSliceKey?.(slice.label);
+                onTooltipChange?.(
+                  buildTooltipModel({
+                    x: outerPoint.x,
+                    y: outerPoint.y,
+                    width: 280,
+                    height: 280,
+                    eyebrow: title || "Breakdown",
+                    title: slice.label,
+                    value: formatValue(slice.value),
+                    details: [
+                      `${truncateLabel(measureKey, 28)}: ${formatValue(slice.value)}`,
+                      `${Math.round((slice.value / total) * 100)}% of total`,
+                    ],
+                    color: palette[index % palette.length],
+                  }),
+                );
+              }}
+              onMouseLeave={() => {
+                onClearHoverSliceKey?.();
+                onTooltipClear?.();
+              }}
+              onFocus={() => {
+                onHoverSliceKey?.(slice.label);
+                onTooltipChange?.(
+                  buildTooltipModel({
+                    x: outerPoint.x,
+                    y: outerPoint.y,
+                    width: 280,
+                    height: 280,
+                    eyebrow: title || "Breakdown",
+                    title: slice.label,
+                    value: formatValue(slice.value),
+                    details: [
+                      `${truncateLabel(measureKey, 28)}: ${formatValue(slice.value)}`,
+                      `${Math.round((slice.value / total) * 100)}% of total`,
+                    ],
+                    color: palette[index % palette.length],
+                  }),
+                );
+              }}
+              onBlur={() => {
+                onClearHoverSliceKey?.();
+                onTooltipClear?.();
+              }}
+              onClick={() => onToggleSlice?.(slice.label)}
+            />
+          );
         })}
         {chartType === "donut" ? (
           <g>
@@ -709,7 +1076,16 @@ function PieChart({ slices, palette, chartType, measureKey, title }) {
         <strong>{title || "Breakdown"}</strong>
         <span>{truncateLabel(measureKey, 28)}</span>
         {slices.map((slice, index) => (
-          <div key={slice.label} className="chart-pie-legend-item">
+          <button
+            key={slice.label}
+            type="button"
+            className={`chart-pie-legend-item ${resolvedEmphasisKey && resolvedEmphasisKey !== slice.label ? "muted" : "active"}`}
+            onClick={() => onToggleSlice?.(slice.label)}
+            onMouseEnter={() => onHoverSliceKey?.(slice.label)}
+            onMouseLeave={() => onClearHoverSliceKey?.()}
+            onFocus={() => onHoverSliceKey?.(slice.label)}
+            onBlur={() => onClearHoverSliceKey?.()}
+          >
             <span className="chart-pie-legend-swatch" style={{ backgroundColor: palette[index % palette.length] }} />
             <div>
               <strong>{truncateLabel(slice.label, 20)}</strong>
@@ -717,7 +1093,7 @@ function PieChart({ slices, palette, chartType, measureKey, title }) {
                 {formatValue(slice.value)} ({Math.round((slice.value / total) * 100)}%)
               </span>
             </div>
-          </div>
+          </button>
         ))}
       </div>
     </div>
@@ -743,6 +1119,9 @@ export function ChartPreview({
   preferredMeasure,
   themeColors = [],
 }) {
+  const [focusedKey, setFocusedKey] = useState("");
+  const [hoveredKey, setHoveredKey] = useState("");
+  const [tooltip, setTooltip] = useState(null);
   const records = toRecords(result);
   const palette = buildSeriesPalette(themeColors);
   const normalizedVisualization = visualization?.chartType
@@ -759,6 +1138,25 @@ export function ChartPreview({
     : normalizedVisualization?.stacked && baseChartType === "bar"
       ? "stacked-bar"
       : baseChartType;
+  const emphasisKey = hoveredKey || focusedKey;
+
+  function handleToggleKey(key) {
+    const normalized = String(key || "").trim();
+    if (!normalized) {
+      setFocusedKey("");
+      return;
+    }
+    setFocusedKey((current) => (current === normalized ? "" : normalized));
+  }
+
+  function clearHoverState() {
+    setHoveredKey("");
+  }
+
+  function clearVisualInteraction() {
+    setTooltip(null);
+    setHoveredKey("");
+  }
 
   if (records.length === 0) {
     return (
@@ -820,22 +1218,28 @@ export function ChartPreview({
       );
     }
     return (
-      <div className="chart-panel" style={{ "--chart-primary": palette[0], "--chart-secondary": palette[1] }}>
-        <div className="chart-panel-header">
-          <div>
-            <h3>{title || "Chart preview"}</h3>
-            {normalizedVisualization?.subtitle ? <p>{normalizedVisualization.subtitle}</p> : null}
-          </div>
-          <span className="chart-kind">{describeChartKind(chartType)}</span>
-        </div>
+      <ChartPanelShell
+        title={title || "Chart preview"}
+        subtitle={normalizedVisualization?.subtitle}
+        chartType={chartType}
+        tooltip={tooltip}
+        onPointerLeave={clearVisualInteraction}
+        style={{ "--chart-primary": palette[0], "--chart-secondary": palette[1] }}
+      >
         <ScatterChart
           points={scatterPoints}
           xLabel={xKey}
           yLabel={yKey}
           groupKey={groupKey}
           palette={palette}
+          activeGroupKey={emphasisKey}
+          onDatumHover={setTooltip}
+          onDatumLeave={() => setTooltip(null)}
+          onToggleSeries={handleToggleKey}
+          onHoverSeries={setHoveredKey}
+          onClearHoverSeries={clearHoverState}
         />
-      </div>
+      </ChartPanelShell>
     );
   }
 
@@ -891,16 +1295,14 @@ export function ChartPreview({
       );
     }
     return (
-      <div className="chart-panel" style={{ "--chart-primary": palette[0], "--chart-secondary": palette[1] }}>
-        <div className="chart-panel-header">
-          <div>
-            <h3>{title || "Metric"}</h3>
-            {normalizedVisualization?.subtitle ? <p>{normalizedVisualization.subtitle}</p> : null}
-          </div>
-          <span className="chart-kind">{describeChartKind(chartType)}</span>
-        </div>
+      <ChartPanelShell
+        title={title || "Metric"}
+        subtitle={normalizedVisualization?.subtitle}
+        chartType={chartType}
+        style={{ "--chart-primary": palette[0], "--chart-secondary": palette[1] }}
+      >
         <StatCard stat={stat} title={title} />
-      </div>
+      </ChartPanelShell>
     );
   }
 
@@ -931,22 +1333,28 @@ export function ChartPreview({
       );
     }
     return (
-      <div className="chart-panel" style={{ "--chart-primary": palette[0], "--chart-secondary": palette[1] }}>
-        <div className="chart-panel-header">
-          <div>
-            <h3>{title || "Chart preview"}</h3>
-            {normalizedVisualization?.subtitle ? <p>{normalizedVisualization.subtitle}</p> : null}
-          </div>
-          <span className="chart-kind">{describeChartKind(chartType)}</span>
-        </div>
+      <ChartPanelShell
+        title={title || "Chart preview"}
+        subtitle={normalizedVisualization?.subtitle}
+        chartType={chartType}
+        tooltip={tooltip}
+        onPointerLeave={clearVisualInteraction}
+        style={{ "--chart-primary": palette[0], "--chart-secondary": palette[1] }}
+      >
         <PieChart
           slices={slices}
           palette={palette}
           chartType={chartType}
           measureKey={measureKeys[0]}
           title={title}
+          activeSliceKey={emphasisKey}
+          onHoverSliceKey={setHoveredKey}
+          onClearHoverSliceKey={clearHoverState}
+          onToggleSlice={handleToggleKey}
+          onTooltipChange={setTooltip}
+          onTooltipClear={() => setTooltip(null)}
         />
-      </div>
+      </ChartPanelShell>
     );
   }
 
@@ -969,14 +1377,14 @@ export function ChartPreview({
   }
 
   return (
-    <div className="chart-panel" style={{ "--chart-primary": palette[0], "--chart-secondary": palette[1] }}>
-      <div className="chart-panel-header">
-        <div>
-          <h3>{title || "Chart preview"}</h3>
-          {normalizedVisualization?.subtitle ? <p>{normalizedVisualization.subtitle}</p> : null}
-        </div>
-        <span className="chart-kind">{describeChartKind(chartType)}</span>
-      </div>
+    <ChartPanelShell
+      title={title || "Chart preview"}
+      subtitle={normalizedVisualization?.subtitle}
+      chartType={chartType}
+      tooltip={tooltip}
+      onPointerLeave={clearVisualInteraction}
+      style={{ "--chart-primary": palette[0], "--chart-secondary": palette[1] }}
+    >
       {chartType === "line" || chartType === "area" ? (
         <LineLikeChart
           model={model}
@@ -984,6 +1392,12 @@ export function ChartPreview({
           chartType={chartType}
           xLabel={dimensionKey}
           yLabel={measureKeys.join(", ")}
+          activeSeriesKey={emphasisKey}
+          onDatumHover={setTooltip}
+          onDatumLeave={() => setTooltip(null)}
+          onToggleSeries={handleToggleKey}
+          onHoverSeries={setHoveredKey}
+          onClearHoverSeries={clearHoverState}
         />
       ) : (
         <BarLikeChart
@@ -992,8 +1406,14 @@ export function ChartPreview({
           chartType={chartType === "stacked-bar" ? "stacked-bar" : "bar"}
           xLabel={dimensionKey}
           yLabel={measureKeys.join(", ")}
+          activeSeriesKey={emphasisKey}
+          onDatumHover={setTooltip}
+          onDatumLeave={() => setTooltip(null)}
+          onToggleSeries={handleToggleKey}
+          onHoverSeries={setHoveredKey}
+          onClearHoverSeries={clearHoverState}
         />
       )}
-    </div>
+    </ChartPanelShell>
   );
 }

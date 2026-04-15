@@ -446,6 +446,7 @@ def test_local_sdk_dataset_and_sql_queries_use_runtime_adapter() -> None:
     assert dataset_result.status == "succeeded"
     assert dataset_result.row_count_preview == 1
     assert sql_result.status == "succeeded"
+    assert sql_result.query_scope == "source"
     assert sql_result.rows == [{"value": 7}]
     assert len(runtime_host.execute_sql_text_calls) == 0
     assert len(runtime_host.execute_sql_calls) == 1
@@ -516,6 +517,7 @@ def test_local_sdk_direct_sql_by_connection_name_uses_runtime_shortcut() -> None
     )
 
     assert result.status == "succeeded"
+    assert result.query_scope == "source"
     assert len(runtime_host.execute_sql_calls) == 0
     assert len(runtime_host.execute_sql_text_calls) == 1
 
@@ -532,6 +534,7 @@ def test_local_sdk_federated_sql_defaults_to_runtime_sql_service_without_selecte
     result = client.sql.query(query="SELECT value FROM sales_orders")
 
     assert result.status == "succeeded"
+    assert result.query_scope == "dataset"
     assert len(runtime_host.execute_sql_calls) == 1
     assert len(runtime_host.execute_sql_text_calls) == 0
 
@@ -552,6 +555,7 @@ def test_local_sdk_selected_datasets_is_a_uuid_subset_selector() -> None:
     )
 
     assert result.status == "succeeded"
+    assert result.query_scope == "dataset"
     assert len(runtime_host.execute_sql_calls) == 1
     request = runtime_host.execute_sql_calls[0]
     assert request.selected_datasets == [selected_dataset_id]
@@ -657,6 +661,7 @@ def test_remote_sdk_runtime_host_requests_use_runtime_payload_shapes() -> None:
         if request.method == "POST" and request.url.path == "/api/runtime/v1/sql/query":
             payload = _runtime_payload(request)
             assert payload == {
+                "query_scope": "source",
                 "query": "select 7 as value",
                 "connection_name": "commerce_demo",
                 "query_dialect": "tsql",
@@ -741,6 +746,7 @@ def test_remote_sdk_runtime_host_sql_defaults_to_federation_without_selected_dat
         if request.method == "POST" and request.url.path == "/api/runtime/v1/sql/query":
             payload = _payload(request)
             assert payload == {
+                "query_scope": "dataset",
                 "query": "SELECT * FROM sales_orders",
                 "selected_datasets": [],
                 "query_dialect": "tsql",

@@ -1,8 +1,8 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link, NavLink, useLocation } from "react-router-dom";
 import { Box, ChevronLeft, ChevronRight } from "lucide-react";
 
-import { NAV_SECTIONS, resolveActiveNav } from "../lib/routes";
+import { NAV_SECTIONS } from "../lib/routes";
 import { ThemeToggle } from "./ThemeToggle";
 
 export function AppShell({ session, authStatus, onLogout, children }) {
@@ -21,11 +21,6 @@ export function AppShell({ session, authStatus, onLogout, children }) {
     .slice(0, 2)
     .map((part) => part[0]?.toUpperCase() || "")
     .join("");
-
-  const activePage = useMemo(
-    () => resolveActiveNav(location.pathname),
-    [location.pathname],
-  );
 
   useEffect(() => {
     setUtilityMenuOpen(false);
@@ -58,6 +53,7 @@ export function AppShell({ session, authStatus, onLogout, children }) {
   }, []);
 
   const flatItems = NAV_SECTIONS.flatMap((section) => section.items);
+  const mobileItems = flatItems.filter((item) => item.mobile !== false);
   const utilityPanel = (className = "", compact = false, ref = null) => (
     <div className={`shell-utility-panel ${className}`.trim()} ref={ref}>
       <button
@@ -173,7 +169,7 @@ export function AppShell({ session, authStatus, onLogout, children }) {
 
       <div className="shell-main">
         <nav className="mobile-nav" aria-label="Runtime navigation">
-          {flatItems.map((item) => {
+          {mobileItems.map((item) => {
             const Icon = item.icon;
             return (
               <NavLink

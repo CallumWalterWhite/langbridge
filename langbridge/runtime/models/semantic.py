@@ -5,6 +5,7 @@ from typing import Any
 from pydantic import Field
 
 from langbridge.runtime.models.base import RuntimeModel, RuntimeRequestModel
+from langbridge.runtime.models.federation_diagnostics import RuntimeFederationDiagnostics
 
 
 class SemanticQueryMetaResponse(RuntimeModel):
@@ -28,6 +29,7 @@ class SemanticQueryResponse(RuntimeModel):
     data: list[dict[str, Any]] = Field(default_factory=list)
     annotations: list[dict[str, Any]] = Field(default_factory=list)
     metadata: list[dict[str, Any]] | None = None
+    federation_diagnostics: RuntimeFederationDiagnostics | None = None
 
 
 class UnifiedSemanticSourceModelRequest(RuntimeModel):
@@ -60,3 +62,4 @@ class UnifiedSemanticQueryResponse(RuntimeModel):
     data: list[dict[str, Any]] = Field(default_factory=list)
     annotations: list[dict[str, Any]] = Field(default_factory=list)
     metadata: list[dict[str, Any]] | None = None
+    federation_diagnostics: RuntimeFederationDiagnostics | None = None

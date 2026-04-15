@@ -6,7 +6,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from langbridge.runtime.execution import DuckDbExecutionEngine, ExecutionEngine
-from .errors import ExecutionRuntimeError, ExecutionValidationError
+from .errors import DatasetNotSynchronizedError, ExecutionRuntimeError, ExecutionValidationError
 from langbridge.runtime.models.metadata import (
     DatasetMaterializationMode,
     DatasetMetadata,
@@ -83,6 +83,7 @@ class DatasetExecutionResolver:
         dataset_name: str,
         semantic_model: SemanticModel,
         raw_datasets_payload: Mapping[str, Any] | None = None,
+        ignore_non_syncd_datasets: bool = False,
     ) -> tuple[FederationWorkflow, str]:
         table_bindings: dict[str, VirtualTableBinding] = {}
         dialects: list[str] = []
@@ -101,20 +102,25 @@ class DatasetExecutionResolver:
                 raise ExecutionValidationError(
                     f"Semantic dataset '{dataset_key}' must declare dataset_id for federated execution."
                 )
-            dataset = await self._load_dataset(
-                workspace_id=workspace_id,
-                dataset_id=dataset_ref,
-                table_key=dataset_key,
-            )
-            binding, dialect = self._build_binding_from_dataset_record(
-                dataset=dataset,
-                table_key=dataset_key,
-                logical_schema=(semantic_dataset.schema_name or None),
-                logical_table_name=semantic_dataset.relation_name,
-                catalog_name=semantic_dataset.catalog_name,
-            )
-            table_bindings[dataset_key] = binding
-            dialects.append(dialect)
+            try: 
+                dataset = await self._load_dataset(
+                    workspace_id=workspace_id,
+                    dataset_id=dataset_ref,
+                    table_key=dataset_key,
+                )
+                binding, dialect = self._build_binding_from_dataset_record(
+                    dataset=dataset,
+                    table_key=dataset_key,
+                    logical_schema=(semantic_dataset.schema_name or None),
+                    logical_table_name=semantic_dataset.relation_name,
+                    catalog_name=semantic_dataset.catalog_name,
+                )
+                table_bindings[dataset_key] = binding
+                dialects.append(dialect)
+            except DatasetNotSynchronizedError as exc:
+                if ignore_non_syncd_datasets:
+                    continue
+                raise exc
 
         relationships = [
             VirtualRelationship(
@@ -441,7 +447,7 @@ class DatasetExecutionResolver:
                     source_detail = f" (table '{str(sync_source.get('table')).strip()}')"
                 elif str(sync_source.get("sql") or "").strip():
                     source_detail = " (SQL query source)"
-                raise ExecutionValidationError(
+                raise DatasetNotSynchronizedError(
                     f"Synced dataset '{dataset.name}' has not been populated yet. "
                     f"Run dataset sync for dataset '{dataset.name}'{source_detail} before querying it."
                 )

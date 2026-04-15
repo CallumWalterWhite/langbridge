@@ -32,7 +32,14 @@ from langbridge.connectors.base import (
     get_connector_config_factory,
 )
 from langbridge.connectors.base.config import ConnectorRuntimeType
-from langbridge.federation.models import FederationWorkflow, VirtualDataset, VirtualTableBinding
+from langbridge.federation.models import (
+    ExecutionSummary,
+    FederationWorkflow,
+    LogicalPlan,
+    PhysicalPlan,
+    VirtualDataset,
+    VirtualTableBinding,
+)
 from langbridge.runtime.execution import FederatedQueryTool
 from langbridge.runtime.ports import (
     DatasetCatalogStore,
@@ -47,6 +54,7 @@ from langbridge.runtime.providers import (
 from langbridge.runtime.models import ConnectorMetadata
 from langbridge.runtime.security import SecretProviderRegistry
 from langbridge.runtime.services.dataset_execution import DatasetExecutionResolver
+from langbridge.runtime.services.federation_diagnostics import build_runtime_federation_diagnostics
 from langbridge.runtime.settings import runtime_settings as settings
 
 RewriteExpression = Callable[[sqlglot.Expression], sqlglot.Expression]
@@ -322,6 +330,11 @@ class SqlQueryService:
         )
         columns_payload = self._extract_execution_columns(execution, redacted_rows)
         execution_meta = self._extract_execution_meta(execution)
+        federation_diagnostics = self._build_federation_diagnostics(
+            workflow=workflow,
+            planning_payload=execution.get("planning") if isinstance(execution, dict) else None,
+            execution_payload=execution.get("execution") if isinstance(execution, dict) else None,
+        )
 
         now = datetime.now(timezone.utc)
         job.status = "succeeded"
@@ -344,6 +357,11 @@ class SqlQueryService:
             "federated": True,
             "workflow_id": workflow.id,
             "source_aliases": source_aliases,
+            "federation_diagnostics": (
+                federation_diagnostics.model_dump(mode="json")
+                if federation_diagnostics is not None
+                else None
+            ),
         }
         self._store_preview_artifact(
             job=job,
@@ -768,6 +786,7 @@ class SqlQueryService:
 
     @staticmethod
     def _result_payload(job: SqlJob) -> dict[str, Any]:
+        stats = dict(job.stats_json or {})
         return {
             "columns": list(job.result_columns_json or []),
             "rows": list(job.result_rows_json or []),
@@ -777,7 +796,8 @@ class SqlQueryService:
             "duration_ms": job.duration_ms,
             "result_cursor": job.result_cursor,
             "redaction_applied": job.redaction_applied,
-            "stats": dict(job.stats_json or {}),
+            "stats": stats,
+            "federation_diagnostics": stats.get("federation_diagnostics"),
         }
 
     @staticmethod
@@ -915,6 +935,33 @@ class SqlQueryService:
             "bytes_scanned": bytes_scanned if has_bytes else None,
         }
 
+    @staticmethod
+    def _build_federation_diagnostics(
+        *,
+        workflow: FederationWorkflow,
+        planning_payload: dict[str, Any] | None,
+        execution_payload: dict[str, Any] | None,
+    ):
+        if not isinstance(planning_payload, dict):
+            return None
+        logical_plan_payload = planning_payload.get("logical_plan")
+        physical_plan_payload = planning_payload.get("physical_plan")
+        if not isinstance(logical_plan_payload, dict) or not isinstance(physical_plan_payload, dict):
+            return None
+        logical_plan = LogicalPlan.model_validate(logical_plan_payload)
+        physical_plan = PhysicalPlan.model_validate(physical_plan_payload)
+        execution_summary = (
+            ExecutionSummary.model_validate(execution_payload)
+            if isinstance(execution_payload, dict)
+            else None
+        )
+        return build_runtime_federation_diagnostics(
+            workflow=workflow,
+            logical_plan=logical_plan,
+            physical_plan=physical_plan,
+            execution=execution_summary,
+        )
+
     def _store_federated_explain_result(
         self,
         *,
@@ -930,6 +977,11 @@ class SqlQueryService:
         logical_tables = logical_plan.get("tables") if isinstance(logical_plan, dict) else {}
         logical_joins = logical_plan.get("joins") if isinstance(logical_plan, dict) else []
         physical_stages = physical_plan.get("stages") if isinstance(physical_plan, dict) else []
+        federation_diagnostics = self._build_federation_diagnostics(
+            workflow=workflow,
+            planning_payload=explain_payload,
+            execution_payload=None,
+        )
 
         now = datetime.now(timezone.utc)
         job.status = "succeeded"
@@ -964,5 +1016,10 @@ class SqlQueryService:
                 "query_hash": job.query_hash,
                 "workflow": workflow.model_dump(mode="json"),
                 "plan": explain_payload,
-            }
+            },
+            "federation_diagnostics": (
+                federation_diagnostics.model_dump(mode="json")
+                if federation_diagnostics is not None
+                else None
+            ),
         }

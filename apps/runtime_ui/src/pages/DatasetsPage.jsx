@@ -1988,8 +1988,12 @@ export function DatasetsPage() {
                         Edit
                       </button>
                     ) : null}
-                    <button className="ghost-button" type="button" onClick={() => navigate("/sql")}>
-                      Open SQL
+                    <button
+                      className="ghost-button"
+                      type="button"
+                      onClick={() => navigate("/query-workspace")}
+                    >
+                      Open Query Workspace
                     </button>
                     <button
                       className="ghost-button"
@@ -2299,7 +2303,7 @@ export function DatasetsPage() {
                     <article className="detail-card">
                       <strong>SQL alias</strong>
                       <span>{detail?.sql_alias || toSqlAlias(detail?.name || selected.name)}</span>
-                      <small>Use this alias from the runtime SQL workspace.</small>
+                      <small>Use this alias from Query Workspace.</small>
                     </article>
                     <article className="detail-card">
                       <strong>Semantic and policy posture</strong>

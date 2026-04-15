@@ -2,6 +2,8 @@
 import asyncio
 import json
 import sqlite3
+import threading
+import time
 import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
@@ -16,6 +18,7 @@ from mcp import ClientSession
 from mcp.client.streamable_http import streamablehttp_client
 
 from langbridge import LangbridgeClient
+from langbridge.federation.executor import StageExecutor
 from langbridge.runtime import build_configured_local_runtime
 from langbridge.runtime.bootstrap import ConfiguredLocalRuntimeHost
 from langbridge.runtime.context import RuntimeContext
@@ -99,6 +102,9 @@ semantic_models:
               expression: net_revenue
               type: number
               aggregation: sum
+      metrics:
+        net_sales_metric:
+          expression: SUM(shopify_orders.net_revenue)
 llm_connections:
   - name: local_openai
     provider: openai
@@ -149,6 +155,19 @@ agents:
     runtime = build_configured_local_runtime(config_path=str(config_path))
 
     async def fake_agent_execute(*, job_id, request, event_emitter=None):
+        if event_emitter is not None:
+            await event_emitter.emit(
+                event_type="AgentRunStarted",
+                message="Working on your request.",
+                visibility="public",
+                source="supervisor",
+            )
+            await event_emitter.emit(
+                event_type="AnalyticalSqlExecutionStarted",
+                message="Running query against the selected asset.",
+                visibility="public",
+                source="tool:analyst:sql",
+            )
         response_payload = {
             "summary": f"{runtime._agents['commerce_analyst'].config.name} answered runtime prompt",
             "result": {"text": "ok"},
@@ -172,8 +191,19 @@ agents:
             )
             runtime._thread_message_repository.add(assistant_message)
             thread.last_message_id = assistant_message.id
+            thread.state = "awaiting_user_input"
+            _clear_active_run_metadata(thread)
+            await runtime._thread_repository.save(thread)
+            if event_emitter is not None:
+                await event_emitter.emit(
+                    event_type="AgentRunCompleted",
+                    message="Response is ready.",
+                    visibility="public",
+                    source="supervisor",
+                )
         return SimpleNamespace(
-            response=response_payload
+            response=response_payload,
+            assistant_message=assistant_message if thread is not None else None,
         )
 
     runtime._runtime_host.services.agent_execution.execute = fake_agent_execute  # type: ignore[assignment]
@@ -182,6 +212,9 @@ agents:
 
 def _create_runtime_app(runtime_host, **kwargs):
     auth_config = kwargs.pop("auth_config", RuntimeAuthConfig(mode=RuntimeAuthMode.none))
+    if getattr(runtime_host.services, "semantic_vector_search", None) is not None:
+        runtime_host.services.semantic_vector_search = None
+    kwargs.setdefault("default_background_tasks", [])
     return create_runtime_api_app(runtime_host=runtime_host, auth_config=auth_config, **kwargs)
 
 
@@ -368,6 +401,9 @@ semantic_models:
             - name: loyalty_tier
               expression: loyalty_tier
               type: string
+      metrics:
+        net_sales_metric:
+          expression: SUM(shopify_orders.net_revenue)
       relationships:
         - name: orders_to_customers
           source_dataset: shopify_orders
@@ -434,6 +470,23 @@ def _extract_sse_payload(response_text: str) -> dict[str, object]:
     raise AssertionError(f"No SSE payload found in response: {response_text}")
 
 
+def _extract_sse_payloads(response_text: str) -> list[dict[str, object]]:
+    payloads: list[dict[str, object]] = []
+    for line in response_text.splitlines():
+        if line.startswith("data: "):
+            payloads.append(json.loads(line.removeprefix("data: ")))
+    if not payloads:
+        raise AssertionError(f"No SSE payloads found in response: {response_text}")
+    return payloads
+
+
+def _clear_active_run_metadata(thread) -> None:
+    metadata = dict(getattr(thread, "metadata", {}) or {})
+    metadata.pop("active_run_id", None)
+    metadata.pop("active_run_type", None)
+    thread.metadata = metadata
+
+
 def test_runtime_host_api_exposes_runtime_features(tmp_path: Path) -> None:
     runtime = _build_runtime(tmp_path)
     app = _create_runtime_app(runtime)
@@ -485,6 +538,7 @@ def test_runtime_host_api_exposes_runtime_features(tmp_path: Path) -> None:
     sql = client.post(
         "/api/runtime/v1/sql/query",
         json={
+            "query_scope": "source",
             "query": (
                 "SELECT country, SUM(net_revenue) AS net_sales "
                 "FROM orders_enriched "
@@ -496,11 +550,13 @@ def test_runtime_host_api_exposes_runtime_features(tmp_path: Path) -> None:
     )
     assert sql.status_code == 200
     assert sql.json()["status"] == "succeeded"
+    assert sql.json()["query_scope"] == "source"
     assert sql.json()["rows"][0]["country"] == "United Kingdom"
 
     federated_sql = client.post(
         "/api/runtime/v1/sql/query",
         json={
+            "query_scope": "dataset",
             "query": (
                 "SELECT country, SUM(net_revenue) AS net_sales "
                 "FROM shopify_orders "
@@ -511,6 +567,7 @@ def test_runtime_host_api_exposes_runtime_features(tmp_path: Path) -> None:
     )
     assert federated_sql.status_code == 200
     assert federated_sql.json()["status"] == "succeeded"
+    assert federated_sql.json()["query_scope"] == "dataset"
     assert federated_sql.json()["rows"][0]["country"] == "United Kingdom"
 
     agent = client.post(
@@ -548,6 +605,306 @@ def test_runtime_host_api_returns_500_for_unexpected_agent_errors(
 
     assert response.status_code == 500
     assert response.json()["detail"] == "'NoneType' object is not callable"
+
+
+def test_runtime_host_api_returns_404_for_unknown_agent_name(tmp_path: Path) -> None:
+    runtime = _build_runtime(tmp_path)
+    app = _create_runtime_app(runtime)
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/runtime/v1/agents/ask",
+        json={
+            "message": "Summarize revenue",
+            "agent_name": "missing_agent",
+        },
+    )
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "Agent 'missing_agent' was not found."
+
+    with client.stream(
+        "POST",
+        "/api/runtime/v1/agents/ask/stream",
+        json={
+            "message": "Summarize revenue",
+            "agent_name": "missing_agent",
+        },
+    ) as stream_response:
+        stream_payload = json.loads(stream_response.read().decode("utf-8"))
+
+    assert stream_response.status_code == 404
+    assert stream_payload["detail"] == "Agent 'missing_agent' was not found."
+
+
+def test_runtime_host_api_streams_agent_run_progress_and_persists_final_message(tmp_path: Path) -> None:
+    runtime = _build_runtime(tmp_path)
+    app = _create_runtime_app(runtime)
+    client = TestClient(app)
+
+    with client.stream(
+        "POST",
+        "/api/runtime/v1/agents/ask/stream",
+        json={
+            "message": "Summarize revenue",
+            "agent_name": "commerce_analyst",
+        },
+    ) as response:
+        body = "".join(response.iter_text())
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/event-stream")
+
+    payloads = _extract_sse_payloads(body)
+    assert payloads[0]["event"] == "run.started"
+    assert payloads[0]["status"] == "in_progress"
+    assert payloads[0]["run_type"] == "agent"
+    assert payloads[0]["run_id"] == payloads[0]["job_id"]
+    assert payloads[1]["event"] == "run.progress"
+    assert payloads[1]["stage"] == "planning"
+    assert payloads[2]["stage"] == "running_query"
+    assert payloads[-1]["event"] == "run.completed"
+    assert payloads[-1]["terminal"] is True
+    assert payloads[-1]["status"] == "completed"
+    thread_id = payloads[-1]["thread_id"]
+
+    messages = client.get(f"/api/runtime/v1/threads/{thread_id}/messages")
+    assert messages.status_code == 200
+    assert messages.json()["total"] == 2
+    assert messages.json()["items"][1]["role"] == "assistant"
+
+
+def test_runtime_host_api_replays_active_run_progress_from_run_stream_endpoint(tmp_path: Path) -> None:
+    runtime = _build_runtime(tmp_path)
+    app = _create_runtime_app(runtime)
+    release_execution = threading.Event()
+    stream_started = threading.Event()
+    starter_state: dict[str, str | int] = {}
+    starter_errors: list[Exception] = []
+
+    async def _slow_execute(*, job_id, request, event_emitter=None):
+        if event_emitter is not None:
+            await event_emitter.emit(
+                event_type="AgentRunStarted",
+                message="Working on your request.",
+                visibility="public",
+                source="supervisor",
+            )
+            await event_emitter.emit(
+                event_type="AnalyticalSqlExecutionStarted",
+                message="Running query against the selected asset.",
+                visibility="public",
+                source="tool:analyst:sql",
+            )
+        await asyncio.to_thread(release_execution.wait, 5)
+        thread = await runtime._thread_repository.get_by_id(request.thread_id)
+        assert thread is not None
+        assistant_message = RuntimeThreadMessage(
+            id=uuid.uuid4(),
+            thread_id=request.thread_id,
+            parent_message_id=thread.last_message_id,
+            role=RuntimeMessageRole.assistant,
+            content={
+                "summary": "Replay completed.",
+                "result": {"text": "ok"},
+                "visualization": None,
+            },
+            created_at=datetime.now(timezone.utc),
+        )
+        runtime._thread_message_repository.add(assistant_message)
+        thread.last_message_id = assistant_message.id
+        thread.state = "awaiting_user_input"
+        _clear_active_run_metadata(thread)
+        await runtime._thread_repository.save(thread)
+        if event_emitter is not None:
+            await event_emitter.emit(
+                event_type="AgentRunCompleted",
+                message="Response is ready.",
+                visibility="public",
+                source="supervisor",
+            )
+        return SimpleNamespace(
+            response={
+                "summary": "Replay completed.",
+                "result": {"text": "ok"},
+                "visualization": None,
+                "error": None,
+                "events": [],
+            },
+            assistant_message=assistant_message,
+        )
+
+    runtime._runtime_host.services.agent_execution.execute = _slow_execute  # type: ignore[assignment]
+
+    with TestClient(app) as attach_client:
+        def _start_stream() -> None:
+            async def _consume_stream() -> None:
+                async for event in runtime.ask_agent_stream(
+                    prompt="Summarize revenue",
+                    agent_name="commerce_analyst",
+                ):
+                    if event is None:
+                        continue
+                    if not stream_started.is_set():
+                        starter_state["run_id"] = str(event.run_id)
+                        starter_state["thread_id"] = str(event.thread_id)
+                        stream_started.set()
+
+            try:
+                asyncio.run(_consume_stream())
+            except Exception as exc:  # pragma: no cover - surfaced below
+                starter_errors.append(exc)
+                stream_started.set()
+
+        starter_thread = threading.Thread(target=_start_stream, daemon=True)
+        starter_thread.start()
+        assert stream_started.wait(timeout=5)
+        assert not starter_errors
+
+        run_id = str(starter_state["run_id"])
+        with attach_client.stream(
+            "GET",
+            f"/api/runtime/v1/runs/{run_id}/stream",
+            params={"after_sequence": 1},
+        ) as response:
+            release_execution.set()
+            replay_body = "".join(response.iter_text())
+
+        starter_thread.join(timeout=5)
+        assert not starter_thread.is_alive()
+        assert response.status_code == 200
+        replay_payloads = _extract_sse_payloads(replay_body)
+        assert replay_payloads[0]["sequence"] == 2
+        assert replay_payloads[0]["stage"] == "planning"
+        assert replay_payloads[1]["sequence"] == 3
+        assert replay_payloads[1]["stage"] == "running_query"
+        assert replay_payloads[-1]["event"] == "run.completed"
+        assert replay_payloads[-1]["run_id"] == run_id
+
+
+def test_runtime_host_api_returns_404_for_missing_run_stream(tmp_path: Path) -> None:
+    runtime = _build_runtime(tmp_path)
+    app = _create_runtime_app(runtime)
+    client = TestClient(app)
+
+    response = client.get(f"/api/runtime/v1/runs/{uuid.uuid4()}/stream")
+
+    assert response.status_code == 404
+    assert response.json()["detail"].startswith("Run '")
+
+
+def test_runtime_host_api_streams_agent_run_failure_and_resets_thread(tmp_path: Path) -> None:
+    runtime = _build_runtime(tmp_path)
+    app = _create_runtime_app(runtime)
+    client = TestClient(app)
+
+    async def _boom_execute(*, job_id, request, event_emitter=None):
+        if event_emitter is not None:
+            await event_emitter.emit(
+                event_type="AgentRunStarted",
+                message="Working on your request.",
+                visibility="public",
+                source="supervisor",
+            )
+        raise RuntimeError("warehouse timeout")
+
+    runtime._runtime_host.services.agent_execution.execute = _boom_execute  # type: ignore[assignment]
+
+    with client.stream(
+        "POST",
+        "/api/runtime/v1/agents/ask/stream",
+        json={
+            "message": "Summarize revenue",
+            "agent_name": "commerce_analyst",
+        },
+    ) as response:
+        body = "".join(response.iter_text())
+
+    assert response.status_code == 200
+    payloads = _extract_sse_payloads(body)
+    assert payloads[-1]["event"] == "run.failed"
+    assert payloads[-1]["terminal"] is True
+    assert payloads[-1]["message"] == "warehouse timeout"
+    thread_id = payloads[-1]["thread_id"]
+
+    thread = client.get(f"/api/runtime/v1/threads/{thread_id}")
+    assert thread.status_code == 200
+    assert thread.json()["state"] == "awaiting_user_input"
+
+    messages = client.get(f"/api/runtime/v1/threads/{thread_id}/messages")
+    assert messages.status_code == 200
+    assert messages.json()["total"] == 1
+    assert messages.json()["items"][0]["role"] == "user"
+
+
+def test_runtime_host_api_streams_access_denied_and_persists_canonical_message(tmp_path: Path) -> None:
+    runtime = _build_runtime(tmp_path)
+    app = _create_runtime_app(runtime)
+    client = TestClient(app)
+
+    async def _access_denied_execute(*, job_id, request, event_emitter=None):
+        if event_emitter is not None:
+            await event_emitter.emit(
+                event_type="AnalyticalAccessDenied",
+                message="Analytical access is blocked by the agent access policy.",
+                visibility="public",
+                source="supervisor",
+                details={"reason": "connector denied"},
+            )
+        thread = await runtime._thread_repository.get_by_id(request.thread_id)
+        assert thread is not None
+        assistant_message = RuntimeThreadMessage(
+            id=uuid.uuid4(),
+            thread_id=request.thread_id,
+            parent_message_id=thread.last_message_id,
+            role=RuntimeMessageRole.assistant,
+            content={
+                "summary": "Access denied summary.",
+                "result": {},
+                "visualization": None,
+                "diagnostics": {"analyst_outcome": {"status": "access_denied"}},
+            },
+            created_at=datetime.now(timezone.utc),
+        )
+        runtime._thread_message_repository.add(assistant_message)
+        thread.last_message_id = assistant_message.id
+        thread.state = "awaiting_user_input"
+        _clear_active_run_metadata(thread)
+        await runtime._thread_repository.save(thread)
+        return SimpleNamespace(
+            response={
+                "summary": "Access denied summary.",
+                "result": {},
+                "visualization": None,
+                "error": None,
+                "diagnostics": {"analyst_outcome": {"status": "access_denied"}},
+            },
+            assistant_message=assistant_message,
+        )
+
+    runtime._runtime_host.services.agent_execution.execute = _access_denied_execute  # type: ignore[assignment]
+
+    with client.stream(
+        "POST",
+        "/api/runtime/v1/agents/ask/stream",
+        json={
+            "message": "Summarize payroll",
+            "agent_name": "commerce_analyst",
+        },
+    ) as response:
+        body = "".join(response.iter_text())
+
+    assert response.status_code == 200
+    payloads = _extract_sse_payloads(body)
+    assert any(item["stage"] == "access_denied" for item in payloads)
+    assert payloads[-1]["event"] == "run.failed"
+    assert payloads[-1]["stage"] == "access_denied"
+    thread_id = payloads[-1]["thread_id"]
+
+    messages = client.get(f"/api/runtime/v1/threads/{thread_id}/messages")
+    assert messages.status_code == 200
+    assert messages.json()["total"] == 2
+    assert messages.json()["items"][1]["content"]["summary"] == "Access denied summary."
 
 
 def test_runtime_host_api_executes_joined_semantic_query_with_runtime_response_shape(tmp_path: Path) -> None:
@@ -589,6 +946,10 @@ def test_runtime_host_api_executes_joined_semantic_query_with_runtime_response_s
         },
     ]
     assert "LEFT JOIN customer_profiles" in payload["generated_sql"]
+    assert payload["federation_diagnostics"]["summary"]["query_type"] == "semantic"
+    assert payload["federation_diagnostics"]["summary"]["stage_count"] >= 1
+    assert payload["federation_diagnostics"]["logical_plan"]["tables"]
+    assert payload["federation_diagnostics"]["pushdown"]["stages"]
 
 
 def test_runtime_host_api_executes_federated_sql_join_across_runtime_datasets(tmp_path: Path) -> None:
@@ -599,6 +960,7 @@ def test_runtime_host_api_executes_federated_sql_join_across_runtime_datasets(tm
     response = client.post(
         "/api/runtime/v1/sql/query",
         json={
+            "query_scope": "dataset",
             "query": (
                 "SELECT c.region, SUM(o.net_revenue) AS net_sales "
                 "FROM shopify_orders AS o "
@@ -612,11 +974,199 @@ def test_runtime_host_api_executes_federated_sql_join_across_runtime_datasets(tm
     assert response.status_code == 200
     payload = response.json()
     assert payload["status"] == "succeeded"
+    assert payload["query_scope"] == "dataset"
     assert payload["rows"] == [
         {"net_sales": 440.0, "region": "Europe"},
         {"net_sales": 210.0, "region": "North America"},
     ]
     assert payload["generated_sql"] is not None
+    assert payload["federation_diagnostics"]["summary"]["query_type"] == "sql"
+    assert payload["federation_diagnostics"]["summary"]["stage_count"] >= 3
+    assert payload["federation_diagnostics"]["stages"][0]["runtime_ms"] is not None
+    assert payload["federation_diagnostics"]["cache"]["stages"]
+
+
+@pytest.mark.anyio
+async def test_runtime_host_api_remains_responsive_during_long_federated_sql_query(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime = _build_runtime_with_relational_semantic_models(tmp_path)
+    app = _create_runtime_app(runtime)
+    original = StageExecutor._execute_local_compute_stage_blocking
+
+    def _slow_local_compute(self, stage, context, cache_descriptor):
+        time.sleep(0.25)
+        return original(self, stage, context, cache_descriptor)
+
+    monkeypatch.setattr(StageExecutor, "_execute_local_compute_stage_blocking", _slow_local_compute)
+
+    async with app.router.lifespan_context(app):
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            long_query_task = asyncio.create_task(
+                client.post(
+                    "/api/runtime/v1/sql/query",
+                    json={
+                        "query_scope": "dataset",
+                        "query": (
+                            "SELECT c.region, SUM(o.net_revenue) AS net_sales "
+                            "FROM shopify_orders AS o "
+                            "JOIN shopify_customers AS c ON o.customer_id = c.customer_id "
+                            "GROUP BY c.region "
+                            "ORDER BY net_sales DESC"
+                        ),
+                    },
+                )
+            )
+            await asyncio.sleep(0.02)
+            assert not long_query_task.done()
+
+            started = time.perf_counter()
+            health_response = await client.get("/api/runtime/v1/health")
+            elapsed = time.perf_counter() - started
+
+            assert health_response.status_code == 200
+            assert health_response.json() == {"status": "ok"}
+            assert elapsed < 0.15
+
+            long_query_response = await long_query_task
+            assert long_query_response.status_code == 200
+            assert long_query_response.json()["rows"] == [
+                {"net_sales": 440.0, "region": "Europe"},
+                {"net_sales": 210.0, "region": "North America"},
+            ]
+
+
+def test_runtime_host_api_returns_federation_diagnostics_for_sql_explain(tmp_path: Path) -> None:
+    runtime = _build_runtime_with_relational_semantic_models(tmp_path)
+    app = _create_runtime_app(runtime)
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/runtime/v1/sql/query",
+        json={
+            "query_scope": "dataset",
+            "query": (
+                "SELECT c.region, SUM(o.net_revenue) AS net_sales "
+                "FROM shopify_orders AS o "
+                "JOIN shopify_customers AS c ON o.customer_id = c.customer_id "
+                "GROUP BY c.region "
+                "ORDER BY net_sales DESC"
+            ),
+            "explain": True,
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "succeeded"
+    assert payload["query_scope"] == "dataset"
+    assert payload["federation_diagnostics"]["summary"]["query_type"] == "sql"
+    assert payload["federation_diagnostics"]["physical_plan"]["stages"]
+    assert payload["federation_diagnostics"]["pushdown"]["stages"]
+
+
+def test_runtime_host_api_executes_semantic_sql_with_explicit_scope(tmp_path: Path) -> None:
+    runtime = _build_runtime_with_relational_semantic_models(tmp_path)
+    app = _create_runtime_app(runtime)
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/runtime/v1/sql/query",
+        json={
+            "query_scope": "semantic",
+            "query": (
+                "SELECT region, net_sales "
+                "FROM commerce_performance "
+                "WHERE order_status = 'fulfilled' "
+                "ORDER BY net_sales DESC"
+            ),
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "succeeded"
+    assert payload["query_scope"] == "semantic"
+    assert payload["semantic_model_id"] is not None
+    assert payload["semantic_model_ids"]
+    assert payload["rows"] == [
+        {"region": "North America", "net_sales": 210.0},
+        {"region": "Europe", "net_sales": 180.0},
+    ]
+    assert "LEFT JOIN customer_profiles" in payload["generated_sql"]
+    assert payload["federation_diagnostics"]["summary"]["query_type"] == "semantic"
+
+
+def test_runtime_host_api_executes_semantic_sql_with_model_level_metric(tmp_path: Path) -> None:
+    runtime = _build_runtime_with_relational_semantic_models(tmp_path)
+    app = _create_runtime_app(runtime)
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/runtime/v1/sql/query",
+        json={
+            "query_scope": "semantic",
+            "query": (
+                "SELECT country, net_sales_metric "
+                "FROM commerce_performance "
+                "WHERE order_status = 'fulfilled' "
+                "GROUP BY country "
+                "ORDER BY net_sales_metric DESC"
+            ),
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "succeeded"
+    assert payload["query_scope"] == "semantic"
+    assert payload["rows"] == [
+        {"country": "United States", "net_sales_metric": 210.0},
+        {"country": "United Kingdom", "net_sales_metric": 180.0},
+    ]
+
+
+def test_runtime_host_api_rejects_semantic_sql_scope_resource_mismatch(tmp_path: Path) -> None:
+    runtime = _build_runtime_with_relational_semantic_models(tmp_path)
+    app = _create_runtime_app(runtime)
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/runtime/v1/sql/query",
+        json={
+            "query_scope": "semantic",
+            "query": "SELECT region FROM commerce_performance",
+            "connection_name": "commerce_demo",
+        },
+    )
+
+    assert response.status_code == 422
+
+
+def test_runtime_host_api_rejects_unsupported_semantic_sql_join(tmp_path: Path) -> None:
+    runtime = _build_runtime_with_relational_semantic_models(tmp_path)
+    app = _create_runtime_app(runtime)
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/runtime/v1/sql/query",
+        json={
+            "query_scope": "semantic",
+            "query": (
+                "SELECT o.region "
+                "FROM commerce_performance AS o "
+                "JOIN other_model AS x ON o.region = x.region"
+            ),
+        },
+    )
+
+    assert response.status_code == 400
+    detail = response.json()["detail"]
+    assert "does not support JOIN clauses" in detail
+    assert "governed relationships" in detail
+    assert "dataset SQL scope" in detail
 
 
 def test_runtime_host_api_serves_ui_when_feature_enabled(tmp_path: Path) -> None:
@@ -1190,6 +1740,7 @@ def test_runtime_host_api_creates_runtime_managed_resources_and_exposes_manageme
     connector_sql = client.post(
         "/api/runtime/v1/sql/query",
         json={
+            "query_scope": "source",
             "query": "SELECT COUNT(*) AS row_count FROM orders_enriched",
             "connection_name": "runtime_demo",
         },
@@ -1525,6 +2076,7 @@ def test_runtime_host_api_sqlite_persists_runtime_managed_resources_across_resta
         connector_sql = restarted_client.post(
             "/api/runtime/v1/sql/query",
             json={
+                "query_scope": "source",
                 "query": "SELECT COUNT(*) AS row_count FROM orders_enriched",
                 "connection_name": "runtime_demo",
             },

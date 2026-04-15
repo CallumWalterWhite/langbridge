@@ -655,7 +655,6 @@ def _build_clarifying_question(signals: RouteSignals, question: str) -> str:
         return (
             "To move forward, please specify "
             + " and ".join(missing)
-            + ", for example 'fund performance by region for 2024 Q1'."
         )
     return (
         "Could you provide a bit more detail so I can plan safely? "

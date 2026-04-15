@@ -213,6 +213,7 @@ class SupervisorOrchestrator:
                 "asset": "",
                 "asset_type": None,
                 "analysis_path": None,
+                "query_scope": None,
                 "execution_mode": None,
                 "result": {},
                 "visualization": None,
@@ -378,6 +379,7 @@ class SupervisorOrchestrator:
             "analyst_outcome": analyst_result.outcome.model_dump(mode="json") if analyst_result.outcome else None,
             "dialect": analyst_result.dialect,
             "analysis_path": analyst_result.analysis_path,
+            "query_scope": analyst_result.query_scope.value if analyst_result.query_scope is not None else None,
             "execution_mode": analyst_result.execution_mode,
             "asset_type": analyst_result.asset_type,
             "asset_name": analyst_result.asset_name,
@@ -439,6 +441,7 @@ class SupervisorOrchestrator:
             "asset": analyst_result.asset_name,
             "asset_type": analyst_result.asset_type,
             "analysis_path": analyst_result.analysis_path,
+            "query_scope": analyst_result.query_scope.value if analyst_result.query_scope is not None else None,
             "execution_mode": analyst_result.execution_mode,
             "result": data_payload,
             "visualization": visualization,
@@ -1054,6 +1057,7 @@ class SupervisorOrchestrator:
     ) -> Dict[str, Any]:
         summary: Dict[str, Any] = {
             "analysis_path": analyst_result.analysis_path,
+            "query_scope": analyst_result.query_scope.value if analyst_result.query_scope is not None else None,
             "execution_mode": analyst_result.execution_mode,
             "asset_type": analyst_result.asset_type,
             "asset_name": analyst_result.asset_name,
@@ -1543,6 +1547,7 @@ class SupervisorOrchestrator:
             "analyst_outcome": analyst_result.outcome.model_dump(mode="json") if analyst_result.outcome else None,
             "dialect": analyst_result.dialect,
             "analysis_path": analyst_result.analysis_path,
+            "query_scope": analyst_result.query_scope.value if analyst_result.query_scope is not None else None,
             "execution_mode": analyst_result.execution_mode,
             "asset_type": analyst_result.asset_type,
             "asset_name": analyst_result.asset_name,
@@ -1582,6 +1587,7 @@ class SupervisorOrchestrator:
             "asset": analyst_result.asset_name,
             "asset_type": analyst_result.asset_type,
             "analysis_path": analyst_result.analysis_path,
+            "query_scope": analyst_result.query_scope.value if analyst_result.query_scope is not None else None,
             "execution_mode": analyst_result.execution_mode,
             "result": {},
             "visualization": None,
@@ -1594,6 +1600,7 @@ class SupervisorOrchestrator:
     def _build_empty_analyst_response(*, error_message: str) -> AnalystQueryResponse:
         return AnalystQueryResponse(
             analysis_path="dataset",
+            query_scope=None,
             execution_mode="federated",
             asset_type="dataset",
             asset_id="",

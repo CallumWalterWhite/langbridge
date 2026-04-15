@@ -425,6 +425,10 @@ export function enrichDashboardBuilderResult(response) {
     rowCount: rows.length,
     metadata: Array.isArray(response?.metadata) ? response.metadata : [],
     generated_sql: response?.generated_sql || "",
+    federation_diagnostics:
+      response?.federation_diagnostics && typeof response.federation_diagnostics === "object"
+        ? response.federation_diagnostics
+        : null,
   };
 }
 

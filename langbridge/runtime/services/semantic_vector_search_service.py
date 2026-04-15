@@ -15,6 +15,7 @@ from sqlglot import exp
 from langbridge.connectors.base import ConnectorRuntimeType, get_connector_config_factory
 from langbridge.connectors.base.connector import ManagedVectorDB
 from langbridge.plugins.connectors import VectorDBConnectorFactory
+from langbridge.runtime import settings
 from langbridge.runtime.embeddings import EmbeddingProvider
 from langbridge.runtime.execution.federated_query_tool import FederatedQueryTool
 from langbridge.runtime.models import (
@@ -22,11 +23,13 @@ from langbridge.runtime.models import (
     SemanticVectorIndexStatus,
     SemanticVectorStoreTarget,
 )
+from langbridge.runtime.models.llm import LLMConnectionSecret
 from langbridge.runtime.ports import (
     ConnectorMetadataProvider,
     CredentialProvider,
     DatasetCatalogStore,
     DatasetMetadataProvider,
+    LLMConnectionStore,
     SemanticModelMetadataProvider,
     SemanticVectorIndexStore,
 )
@@ -52,6 +55,14 @@ class SemanticVectorSearchHit:
 
 
 class SemanticVectorSearchService:
+    @staticmethod
+    def _normalize_timestamp(value: datetime | None) -> datetime | None:
+        if value is None:
+            return None
+        if value.tzinfo is None or value.utcoffset() is None:
+            return value.replace(tzinfo=timezone.utc)
+        return value.astimezone(timezone.utc)
+
     def __init__(
         self,
         *,
@@ -63,6 +74,7 @@ class SemanticVectorSearchService:
         dataset_provider: DatasetMetadataProvider | None = None,
         connector_provider: ConnectorMetadataProvider | None = None,
         credential_provider: CredentialProvider | None = None,
+        llm_connection_store: LLMConnectionStore = None,
         embedding_provider: EmbeddingProvider | None = None,
     ) -> None:
         self._dataset_repository = dataset_repository
@@ -72,8 +84,9 @@ class SemanticVectorSearchService:
         self._dataset_provider = dataset_provider
         self._connector_provider = connector_provider
         self._credential_provider = credential_provider
-        self._embedding_provider = embedding_provider
         self._logger = logger
+        self._embedding_provider = embedding_provider
+        self._llm_connection_store = llm_connection_store
         self._vector_factory = VectorDBConnectorFactory()
         self._dataset_execution_resolver = DatasetExecutionResolver(
             dataset_repository=dataset_repository,
@@ -84,7 +97,7 @@ class SemanticVectorSearchService:
         return self.refresh_unavailable_reason() is None
 
     def refresh_unavailable_reason(self) -> str | None:
-        if self._embedding_provider is None:
+        if self._embedding_provider is None and self._llm_connection_store is None: # default embedding provider can be created if llm connection repository is available
             return "Semantic vector refresh requires an embedding provider."
         if self._federated_query_tool is None:
             return "Semantic vector refresh requires a federated query tool."
@@ -102,7 +115,7 @@ class SemanticVectorSearchService:
         semantic_model_id: uuid.UUID | None = None,
         force: bool = False,
     ) -> list[SemanticVectorIndexMetadata]:
-        embedder = embedding_provider or self._embedding_provider
+        embedder = embedding_provider or self._embedding_provider or (await self._create_embedding_provider_with_default_llm_connection())
         if embedder is None:
             raise ExecutionValidationError(
                 "Semantic vector refresh requires an embedding provider."
@@ -133,6 +146,8 @@ class SemanticVectorSearchService:
                 dataset_name=model_record.name or f"semantic_model_{model_record.id.hex[:8]}",
                 semantic_model=semantic_model,
                 raw_datasets_payload=raw_datasets,
+                ignore_non_syncd_datasets=True, # avoid blocking refresh if some datasets are not yet synced, since we'll only attempt to refresh indexes for dimensions of already synced datasets
+                #TODO: need to implement task dependencies and only refresh indexes for dimensions of datasets that have been synced in the same refresh run, to ensure indexes are only refreshed when their source data is ready
             )
             dimensions_by_key = {
                 (dataset_key, dimension.name): dimension
@@ -171,7 +186,52 @@ class SemanticVectorSearchService:
         embedding_provider: EmbeddingProvider | None = None,
         top_k: int = 5,
     ) -> list[SemanticVectorSearchHit]:
-        embedder = embedding_provider or self._embedding_provider
+        return await self._search_index_records(
+            workspace_id=workspace_id,
+            semantic_model_id=semantic_model_id,
+            queries=queries,
+            embedding_provider=embedding_provider,
+            top_k=top_k,
+            dataset_key=None,
+            dimension_name=None,
+            max_hits_per_index=1,
+        )
+
+    async def search_dimension(
+        self,
+        *,
+        workspace_id: uuid.UUID,
+        semantic_model_id: uuid.UUID,
+        dataset_key: str,
+        dimension_name: str,
+        queries: Sequence[str],
+        embedding_provider: EmbeddingProvider | None = None,
+        top_k: int = 5,
+    ) -> list[SemanticVectorSearchHit]:
+        return await self._search_index_records(
+            workspace_id=workspace_id,
+            semantic_model_id=semantic_model_id,
+            queries=queries,
+            embedding_provider=embedding_provider,
+            top_k=top_k,
+            dataset_key=dataset_key,
+            dimension_name=dimension_name,
+            max_hits_per_index=max(1, int(top_k)),
+        )
+
+    async def _search_index_records(
+        self,
+        *,
+        workspace_id: uuid.UUID,
+        semantic_model_id: uuid.UUID,
+        queries: Sequence[str],
+        embedding_provider: EmbeddingProvider | None = None,
+        top_k: int,
+        dataset_key: str | None,
+        dimension_name: str | None,
+        max_hits_per_index: int,
+    ) -> list[SemanticVectorSearchHit]:
+        embedder = embedding_provider or self._embedding_provider or (await self._create_embedding_provider_with_default_llm_connection())
         if embedder is None or top_k <= 0:
             return []
 
@@ -183,6 +243,10 @@ class SemanticVectorSearchService:
             workspace_id=workspace_id,
             semantic_model_id=semantic_model_id,
         )
+        if dataset_key is not None:
+            index_records = [record for record in index_records if record.dataset_key == dataset_key]
+        if dimension_name is not None:
+            index_records = [record for record in index_records if record.dimension_name == dimension_name]
         if not index_records:
             return []
 
@@ -213,10 +277,13 @@ class SemanticVectorSearchService:
                 )
                 continue
 
-            best_hit: SemanticVectorSearchHit | None = None
+            hits_by_match_key: dict[str, SemanticVectorSearchHit] = {}
             for query_text, embedding in zip(cleaned_queries, embeddings):
                 try:
-                    search_results = await vector_store.search(embedding, top_k=1)
+                    search_results = await vector_store.search(
+                        embedding,
+                        top_k=max(1, int(max_hits_per_index)),
+                    )
                 except Exception as exc:
                     self._logger.warning(
                         "Semantic vector search failed for index %s: %s",
@@ -226,24 +293,31 @@ class SemanticVectorSearchService:
                     break
                 if not search_results:
                     continue
-                result = search_results[0]
-                metadata = dict(result.get("metadata") or {})
-                matched_value = str(metadata.get("value") or "").strip()
-                if not matched_value:
-                    continue
-                candidate = SemanticVectorSearchHit(
-                    index_id=record.id,
-                    semantic_model_id=record.semantic_model_id,
-                    dataset_key=record.dataset_key,
-                    dimension_name=record.dimension_name,
-                    matched_value=matched_value,
-                    score=float(result.get("score") or 0.0),
-                    source_text=query_text,
-                )
-                if best_hit is None or candidate.score > best_hit.score:
-                    best_hit = candidate
-            if best_hit is not None:
-                hits.append(best_hit)
+                for result in search_results:
+                    metadata = dict(result.get("metadata") or {})
+                    matched_value = str(metadata.get("value") or "").strip()
+                    if not matched_value:
+                        continue
+                    candidate = SemanticVectorSearchHit(
+                        index_id=record.id,
+                        semantic_model_id=record.semantic_model_id,
+                        dataset_key=record.dataset_key,
+                        dimension_name=record.dimension_name,
+                        matched_value=matched_value,
+                        score=float(result.get("score") or 0.0),
+                        source_text=query_text,
+                    )
+                    match_key = str(result.get("id") or matched_value).strip().lower()
+                    prior = hits_by_match_key.get(match_key)
+                    if prior is None or candidate.score > prior.score:
+                        hits_by_match_key[match_key] = candidate
+            hits.extend(
+                sorted(
+                    hits_by_match_key.values(),
+                    key=lambda item: item.score,
+                    reverse=True,
+                )[: max(1, int(max_hits_per_index))]
+            )
 
         hits.sort(key=lambda item: item.score, reverse=True)
         return hits[:top_k]
@@ -290,6 +364,14 @@ class SemanticVectorSearchService:
                 if not dimension.vector or not dimension.vector.enabled:
                     continue
                 desired_key = (dataset_key, dimension.name)
+                if desired_key in desired_keys:
+                    self._logger.warning(
+                        "Skipping duplicate semantic vector index definition for %s.%s in semantic model %s.",
+                        dataset_key,
+                        dimension.name,
+                        semantic_model_record.id,
+                    )
+                    continue
                 desired_keys.add(desired_key)
                 prior = existing_by_key.get(desired_key)
                 candidate = await self._build_index_metadata(
@@ -299,7 +381,9 @@ class SemanticVectorSearchService:
                     dimension=dimension,
                     prior=prior,
                 )
-                synced.append(await store.save(candidate))
+                saved = await store.save(candidate)
+                existing_by_key[desired_key] = saved
+                synced.append(saved)
 
         for stale in existing:
             if (stale.dataset_key, stale.dimension_name) in desired_keys:
@@ -618,7 +702,7 @@ class SemanticVectorSearchService:
                 ConnectorRuntimeType.FAISS
             )
             return await connector_class.create_managed_instance(
-                {"index_name": index_metadata.vector_index_name},
+                {"index_name": index_metadata.vector_index_name, "location": settings.runtime_settings.MANAGED_VECTOR_FAISS_DB_DIR},
                 logger=self._logger,
             )
 
@@ -774,6 +858,29 @@ class SemanticVectorSearchService:
             and index.last_refreshed_at is not None
             and int(index.indexed_value_count or 0) > 0
         ]
+        
+    async def _create_embedding_provider_with_default_llm_connection(
+        self
+    ):
+        if self._llm_connection_store is None:
+            raise ExecutionValidationError(
+                "LLM connection repository is required to resolve default LLM connection for embedding provider."
+            )
+        
+        llm_connections: list[LLMConnectionSecret] = await self._llm_connection_store.list_llm_connections()
+        if not llm_connections:
+            raise ExecutionValidationError(
+                "No LLM connections are available to resolve default embedding provider."
+            )
+        
+        default_connection = next((conn for conn in llm_connections if conn.default), None)
+        if default_connection is None:
+            raise ExecutionValidationError(
+                "No default LLM connection is configured to resolve default embedding provider."
+            )
+            
+        return EmbeddingProvider.from_llm_connection(default_connection)
+            
 
     @staticmethod
     def _load_model(content_yaml: str) -> SemanticModel:
@@ -852,13 +959,16 @@ class SemanticVectorSearchService:
 
     @staticmethod
     def _should_refresh(index_metadata: SemanticVectorIndexMetadata) -> bool:
-        if index_metadata.last_refreshed_at is None:
+        last_refreshed_at = SemanticVectorSearchService._normalize_timestamp(
+            index_metadata.last_refreshed_at
+        )
+        if last_refreshed_at is None:
             return True
         interval_seconds = index_metadata.refresh_interval_seconds
         if interval_seconds is None or interval_seconds <= 0:
             return False
         return datetime.now(timezone.utc) >= (
-            index_metadata.last_refreshed_at + timedelta(seconds=interval_seconds)
+            last_refreshed_at + timedelta(seconds=interval_seconds)
         )
 
     def _require_vector_index_store(self) -> SemanticVectorIndexStore:

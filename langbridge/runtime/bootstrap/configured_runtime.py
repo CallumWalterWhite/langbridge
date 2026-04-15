@@ -111,6 +111,7 @@ from langbridge.runtime.services.runtime_host import (
     RuntimeProviders,
     RuntimeServices,
 )
+from langbridge.runtime.services.run_streams import RuntimeRunStreamRegistry
 from langbridge.connectors.base import (
     ApiConnectorFactory,
     ConnectorSyncStrategy,
@@ -123,6 +124,7 @@ from langbridge.connectors.base import (
 from langbridge.runtime.services.semantic_query_execution_service import (
     SemanticQueryExecutionService,
 )
+from langbridge.runtime.services.semantic_sql_query_service import SemanticSqlQueryService
 from langbridge.runtime.services.semantic_vector_search_service import (
     SemanticVectorSearchService,
 )
@@ -136,6 +138,7 @@ from langbridge.semantic.loader import (
 )
 from langbridge.semantic.model import SemanticModel
 from langbridge.semantic.query import SemanticQuery
+from langbridge.semantic.query.resolver import MetricRef, SemanticModelResolver
 from langbridge.runtime.utils.lineage import stable_payload_hash
 
 
@@ -343,6 +346,7 @@ class ConfiguredLocalRuntimeHost(RuntimeHost):
         secret_provider_registry: SecretProviderRegistry,
         thread_repository: ThreadStore,
         thread_message_repository: ThreadMessageStore,
+        run_streams: RuntimeRunStreamRegistry | None = None,
         persistence_controller: _ConfiguredRuntimePersistenceController | None = None,
         owns_runtime_resources: bool = True,
     ) -> None:
@@ -365,6 +369,7 @@ class ConfiguredLocalRuntimeHost(RuntimeHost):
         self._api_connector_factory = ApiConnectorFactory()
         self._thread_repository = thread_repository
         self._thread_message_repository = thread_message_repository
+        self._run_streams = run_streams or RuntimeRunStreamRegistry()
         self._persistence_controller = persistence_controller
         self._owns_runtime_resources = owns_runtime_resources
         self.context = context
@@ -410,6 +415,7 @@ class ConfiguredLocalRuntimeHost(RuntimeHost):
             secret_provider_registry=self._secret_provider_registry,
             thread_repository=self._thread_repository,
             thread_message_repository=self._thread_message_repository,
+            run_streams=self._run_streams,
             persistence_controller=self._persistence_controller,
             owns_runtime_resources=False,
         )
@@ -417,6 +423,8 @@ class ConfiguredLocalRuntimeHost(RuntimeHost):
     async def aclose(self) -> None:
         if self._owns_runtime_resources and self._persistence_controller is not None:
             await self._persistence_controller.aclose()
+        if self._owns_runtime_resources:
+            await self._run_streams.aclose()
         await self._runtime_host.aclose()
 
     def close(self) -> None:
@@ -530,6 +538,9 @@ class ConfiguredLocalRuntimeHost(RuntimeHost):
 
     async def query_semantic(self, *args: Any, **kwargs: Any) -> Any:
         return await self._applications.semantic.query_semantic(*args, **kwargs)
+
+    async def query_sql(self, *, request) -> dict[str, Any]:
+        return await self._applications.sql.query_sql(request=request)
 
     async def execute_sql(self, *, request) -> dict[str, Any]:
         return await self._applications.sql.execute_sql(request=request)
@@ -774,6 +785,34 @@ class ConfiguredLocalRuntimeHost(RuntimeHost):
             agent_name=agent_name,
             thread_id=thread_id,
             title=title,
+        )
+
+    def ask_agent_stream(
+        self,
+        *,
+        prompt: str,
+        agent_name: str | None = None,
+        thread_id: uuid.UUID | None = None,
+        title: str | None = None,
+    ):
+        return self._applications.agents.ask_agent_stream(
+            prompt=prompt,
+            agent_name=agent_name,
+            thread_id=thread_id,
+            title=title,
+        )
+
+    async def stream_run(
+        self,
+        *,
+        run_id: uuid.UUID,
+        after_sequence: int = 0,
+        heartbeat_interval: float = 10.0,
+    ):
+        return await self._applications.runs.stream_run(
+            run_id=run_id,
+            after_sequence=after_sequence,
+            heartbeat_interval=heartbeat_interval,
         )
 
     async def create_thread(
@@ -1148,17 +1187,41 @@ class ConfiguredLocalRuntimeHost(RuntimeHost):
         if "." in value:
             return value
 
-        matches: list[str] = []
+        matches: list[tuple[str, str]] = []
         for semantic_model in semantic_models:
-            for dataset_name, dataset in semantic_model.semantic_model.datasets.items():
-                dimension_names = {dimension.name for dimension in (dataset.dimensions or [])}
-                measure_names = {measure.name for measure in (dataset.measures or [])}
-                if value in dimension_names or value in measure_names:
-                    matches.append(f"{dataset_name}.{value}")
+            model = semantic_model.semantic_model
+            if model is None:
+                continue
+            resolver = SemanticModelResolver(model)
+            try:
+                dimension_ref = resolver.resolve_dimension(value)
+            except SemanticModelError:
+                dimension_ref = None
+            else:
+                matches.append(
+                    (
+                        f"{dimension_ref.dataset}.{dimension_ref.column}",
+                        "dimension",
+                    )
+                )
+            try:
+                measure_or_metric_ref = resolver.resolve_measure_or_metric(value)
+            except SemanticModelError:
+                measure_or_metric_ref = None
+            else:
+                if isinstance(measure_or_metric_ref, MetricRef):
+                    matches.append((measure_or_metric_ref.key, "metric"))
+                else:
+                    matches.append(
+                        (
+                            f"{measure_or_metric_ref.dataset}.{measure_or_metric_ref.column}",
+                            "measure",
+                        )
+                    )
 
         unique_matches = list(dict.fromkeys(matches))
         if len(unique_matches) == 1:
-            return unique_matches[0]
+            return unique_matches[0][0]
         if not unique_matches:
             raise ValueError(
                 f"Semantic member '{value}' was not found in the selected semantic models."
@@ -2495,6 +2558,7 @@ class ConfiguredLocalRuntimeHostFactory:
                     model=llm_connection.model,
                     configuration=dict(llm_connection.configuration or {}),
                     is_active=True,
+                    default=bool(llm_connection.default),
                     workspace_id=context.workspace_id,
                     created_at=now,
                     updated_at=now,
@@ -2761,6 +2825,35 @@ class ConfiguredLocalRuntimeHostFactory:
                 raw_values=normalized.get("semantic_model_ids"),
                 by_name=semantic_models,
                 by_id={record.id: record for record in semantic_models.values()},
+            )
+        if "preferred_dataset_id" in normalized and normalized.get("preferred_dataset_id") is not None:
+            preferred_dataset_ids = ConfiguredLocalRuntimeHostFactory._normalize_named_uuid_refs(
+                agent_name=agent_name,
+                field_name=f"tool '{tool_name}' preferred_dataset_id",
+                raw_values=[normalized.get("preferred_dataset_id")],
+                by_name=datasets,
+                by_id={record.id: record for record in datasets.values()},
+            )
+            normalized["preferred_dataset_id"] = (
+                preferred_dataset_ids[0]
+                if preferred_dataset_ids
+                else None
+            )
+        if (
+            "preferred_semantic_model_id" in normalized
+            and normalized.get("preferred_semantic_model_id") is not None
+        ):
+            preferred_semantic_model_ids = ConfiguredLocalRuntimeHostFactory._normalize_named_uuid_refs(
+                agent_name=agent_name,
+                field_name=f"tool '{tool_name}' preferred_semantic_model_id",
+                raw_values=[normalized.get("preferred_semantic_model_id")],
+                by_name=semantic_models,
+                by_id={record.id: record for record in semantic_models.values()},
+            )
+            normalized["preferred_semantic_model_id"] = (
+                preferred_semantic_model_ids[0]
+                if preferred_semantic_model_ids
+                else None
             )
         return normalized
 
@@ -3153,6 +3246,7 @@ class ConfiguredLocalRuntimeHostFactory:
             dataset_provider=dataset_provider,
             connector_provider=connector_provider,
         )
+        semantic_sql_query_service = SemanticSqlQueryService()
         sql_query_service = SqlQueryService(
             sql_job_result_artifact_store=None,
             dataset_repository=dataset_repository,
@@ -3205,6 +3299,7 @@ class ConfiguredLocalRuntimeHostFactory:
                 dataset_query=dataset_query_service,
                 dataset_sync=dataset_sync_service,
                 agent_execution=agent_execution_service,
+                semantic_sql_query=semantic_sql_query_service,
             ),
         ), thread_repository, thread_message_repository
 

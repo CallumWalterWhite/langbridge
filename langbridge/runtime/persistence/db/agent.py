@@ -25,6 +25,7 @@ class LLMConnection(Base):
     model = Column(String(50))
     configuration = Column(JSON)
     is_active = Column(Boolean, default=True)
+    default = Column(Boolean, default=False)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     workspace_id = Column(UUID(as_uuid=True), ForeignKey("workspaces.id"), nullable=False, index=True)

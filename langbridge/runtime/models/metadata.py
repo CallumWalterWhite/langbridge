@@ -1,6 +1,6 @@
 
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Literal
 
@@ -76,6 +76,14 @@ def _normalize_enum_value(
     elif case == "upper":
         raw_value = raw_value.upper()
     return enum_cls(raw_value)
+
+
+def _normalize_datetime_value(value: datetime | None) -> datetime | None:
+    if value is None:
+        return None
+    if value.tzinfo is None or value.utcoffset() is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
 
 
 class ConnectorMetadata(RuntimeModel):
@@ -523,3 +531,14 @@ class SemanticVectorIndexMetadata(RuntimeModel):
     last_refresh_error: str | None = None
     created_at: datetime | None = None
     updated_at: datetime | None = None
+
+    @field_validator(
+        "last_refresh_started_at",
+        "last_refreshed_at",
+        "created_at",
+        "updated_at",
+        mode="after",
+    )
+    @classmethod
+    def _validate_datetime_fields(cls, value: datetime | None) -> datetime | None:
+        return _normalize_datetime_value(value)

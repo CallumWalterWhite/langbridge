@@ -47,6 +47,7 @@ class AgentExecutionResult:
     response: dict[str, Any]
     thread: RuntimeThread
     user_message: RuntimeThreadMessage
+    assistant_message: RuntimeThreadMessage
     agent_definition: RuntimeAgentDefinition
 
 
@@ -127,8 +128,9 @@ class AgentExecutionService:
         )
         response = self._ensure_response_defaults(response, user_query=user_query)
         self._persist_supervisor_state(thread, response)
+        self._clear_active_run_metadata(thread)
 
-        self._record_assistant_message(
+        assistant_message = self._record_assistant_message(
             thread=thread,
             user_message=user_message,
             response=response,
@@ -145,12 +147,14 @@ class AgentExecutionService:
             response=response,
             thread=thread,
             user_message=user_message,
+            assistant_message=assistant_message,
             agent_definition=agent_definition,
         )
 
     async def reset_thread_after_failure(self, *, thread_id: uuid.UUID) -> RuntimeThread | None:
         thread = await self._thread_repository.get_by_id(thread_id)
         if thread is not None:
+            self._clear_active_run_metadata(thread)
             self._set_thread_awaiting_user_input(thread)
             thread.updated_at = datetime.now(timezone.utc)
             await self._thread_repository.save(thread)
@@ -240,6 +244,13 @@ class AgentExecutionService:
         thread.metadata = metadata
 
     @staticmethod
+    def _clear_active_run_metadata(thread: RuntimeThread) -> None:
+        metadata = dict(thread.metadata or {})
+        metadata.pop("active_run_id", None)
+        metadata.pop("active_run_type", None)
+        thread.metadata = metadata
+
+    @staticmethod
     def _has_active_clarification_state(payload: Any) -> bool:
         if not isinstance(payload, dict):
             return False
@@ -305,7 +316,7 @@ class AgentExecutionService:
         user_message: RuntimeThreadMessage,
         response: dict[str, Any],
         agent_id: uuid.UUID,
-    ) -> None:
+    ) -> RuntimeThreadMessage:
         assistant_message_id = uuid.uuid4()
         assistant_message = RuntimeThreadMessage(
             id=assistant_message_id,
@@ -325,6 +336,7 @@ class AgentExecutionService:
         thread.last_message_id = assistant_message_id
         self._set_thread_awaiting_user_input(thread)
         thread.updated_at = datetime.now(timezone.utc)
+        return assistant_message
 
     @staticmethod
     def _ensure_response_defaults(response: dict[str, Any], *, user_query: str) -> dict[str, Any]:

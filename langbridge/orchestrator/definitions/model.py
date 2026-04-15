@@ -79,6 +79,13 @@ class ToolType(str, Enum):
     doc = "doc"
     custom = "custom"
 
+
+class AnalystQueryScopePolicy(str, Enum):
+    semantic_only = "semantic_only"
+    semantic_preferred = "semantic_preferred"
+    dataset_only = "dataset_only"
+    dataset_preferred = "dataset_preferred"
+
 class SqlToolConfig(BaseModel):
     dataset_ids: list[uuid.UUID] = Field(
         default_factory=list,
@@ -88,15 +95,52 @@ class SqlToolConfig(BaseModel):
         default_factory=list,
         description="Dataset-backed semantic model ids available to the analyst.",
     )
+    query_scope_policy: AnalystQueryScopePolicy = Field(
+        default=AnalystQueryScopePolicy.semantic_preferred,
+        description="Policy that controls whether semantic or dataset scope is attempted first.",
+    )
+    allow_source_scope: bool = Field(
+        default=False,
+        description="Allow explicit source-scope querying when expert/debug bindings add that scope.",
+    )
+    preferred_dataset_id: uuid.UUID | None = Field(
+        default=None,
+        description="Optional preferred dataset id used as a tie-breaker inside dataset scope.",
+    )
+    preferred_semantic_model_id: uuid.UUID | None = Field(
+        default=None,
+        description="Optional preferred semantic model id used as a tie-breaker inside semantic scope.",
+    )
 
     @model_validator(mode="after")
     def _validate_assets(self) -> "SqlToolConfig":
         has_datasets = bool(self.dataset_ids)
         has_semantic_models = bool(self.semantic_model_ids)
-        if has_datasets == has_semantic_models:
+        if not has_datasets and not has_semantic_models:
             raise ValueError(
-                "SQL tool config must define either dataset_ids or semantic_model_ids."
+                "SQL tool config must define at least one dataset_id or semantic_model_id."
             )
+        if (
+            self.query_scope_policy == AnalystQueryScopePolicy.semantic_only
+            and not has_semantic_models
+        ):
+            raise ValueError(
+                "SQL tool config with query_scope_policy='semantic_only' must define semantic_model_ids."
+            )
+        if (
+            self.query_scope_policy == AnalystQueryScopePolicy.dataset_only
+            and not has_datasets
+        ):
+            raise ValueError(
+                "SQL tool config with query_scope_policy='dataset_only' must define dataset_ids."
+            )
+        if self.preferred_dataset_id is not None and self.preferred_dataset_id not in self.dataset_ids:
+            raise ValueError("preferred_dataset_id must be included in dataset_ids.")
+        if (
+            self.preferred_semantic_model_id is not None
+            and self.preferred_semantic_model_id not in self.semantic_model_ids
+        ):
+            raise ValueError("preferred_semantic_model_id must be included in semantic_model_ids.")
         return self
 
 class ToolBinding(BaseModel):

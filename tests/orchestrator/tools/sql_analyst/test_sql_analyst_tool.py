@@ -9,11 +9,13 @@ from langbridge.orchestrator.tools.sql_analyst.interfaces import (
     AnalyticalColumn,
     AnalyticalContext,
     AnalyticalDatasetBinding,
+    AnalyticalQueryExecutionResult,
     AnalystOutcomeStatus,
     AnalystQueryRequest,
     QueryResult,
 )
 from langbridge.orchestrator.tools.sql_analyst.tool import SqlAnalystTool
+from langbridge.runtime.models import SqlQueryScope
 from langbridge.runtime.services.semantic_vector_search_service import (
     SemanticVectorSearchHit,
 )
@@ -25,35 +27,54 @@ class DummyLLM:
         self.prompts: list[str] = []
 
     def complete(self, prompt: str, *, temperature: float = 0.0, max_tokens: int | None = None) -> str:
-        _ = (prompt, temperature, max_tokens)
+        _ = (temperature, max_tokens)
         self.prompts.append(prompt)
         return self._sql
 
 
-class RecordingFederatedExecutor:
-    def __init__(self, rows: list[tuple[Any, ...]] | None = None) -> None:
-        self.calls: list[dict[str, Any]] = []
-        self._rows = rows or [(42,)]
-
-    async def execute_sql(
+class RecordingQueryExecutor:
+    def __init__(
         self,
         *,
-        sql: str,
-        dialect: str,
-        max_rows: int | None = None,
-    ) -> QueryResult:
-        self.calls.append({"sql": sql, "dialect": dialect, "max_rows": max_rows})
-        return QueryResult(
-            columns=["value"],
-            rows=self._rows,
-            rowcount=len(self._rows),
-            elapsed_ms=5,
-            source_sql=sql,
+        rows: list[tuple[Any, ...]] | None = None,
+        apply_limit: bool = True,
+    ) -> None:
+        self.calls: list[dict[str, Any]] = []
+        self._rows = rows or [(42,)]
+        self._apply_limit = apply_limit
+
+    async def execute_query(
+        self,
+        *,
+        query: str,
+        query_dialect: str,
+        requested_limit: int | None = None,
+    ) -> AnalyticalQueryExecutionResult:
+        self.calls.append(
+            {
+                "query": query,
+                "query_dialect": query_dialect,
+                "requested_limit": requested_limit,
+            }
+        )
+        executable_query = query
+        if self._apply_limit and requested_limit is not None:
+            executable_query = f"{query} LIMIT {requested_limit}"
+        return AnalyticalQueryExecutionResult(
+            executable_query=executable_query,
+            result=QueryResult(
+                columns=["value"],
+                rows=self._rows,
+                rowcount=len(self._rows),
+                elapsed_ms=5,
+                source_sql=executable_query,
+            ),
         )
 
 
 def _dataset_context() -> AnalyticalContext:
     return AnalyticalContext(
+        query_scope=SqlQueryScope.dataset,
         asset_type="dataset",
         asset_id="dataset-1",
         asset_name="orders_dataset",
@@ -77,6 +98,7 @@ def _dataset_context() -> AnalyticalContext:
 
 def _semantic_context() -> AnalyticalContext:
     return AnalyticalContext(
+        query_scope=SqlQueryScope.semantic,
         asset_type="semantic_model",
         asset_id="semantic-model-1",
         asset_name="orders_semantic",
@@ -85,7 +107,7 @@ def _semantic_context() -> AnalyticalContext:
             AnalyticalDatasetBinding(
                 dataset_id="dataset-1",
                 dataset_name="orders_dataset",
-                sql_alias="orders",
+                sql_alias="shopify_orders",
                 source_kind="connector",
                 storage_kind="table",
                 columns=[
@@ -129,20 +151,22 @@ class RecordingSemanticVectorSearchService:
         return list(self._hits)
 
 
-def test_sql_analyst_tool_executes_dataset_context_through_federation() -> None:
+def test_sql_analyst_tool_executes_dataset_scope_through_query_executor() -> None:
     llm = DummyLLM("SELECT COUNT(*) AS order_count FROM orders")
-    executor = RecordingFederatedExecutor(rows=[(2,)])
+    executor = RecordingQueryExecutor(rows=[(2,)])
     tool = SqlAnalystTool(
         llm=llm,
         context=_dataset_context(),
-        federated_sql_executor=executor,
+        query_executor=executor,
     )
 
     response = tool.run(AnalystQueryRequest(question="How many orders?"))
 
     assert response.error is None
+    assert response.query_scope == SqlQueryScope.dataset
     assert response.outcome is not None
     assert response.outcome.status == AnalystOutcomeStatus.success
+    assert response.outcome.final_query_scope == SqlQueryScope.dataset
     assert response.analysis_path == "dataset"
     assert response.execution_mode == "federated"
     assert response.asset_name == "orders_dataset"
@@ -150,9 +174,9 @@ def test_sql_analyst_tool_executes_dataset_context_through_federation() -> None:
     assert response.sql_executable == "SELECT COUNT(*) AS order_count FROM orders LIMIT 1000"
     assert executor.calls == [
         {
-            "sql": "SELECT COUNT(*) AS order_count FROM orders LIMIT 1000",
-            "dialect": "postgres",
-            "max_rows": 1000,
+            "query": "SELECT COUNT(*) AS order_count FROM orders",
+            "query_dialect": "postgres",
+            "requested_limit": 1000,
         }
     ]
     assert response.result == QueryResult(
@@ -164,13 +188,13 @@ def test_sql_analyst_tool_executes_dataset_context_through_federation() -> None:
     )
 
 
-def test_sql_analyst_tool_applies_limit_before_federated_execution() -> None:
+def test_sql_analyst_tool_passes_requested_limit_to_dataset_executor() -> None:
     llm = DummyLLM("SELECT order_id FROM orders")
-    executor = RecordingFederatedExecutor()
+    executor = RecordingQueryExecutor()
     tool = SqlAnalystTool(
         llm=llm,
         context=_dataset_context(),
-        federated_sql_executor=executor,
+        query_executor=executor,
     )
 
     response = tool.run(AnalystQueryRequest(question="List orders", limit=10))
@@ -179,13 +203,17 @@ def test_sql_analyst_tool_applies_limit_before_federated_execution() -> None:
     assert response.outcome is not None
     assert response.outcome.status == AnalystOutcomeStatus.success
     assert response.sql_executable == "SELECT order_id FROM orders LIMIT 10"
-    assert executor.calls[0]["sql"] == "SELECT order_id FROM orders LIMIT 10"
-    assert executor.calls[0]["max_rows"] == 10
+    assert executor.calls[0]["requested_limit"] == 10
 
 
-def test_sql_analyst_tool_uses_runtime_semantic_vector_search_hints() -> None:
-    llm = DummyLLM("SELECT COUNT(*) AS order_count FROM orders WHERE orders.country = 'France'")
-    executor = RecordingFederatedExecutor(rows=[(12,)])
+def test_sql_analyst_tool_uses_semantic_first_prompting_and_vector_hints() -> None:
+    llm = DummyLLM(
+        "SELECT country, COUNT(*) AS order_count "
+        "FROM orders_semantic "
+        "WHERE country = 'France' "
+        "GROUP BY country"
+    )
+    executor = RecordingQueryExecutor(rows=[(12,)], apply_limit=False)
     workspace_id = uuid.uuid4()
     semantic_model_id = uuid.uuid4()
     semantic_search = RecordingSemanticVectorSearchService(
@@ -204,7 +232,7 @@ def test_sql_analyst_tool_uses_runtime_semantic_vector_search_hints() -> None:
     tool = SqlAnalystTool(
         llm=llm,
         context=_semantic_context(),
-        federated_sql_executor=executor,
+        query_executor=executor,
         embedder=DummyEmbedder(),
         semantic_vector_search_service=semantic_search,
         semantic_vector_search_workspace_id=workspace_id,
@@ -214,8 +242,11 @@ def test_sql_analyst_tool_uses_runtime_semantic_vector_search_hints() -> None:
     response = tool.run(AnalystQueryRequest(question="How many orders came from the French market?"))
 
     assert response.error is None
+    assert response.query_scope == SqlQueryScope.semantic
+    assert response.selected_semantic_model_id == "semantic-model-1"
     assert response.outcome is not None
     assert response.outcome.status == AnalystOutcomeStatus.success
+    assert response.outcome.final_query_scope == SqlQueryScope.semantic
     assert semantic_search.calls == [
         {
             "workspace_id": workspace_id,
@@ -228,8 +259,19 @@ def test_sql_analyst_tool_uses_runtime_semantic_vector_search_hints() -> None:
             "top_k": 3,
         }
     ]
+    assert "Semantic scope is the default analytical surface for governed business analysis." in llm.prompts[0]
+    assert "- Query the governed semantic model with FROM orders_semantic." in llm.prompts[0]
     assert "Filters to apply: shopify_orders.country = 'France'" in llm.prompts[0]
     assert "shopify_orders.country ~= 'France'" in llm.prompts[0]
-    assert executor.calls[0]["sql"] == (
-        "SELECT COUNT(*) AS order_count FROM orders WHERE orders.country = 'France' LIMIT 1000"
-    )
+    assert executor.calls == [
+        {
+            "query": (
+                "SELECT country, COUNT(*) AS order_count "
+                "FROM orders_semantic "
+                "WHERE country = 'France' "
+                "GROUP BY country"
+            ),
+            "query_dialect": "postgres",
+            "requested_limit": 1000,
+        }
+    ]

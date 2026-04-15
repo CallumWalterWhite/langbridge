@@ -10,6 +10,7 @@ from typing import Any
 import yaml
 from .errors import ExecutionValidationError
 
+from langbridge.federation.models import ExecutionSummary, FederationWorkflow, LogicalPlan, PhysicalPlan
 from langbridge.runtime.services.dataset_execution import (
     DatasetExecutionResolver,
     build_binding_for_dataset,
@@ -33,6 +34,7 @@ from langbridge.runtime.providers import (
     DatasetMetadataProvider,
     SemanticModelMetadataProvider,
 )
+from langbridge.runtime.services.federation_diagnostics import build_runtime_federation_diagnostics
 from langbridge.runtime.settings import runtime_settings as settings
 from langbridge.semantic.loader import (
     SemanticModelError,
@@ -129,6 +131,38 @@ class SemanticQueryExecutionService:
                 if schema_value is not None and "schema_name" not in table_payload:
                     table_payload["schema_name"] = schema_value
         return payload
+
+    @staticmethod
+    def _build_federation_diagnostics(
+        *,
+        workflow: Any,
+        planning_payload: dict[str, Any] | None,
+        execution_payload: dict[str, Any] | None,
+    ):
+        if not isinstance(planning_payload, dict):
+            return None
+        logical_plan_payload = planning_payload.get("logical_plan")
+        physical_plan_payload = planning_payload.get("physical_plan")
+        if not isinstance(logical_plan_payload, dict) or not isinstance(physical_plan_payload, dict):
+            return None
+        logical_plan = LogicalPlan.model_validate(logical_plan_payload)
+        physical_plan = PhysicalPlan.model_validate(physical_plan_payload)
+        execution_summary = (
+            ExecutionSummary.model_validate(execution_payload)
+            if isinstance(execution_payload, dict)
+            else None
+        )
+        normalized_workflow = (
+            workflow
+            if isinstance(workflow, FederationWorkflow)
+            else FederationWorkflow.model_validate(workflow)
+        )
+        return build_runtime_federation_diagnostics(
+            workflow=normalized_workflow,
+            logical_plan=logical_plan,
+            physical_plan=physical_plan,
+            execution=execution_summary,
+        )
 
     @staticmethod
     def build_widget_query_payload(
@@ -355,6 +389,11 @@ class SemanticQueryExecutionService:
         data_payload = execution.get("rows", [])
         if not isinstance(data_payload, list):
             raise ExecutionValidationError("Federated query execution returned an invalid row payload.")
+        federation_diagnostics = self._build_federation_diagnostics(
+            workflow=workflow_payload,
+            planning_payload=execution.get("planning") if isinstance(execution, dict) else None,
+            execution_payload=execution.get("execution") if isinstance(execution, dict) else None,
+        )
 
         response = UnifiedSemanticQueryResponse(
             id=uuid.uuid4(),
@@ -364,6 +403,7 @@ class SemanticQueryExecutionService:
             data=data_payload,
             annotations=plan.annotations,
             metadata=plan.metadata,
+            federation_diagnostics=federation_diagnostics,
         )
         return UnifiedQueryExecutionResult(response=response, compiled_sql=plan.sql)
 
@@ -420,6 +460,11 @@ class SemanticQueryExecutionService:
         rows_payload = execution.get("rows", [])
         if not isinstance(rows_payload, list):
             raise ExecutionValidationError("Dataset-backed semantic query returned an invalid row payload.")
+        federation_diagnostics = self._build_federation_diagnostics(
+            workflow=workflow,
+            planning_payload=execution.get("planning") if isinstance(execution, dict) else None,
+            execution_payload=execution.get("execution") if isinstance(execution, dict) else None,
+        )
 
         response = SemanticQueryResponse(
             id=uuid.uuid4(),
@@ -428,6 +473,7 @@ class SemanticQueryExecutionService:
             data=[row for row in rows_payload if isinstance(row, dict)],
             annotations=plan.annotations,
             metadata=plan.metadata,
+            federation_diagnostics=federation_diagnostics,
         )
         return StandardQueryExecutionResult(response=response, compiled_sql=plan.sql)
 

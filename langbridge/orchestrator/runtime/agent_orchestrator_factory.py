@@ -30,7 +30,11 @@ from langbridge.orchestrator.agents.reasoning.agent import ReasoningAgent
 from langbridge.orchestrator.agents.supervisor.orchestrator import SupervisorOrchestrator
 from langbridge.orchestrator.agents.visual import VisualAgent
 from langbridge.orchestrator.agents.web_search import WebSearchAgent
-from langbridge.orchestrator.definitions import AgentDefinitionModel, ExecutionMode
+from langbridge.orchestrator.definitions import (
+    AgentDefinitionModel,
+    AnalystQueryScopePolicy,
+    ExecutionMode,
+)
 from langbridge.orchestrator.definitions.model import DataAccessPolicy, ToolType
 from langbridge.orchestrator.llm.provider import LLMProvider
 from langbridge.orchestrator.runtime.access_policy import (
@@ -38,17 +42,31 @@ from langbridge.orchestrator.runtime.access_policy import (
     ConnectorAccessPolicyEvaluator,
 )
 from langbridge.orchestrator.runtime.response_formatter import ResponsePresentation
+from langbridge.orchestrator.tools.semantic_search.tool import SemanticSearchTool
 from langbridge.orchestrator.tools.sql_analyst import SqlAnalystTool
 from langbridge.orchestrator.tools.sql_analyst.interfaces import (
     AnalyticalColumn,
     AnalyticalContext,
     AnalyticalDatasetBinding,
     AnalyticalField,
+    AnalyticalQueryExecutionFailure,
+    AnalyticalQueryExecutionResult,
     AnalyticalMetric,
+    AnalystOutcomeStage,
     QueryResult,
 )
+from langbridge.runtime.models import SqlQueryScope
 from langbridge.runtime.settings import runtime_settings
-from langbridge.runtime.utils.sql import normalize_sql_dialect
+from langbridge.runtime.utils.sql import enforce_preview_limit, normalize_sql_dialect
+from langbridge.runtime.services.semantic_query_execution_service import (
+    SemanticQueryExecutionService,
+)
+from langbridge.runtime.services.semantic_sql_query_service import (
+    SemanticSqlQueryService,
+    build_semantic_sql_metadata_columns_by_source,
+    resolve_semantic_sql_projection_value,
+)
+from langbridge.semantic.errors import SemanticSqlError
 from langbridge.federation.models import FederationWorkflow, VirtualDataset
 from langbridge.semantic.loader import load_semantic_model
 from langbridge.semantic.model import Dimension, Measure, Metric, SemanticModel, Table
@@ -61,6 +79,10 @@ class AnalystBinding:
     description: str | None = None
     dataset_ids: list[uuid.UUID] = field(default_factory=list)
     semantic_model_ids: list[uuid.UUID] = field(default_factory=list)
+    query_scope_policy: AnalystQueryScopePolicy = AnalystQueryScopePolicy.semantic_preferred
+    allow_source_scope: bool = False
+    preferred_dataset_id: uuid.UUID | None = None
+    preferred_semantic_model_id: uuid.UUID | None = None
 
 
 @dataclass(slots=True)
@@ -78,6 +100,7 @@ class AgentToolConfig:
 class AnalystToolBuildResult:
     tools: list[SqlAnalystTool]
     access_scope: AnalyticalAccessScope
+    semantic_search_tools_by_asset: dict[str, list[SemanticSearchTool]] = field(default_factory=dict)
 
 
 @dataclass(slots=True)
@@ -87,7 +110,34 @@ class AgentRuntime:
     planning_context: Dict[str, Any] | None
 
 
-class _FederatedSqlExecutor:
+class _SemanticModelProviderAdapter:
+    def __init__(self, store: SemanticModelStore) -> None:
+        self._store = store
+
+    async def get_semantic_model(
+        self,
+        *,
+        workspace_id: uuid.UUID,
+        semantic_model_id: uuid.UUID,
+    ) -> SemanticModelMetadata | None:
+        record = await self._store.get_by_id(semantic_model_id)
+        if record is None or record.workspace_id != workspace_id:
+            return None
+        return record
+
+    async def get_semantic_models(
+        self,
+        *,
+        workspace_id: uuid.UUID,
+        semantic_model_ids: list[uuid.UUID] | None = None,
+    ) -> list[SemanticModelMetadata]:
+        if not semantic_model_ids:
+            return []
+        records = await self._store.get_by_ids(list(semantic_model_ids))
+        return [record for record in records if record.workspace_id == workspace_id]
+
+
+class _DatasetScopeExecutor:
     def __init__(
         self,
         *,
@@ -99,24 +149,56 @@ class _FederatedSqlExecutor:
         self._workflow = workflow
         self._workspace_id = workspace_id
 
-    async def execute_sql(
+    async def execute_query(
         self,
         *,
-        sql: str,
-        dialect: str,
-        max_rows: int | None = None,
-    ) -> QueryResult:
-        execution = await self._federated_query_tool.execute_federated_query(
-            {
-                "workspace_id": self._workspace_id,
-                "query": sql,
-                "dialect": dialect,
-                "workflow": self._workflow,
-            }
-        )
+        query: str,
+        query_dialect: str,
+        requested_limit: int | None = None,
+    ) -> AnalyticalQueryExecutionResult:
+        try:
+            sqlglot.parse_one(query, read="postgres")
+        except sqlglot.ParseError as exc:
+            raise AnalyticalQueryExecutionFailure(
+                stage=AnalystOutcomeStage.query,
+                message=f"Canonical SQL failed to parse: {exc}",
+                original_error=str(exc),
+                recoverable=True,
+            ) from exc
+
+        executable_sql = query
+        if requested_limit:
+            executable_sql, _ = enforce_preview_limit(
+                query,
+                max_rows=requested_limit,
+                dialect="postgres",
+            )
+
+        try:
+            execution = await self._federated_query_tool.execute_federated_query(
+                {
+                    "workspace_id": self._workspace_id,
+                    "query": executable_sql,
+                    "dialect": query_dialect,
+                    "workflow": self._workflow,
+                }
+            )
+        except Exception as exc:
+            raise AnalyticalQueryExecutionFailure(
+                stage=AnalystOutcomeStage.execution,
+                message=f"Execution failed: {exc}",
+                original_error=str(exc),
+                recoverable=self._is_transient_execution_error(str(exc)),
+                metadata={"executable_query": executable_sql},
+            ) from exc
         rows_payload = execution.get("rows", [])
         if not isinstance(rows_payload, list):
-            raise AgentError("Federated SQL execution returned an invalid rows payload.")
+            raise AnalyticalQueryExecutionFailure(
+                stage=AnalystOutcomeStage.execution,
+                message="Federated SQL execution returned an invalid rows payload.",
+                recoverable=False,
+                metadata={"executable_query": executable_sql},
+            )
 
         columns_payload = execution.get("columns", [])
         if isinstance(columns_payload, list) and columns_payload:
@@ -141,17 +223,216 @@ class _FederatedSqlExecutor:
             if isinstance(raw_runtime, int):
                 elapsed_ms = raw_runtime
 
-        return QueryResult(
-            columns=columns,
-            rows=rows,
-            rowcount=len(rows),
-            elapsed_ms=elapsed_ms,
-            source_sql=sql,
+        return AnalyticalQueryExecutionResult(
+            executable_query=executable_sql,
+            result=QueryResult(
+                columns=columns,
+                rows=rows,
+                rowcount=len(rows),
+                elapsed_ms=elapsed_ms,
+                source_sql=executable_sql,
+            ),
         )
+
+    @staticmethod
+    def _is_transient_execution_error(error_message: str) -> bool:
+        normalized = str(error_message or "").lower()
+        transient_markers = (
+            "timeout",
+            "temporarily unavailable",
+            "temporary",
+            "connection reset",
+            "connection aborted",
+            "try again",
+            "rate limit",
+        )
+        return any(marker in normalized for marker in transient_markers)
+
+
+class _SemanticScopeExecutor:
+    def __init__(
+        self,
+        *,
+        workspace_id: uuid.UUID,
+        semantic_model_id: uuid.UUID,
+        semantic_model_name: str,
+        semantic_model: SemanticModel,
+        semantic_query_service: SemanticQueryExecutionService,
+        semantic_sql_service: SemanticSqlQueryService,
+    ) -> None:
+        self._workspace_id = workspace_id
+        self._semantic_model_id = semantic_model_id
+        self._semantic_model_name = semantic_model_name
+        self._semantic_model = semantic_model
+        self._semantic_query_service = semantic_query_service
+        self._semantic_sql_service = semantic_sql_service
+
+    async def execute_query(
+        self,
+        *,
+        query: str,
+        query_dialect: str,
+        requested_limit: int | None = None,
+    ) -> AnalyticalQueryExecutionResult:
+        try:
+            parsed_query = self._semantic_sql_service.parse_query(
+                query=query,
+                query_dialect=query_dialect,
+            )
+        except Exception as exc:
+            raise self._semantic_failure(exc)
+
+        if parsed_query.semantic_model_ref != self._semantic_model_name:
+            raise AnalyticalQueryExecutionFailure(
+                stage=AnalystOutcomeStage.query,
+                message=(
+                    f"Semantic SQL must query the selected semantic model '{self._semantic_model_name}'."
+                ),
+                original_error=str(parsed_query.semantic_model_ref),
+                recoverable=False,
+                metadata={"scope_fallback_eligible": True},
+            )
+
+        try:
+            query_plan = self._semantic_sql_service.build_query_plan(
+                parsed_query=parsed_query,
+                semantic_model=self._semantic_model,
+                requested_limit=requested_limit,
+            )
+        except Exception as exc:
+            raise self._semantic_failure(exc)
+
+        try:
+            execution = await self._semantic_query_service.execute_standard_query(
+                workspace_id=self._workspace_id,
+                semantic_model_id=self._semantic_model_id,
+                semantic_query=query_plan.semantic_query,
+            )
+        except Exception as exc:
+            raise self._semantic_failure(exc)
+
+        dataset_names = set(self._semantic_model.datasets.keys())
+        metadata_columns_by_source = build_semantic_sql_metadata_columns_by_source(
+            execution.response.metadata
+        )
+        rows = [
+            tuple(
+                resolve_semantic_sql_projection_value(
+                    row=row,
+                    projection=projection,
+                    metadata_columns_by_source=metadata_columns_by_source,
+                    dataset_names=dataset_names,
+                )
+                for projection in query_plan.projections
+            )
+            for row in execution.response.data
+            if isinstance(row, dict)
+        ]
+        return AnalyticalQueryExecutionResult(
+            executable_query=execution.compiled_sql,
+            result=QueryResult(
+                columns=[projection.output_name for projection in query_plan.projections],
+                rows=rows,
+                rowcount=len(rows),
+                elapsed_ms=None,
+                source_sql=execution.compiled_sql,
+            ),
+            metadata={"compiled_sql": execution.compiled_sql},
+        )
+
+    def _semantic_failure(self, exc: Exception) -> AnalyticalQueryExecutionFailure:
+        message = str(exc)
+        normalized = message.lower()
+        if isinstance(exc, SemanticSqlError) and exc.category == "parse_error":
+            return AnalyticalQueryExecutionFailure(
+                stage=AnalystOutcomeStage.query,
+                message=message,
+                original_error=message,
+                recoverable=True,
+            )
+        if normalized.startswith("semantic sql parse failed") or "semantic sql query is empty" in normalized:
+            return AnalyticalQueryExecutionFailure(
+                stage=AnalystOutcomeStage.query,
+                message=message,
+                original_error=message,
+                recoverable=True,
+            )
+
+        semantic_failure_kind = self._semantic_failure_kind(exc=exc, normalized_message=normalized)
+        if semantic_failure_kind is not None:
+            return AnalyticalQueryExecutionFailure(
+                stage=AnalystOutcomeStage.query,
+                message=message,
+                original_error=message,
+                recoverable=False,
+                metadata={
+                    "scope_fallback_eligible": True,
+                    "semantic_failure_kind": semantic_failure_kind,
+                },
+            )
+
+        execution_markers = (
+            "invalid row payload",
+            "federated query tool is not configured",
+            "runtime node",
+        )
+        stage = (
+            AnalystOutcomeStage.execution
+            if any(marker in normalized for marker in execution_markers)
+            else AnalystOutcomeStage.query
+        )
+        return AnalyticalQueryExecutionFailure(
+            stage=stage,
+            message=message,
+            original_error=message,
+            recoverable=False,
+        )
+
+    @staticmethod
+    def _semantic_failure_kind(*, exc: Exception, normalized_message: str) -> str | None:
+        if isinstance(exc, SemanticSqlError):
+            if exc.category in {
+                "unsupported_construct",
+                "invalid_grouping",
+                "invalid_filter",
+                "unsupported_expression",
+                "invalid_time_bucket",
+            }:
+                return "unsupported_semantic_sql_shape"
+            if exc.category in {"invalid_member", "ambiguous_member"}:
+                return "semantic_coverage_gap"
+
+        unsupported_shape_markers = (
+            "semantic sql scope does not support",
+            "semantic member columns and",
+            "time buckets in select",
+            "semantic sql group by",
+            "semantic sql order by",
+            "semantic sql like",
+            "semantic sql comparisons must compare",
+            "semantic sql time bucketing",
+            "semantic sql where",
+            "must query the selected semantic model",
+            "must match the selected semantic dimensions and time buckets",
+            "can only reference semantic dimensions or time buckets",
+            "selected semantic dimensions and time buckets",
+        )
+        if any(marker in normalized_message for marker in unsupported_shape_markers):
+            return "unsupported_semantic_sql_shape"
+
+        coverage_gap_markers = (
+            "unknown semantic member",
+            "semantic model not found",
+            "could not resolve a selected semantic member",
+            "semantic query translation failed",
+        )
+        if any(marker in normalized_message for marker in coverage_gap_markers):
+            return "semantic_coverage_gap"
+        return None
 
 
 class AgentOrchestratorFactory:
-    """Build runtime-side orchestrator components for dataset-first federated analysis."""
+    """Build runtime-side orchestrator components for layered analytical execution."""
 
     def __init__(
         self,
@@ -170,6 +451,14 @@ class AgentOrchestratorFactory:
         self._dataset_execution_resolver = DatasetExecutionResolver(
             dataset_repository=self._dataset_repository,
         )
+        self._semantic_model_provider = _SemanticModelProviderAdapter(self._semantic_model_store)
+        self._semantic_query_service = SemanticQueryExecutionService(
+            dataset_repository=self._dataset_repository,
+            federated_query_tool=self._federated_query_tool,
+            logger=self._logger,
+            semantic_model_provider=self._semantic_model_provider,
+        )
+        self._semantic_sql_service = SemanticSqlQueryService()
 
     async def create_runtime(
         self,
@@ -216,6 +505,7 @@ class AgentOrchestratorFactory:
             llm_provider=llm_provider,
             planning_constraints=planning_constraints,
             analyst_tools=analyst_tools,
+            semantic_search_tools_by_asset=analyst_tool_build.semantic_search_tools_by_asset,
             analytical_access_scope=tool_config.analytical_access_scope,
             event_emitter=event_emitter,
         )
@@ -246,6 +536,10 @@ class AgentOrchestratorFactory:
                     description=tool.description,
                     dataset_ids=list(config.dataset_ids),
                     semantic_model_ids=list(config.semantic_model_ids),
+                    query_scope_policy=config.query_scope_policy,
+                    allow_source_scope=bool(config.allow_source_scope),
+                    preferred_dataset_id=config.preferred_dataset_id,
+                    preferred_semantic_model_id=config.preferred_semantic_model_id,
                 )
             )
 
@@ -315,8 +609,11 @@ class AgentOrchestratorFactory:
         analytical_assets: Dict[str, Dict[str, Any]] = {}
         for tool in analyst_tools:
             analytical_assets[tool.context.asset_id] = {
+                "binding_name": tool.binding_name,
                 "name": tool.context.asset_name,
                 "asset_type": tool.context.asset_type,
+                "query_scope": tool.context.query_scope.value,
+                "query_scope_policy": tool.query_scope_policy.value,
                 "description": tool.context.description,
                 "execution_mode": tool.context.execution_mode,
                 "datasets": [
@@ -359,16 +656,19 @@ class AgentOrchestratorFactory:
             return AnalystToolBuildResult(
                 tools=[],
                 access_scope=AnalyticalAccessScope(),
+                semantic_search_tools_by_asset={},
             )
         if self._federated_query_tool is None:
             self._logger.warning("Federated query tool is not configured; analyst route cannot be built.")
             return AnalystToolBuildResult(
                 tools=[],
                 access_scope=AnalyticalAccessScope(),
+                semantic_search_tools_by_asset={},
             )
 
         access_policy_evaluator = ConnectorAccessPolicyEvaluator(access_policy)
         sql_tools: list[SqlAnalystTool] = []
+        semantic_search_tools_by_asset: dict[str, list[SemanticSearchTool]] = {}
         denied_assets = []
         for binding in tool_config.analyst_bindings:
             if binding.dataset_ids:
@@ -406,9 +706,16 @@ class AgentOrchestratorFactory:
                         llm_provider=llm_provider,
                         embedding_provider=embedding_provider,
                         event_emitter=event_emitter,
+                        priority=(
+                            100
+                            if (
+                                binding.preferred_dataset_id is not None
+                                and binding.preferred_dataset_id in {dataset.id for dataset in datasets}
+                            )
+                            else 0
+                        ),
                     )
                 )
-                continue
 
             for semantic_model_id in binding.semantic_model_ids:
                 semantic_model_entry = await self._semantic_model_store.get_by_id(semantic_model_id)
@@ -487,8 +794,24 @@ class AgentOrchestratorFactory:
                         llm_provider=llm_provider,
                         embedding_provider=embedding_provider,
                         event_emitter=event_emitter,
+                        priority=(
+                            100
+                            if binding.preferred_semantic_model_id == semantic_model_entry.id
+                            else 0
+                        ),
                     )
                 )
+                semantic_asset_id = str(semantic_model_entry.id)
+                semantic_search_tools = self._build_semantic_model_semantic_search_tools(
+                    semantic_model_entry=semantic_model_entry,
+                    semantic_model=semantic_model,
+                    llm_provider=llm_provider,
+                    embedding_provider=embedding_provider,
+                )
+                if semantic_search_tools:
+                    semantic_search_tools_by_asset.setdefault(semantic_asset_id, []).extend(
+                        semantic_search_tools
+                    )
 
         return AnalystToolBuildResult(
             tools=sql_tools,
@@ -497,6 +820,7 @@ class AgentOrchestratorFactory:
                 authorized_asset_count=len(sql_tools),
                 denied_assets=tuple(denied_assets),
             ),
+            semantic_search_tools_by_asset=semantic_search_tools_by_asset,
         )
 
     async def _build_dataset_tool(
@@ -508,6 +832,7 @@ class AgentOrchestratorFactory:
         llm_provider: LLMProvider,
         embedding_provider: Optional[EmbeddingProvider],
         event_emitter: Optional[AgentEventEmitter],
+        priority: int,
     ) -> SqlAnalystTool:
         workflow, _workflow_dialect = await self._build_dataset_workflow(selected_datasets)
         context = await self._build_dataset_context(
@@ -516,7 +841,7 @@ class AgentOrchestratorFactory:
             binding=binding,
             workflow=workflow,
         )
-        federated_executor = _FederatedSqlExecutor(
+        query_executor = _DatasetScopeExecutor(
             federated_query_tool=self._federated_query_tool,
             workflow=workflow,
             workspace_id=str(dataset.workspace_id),
@@ -526,9 +851,12 @@ class AgentOrchestratorFactory:
             llm=llm_provider,
             context=context,
             semantic_model=semantic_model,
-            federated_sql_executor=federated_executor,
+            query_executor=query_executor,
+            binding_name=binding.name,
+            binding_description=binding.description,
+            query_scope_policy=binding.query_scope_policy,
             logger=self._logger,
-            priority=0,
+            priority=priority,
             embedder=embedding_provider,
             event_emitter=event_emitter,
         )
@@ -543,6 +871,7 @@ class AgentOrchestratorFactory:
         llm_provider: LLMProvider,
         embedding_provider: Optional[EmbeddingProvider],
         event_emitter: Optional[AgentEventEmitter],
+        priority: int,
     ) -> SqlAnalystTool:
         context = await self._build_semantic_model_context(
             binding=binding,
@@ -550,24 +879,69 @@ class AgentOrchestratorFactory:
             semantic_model=semantic_model,
             workflow=workflow,
         )
-        federated_executor = _FederatedSqlExecutor(
-            federated_query_tool=self._federated_query_tool,
-            workflow=workflow,
-            workspace_id=str(semantic_model_entry.workspace_id),
+        query_executor = _SemanticScopeExecutor(
+            workspace_id=semantic_model_entry.workspace_id,
+            semantic_model_id=semantic_model_entry.id,
+            semantic_model_name=semantic_model_entry.name or semantic_model.name or binding.name,
+            semantic_model=semantic_model,
+            semantic_query_service=self._semantic_query_service,
+            semantic_sql_service=self._semantic_sql_service,
         )
         return SqlAnalystTool(
             llm=llm_provider,
             context=context,
             semantic_model=semantic_model,
-            federated_sql_executor=federated_executor,
+            query_executor=query_executor,
+            binding_name=binding.name,
+            binding_description=binding.description,
+            query_scope_policy=binding.query_scope_policy,
             logger=self._logger,
-            priority=0,
+            priority=priority,
             embedder=embedding_provider,
             event_emitter=event_emitter,
             semantic_vector_search_service=self._semantic_vector_search_service,
             semantic_vector_search_workspace_id=semantic_model_entry.workspace_id,
             semantic_vector_search_model_id=semantic_model_entry.id,
         )
+
+    def _build_semantic_model_semantic_search_tools(
+        self,
+        *,
+        semantic_model_entry: SemanticModelMetadata,
+        semantic_model: SemanticModel,
+        llm_provider: LLMProvider,
+        embedding_provider: Optional[EmbeddingProvider],
+    ) -> list[SemanticSearchTool]:
+        if self._semantic_vector_search_service is None:
+            return []
+
+        search_tools: list[SemanticSearchTool] = []
+        semantic_asset_name = semantic_model_entry.name or semantic_model.name or str(semantic_model_entry.id)
+        seen_dimensions: set[tuple[str, str]] = set()
+        for dataset_key, dataset in semantic_model.datasets.items():
+            for dimension in dataset.dimensions or []:
+                if not dimension.vector or not dimension.vector.enabled:
+                    continue
+                dimension_key = (str(dataset_key), str(dimension.name))
+                if dimension_key in seen_dimensions:
+                    continue
+                seen_dimensions.add(dimension_key)
+                search_tools.append(
+                    SemanticSearchTool(
+                        semantic_name=(
+                            f"{semantic_asset_name}:{dataset_key}.{dimension.name}"
+                        ),
+                        llm=llm_provider,
+                        logger=self._logger,
+                        semantic_vector_search_service=self._semantic_vector_search_service,
+                        semantic_vector_search_workspace_id=semantic_model_entry.workspace_id,
+                        semantic_vector_search_model_id=semantic_model_entry.id,
+                        semantic_vector_search_dataset_key=str(dataset_key),
+                        semantic_vector_search_dimension_name=str(dimension.name),
+                        embedding_provider=embedding_provider,
+                    )
+                )
+        return search_tools
 
     async def _build_dataset_workflow(
         self,
@@ -704,6 +1078,7 @@ class AgentOrchestratorFactory:
             binding=binding,
         )
         return AnalyticalContext(
+            query_scope=SqlQueryScope.dataset,
             asset_type="dataset",
             asset_id=asset_id,
             asset_name=context_name,
@@ -786,6 +1161,7 @@ class AgentOrchestratorFactory:
             for relationship in (semantic_model.relationships or [])
         ]
         return AnalyticalContext(
+            query_scope=SqlQueryScope.semantic,
             asset_type="semantic_model",
             asset_id=str(semantic_model_entry.id),
             asset_name=semantic_model_entry.name or semantic_model.name or binding.name,
@@ -1022,6 +1398,7 @@ class AgentOrchestratorFactory:
         llm_provider: LLMProvider,
         planning_constraints: PlanningConstraints,
         analyst_tools: list[SqlAnalystTool],
+        semantic_search_tools_by_asset: dict[str, list[SemanticSearchTool]],
         analytical_access_scope: AnalyticalAccessScope | None,
         event_emitter: Optional[AgentEventEmitter],
     ) -> SupervisorOrchestrator:
@@ -1030,6 +1407,7 @@ class AgentOrchestratorFactory:
             analyst_agent = AnalystAgent(
                 llm=llm_provider,
                 tools=analyst_tools,
+                semantic_search_tools_by_asset=semantic_search_tools_by_asset,
                 access_scope=analytical_access_scope,
                 logger=self._logger,
             )

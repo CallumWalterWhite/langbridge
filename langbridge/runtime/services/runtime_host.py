@@ -1,4 +1,5 @@
 from dataclasses import dataclass, replace
+import inspect
 from typing import Any
 
 from langbridge.runtime.context import RuntimeContext
@@ -17,6 +18,7 @@ from langbridge.runtime.services.dataset_sync_service import ConnectorSyncRuntim
 from langbridge.runtime.services.semantic_query_execution_service import (
     SemanticQueryExecutionService,
 )
+from langbridge.runtime.services.semantic_sql_query_service import SemanticSqlQueryService
 from langbridge.runtime.services.semantic_vector_search_service import (
     SemanticVectorSearchService,
 )
@@ -42,6 +44,7 @@ class RuntimeServices:
     dataset_query: DatasetQueryService
     dataset_sync: ConnectorSyncRuntime
     agent_execution: AgentExecutionService
+    semantic_sql_query: SemanticSqlQueryService | None = None
 
 
 @dataclass(slots=True)
@@ -54,9 +57,29 @@ class RuntimeHost:
         return replace(self, context=context)
 
     async def aclose(self) -> None:
+        federated_query_tool = getattr(self.services, "federated_query_tool", None)
+        if federated_query_tool is None:
+            return None
+        aclose = getattr(federated_query_tool, "aclose", None)
+        if callable(aclose):
+            result = aclose()
+            if inspect.isawaitable(result):
+                await result
+            return None
+        close = getattr(federated_query_tool, "close", None)
+        if callable(close):
+            result = close()
+            if inspect.isawaitable(result):
+                await result
         return None
 
     def close(self) -> None:
+        federated_query_tool = getattr(self.services, "federated_query_tool", None)
+        if federated_query_tool is None:
+            return None
+        close = getattr(federated_query_tool, "close", None)
+        if callable(close):
+            close()
         return None
 
     async def query_dataset(self, *args: Any, **kwargs: Any) -> Any:
@@ -91,6 +114,14 @@ class RuntimeHost:
         if self.services.semantic_query is None:
             raise RuntimeError("SemanticQueryExecutionService is not configured for this runtime host.")
         return await self.services.semantic_query.execute_unified_query(*args, **kwargs)
+
+    def parse_semantic_sql_query(self, *args: Any, **kwargs: Any) -> Any:
+        service = self.services.semantic_sql_query or SemanticSqlQueryService()
+        return service.parse_query(*args, **kwargs)
+
+    def build_semantic_sql_query(self, *args: Any, **kwargs: Any) -> Any:
+        service = self.services.semantic_sql_query or SemanticSqlQueryService()
+        return service.build_query_plan(*args, **kwargs)
 
     async def refresh_semantic_vector_search(self, *args: Any, **kwargs: Any) -> Any:
         if self.services.semantic_vector_search is None:

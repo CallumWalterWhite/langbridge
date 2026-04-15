@@ -196,6 +196,9 @@ semantic_models:
               expression: order_id
               type: string
               primary_key: true
+              vector:
+                enabled: true
+                refresh_interval: 5m
             - name: order_date
               expression: order_date
               type: time
@@ -564,7 +567,7 @@ agents:
         strategy: database
       features:
         bi_copilot_enabled: false
-        deep_research_enabled: false
+        deep_research_enabled: true
         visualization_enabled: true
         mcp_enabled: true
       tools:
@@ -586,7 +589,7 @@ agents:
         response_mode: analyst
         max_iterations: 4
         max_steps_per_iteration: 6
-        allow_parallel_tools: false
+        allow_parallel_tools: true
       output:
         format: markdown
       guardrails:

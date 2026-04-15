@@ -345,6 +345,7 @@ def build_access_denied_response(
     asset_name = denied_asset.asset_name if denied_asset is not None else ""
     return AnalystQueryResponse(
         analysis_path=asset_type,
+        query_scope=None,
         execution_mode="federated",
         asset_type=asset_type,
         asset_id=asset_id,

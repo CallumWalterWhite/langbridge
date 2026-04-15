@@ -1,5 +1,6 @@
 from .model import (
     AgentDefinitionModel,
+    AnalystQueryScopePolicy,
     DataAccessPolicy,
     ExecutionBehavior,
     ExecutionMode,
@@ -18,6 +19,7 @@ from .factory import AgentDefinitionFactory
 
 __all__ = [
     "AgentDefinitionModel",
+    "AnalystQueryScopePolicy",
     "DataAccessPolicy",
     "ExecutionBehavior",
     "ExecutionMode",

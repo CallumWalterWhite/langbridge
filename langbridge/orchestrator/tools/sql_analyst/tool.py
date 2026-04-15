@@ -1,8 +1,6 @@
 """
 Federated analytical tool for dataset-backed and semantic-model-backed SQL generation.
 """
-
-
 import asyncio
 import inspect
 import logging
@@ -15,18 +13,28 @@ from typing import Any, Dict, List, Optional
 import sqlglot
 from sqlglot import exp
 
+from langbridge.orchestrator.definitions import AnalystQueryScopePolicy
+from langbridge.runtime.services.semantic_vector_search_service import (
+    SemanticVectorSearchService,
+)
+from langbridge.orchestrator.llm.provider import LLMProvider
 from langbridge.runtime.embeddings import EmbeddingProvider
 from langbridge.runtime.events import (
     AgentEventVisibility,
     AgentEventEmitter,
 )
-from langbridge.runtime.services.semantic_vector_search_service import (
-    SemanticVectorSearchService,
+from langbridge.runtime.models import SqlQueryScope
+from .prompts import (
+    SQL_ORCHESTRATION_INSTRUCTION,
+    SEMANTIC_SQL_ORCHESTRATION_INSTRUCTION,
+    DATASET_SQL_ORCHESTRATION_INSTRUCTION,
 )
-from langbridge.orchestrator.llm.provider import LLMProvider
-from langbridge.runtime.utils.sql import enforce_preview_limit
+from .renderer import render_analysis_context
 from .interfaces import (
     AnalyticalContext,
+    AnalyticalQueryExecutionFailure,
+    AnalyticalQueryExecutionResult,
+    AnalyticalQueryExecutor,
     AnalyticalField,
     AnalyticalMetric,
     AnalystExecutionOutcome,
@@ -34,9 +42,9 @@ from .interfaces import (
     AnalystOutcomeStatus,
     AnalystQueryRequest,
     AnalystQueryResponse,
-    FederatedSqlExecutor,
     QueryResult,
     SemanticModel,
+    SemanticModelLike,
 )
 
 SQL_FENCE_RE = re.compile(r"```(?:sql)?\s*(.*?)```", re.IGNORECASE | re.DOTALL)
@@ -63,9 +71,6 @@ class VectorMatch:
     source_text: str
 
 
-SemanticModelLike = SemanticModel
-
-
 class SqlAnalystTool:
     """
     Generate federated SQL for an analytical asset and execute it through the
@@ -77,8 +82,11 @@ class SqlAnalystTool:
         *,
         llm: LLMProvider,
         context: AnalyticalContext,
-        federated_sql_executor: FederatedSqlExecutor,
+        query_executor: AnalyticalQueryExecutor,
         semantic_model: SemanticModelLike | None = None,
+        binding_name: str | None = None,
+        binding_description: str | None = None,
+        query_scope_policy: AnalystQueryScopePolicy = AnalystQueryScopePolicy.semantic_preferred,
         logger: logging.Logger | None = None,
         llm_temperature: float = 0.0,
         priority: int = 0,
@@ -91,7 +99,10 @@ class SqlAnalystTool:
         self.llm = llm
         self.context = context
         self.semantic_model = semantic_model
-        self._federated_sql_executor = federated_sql_executor
+        self._query_executor = query_executor
+        self.binding_name = str(binding_name or context.asset_name or "analytical_binding").strip() or "analytical_binding"
+        self.binding_description = str(binding_description or "").strip() or None
+        self.query_scope_policy = query_scope_policy
         self.dialect = str(context.dialect or "postgres").strip().lower() or "postgres"
         self.logger = logger or logging.getLogger(__name__)
         self.llm_temperature = llm_temperature
@@ -110,9 +121,17 @@ class SqlAnalystTool:
     def asset_type(self) -> str:
         return self.context.asset_type
 
+    @property
+    def query_scope(self) -> SqlQueryScope:
+        return self.context.query_scope
+
     def describe_for_selection(self, *, tool_id: str) -> dict[str, Any]:
         return {
             "id": tool_id,
+            "binding_name": self.binding_name,
+            "binding_description": self.binding_description,
+            "query_scope_policy": self.query_scope_policy.value,
+            "query_scope": self.query_scope.value,
             "priority": self.priority,
             "asset_type": self.context.asset_type,
             "asset_name": self.context.asset_name,
@@ -237,7 +256,10 @@ class SqlAnalystTool:
             event_type="AnalyticalToolStarted",
             message="Analyzing the selected analytical asset.",
             visibility=AgentEventVisibility.public,
-            details=self._event_details(execution_mode=self.context.execution_mode),
+            details=self._event_details(
+                execution_mode=self.context.execution_mode,
+                query_scope=self.query_scope.value,
+            ),
         )
         start_ts = time.perf_counter()
         active_request = await self._augment_request(query_request)
@@ -269,104 +291,111 @@ class SqlAnalystTool:
         canonical_sql = self._prepare_canonical_sql(canonical_sql)
         await self._emit_event(
             event_type="AnalyticalSqlGenerated",
-            message="SQL was generated for federated execution.",
-            visibility=AgentEventVisibility.internal,
-            details=self._event_details(sql_canonical=canonical_sql),
-        )
-
-        sql_validation_error = self._validate_sql(canonical_sql)
-        if sql_validation_error:
-            elapsed_ms = int((time.perf_counter() - start_ts) * 1000)
-            await self._emit_event(
-                event_type="AnalyticalSqlValidationFailed",
-                message="Generated SQL did not pass validation.",
-                visibility=AgentEventVisibility.internal,
-                details=self._event_details(
-                    error=sql_validation_error,
-                    sql_canonical=canonical_sql,
-                ),
-            )
-            return self._build_response(
-                sql_canonical=canonical_sql,
-                sql_executable="",
-                outcome=self._build_outcome(
-                    status=AnalystOutcomeStatus.query_error,
-                    stage=AnalystOutcomeStage.query,
-                    message=sql_validation_error,
-                    original_error=sql_validation_error,
-                    recoverable=True,
-                    terminal=False,
-                ),
-                elapsed_ms=elapsed_ms,
-            )
-
-        executable_sql = self._prepare_executable_sql(canonical_sql, limit=active_request.limit)
-        self._log_sql(ToolTelemetry(canonical_sql=canonical_sql, executable_sql=executable_sql))
-
-        await self._emit_event(
-            event_type="AnalyticalSqlExecutionPrepared",
-            message="Prepared federated SQL statement.",
+            message="A scoped analytical query was generated.",
             visibility=AgentEventVisibility.internal,
             details=self._event_details(
-                dialect=self.dialect,
                 sql_canonical=canonical_sql,
-                sql_executable=executable_sql,
-                max_rows=active_request.limit,
+                query_scope=self.query_scope.value,
             ),
         )
+
         await self._emit_event(
             event_type="AnalyticalSqlExecutionStarted",
-            message="Running federated analytical query.",
+            message="Running analytical query in the selected scope.",
             visibility=AgentEventVisibility.public,
             details=self._event_details(
                 dialect=self.dialect,
                 execution_mode=self.context.execution_mode,
+                query_scope=self.query_scope.value,
                 max_rows=active_request.limit,
             ),
         )
 
-        result_payload: QueryResult | None = None
+        execution_result: AnalyticalQueryExecutionResult | None = None
         execution_outcome: AnalystExecutionOutcome | None = None
+        executable_sql = ""
         try:
-            result_payload = await self._federated_sql_executor.execute_sql(
-                sql=executable_sql,
-                dialect=self.dialect,
-                max_rows=active_request.limit,
+            execution_result = await self._query_executor.execute_query(
+                query=canonical_sql,
+                query_dialect=self.dialect,
+                requested_limit=active_request.limit,
+            )
+            executable_sql = execution_result.executable_query
+            self._log_sql(ToolTelemetry(canonical_sql=canonical_sql, executable_sql=executable_sql))
+            await self._emit_event(
+                event_type="AnalyticalSqlExecutionPrepared",
+                message="Prepared analytical statement for execution.",
+                visibility=AgentEventVisibility.internal,
+                details=self._event_details(
+                    dialect=self.dialect,
+                    sql_canonical=canonical_sql,
+                    sql_executable=executable_sql,
+                    query_scope=self.query_scope.value,
+                    max_rows=active_request.limit,
+                ),
             )
             await self._emit_event(
                 event_type="AnalyticalSqlExecutionCompleted",
-                message="Federated analytical query completed.",
+                message="Analytical query completed.",
                 visibility=AgentEventVisibility.public,
                 details=self._event_details(
-                    row_count=result_payload.rowcount,
-                    elapsed_ms=result_payload.elapsed_ms,
+                    row_count=execution_result.result.rowcount,
+                    elapsed_ms=execution_result.result.elapsed_ms,
+                    query_scope=self.query_scope.value,
                 ),
             )
+        except AnalyticalQueryExecutionFailure as exc:
+            executable_sql = str(exc.metadata.get("executable_query") or "")
+            await self._emit_event(
+                event_type="AnalyticalSqlExecutionFailed",
+                message=f"Analytical query failed. Error: {exc.message}",
+                visibility=AgentEventVisibility.public,
+                details=self._event_details(
+                    error=exc.message,
+                    query_scope=self.query_scope.value,
+                ),
+            )
+            execution_outcome = self._build_outcome(
+                status=(
+                    AnalystOutcomeStatus.query_error
+                    if exc.stage == AnalystOutcomeStage.query
+                    else AnalystOutcomeStatus.execution_error
+                ),
+                stage=exc.stage,
+                message=exc.message,
+                original_error=exc.original_error,
+                recoverable=exc.recoverable,
+                terminal=False,
+                metadata=dict(exc.metadata or {}),
+            )
         except Exception as exc:  # pragma: no cover
-            self.logger.exception("Federated execution failed for asset %s", self.name)
-            execution_message = f"Execution failed: {exc}"
+            self.logger.exception("Analytical execution failed for asset %s", self.name)
+            await self._emit_event(
+                event_type="AnalyticalSqlExecutionFailed",
+                message=f"Analytical query failed. Error: {str(exc)}",
+                visibility=AgentEventVisibility.public,
+                details=self._event_details(
+                    error=str(exc),
+                    query_scope=self.query_scope.value,
+                ),
+            )
             execution_outcome = self._build_outcome(
                 status=AnalystOutcomeStatus.execution_error,
                 stage=AnalystOutcomeStage.execution,
-                message=execution_message,
+                message=f"Execution failed: {exc}",
                 original_error=str(exc),
-                recoverable=self._is_recoverable_execution_error(str(exc)),
+                recoverable=False,
                 terminal=False,
-            )
-            await self._emit_event(
-                event_type="AnalyticalSqlExecutionFailed",
-                message="Federated analytical query failed.",
-                visibility=AgentEventVisibility.public,
-                details=self._event_details(error=str(exc)),
             )
 
         elapsed_ms = int((time.perf_counter() - start_ts) * 1000)
-        if execution_outcome is None:
-            if result_payload and (result_payload.rowcount or len(result_payload.rows)):
+        if execution_outcome is None and execution_result is not None:
+            if execution_result.result.rowcount or len(execution_result.result.rows):
                 execution_outcome = self._build_outcome(
                     status=AnalystOutcomeStatus.success,
                     stage=AnalystOutcomeStage.result,
                     terminal=True,
+                    metadata=dict(execution_result.metadata or {}),
                 )
             else:
                 execution_outcome = self._build_outcome(
@@ -375,19 +404,22 @@ class SqlAnalystTool:
                     message="No rows matched the query.",
                     recoverable=True,
                     terminal=False,
+                    metadata=dict(execution_result.metadata or {}),
                 )
         return self._build_response(
             sql_canonical=canonical_sql,
             sql_executable=executable_sql,
-            result=result_payload,
+            result=execution_result.result if execution_result is not None else None,
             outcome=execution_outcome,
             elapsed_ms=elapsed_ms,
         )
 
     def _event_details(self, **extra: Any) -> dict[str, Any]:
         details = {
+            "binding_name": self.binding_name,
             "asset_name": self.name,
             "asset_type": self.asset_type,
+            "query_scope": self.query_scope.value,
         }
         details.update(extra)
         return details
@@ -403,35 +435,15 @@ class SqlAnalystTool:
 
     def _prepare_canonical_sql(self, raw_sql: str) -> str:
         canonical_sql = self._extract_sql(raw_sql.strip())
+        if self.query_scope == SqlQueryScope.semantic:
+            return canonical_sql
         canonical_sql = self._expand_semantic_measure_references(canonical_sql)
         return self._normalize_temporal_predicates(canonical_sql)
-
-    @staticmethod
-    def _validate_sql(sql: str) -> str | None:
-        try:
-            sqlglot.parse_one(sql, read="postgres")
-        except sqlglot.ParseError as exc:
-            return f"Canonical SQL failed to parse: {exc}"
-        return None
-
-    @staticmethod
-    def _prepare_executable_sql(sql: str, *, limit: int | None) -> str:
-        if not limit:
-            return sql
-        executable_sql, _ = enforce_preview_limit(
-            sql,
-            max_rows=limit,
-            dialect="postgres",
-        )
-        return executable_sql
 
     def _build_sql_orchestration_instructions(self) -> str:
         orchestration = getattr(self.semantic_model, "orchestration", None)
         if orchestration is not None:
-            return (
-                "Orchestration instructions (provide guidance on how to generate SQL for this semantic model, including how to use its semantic definitions and how to join its tables if applicable):\n"
-                f"{orchestration}\n"
-            )
+            return SQL_ORCHESTRATION_INSTRUCTION.format(instruction=orchestration)
         return ""
 
     def _build_error_hints(self, error_history: list[str]) -> str:
@@ -475,10 +487,16 @@ class SqlAnalystTool:
     ) -> AnalystQueryResponse:
         return AnalystQueryResponse(
             analysis_path=self.context.asset_type,
+            query_scope=self.query_scope,
             execution_mode=self.context.execution_mode,
             asset_type=self.context.asset_type,
             asset_id=self.context.asset_id,
             asset_name=self.context.asset_name,
+            selected_semantic_model_id=(
+                self.context.asset_id
+                if self.context.asset_type == "semantic_model"
+                else None
+            ),
             sql_canonical=sql_canonical,
             sql_executable=sql_executable,
             dialect=self.dialect,
@@ -498,6 +516,7 @@ class SqlAnalystTool:
         original_error: str | None = None,
         recoverable: bool = False,
         terminal: bool = True,
+        metadata: dict[str, Any] | None = None,
     ) -> AnalystExecutionOutcome:
         return AnalystExecutionOutcome(
             status=status,
@@ -510,23 +529,16 @@ class SqlAnalystTool:
             selected_asset_id=self.context.asset_id,
             selected_asset_name=self.context.asset_name,
             selected_asset_type=self.context.asset_type,
+            attempted_query_scope=self.query_scope,
+            final_query_scope=self.query_scope,
+            selected_semantic_model_id=(
+                self.context.asset_id
+                if self.context.asset_type == "semantic_model"
+                else None
+            ),
+            selected_dataset_ids=[dataset.dataset_id for dataset in self.context.datasets],
+            metadata=dict(metadata or {}),
         )
-
-    @staticmethod
-    def _is_recoverable_execution_error(error_message: str) -> bool:
-        normalized = str(error_message or "").lower()
-        if not normalized:
-            return False
-        transient_markers = (
-            "timeout",
-            "temporarily unavailable",
-            "temporary",
-            "connection reset",
-            "connection aborted",
-            "try again",
-            "rate limit",
-        )
-        return any(marker in normalized for marker in transient_markers)
 
     async def _emit_event(
         self,
@@ -567,27 +579,8 @@ class SqlAnalystTool:
         if request.semantic_search_result_prompts:
             search_text = "Search hints:\n" + "\n".join(request.semantic_search_result_prompts) + "\n"
 
-        return (
-            "You are an expert analytics engineer generating SQL for Langbridge.\n"
-            "Execution happens through federated dataset query execution by default.\n"
-            "Semantic models are an optional governed layer over datasets, not a direct connector target.\n"
-            f"{self._render_analysis_context()}\n"
-            "Rules:\n"
-            "- Return a single SELECT statement.\n"
-            "- The SQL must target PostgreSQL dialect.\n"
-            "- Do not include comments, explanations, or additional text.\n"
-            "- Use only datasets, tables, relationships, dimensions, measures, and metrics defined in the context.\n"
-            "- Use dataset SQL aliases exactly as listed in the context.\n"
-            "- Fully qualify columns as alias.column. Do not use SELECT *.\n"
-            "- Only join tables that are explicitly available in this context.\n"
-            "- If the context includes relationships, use only those relationships.\n"
-            "- If the context includes metrics, expand them faithfully.\n"
-            "- Treat semantic measures as logical aliases and expand them to their configured expressions.\n"
-            "- Group only by non-aggregated selected dimensions.\n"
-            "- Prefer a single query; CTEs are allowed when they simplify the plan.\n"
-            "- Do not invent columns, tables, metrics, or joins.\n"
-            "- Use ANSI-friendly PostgreSQL syntax.\n"
-            "- Use search hints only as grounding for filters when they are relevant.\n"
+        shared_sections = (
+            f"{render_analysis_context(self.context, self.semantic_model)}\n"
             f"{self._build_sql_orchestration_instructions()}"
             f"{self._build_error_hints(request.error_history)}"
             f"{limit_hint}"
@@ -595,90 +588,23 @@ class SqlAnalystTool:
             f"{conversation_text}"
             f"{search_text}"
             f"Question: {request.question}\n"
-            "Return SQL in PostgreSQL dialect only. No comments or explanation."
         )
 
-    def _render_analysis_context(self) -> str:
-        if self.context.asset_type == "semantic_model":
-            return self._render_semantic_model_context()
-        return self._render_dataset_context()
+        if self.query_scope == SqlQueryScope.semantic:
+            relation_name = self._semantic_relation_name()
+            return SEMANTIC_SQL_ORCHESTRATION_INSTRUCTION.format(
+                shared_sections=shared_sections,
+                relation_name=relation_name,
+            )
 
-    def _render_dataset_context(self) -> str:
-        parts: list[str] = [f"Dataset asset: {self.context.asset_name}"]
-        if self.context.description:
-            parts.append(f"Description: {self.context.description}")
-        if self.context.tags:
-            parts.append(f"Tags: {', '.join(self.context.tags)}")
-        if self.context.datasets:
-            parts.append("Datasets:")
-            for dataset in self.context.datasets:
-                line = f"  - {dataset.sql_alias} ({dataset.dataset_name})"
-                descriptor = ", ".join(
-                    value
-                    for value in (dataset.source_kind, dataset.storage_kind)
-                    if value
-                )
-                if descriptor:
-                    line = f"{line} [{descriptor}]"
-                parts.append(line)
-                if dataset.description:
-                    parts.append(f"      description: {dataset.description}")
-                if dataset.columns:
-                    parts.append("      columns:")
-                    for column in dataset.columns:
-                        column_line = f"        * {dataset.sql_alias}.{column.name}"
-                        if column.data_type:
-                            column_line = f"{column_line} ({column.data_type})"
-                        parts.append(column_line)
-        if self.context.relationships:
-            parts.append("Relationships:")
-            for relationship in self.context.relationships:
-                parts.append(f"  - {relationship}")
-        return "\n".join(parts)
+        return DATASET_SQL_ORCHESTRATION_INSTRUCTION.format(shared_sections=shared_sections)
 
-    def _render_semantic_model_context(self) -> str:
-        parts: list[str] = [f"Semantic model asset: {self.context.asset_name}"]
-        if self.context.description:
-            parts.append(f"Description: {self.context.description}")
-        if self.context.tags:
-            parts.append(f"Tags: {', '.join(self.context.tags)}")
-        if self.context.datasets:
-            parts.append("Backed by datasets:")
-            for dataset in self.context.datasets:
-                parts.append(f"  - {dataset.sql_alias} ({dataset.dataset_name})")
-        if self.context.tables:
-            parts.append("Tables:")
-            for table in self.context.tables:
-                parts.append(f"  - {table}")
-        if self.semantic_model is not None:
-            parts.extend(self._render_semantic_model_definitions())
-        self._append_field_block(parts, "Dimensions", self.context.dimensions)
-        self._append_field_block(parts, "Measures", self.context.measures)
-        if self.context.metrics:
-            parts.append("Metrics:")
-            for metric in self.context.metrics:
-                line = f"  - {metric.name}"
-                if metric.expression:
-                    line = f"{line}: {metric.expression}"
-                if metric.description:
-                    line = f"{line} ({metric.description})"
-                parts.append(line)
-        if self.context.relationships:
-            parts.append("Relationships:")
-            for relationship in self.context.relationships:
-                parts.append(f"  - {relationship}")
-        return "\n".join(parts)
-
-    @staticmethod
-    def _append_field_block(parts: list[str], title: str, fields: list[AnalyticalField]) -> None:
-        if not fields:
-            return
-        parts.append(f"{title}:")
-        for field in fields:
-            line = f"  - {field.name}"
-            if field.synonyms:
-                line = f"{line} (synonyms: {', '.join(field.synonyms)})"
-            parts.append(line)
+    def _semantic_relation_name(self) -> str:
+        relation_name = str(self.context.asset_name or "").strip()
+        if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", relation_name):
+            return relation_name
+        escaped = relation_name.replace('"', '""')
+        return f'"{escaped}"'
 
     async def _maybe_augment_request_with_vectors(self, request: AnalystQueryRequest) -> AnalystQueryRequest:
         if not self.embedder or self._semantic_vector_search_service is None:
@@ -857,32 +783,6 @@ class SqlAnalystTool:
             return node
 
         return expression.transform(_qualify)
-
-    def _render_semantic_model_definitions(self) -> list[str]:
-        if self.semantic_model is None:
-            return []
-
-        parts: list[str] = ["Semantic definitions:"]
-        for table_key, table in (getattr(self.semantic_model, "tables", {}) or {}).items():
-            parts.append(f"  - table {table_key}")
-            for dimension in table.dimensions or []:
-                expression_sql = str(dimension.expression or dimension.name).strip()
-                line = f"      dimension {table_key}.{dimension.name}"
-                if expression_sql:
-                    line = f"{line} => {expression_sql}"
-                if dimension.type:
-                    line = f"{line} [{dimension.type}]"
-                parts.append(line)
-            for measure in table.measures or []:
-                expression_sql = str(measure.expression or measure.name).strip()
-                line = f"      measure {table_key}.{measure.name}"
-                aggregation = str(measure.aggregation or "").strip().lower()
-                if aggregation:
-                    line = f"{line} ({aggregation})"
-                if expression_sql:
-                    line = f"{line} => {expression_sql}"
-                parts.append(line)
-        return parts
 
     def _normalize_temporal_predicates(self, sql: str) -> str:
         temporal_columns = self._temporal_columns_by_name()

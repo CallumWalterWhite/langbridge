@@ -1,13 +1,14 @@
 import logging
 import os
+import json
 import uuid
-from collections.abc import Iterable
+from collections.abc import AsyncIterator, Iterable
 from contextlib import asynccontextmanager
 import inspect
 from pathlib import Path
 from typing import Any
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 
 from langbridge.mcp import DEFAULT_MCP_MOUNT_PATH, build_runtime_mcp_server
 from langbridge.ui import register_runtime_ui
@@ -31,9 +32,8 @@ from langbridge.runtime.bootstrap import (
 from langbridge.runtime.application.errors import ApplicationError, BusinessValidationError
 from langbridge.runtime.models.jobs import (
     CreateDatasetPreviewJobRequest,
-    CreateSqlJobRequest,
-    SqlWorkbenchMode,
 )
+from langbridge.runtime.models.streaming import RuntimeRunStreamEvent
 from langbridge.runtime.services.errors import ExecutionValidationError
 from langbridge.runtime.services.runtime_host import RuntimeHost
 from langbridge.runtime.hosting.api_models import (
@@ -115,24 +115,10 @@ def create_runtime_api_app(
         default_context=host.context,
         runtime_host=host,
     )
-    resolved_default_background_tasks = _resolve_default_background_tasks(
+    task_manager = RuntimeBackgroundTaskManager(
         runtime_host=host,
-        default_background_tasks=default_background_tasks,
+        custom_tasks=background_tasks,
     )
-    task_manager = background_task_manager
-    if task_manager is None:
-        task_manager = RuntimeBackgroundTaskManager(
-            runtime_host=host,
-            default_tasks=resolved_default_background_tasks,
-            custom_tasks=background_tasks,
-        )
-    else:
-        if task_manager.runtime_host is not host:
-            raise ValueError("background_task_manager must be bound to the same runtime_host.")
-        for task in resolved_default_background_tasks:
-            task_manager.register_default_task(task)
-        for task in background_tasks or ():
-            task_manager.register_custom_task(task)
     mcp_server = None
     mcp_app = None
     odbc_server = None
@@ -158,6 +144,10 @@ def create_runtime_api_app(
         if odbc_server is not None:
             await odbc_server.start()
         await _register_runtime_dataset_background_tasks(
+            task_manager=task_manager,
+            runtime_host=host,
+        )
+        await _register_runtime_semantic_vector_refresh_task(
             task_manager=task_manager,
             runtime_host=host,
         )
@@ -639,6 +629,7 @@ def create_runtime_api_app(
             annotations=list(payload.get("annotations", [])),
             metadata=payload.get("metadata"),
             generated_sql=payload.get("generated_sql"),
+            federation_diagnostics=payload.get("federation_diagnostics"),
         )
 
     @app.get("/api/runtime/v1/semantic-models", response_model=RuntimeSemanticModelListResponse)
@@ -699,7 +690,16 @@ def create_runtime_api_app(
         body: RuntimeSqlQueryRequest,
     ) -> RuntimeSqlQueryResponse:
         configured_host = await _resolve_request_host(request)
-        return await _execute_runtime_sql(configured_host, body)
+        try:
+            return await _execute_runtime_sql(configured_host, body)
+        except HTTPException:
+            raise
+        except (ValueError, ApplicationError, ExecutionValidationError) as exc:
+            detail = str(exc)
+            raise HTTPException(
+                status_code=_runtime_query_status_code(detail),
+                detail=detail,
+            ) from exc
 
     @app.get("/api/runtime/v1/agents")
     async def list_agents(request: Request) -> dict[str, Any]:
@@ -742,12 +742,63 @@ def create_runtime_api_app(
         return RuntimeAgentAskResponse(
             thread_id=uuid.UUID(str(payload_thread_id)) if payload_thread_id is not None else body.thread_id,
             status="succeeded",
+            run_id=uuid.UUID(str(payload_job_id)) if payload_job_id is not None else None,
             job_id=uuid.UUID(str(payload_job_id)) if payload_job_id is not None else None,
+            message_id=(
+                uuid.UUID(str(result.get("message_id")))
+                if result.get("message_id") is not None
+                else None
+            ),
             summary=result.get("summary"),
             result=result.get("result"),
             visualization=result.get("visualization"),
             error=result.get("error"),
             events=list(result.get("events", [])),
+        )
+
+    @app.post("/api/runtime/v1/agents/ask/stream")
+    async def ask_agent_stream(
+        request: Request,
+        body: RuntimeAgentAskRequest,
+    ) -> StreamingResponse:
+        configured_host = await _resolve_request_host(request)
+        agent_name = _resolve_agent_name(
+            configured_host,
+            agent_id=body.agent_id,
+            agent_name=body.agent_name,
+        )
+
+        return _build_runtime_sse_response(
+            _stream_runtime_run_events(
+                request=request,
+                events=configured_host.ask_agent_stream(
+                    prompt=body.message,
+                    agent_name=agent_name,
+                    thread_id=body.thread_id,
+                    title=body.title,
+                ),
+            )
+        )
+
+    @app.get("/api/runtime/v1/runs/{run_id}/stream")
+    async def stream_run(
+        request: Request,
+        run_id: uuid.UUID,
+        after_sequence: int = 0,
+    ) -> StreamingResponse:
+        configured_host = await _resolve_request_host(request)
+        try:
+            events = await configured_host.stream_run(
+                run_id=run_id,
+                after_sequence=after_sequence,
+            )
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=f"Run '{run_id}' was not found.") from exc
+        return _build_runtime_sse_response(
+            _stream_runtime_run_events(
+                request=request,
+                events=events,
+            )
         )
 
     @app.post("/api/runtime/v1/threads")
@@ -1009,13 +1060,64 @@ def _resolve_agent_name(
 ) -> str | None:
     normalized_name = str(agent_name or "").strip()
     if normalized_name:
-        return normalized_name
+        if normalized_name in runtime_host._agents:
+            return normalized_name
+        raise HTTPException(status_code=404, detail=f"Agent '{normalized_name}' was not found.")
     if agent_id is None:
         return None
     for candidate_name, record in runtime_host._agents.items():
         if record.id == agent_id:
             return candidate_name
     raise HTTPException(status_code=404, detail=f"Agent '{agent_id}' was not found.")
+
+
+def _encode_sse_payload(*, event_name: str, payload: RuntimeRunStreamEvent) -> str:
+    serialized = json.dumps(payload.model_dump(mode="json"))
+    stream_id = payload.run_id or payload.job_id
+    event_id = (
+        f"{stream_id}:{payload.sequence}"
+        if stream_id is not None
+        else str(payload.sequence)
+    )
+    return f"id: {event_id}\nevent: {event_name}\ndata: {serialized}\n\n"
+
+
+def _encode_sse_comment(comment: str | None = None, *, padding: int = 0) -> str:
+    message = f": {str(comment or '').strip()}".rstrip()
+    if padding > 0:
+        message = f"{message}{' ' * padding}"
+    return f"{message}\n\n"
+
+
+def _build_runtime_sse_response(event_stream: AsyncIterator[str]) -> StreamingResponse:
+    headers = {
+        "Cache-Control": "no-cache",
+        "Connection": "keep-alive",
+        "X-Accel-Buffering": "no",
+    }
+    return StreamingResponse(
+        event_stream,
+        media_type="text/event-stream",
+        headers=headers,
+    )
+
+
+async def _stream_runtime_run_events(
+    *,
+    request: Request,
+    events: AsyncIterator[RuntimeRunStreamEvent | None],
+) -> AsyncIterator[str]:
+    yield _encode_sse_comment("stream-open", padding=2048)
+    async for event in events:
+        if await request.is_disconnected():
+            return
+        if event is None:
+            yield _encode_sse_comment("keep-alive")
+            continue
+        yield _encode_sse_payload(
+            event_name=event.event,
+            payload=event,
+        )
 
 
 async def _resolve_dataset_id(
@@ -1047,65 +1149,28 @@ async def _execute_runtime_sql(
     runtime_host: ConfiguredLocalRuntimeHost,
     request: RuntimeSqlQueryRequest,
 ) -> RuntimeSqlQueryResponse:
-    selected_datasets = list(request.selected_datasets or [])
-    explicit_direct = request.connection_id is not None or bool(request.connection_name)
-
-    if explicit_direct and request.connection_name:
-        try:
-            payload = await runtime_host.execute_sql_text(
-                query=request.query,
-                connection_name=request.connection_name,
-                requested_limit=request.requested_limit,
-            )
-        except HTTPException:
-            raise
-        except Exception as exc:
-            _raise_runtime_internal_server_error("direct SQL query", exc)
-        return RuntimeSqlQueryResponse(
-            sql_job_id=uuid.uuid4(),
-            status="succeeded",
-            columns=list(payload.get("columns", [])),
-            rows=list(payload.get("rows", [])),
-            row_count_preview=int(payload.get("row_count_preview") or 0),
-            total_rows_estimate=payload.get("total_rows_estimate"),
-            bytes_scanned=payload.get("bytes_scanned"),
-            duration_ms=payload.get("duration_ms"),
-            redaction_applied=bool(payload.get("redaction_applied")),
-            query=request.query,
-            generated_sql=payload.get("generated_sql"),
-        )
-
-    sql_job_id = uuid.uuid4()
-    is_federated = not explicit_direct
-    create_request = CreateSqlJobRequest(
-        sql_job_id=sql_job_id,
-        workspace_id=runtime_host.context.workspace_id,
-        actor_id=runtime_host.context.actor_id,
-        workbench_mode=(SqlWorkbenchMode.dataset if is_federated else SqlWorkbenchMode.direct_sql),
-        connection_id=request.connection_id,
-        execution_mode=("federated" if is_federated else "single"),
-        query=request.query,
-        query_dialect=str(request.query_dialect or "tsql").strip().lower() or "tsql",
-        params=dict(request.params or {}),
-        requested_limit=request.requested_limit,
-        requested_timeout_seconds=request.requested_timeout_seconds,
-        enforced_limit=request.requested_limit or 100,
-        enforced_timeout_seconds=request.requested_timeout_seconds or 30,
-        allow_dml=False,
-        allow_federation=is_federated,
-        selected_datasets=selected_datasets,
-        explain=bool(request.explain),
-        correlation_id=runtime_host.context.request_id,
-    )
     try:
-        payload = await runtime_host.execute_sql(request=create_request)
+        payload = await runtime_host.query_sql(request=request)
     except HTTPException:
         raise
+    except (ValueError, ApplicationError, ExecutionValidationError):
+        raise
     except Exception as exc:
-        _raise_runtime_internal_server_error("SQL query", exc)
+        _raise_runtime_internal_server_error(f"{request.query_scope.value} SQL query", exc)
+
+    payload_sql_job_id = payload.get("sql_job_id")
+    try:
+        sql_job_id = uuid.UUID(str(payload_sql_job_id)) if payload_sql_job_id is not None else uuid.uuid4()
+    except (TypeError, ValueError):
+        sql_job_id = uuid.uuid4()
+
     return RuntimeSqlQueryResponse(
         sql_job_id=sql_job_id,
+        query_scope=payload.get("query_scope") or request.query_scope,
         status="succeeded",
+        semantic_model_id=payload.get("semantic_model_id"),
+        semantic_model_ids=list(payload.get("semantic_model_ids", [])),
+        connector_id=payload.get("connector_id"),
         columns=list(payload.get("columns", [])),
         rows=list(payload.get("rows", [])),
         row_count_preview=int(payload.get("row_count_preview") or 0),
@@ -1113,8 +1178,9 @@ async def _execute_runtime_sql(
         bytes_scanned=payload.get("bytes_scanned"),
         duration_ms=payload.get("duration_ms"),
         redaction_applied=bool(payload.get("redaction_applied")),
-        query=request.query,
+        query=payload.get("query") or request.query,
         generated_sql=payload.get("generated_sql"),
+        federation_diagnostics=payload.get("federation_diagnostics"),
     )
 
 
@@ -1252,34 +1318,6 @@ def _principal_has_runtime_admin(principal: RuntimeAuthPrincipal) -> bool:
     return "admin" in normalized_roles or "runtime:admin" in normalized_roles
 
 
-def _resolve_default_background_tasks(
-    *,
-    runtime_host: RuntimeHost,
-    default_background_tasks: Iterable[RuntimeBackgroundTaskDefinition] | None,
-) -> tuple[RuntimeBackgroundTaskDefinition, ...]:
-    tasks = list(default_background_tasks or ())
-    registered_names = {
-        str(task.name or "").strip()
-        for task in tasks
-        if str(task.name or "").strip()
-    }
-    if (
-        runtime_host.services.semantic_vector_search is not None
-        and runtime_host.can_refresh_semantic_vector_search()
-        and _SEMANTIC_VECTOR_REFRESH_TASK_NAME not in registered_names
-    ):
-        tasks.append(
-            build_semantic_vector_refresh_default_task(
-                name=_SEMANTIC_VECTOR_REFRESH_TASK_NAME,
-                schedule=BackgroundTaskSchedule.interval(seconds=60),
-                description=(
-                    "Check semantic vector indexes every minute and refresh any that are due."
-                ),
-            )
-        )
-    return tuple(tasks)
-
-
 async def _register_runtime_dataset_background_tasks(
     *,
     task_manager: RuntimeBackgroundTaskManager,
@@ -1298,6 +1336,33 @@ async def _register_runtime_dataset_background_tasks(
             continue
         task_manager.register_default_task(task)
         existing_names.add(task.name)
+        
+async def _register_runtime_semantic_vector_refresh_task(
+    *,
+    task_manager: RuntimeBackgroundTaskManager,
+    runtime_host: RuntimeHost,
+) -> None:
+    if not isinstance(runtime_host, ConfiguredLocalRuntimeHost):
+        return
+    if runtime_host.services.semantic_vector_search is None or not runtime_host.can_refresh_semantic_vector_search():
+        return
+    existing_names = {
+        str(task.name or "").strip()
+        for task in task_manager.list_tasks()
+        if str(task.name or "").strip()
+    }
+    if _SEMANTIC_VECTOR_REFRESH_TASK_NAME in existing_names:
+        return
+    task_manager.register_default_task(
+        build_semantic_vector_refresh_default_task(
+            name=_SEMANTIC_VECTOR_REFRESH_TASK_NAME,
+            run_on_startup=True,
+            schedule=BackgroundTaskSchedule.interval(seconds=60),
+            description=(
+                "Check semantic vector indexes every minute and refresh any that are due."
+            ),
+        )
+    )
 
 
 def _normalize_runtime_features(features: Iterable[str] | None) -> tuple[str, ...]:
@@ -1348,6 +1413,12 @@ def _runtime_mutation_status_code(detail: str) -> int:
     normalized = str(detail or "").strip().lower()
     if "already exists" in normalized or "already in use" in normalized:
         return 409
+    return 400
+
+
+def _runtime_query_status_code(detail: str) -> int:
+    if _is_missing_semantic_resource(detail) or _is_missing_runtime_resource(detail):
+        return 404
     return 400
 
 

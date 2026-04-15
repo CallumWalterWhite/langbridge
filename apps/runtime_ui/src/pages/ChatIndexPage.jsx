@@ -1,11 +1,29 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { ArrowRight, MessageSquareText, Plus, RefreshCw, Trash2 } from "lucide-react";
+import { ArrowRight, Bot, Plus } from "lucide-react";
 
 import { useAsyncData } from "../hooks/useAsyncData";
-import { createThread, deleteThread, fetchAgents, fetchThreads } from "../lib/runtimeApi";
-import { formatValue, getErrorMessage } from "../lib/format";
-import { CHAT_STARTERS, formatRelativeTime } from "../lib/runtimeUi";
+import {
+  createThread,
+  fetchAgents,
+  fetchThreads,
+} from "../lib/runtimeApi";
+import { getErrorMessage, getRuntimeTimestamp } from "../lib/format";
+import {
+  CHAT_STARTERS,
+  DEFAULT_CHAT_MESSAGE,
+  formatRelativeTime,
+} from "../lib/runtimeUi";
+
+function buildPromptTitle(prompt) {
+  const normalized = String(prompt || "")
+    .trim()
+    .replace(/\s+/g, " ");
+  if (!normalized) {
+    return undefined;
+  }
+  return normalized.slice(0, 80);
+}
 
 export function ChatIndexPage() {
   const navigate = useNavigate();
@@ -14,179 +32,216 @@ export function ChatIndexPage() {
   const threads = Array.isArray(threadsState.data?.items) ? threadsState.data.items : [];
   const agents = Array.isArray(agentsState.data?.items) ? agentsState.data.items : [];
   const sortedThreads = [...threads].sort((left, right) => {
-    const leftTime = new Date(left.updated_at || left.created_at || 0).getTime();
-    const rightTime = new Date(right.updated_at || right.created_at || 0).getTime();
+    const leftTime = getRuntimeTimestamp(left.updated_at || left.created_at || 0);
+    const rightTime = getRuntimeTimestamp(right.updated_at || right.created_at || 0);
     return rightTime - leftTime;
   });
   const latestThread = sortedThreads[0] || null;
+  const [selectedAgentName, setSelectedAgentName] = useState("");
+  const [prompt, setPrompt] = useState(DEFAULT_CHAT_MESSAGE);
+  const [asking, setAsking] = useState(false);
   const [creatingThread, setCreatingThread] = useState(false);
-  const [deletingThreadId, setDeletingThreadId] = useState("");
   const [mutationError, setMutationError] = useState("");
 
-  async function handleCreateThread(seedMessage = "") {
+  useEffect(() => {
+    try {
+      const stored = window.localStorage.getItem("runtime-ask-agent");
+      if (stored) {
+        setSelectedAgentName(stored);
+      }
+    } catch {}
+  }, []);
+
+  useEffect(() => {
+    if (agents.length === 0) {
+      return;
+    }
+    const hasSelectedAgent = agents.some((item) => item.name === selectedAgentName);
+    if (!selectedAgentName || !hasSelectedAgent) {
+      setSelectedAgentName(agents.find((item) => item.default)?.name || agents[0].name);
+    }
+  }, [agents, selectedAgentName]);
+
+  useEffect(() => {
+    try {
+      if (selectedAgentName) {
+        window.localStorage.setItem("runtime-ask-agent", selectedAgentName);
+      }
+    } catch {}
+  }, [selectedAgentName]);
+
+  async function handleAsk(event) {
+    event.preventDefault();
+    if (!selectedAgentName || !prompt.trim()) {
+      return;
+    }
+    await handleCreateThread(prompt.trim(), buildPromptTitle(prompt));
+  }
+
+  async function handleCreateThread(seedMessage = "", title) {
+    if (seedMessage) {
+      setAsking(true);
+    }
     setCreatingThread(true);
     setMutationError("");
     try {
-      const createdThread = await createThread({});
-      if (seedMessage && typeof window !== "undefined") {
-        window.sessionStorage.setItem(`runtime-thread-draft:${createdThread.id}`, seedMessage);
+      const createdThread = await createThread(title ? { title } : {});
+      if (typeof window !== "undefined") {
+        if (seedMessage) {
+          window.sessionStorage.setItem(`runtime-thread-draft:${createdThread.id}`, seedMessage);
+        }
+        if (selectedAgentName) {
+          window.localStorage.setItem(`runtime-thread-agent:${createdThread.id}`, selectedAgentName);
+        }
       }
-      await threadsState.reload();
       navigate(`/chat/${createdThread.id}`);
+      void threadsState.reload();
     } catch (caughtError) {
       setMutationError(getErrorMessage(caughtError));
     } finally {
+      if (seedMessage) {
+        setAsking(false);
+      }
       setCreatingThread(false);
     }
   }
 
-  async function handleDeleteThread(threadId) {
-    setDeletingThreadId(String(threadId));
-    setMutationError("");
-    try {
-      await deleteThread(threadId);
-      await threadsState.reload();
-    } catch (caughtError) {
-      setMutationError(getErrorMessage(caughtError));
-    } finally {
-      setDeletingThreadId("");
-    }
-  }
-
   return (
-    <div className="chat-index-shell">
-      <section className="surface-panel product-command-bar">
-        <div className="product-command-bar-main">
-          <div className="product-command-bar-copy">
-            <p className="eyebrow">Threads</p>
-            <h2>Thread workspace</h2>
-            <div className="product-command-bar-meta">
-              <span className="chip">{formatValue(threads.length)} threads</span>
-              <span className="chip">{formatValue(agents.length)} agents</span>
-              <span className="chip">
-                {latestThread
-                  ? formatRelativeTime(latestThread.updated_at || latestThread.created_at)
-                  : "No activity"}
-              </span>
+    <div className="chat-index-shell chat-home-shell chat-home-shell--minimal">
+      <section className="chat-home-minimal-stage">
+        {threadsState.error ? <div className="error-banner">{threadsState.error}</div> : null}
+        {agentsState.error ? <div className="error-banner">{agentsState.error}</div> : null}
+        {mutationError ? <div className="error-banner">{mutationError}</div> : null}
+
+        <div className="chat-home-minimal-center">
+          <div className="chat-home-copy chat-home-copy--minimal">
+            <h2>What do you want to know?</h2>
+            <p className="chat-home-copy-text">
+              Ask the runtime a question and continue the conversation in a thread.
+            </p>
+          </div>
+
+          <form className="chat-home-composer chat-home-composer--minimal" onSubmit={handleAsk}>
+            <div className="chat-home-composer-top chat-home-composer-top--minimal">
+              <label className="chat-home-agent-field chat-home-agent-field--minimal">
+                <span>Agent</span>
+                <select
+                  className="select-input thread-agent-select"
+                  value={selectedAgentName}
+                  onChange={(event) => setSelectedAgentName(event.target.value)}
+                  disabled={asking || agents.length === 0}
+                >
+                  {agents.map((item) => (
+                    <option key={item.id || item.name} value={item.name}>
+                      {item.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <div className="chat-home-toolbar-actions chat-home-toolbar-actions--minimal">
+                <button
+                  className="ghost-button"
+                  type="button"
+                  onClick={() => void handleCreateThread()}
+                  disabled={creatingThread}
+                >
+                  <Plus className="button-icon" aria-hidden="true" />
+                  {creatingThread ? "Creating..." : "Blank thread"}
+                </button>
+                <button className="ghost-button" type="button" onClick={() => navigate("/agents")}>
+                  <Bot className="button-icon" aria-hidden="true" />
+                  Agent library
+                </button>
+              </div>
             </div>
-          </div>
-          <div className="product-command-bar-actions">
-            <button
-              className="ghost-button"
-              type="button"
-              onClick={() => void threadsState.reload()}
-              disabled={threadsState.loading}
-            >
-              <RefreshCw className="button-icon" aria-hidden="true" />
-              Refresh
-            </button>
-          </div>
-        </div>
-        <div className="thread-index-actions">
-          <button
-            className="primary-button"
-            type="button"
-            onClick={() => void handleCreateThread()}
-            disabled={creatingThread}
-          >
-            <Plus className="button-icon" aria-hidden="true" />
-            {creatingThread ? "Creating..." : "New thread"}
-          </button>
+
+            <textarea
+              className="textarea-input chat-home-textarea chat-home-textarea--minimal"
+              value={prompt}
+              onChange={(event) => setPrompt(event.target.value)}
+              rows={5}
+              disabled={asking}
+              aria-label="Question"
+              placeholder="Ask about your data, runtime activity, semantic models, or the next analytical step..."
+            />
+
+            <div className="chat-home-starters chat-home-starters--minimal">
+              {CHAT_STARTERS.map((starter) => (
+                <button
+                  key={starter}
+                  className="chat-home-starter"
+                  type="button"
+                  onClick={() => setPrompt(starter)}
+                  disabled={asking}
+                >
+                  {starter}
+                </button>
+              ))}
+            </div>
+
+            <div className="chat-home-footer chat-home-footer--minimal">
+              <p className="composer-note">
+                {latestThread
+                  ? `Latest thread updated ${formatRelativeTime(latestThread.updated_at || latestThread.created_at)}`
+                  : "A new thread will be created when you send the first message."}
+              </p>
+              <div className="page-actions">
+                <button
+                  className="ghost-button"
+                  type="button"
+                  onClick={() => setPrompt(DEFAULT_CHAT_MESSAGE)}
+                  disabled={asking}
+                >
+                  Load default
+                </button>
+                <button
+                  className="primary-button"
+                  type="submit"
+                  disabled={asking || !selectedAgentName || !prompt.trim()}
+                >
+                  <ArrowRight className="button-icon" aria-hidden="true" />
+                  {asking ? "Asking runtime..." : "Ask runtime"}
+                </button>
+              </div>
+            </div>
+          </form>
         </div>
       </section>
 
-      <div className="thread-index-layout">
-        <section className="surface-panel thread-index-list">
-          <div className="thread-section-head">
-            <div>
-              <h3>Recent threads</h3>
-            </div>
-          </div>
-
-          {threadsState.error ? <div className="error-banner">{threadsState.error}</div> : null}
-          {mutationError ? <div className="error-banner">{mutationError}</div> : null}
-
-          {threadsState.loading ? (
-            <div className="empty-box">Loading threads...</div>
-          ) : sortedThreads.length > 0 ? (
-            <div className="thread-index-cards">
-              {sortedThreads.map((thread) => (
-                <article key={thread.id} className="thread-index-card">
-                  <button
-                    className="thread-index-card-main"
-                    type="button"
-                    onClick={() => navigate(`/chat/${thread.id}`)}
-                  >
-                    <span className="thread-link-avatar">
-                      {String(thread.title || thread.id || "th")
-                        .slice(0, 2)
-                        .toUpperCase()}
-                    </span>
-                    <span className="thread-link-copy">
-                      <strong>{thread.title || `Thread ${String(thread.id).slice(0, 8)}`}</strong>
-                      <span>
-                        {formatValue(thread.state)} |{" "}
-                        {thread.updated_at
-                          ? `Updated ${formatRelativeTime(thread.updated_at)}`
-                          : `Created ${formatRelativeTime(thread.created_at)}`}
-                      </span>
-                    </span>
-                    <ArrowRight className="thread-link-arrow" aria-hidden="true" />
-                  </button>
-                  <button
-                    className="ghost-button"
-                    type="button"
-                    onClick={() => void handleDeleteThread(thread.id)}
-                    disabled={deletingThreadId === String(thread.id)}
-                  >
-                    <Trash2 className="button-icon" aria-hidden="true" />
-                    {deletingThreadId === String(thread.id) ? "Deleting..." : "Delete"}
-                  </button>
-                </article>
-              ))}
-            </div>
-          ) : (
-            <div className="thread-empty-state">
-              <MessageSquareText className="thread-empty-icon" aria-hidden="true" />
-              <div>
-                <strong>No threads found</strong>
-                <p>Start a new thread to see it appear here.</p>
-              </div>
+      {sortedThreads.length > 0 ? (
+        <section className="chat-home-history">
+          <div className="chat-home-history-head">
+            <h3>Recent</h3>
+            {latestThread ? (
               <button
-                className="primary-button"
+                className="ghost-button"
                 type="button"
-                onClick={() => void handleCreateThread()}
-                disabled={creatingThread}
+                onClick={() => navigate(`/chat/${latestThread.id}`)}
               >
-                <Plus className="button-icon" aria-hidden="true" />
-                Start a thread
+                Continue latest
               </button>
-            </div>
-          )}
-        </section>
-
-        <aside className="surface-panel thread-index-rail">
-          <div className="thread-section-head">
-            <div>
-              <h3>Prompt starters</h3>
-            </div>
+            ) : null}
           </div>
-          <div className="thread-rail-starters">
-            {CHAT_STARTERS.map((starter) => (
+          <div className="chat-home-history-strip">
+            {sortedThreads.slice(0, 6).map((thread) => (
               <button
-                key={starter}
-                className="starter-button"
+                key={thread.id}
+                className="chat-home-history-item"
                 type="button"
-                onClick={() => void handleCreateThread(starter)}
-                disabled={creatingThread}
+                onClick={() => navigate(`/chat/${thread.id}`)}
               >
-                <strong>Start with this prompt</strong>
-                <span>{starter}</span>
+                <strong>{thread.title || `Thread ${String(thread.id).slice(0, 8)}`}</strong>
+                <span>
+                  {thread.updated_at
+                    ? `Updated ${formatRelativeTime(thread.updated_at)}`
+                    : `Created ${formatRelativeTime(thread.created_at)}`}
+                </span>
               </button>
             ))}
           </div>
-        </aside>
-      </div>
+        </section>
+      ) : null}
     </div>
   );
 }

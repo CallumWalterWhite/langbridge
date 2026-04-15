@@ -4,18 +4,20 @@ import uuid
 
 sys.path.append(str(pathlib.Path(__file__).resolve().parents[5] / "langbridge" / "langbridge"))
 
-from langbridge.orchestrator.agents.analyst.agent import AnalystAgent
+from langbridge.orchestrator.agents.analyst.selector import AnalyticalContextSelector
+from langbridge.orchestrator.definitions import AnalystQueryScopePolicy
 from langbridge.orchestrator.tools.sql_analyst.interfaces import (
     AnalyticalColumn,
     AnalyticalContext,
     AnalyticalDatasetBinding,
     AnalyticalMetric,
+    AnalystQueryRequest,
 )
-from langbridge.orchestrator.tools.sql_analyst.tool import SqlAnalystTool
+from langbridge.runtime.models import SqlQueryScope
 
 
 class StaticLLM:
-    def __init__(self, payload: str) -> None:
+    def __init__(self, payload: str = "{}") -> None:
         self._payload = payload
 
     def complete(self, prompt: str, *, temperature: float = 0.0, max_tokens: int | None = None) -> str:
@@ -23,149 +25,196 @@ class StaticLLM:
         return self._payload
 
 
-class FakeFederatedExecutor:
-    def __init__(self, label: str) -> None:
-        self.label = label
-        self.calls: list[dict[str, object]] = []
-
-    async def execute_sql(
+class _FakeTool:
+    def __init__(
         self,
         *,
-        sql: str,
-        dialect: str,
-        max_rows: int | None = None,
-    ):
-        self.calls.append({"sql": sql, "dialect": dialect, "max_rows": max_rows})
-        from langbridge.orchestrator.tools.sql_analyst.interfaces import QueryResult
-
-        return QueryResult(
-            columns=["value"],
-            rows=[(self.label,)],
-            rowcount=1,
-            elapsed_ms=0,
-            source_sql=sql,
+        binding_name: str,
+        asset_name: str,
+        asset_type: str,
+        query_scope: SqlQueryScope,
+        query_scope_policy: AnalystQueryScopePolicy,
+        keywords: set[str],
+        priority: int = 0,
+        metric_name: str | None = None,
+        tags: list[str] | None = None,
+    ) -> None:
+        self.binding_name = binding_name
+        self.binding_description = f"{binding_name} binding"
+        self.query_scope_policy = query_scope_policy
+        self.priority = priority
+        self._keywords = set(keywords)
+        self.context = AnalyticalContext(
+            query_scope=query_scope,
+            asset_type=asset_type,
+            asset_id=str(uuid.uuid4()),
+            asset_name=asset_name,
+            description=f"{asset_name} asset",
+            tags=tags or [],
+            datasets=[
+                AnalyticalDatasetBinding(
+                    dataset_id=str(uuid.uuid4()),
+                    dataset_name=f"{asset_name}_dataset",
+                    sql_alias=asset_name.replace("_model", "").replace("_dataset", ""),
+                    source_kind="connector",
+                    storage_kind="table",
+                    columns=[AnalyticalColumn(name="id", data_type="integer")],
+                )
+            ],
+            tables=[asset_name.replace("_model", "").replace("_dataset", "")],
+            metrics=[AnalyticalMetric(name=metric_name, expression="COUNT(*)")] if metric_name else [],
         )
 
+    @property
+    def name(self) -> str:
+        return self.context.asset_name
 
-def _dataset_context(name: str, sql_alias: str, *, tags: list[str] | None = None) -> AnalyticalContext:
-    return AnalyticalContext(
-        asset_type="dataset",
-        asset_id=str(uuid.uuid4()),
-        asset_name=name,
-        description=f"{name} dataset",
-        tags=tags or [],
-        datasets=[
-            AnalyticalDatasetBinding(
-                dataset_id=str(uuid.uuid4()),
-                dataset_name=name,
-                sql_alias=sql_alias,
-                source_kind="connector",
-                storage_kind="table",
-                columns=[AnalyticalColumn(name="id", data_type="integer")],
-            )
+    @property
+    def query_scope(self) -> SqlQueryScope:
+        return self.context.query_scope
+
+    def selection_keywords(self) -> set[str]:
+        return set(self._keywords)
+
+    def describe_for_selection(self, *, tool_id: str) -> dict[str, object]:
+        return {
+            "id": tool_id,
+            "binding_name": self.binding_name,
+            "query_scope_policy": self.query_scope_policy.value,
+            "query_scope": self.query_scope.value,
+            "asset_name": self.context.asset_name,
+            "asset_type": self.context.asset_type,
+            "metrics": [metric.name for metric in self.context.metrics],
+            "datasets": [dataset.dataset_name for dataset in self.context.datasets],
+            "tags": list(self.context.tags),
+        }
+
+
+def test_selector_chooses_matching_binding_before_asset_selection() -> None:
+    selector = AnalyticalContextSelector(
+        StaticLLM(),
+        [
+            _FakeTool(
+                binding_name="customers",
+                asset_name="customers_dataset",
+                asset_type="dataset",
+                query_scope=SqlQueryScope.dataset,
+                query_scope_policy=AnalystQueryScopePolicy.dataset_only,
+                keywords={"customers", "segment"},
+            ),
+            _FakeTool(
+                binding_name="orders",
+                asset_name="orders_dataset",
+                asset_type="dataset",
+                query_scope=SqlQueryScope.dataset,
+                query_scope_policy=AnalystQueryScopePolicy.dataset_only,
+                keywords={"orders", "revenue"},
+                tags=["revenue"],
+            ),
         ],
-        tables=[sql_alias],
     )
 
+    selection = selector.select_binding(AnalystQueryRequest(question="Show revenue by orders"))
 
-def _semantic_context(name: str, sql_alias: str, metric_name: str) -> AnalyticalContext:
-    return AnalyticalContext(
-        asset_type="semantic_model",
-        asset_id=str(uuid.uuid4()),
-        asset_name=name,
-        description=f"{name} governed model",
-        datasets=[
-            AnalyticalDatasetBinding(
-                dataset_id=str(uuid.uuid4()),
-                dataset_name=f"{name}_dataset",
-                sql_alias=sql_alias,
-                source_kind="connector",
-                storage_kind="table",
-                columns=[AnalyticalColumn(name="id", data_type="integer")],
-            )
+    assert selection.binding_name == "orders"
+    assert selection.initial_scope == SqlQueryScope.dataset
+
+
+def test_selector_selects_asset_within_scope_after_binding_choice() -> None:
+    selector = AnalyticalContextSelector(
+        StaticLLM(),
+        [
+            _FakeTool(
+                binding_name="governed",
+                asset_name="retention_model",
+                asset_type="semantic_model",
+                query_scope=SqlQueryScope.semantic,
+                query_scope_policy=AnalystQueryScopePolicy.semantic_only,
+                keywords={"retention", "churn"},
+                metric_name="retention",
+            ),
+            _FakeTool(
+                binding_name="governed",
+                asset_name="revenue_model",
+                asset_type="semantic_model",
+                query_scope=SqlQueryScope.semantic,
+                query_scope_policy=AnalystQueryScopePolicy.semantic_only,
+                keywords={"revenue", "sales"},
+                metric_name="revenue",
+            ),
         ],
-        tables=[sql_alias],
-        metrics=[AnalyticalMetric(name=metric_name, expression="COUNT(*)")],
     )
 
-
-def _tool(
-    context: AnalyticalContext,
-    sql: str,
-    label: str,
-    *,
-    priority: int = 0,
-) -> tuple[SqlAnalystTool, FakeFederatedExecutor]:
-    executor = FakeFederatedExecutor(label)
-    tool = SqlAnalystTool(
-        llm=StaticLLM(sql),
-        context=context,
-        federated_sql_executor=executor,
-        priority=priority,
-    )
-    return tool, executor
-
-
-def test_analyst_agent_selects_dataset_asset_by_keywords() -> None:
-    customers_tool, customers_executor = _tool(
-        _dataset_context("customers_dataset", "customers"),
-        "SELECT COUNT(*) FROM customers",
-        "customers",
-    )
-    orders_tool, orders_executor = _tool(
-        _dataset_context("orders_dataset", "orders", tags=["revenue", "orders"]),
-        "SELECT COUNT(*) FROM orders",
-        "orders",
+    request = AnalystQueryRequest(question="Give me retention KPI results")
+    selection = selector.select_binding(request)
+    tool = selector.select_tool(
+        request,
+        binding_name=selection.binding_name,
+        query_scope=selection.initial_scope,
     )
 
-    agent = AnalystAgent(StaticLLM(""), [customers_tool, orders_tool])
-    response = agent.answer("Show revenue by orders")
-
-    assert response.error is None
-    assert response.asset_type == "dataset"
-    assert response.asset_name == "orders_dataset"
-    assert orders_executor.calls
-    assert not customers_executor.calls
+    assert selection.binding_name == "governed"
+    assert selection.initial_scope == SqlQueryScope.semantic
+    assert tool.name == "retention_model"
 
 
-def test_analyst_agent_uses_priority_on_tie() -> None:
-    tool_a, exec_a = _tool(
-        _dataset_context("dataset_a", "entity_a"),
-        "SELECT 1 FROM entity_a",
-        "a",
-        priority=1,
-    )
-    tool_b, exec_b = _tool(
-        _dataset_context("dataset_b", "entity_b"),
-        "SELECT 1 FROM entity_b",
-        "b",
-        priority=5,
-    )
-
-    agent = AnalystAgent(StaticLLM(""), [tool_a, tool_b])
-    response = agent.answer("General question with no keywords")
-
-    assert response.asset_name == "dataset_b"
-    assert exec_b.calls
-    assert not exec_a.calls
-
-
-def test_analyst_agent_prefers_semantic_model_when_metric_matches() -> None:
-    dataset_tool, dataset_executor = _tool(
-        _dataset_context("inventory_dataset", "inventory"),
-        "SELECT COUNT(*) FROM inventory",
-        "inventory",
-    )
-    semantic_tool, semantic_executor = _tool(
-        _semantic_context("kpi_model", "metrics", "retention"),
-        "SELECT COUNT(*) FROM metrics",
-        "metrics",
+def test_selector_prefers_semantic_scope_for_semantic_preferred_binding() -> None:
+    selector = AnalyticalContextSelector(
+        StaticLLM(),
+        [
+            _FakeTool(
+                binding_name="sales",
+                asset_name="sales_model",
+                asset_type="semantic_model",
+                query_scope=SqlQueryScope.semantic,
+                query_scope_policy=AnalystQueryScopePolicy.semantic_preferred,
+                keywords={"sales", "revenue"},
+                metric_name="revenue",
+            ),
+            _FakeTool(
+                binding_name="sales",
+                asset_name="sales_dataset",
+                asset_type="dataset",
+                query_scope=SqlQueryScope.dataset,
+                query_scope_policy=AnalystQueryScopePolicy.semantic_preferred,
+                keywords={"sales", "revenue"},
+            ),
+        ],
     )
 
-    agent = AnalystAgent(StaticLLM(""), [dataset_tool, semantic_tool])
-    response = agent.answer("Give me retention KPI results")
+    selection = selector.select_binding(AnalystQueryRequest(question="Revenue by region"))
 
-    assert response.asset_type == "semantic_model"
-    assert response.asset_name == "kpi_model"
-    assert semantic_executor.calls
-    assert not dataset_executor.calls
+    assert selection.binding_name == "sales"
+    assert selection.initial_scope == SqlQueryScope.semantic
+    assert set(selection.available_scopes) == {SqlQueryScope.semantic, SqlQueryScope.dataset}
+    assert selector.fallback_scope(selection, current_scope=SqlQueryScope.semantic) == SqlQueryScope.dataset
+
+
+def test_selector_uses_dataset_scope_for_dataset_only_policy() -> None:
+    selector = AnalyticalContextSelector(
+        StaticLLM(),
+        [
+            _FakeTool(
+                binding_name="sales",
+                asset_name="sales_model",
+                asset_type="semantic_model",
+                query_scope=SqlQueryScope.semantic,
+                query_scope_policy=AnalystQueryScopePolicy.dataset_only,
+                keywords={"sales", "revenue"},
+                metric_name="revenue",
+            ),
+            _FakeTool(
+                binding_name="sales",
+                asset_name="sales_dataset",
+                asset_type="dataset",
+                query_scope=SqlQueryScope.dataset,
+                query_scope_policy=AnalystQueryScopePolicy.dataset_only,
+                keywords={"sales", "revenue"},
+            ),
+        ],
+    )
+
+    selection = selector.select_binding(AnalystQueryRequest(question="Revenue by region"))
+
+    assert selection.initial_scope == SqlQueryScope.dataset
+    assert selector.fallback_scope(selection, current_scope=SqlQueryScope.dataset) is None

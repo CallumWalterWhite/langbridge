@@ -232,6 +232,7 @@ def upgrade() -> None:
     sa.Column('model', sa.String(length=50), nullable=True),
     sa.Column('configuration', sa.JSON(), nullable=True),
     sa.Column('is_active', sa.Boolean(), nullable=True),
+    sa.Column('default', sa.Boolean(), nullable=False),
     sa.Column('created_at', sa.DateTime(), nullable=True),
     sa.Column('updated_at', sa.DateTime(), nullable=True),
     sa.Column('workspace_id', sa.Uuid(), nullable=False),

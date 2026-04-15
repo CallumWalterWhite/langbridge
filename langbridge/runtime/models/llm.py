@@ -24,6 +24,7 @@ class LLMConnectionSecret(RuntimeModel):
     api_key: str
     description: str | None = None
     is_active: bool = True
+    default: bool = False
     workspace_id: uuid.UUID
     created_at: datetime | None = None
     updated_at: datetime | None = None

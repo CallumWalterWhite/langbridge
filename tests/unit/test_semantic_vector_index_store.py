@@ -100,6 +100,12 @@ def test_semantic_vector_index_store_round_trips_dimension_metadata() -> None:
             assert loaded.vector_store_target == SemanticVectorStoreTarget.MANAGED_FAISS
             assert loaded.refresh_status == SemanticVectorIndexStatus.READY
             assert loaded.vector_index_name == "semantic_country_idx"
+            assert loaded.last_refreshed_at is not None
+            assert loaded.last_refreshed_at.tzinfo is not None
+            assert loaded.created_at is not None
+            assert loaded.created_at.tzinfo is not None
+            assert loaded.updated_at is not None
+            assert loaded.updated_at.tzinfo is not None
             assert listed == [loaded]
 
             await store.delete(

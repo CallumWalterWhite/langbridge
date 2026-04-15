@@ -15,6 +15,8 @@ from langbridge.runtime.models import (
     CreateSqlJobRequest,
     LLMConnectionSecret,
     LLMProvider,
+    SqlQueryRequest,
+    SqlQueryScope,
     SqlSelectedDataset,
 )
 
@@ -39,6 +41,21 @@ def test_create_sql_job_request_accepts_camel_case_payload() -> None:
     assert request.workspace_id == workspace_id
     assert request.workbench_mode.value == "dataset"
     assert request.selected_datasets == [dataset_id]
+
+
+def test_sql_query_request_accepts_camel_case_scope_payload() -> None:
+    request = SqlQueryRequest.model_validate(
+        {
+            "queryScope": "source",
+            "query": "SELECT 1",
+            "connectionName": "commerce_demo",
+            "queryDialect": "postgres",
+        }
+    )
+
+    assert request.query_scope == SqlQueryScope.source
+    assert request.connection_name == "commerce_demo"
+    assert request.query_dialect == "postgres"
 
 
 def test_create_dataset_bulk_create_request_accepts_nested_camel_case_payload() -> None:
@@ -203,6 +220,7 @@ def test_embedding_provider_accepts_runtime_llm_connection_shape(monkeypatch) ->
             provider=LLMProvider.OPENAI,
             model="gpt-4.1",
             api_key="secret",
+            default=True,
             workspace_id=uuid.uuid4(),
         )
     )

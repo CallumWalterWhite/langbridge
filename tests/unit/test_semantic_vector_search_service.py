@@ -3,6 +3,7 @@ import logging
 import pathlib
 import sys
 import uuid
+from datetime import datetime, timedelta
 
 import pytest
 
@@ -20,6 +21,7 @@ from langbridge.runtime.models import (
     ManagementMode,
     SecretReference,
     SemanticModelMetadata,
+    SemanticVectorIndexMetadata,
     SemanticVectorIndexStatus,
     SemanticVectorStoreTarget,
 )
@@ -114,6 +116,28 @@ def _semantic_model_yaml(vector_block: str) -> str:
         "        expression: country\n"
         "        type: string\n"
         f"{vector_block}"
+    )
+
+
+def _duplicate_vector_dimension_model_yaml() -> str:
+    return (
+        'version: "1.0"\n'
+        "datasets:\n"
+        "  product:\n"
+        "    relation_name: product\n"
+        "    dimensions:\n"
+        "      - name: product_id\n"
+        "        expression: PRODUCT_ID\n"
+        "        type: string\n"
+        "        vector:\n"
+        "          enabled: true\n"
+        "          refresh_interval: 1d\n"
+        "      - name: product_id\n"
+        "        expression: PRODUCT_ID\n"
+        "        type: string\n"
+        "        vector:\n"
+        "          enabled: true\n"
+        "          refresh_interval: 1d\n"
     )
 
 
@@ -218,6 +242,98 @@ def test_semantic_vector_refresh_builds_default_faiss_index_and_searches_dimensi
         assert hits[0].dimension_name == "country"
         assert hits[0].matched_value == "France"
         assert hits[0].source_text == "French market"
+
+    asyncio.run(_run())
+
+
+def test_semantic_vector_refresh_accepts_naive_last_refreshed_at() -> None:
+    index_metadata = SemanticVectorIndexMetadata(
+        id=uuid.uuid4(),
+        workspace_id=uuid.uuid4(),
+        semantic_model_id=uuid.uuid4(),
+        dataset_key="shopify_orders",
+        dimension_name="country",
+        vector_store_target=SemanticVectorStoreTarget.MANAGED_FAISS,
+        vector_index_name="semantic_country_idx",
+        refresh_interval_seconds=60,
+        refresh_status=SemanticVectorIndexStatus.READY,
+        last_refreshed_at=datetime.utcnow() - timedelta(minutes=5),
+    )
+
+    assert index_metadata.last_refreshed_at is not None
+    assert index_metadata.last_refreshed_at.tzinfo is not None
+    assert SemanticVectorSearchService._should_refresh(index_metadata) is True
+
+
+def test_semantic_vector_refresh_skips_duplicate_dimension_definitions(monkeypatch) -> None:
+    async def _run() -> None:
+        workspace_id = uuid.uuid4()
+        semantic_model_id = uuid.uuid4()
+        semantic_model = SemanticModelMetadata(
+            id=semantic_model_id,
+            workspace_id=workspace_id,
+            name="product_semantic",
+            content_yaml=_duplicate_vector_dimension_model_yaml(),
+            management_mode=ManagementMode.RUNTIME_MANAGED,
+            lifecycle_state=LifecycleState.ACTIVE,
+        )
+        model_provider = MemorySemanticModelProvider(
+            {(workspace_id, semantic_model_id): semantic_model}
+        )
+        index_store = MemorySemanticVectorIndexProvider({})
+        federated_query_tool = RecordingFederatedQueryTool(
+            [
+                {"value": "P-100"},
+                {"value": "P-200"},
+            ]
+        )
+        embedder = StubEmbeddingProvider(
+            {
+                "P-100": [1.0, 0.0],
+                "P-200": [0.0, 1.0],
+            }
+        )
+        service = SemanticVectorSearchService(
+            dataset_repository=None,
+            federated_query_tool=federated_query_tool,
+            logger=logging.getLogger("semantic-vector-tests"),
+            semantic_model_provider=model_provider,
+            semantic_vector_index_store=index_store,
+        )
+
+        async def _build_semantic_workflow(**kwargs):
+            _ = kwargs
+            return DummyWorkflow(), "snowflake"
+
+        async def _resolve_vector_store(**kwargs):
+            _ = kwargs
+            return RecordingManagedVectorDB(config=type("Config", (), {})())
+
+        monkeypatch.setattr(
+            service._dataset_execution_resolver,
+            "build_semantic_workflow",
+            _build_semantic_workflow,
+        )
+        monkeypatch.setattr(
+            service,
+            "_resolve_vector_store",
+            _resolve_vector_store,
+        )
+
+        refreshed = await service.refresh_workspace(
+            workspace_id=workspace_id,
+            embedding_provider=embedder,
+        )
+        indexes = await index_store.list_for_workspace(
+            workspace_id=workspace_id,
+            semantic_model_id=semantic_model_id,
+        )
+
+        assert len(refreshed) == 1
+        assert len(indexes) == 1
+        assert len(federated_query_tool.calls) == 1
+        assert federated_query_tool.calls[0]["query"].startswith("SELECT DISTINCT")
+        assert "FROM product" in federated_query_tool.calls[0]["query"]
 
     asyncio.run(_run())
 

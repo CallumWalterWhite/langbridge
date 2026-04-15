@@ -252,6 +252,7 @@ def build_local_runtime(
             connector_provider=connector_provider,
             credential_provider=credential_provider,
             federated_query_tool=federated_query_tool,
+            llm_connection_store=llm_connection_store,
             logger=logger or logging.getLogger("langbridge.runtime.semantic.vector"),
         )
         if (

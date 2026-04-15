@@ -1,6 +1,7 @@
 
 import uuid
 from datetime import datetime, timezone
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -9,15 +10,28 @@ from langbridge.runtime.persistence.db.dataset import DatasetColumnRecord, Datas
 from langbridge.runtime.persistence.db.workspace import Workspace  # noqa: F401
 from langbridge.runtime.models import LifecycleState, ManagementMode, SemanticModelMetadata
 from langbridge.orchestrator.definitions.factory import AgentDefinitionFactory
+from langbridge.orchestrator.definitions import AnalystQueryScopePolicy
 from langbridge.orchestrator.definitions.model import DataAccessPolicy
 from langbridge.orchestrator.runtime.access_policy import AnalyticalAccessScope
 from langbridge.orchestrator.runtime.agent_orchestrator_factory import (
     AgentOrchestratorFactory,
     AgentToolConfig,
     AnalystBinding,
+    _SemanticScopeExecutor,
 )
 from langbridge.orchestrator.tools.sql_analyst.interfaces import AnalystQueryRequest
-from langbridge.semantic.model import Dimension, SemanticModel, Table
+from langbridge.runtime.models import SqlQueryScope
+from langbridge.runtime.services.semantic_sql_query_service import SemanticSqlQueryService
+from langbridge.semantic.errors import (
+    SemanticSqlInvalidMemberError,
+    SemanticSqlUnsupportedExpressionError,
+)
+from langbridge.semantic.model import (
+    Dimension,
+    DimensionVectorConfig,
+    SemanticModel,
+    Table,
+)
 
 
 class _StaticLLM:
@@ -90,7 +104,7 @@ class _FederatedQueryTool:
         self.calls.append(payload)
         return {
             "columns": ["order_id"],
-            "rows": [{"order_id": 1}],
+            "rows": [{"order_id": 1, "orders.order_id": 1}],
             "execution": {"total_runtime_ms": 13},
         }
 
@@ -188,6 +202,7 @@ def _build_semantic_entry(
     model_name: str = "orders_model",
     table_key: str = "orders",
     connector_id: uuid.UUID | None = None,
+    dimensions: list[Dimension] | None = None,
 ) -> SemanticModelMetadata:
     model = SemanticModel(
         version="1.0",
@@ -197,7 +212,8 @@ def _build_semantic_entry(
                 dataset_id=str(dataset.id),
                 schema="public",
                 name=dataset.table_name or dataset.sql_alias,
-                dimensions=[Dimension(name="order_id", type="integer", primary_key=True)],
+                dimensions=dimensions
+                or [Dimension(name="order_id", type="integer", primary_key=True)],
             )
         },
     )
@@ -257,6 +273,7 @@ async def test_agent_orchestrator_factory_builds_dataset_tool_for_federated_anal
     assert response.error is None
     assert response.asset_type == "dataset"
     assert response.asset_name == "orders_dataset"
+    assert response.query_scope == SqlQueryScope.dataset
     assert response.result is not None
     assert response.result.rows == [(1,)]
     assert len(federated_tool.calls) == 1
@@ -295,7 +312,7 @@ async def test_agent_orchestrator_factory_builds_dataset_backed_semantic_tool() 
             analyst_bindings=[AnalystBinding(name="orders_model", semantic_model_ids=[model_id])],
         ),
         access_policy=DataAccessPolicy(),
-        llm_provider=_StaticLLM("SELECT orders.order_id FROM orders"),  # type: ignore[arg-type]
+        llm_provider=_StaticLLM("SELECT order_id FROM orders_model"),  # type: ignore[arg-type]
         embedding_provider=None,
         event_emitter=None,
     )
@@ -308,9 +325,64 @@ async def test_agent_orchestrator_factory_builds_dataset_backed_semantic_tool() 
     assert response.error is None
     assert response.asset_type == "semantic_model"
     assert response.asset_name == "orders_model"
+    assert response.query_scope == SqlQueryScope.semantic
+    assert response.selected_semantic_model_id == str(model_id)
     assert response.result is not None
-    assert response.result.rows == [(1,)]
+    assert response.result.rows[0][0] == 1
     assert len(federated_tool.calls) == 1
+
+
+@pytest.mark.anyio
+async def test_agent_orchestrator_factory_builds_semantic_and_dataset_tools_for_one_binding() -> None:
+    workspace_id = uuid.uuid4()
+    dataset = _build_dataset(
+        dataset_id=uuid.uuid4(),
+        workspace_id=workspace_id,
+        name="orders_dataset",
+        sql_alias="orders",
+    )
+    columns = _build_columns(dataset=dataset)
+    model_id = uuid.uuid4()
+    semantic_entry = _build_semantic_entry(
+        model_id=model_id,
+        workspace_id=workspace_id,
+        dataset=dataset,
+    )
+    factory = AgentOrchestratorFactory(
+        semantic_model_store=_SemanticModelStore(entries={model_id: semantic_entry}),
+        dataset_repository=_DatasetRepository({dataset.id: dataset}),
+        dataset_column_repository=_DatasetColumnRepository({dataset.id: columns}),
+        federated_query_tool=_FederatedQueryTool(),
+    )
+
+    tool_build = await factory._build_analyst_tools(  # noqa: SLF001
+        tool_config=AgentToolConfig(
+            allow_sql=True,
+            allow_web_search=False,
+            allow_deep_research=False,
+            allow_visualization=False,
+            analyst_bindings=[
+                AnalystBinding(
+                    name="orders",
+                    dataset_ids=[dataset.id],
+                    semantic_model_ids=[model_id],
+                    query_scope_policy=AnalystQueryScopePolicy.semantic_preferred,
+                    preferred_semantic_model_id=model_id,
+                )
+            ],
+        ),
+        access_policy=DataAccessPolicy(),
+        llm_provider=_StaticLLM("SELECT order_id FROM orders_model"),  # type: ignore[arg-type]
+        embedding_provider=None,
+        event_emitter=None,
+    )
+
+    assert len(tool_build.tools) == 2
+    assert {tool.binding_name for tool in tool_build.tools} == {"orders"}
+    assert {tool.query_scope for tool in tool_build.tools} == {SqlQueryScope.dataset, SqlQueryScope.semantic}
+    assert all(tool.query_scope_policy == AnalystQueryScopePolicy.semantic_preferred for tool in tool_build.tools)
+    semantic_tool = next(tool for tool in tool_build.tools if tool.query_scope == SqlQueryScope.semantic)
+    assert semantic_tool.priority == 100
 
 
 @pytest.mark.anyio
@@ -452,6 +524,67 @@ async def test_agent_orchestrator_factory_builds_multiple_semantic_tools_from_on
 
     assert len(tools) == 2
     assert {tool.context.asset_name for tool in tools} == {"orders_model", "customers_model"}
+
+
+@pytest.mark.anyio
+async def test_agent_orchestrator_factory_builds_semantic_vector_search_tools_per_dimension() -> None:
+    workspace_id = uuid.uuid4()
+    dataset = _build_dataset(
+        dataset_id=uuid.uuid4(),
+        workspace_id=workspace_id,
+        name="orders_dataset",
+        sql_alias="orders",
+    )
+    model_id = uuid.uuid4()
+    semantic_entry = _build_semantic_entry(
+        model_id=model_id,
+        workspace_id=workspace_id,
+        dataset=dataset,
+        dimensions=[
+            Dimension(name="order_id", type="integer", primary_key=True),
+            Dimension(
+                name="customer_name",
+                type="text",
+                vector=DimensionVectorConfig(enabled=True),
+            ),
+            Dimension(
+                name="shipping_country",
+                type="text",
+                vector=DimensionVectorConfig(enabled=True),
+            ),
+        ],
+    )
+    factory = AgentOrchestratorFactory(
+        semantic_model_store=_SemanticModelStore(entries={model_id: semantic_entry}),
+        dataset_repository=_DatasetRepository({dataset.id: dataset}),
+        dataset_column_repository=_DatasetColumnRepository({dataset.id: _build_columns(dataset=dataset)}),
+        federated_query_tool=_FederatedQueryTool(),
+        semantic_vector_search_service=SimpleNamespace(),
+    )
+
+    tool_build = await factory._build_analyst_tools(  # noqa: SLF001
+        tool_config=AgentToolConfig(
+            allow_sql=True,
+            allow_web_search=False,
+            allow_deep_research=False,
+            allow_visualization=False,
+            analyst_bindings=[AnalystBinding(name="orders_model", semantic_model_ids=[model_id])],
+        ),
+        access_policy=DataAccessPolicy(),
+        llm_provider=_StaticLLM("SELECT order_id FROM orders_model"),  # type: ignore[arg-type]
+        embedding_provider=None,
+        event_emitter=None,
+    )
+
+    assert len(tool_build.tools) == 1
+    assert list(tool_build.semantic_search_tools_by_asset) == [str(model_id)]
+    search_tools = tool_build.semantic_search_tools_by_asset[str(model_id)]
+    assert len(search_tools) == 2
+    assert {tool.name for tool in search_tools} == {
+        "orders_model:orders.customer_name",
+        "orders_model:orders.shipping_country",
+    }
+    assert all(getattr(tool, "_semantic_vector_search_service") is not None for tool in search_tools)
 
 
 @pytest.mark.anyio
@@ -606,7 +739,7 @@ async def test_agent_orchestrator_factory_excludes_semantic_model_when_backing_d
             allowed_connectors=[visible_connector_id],
             denied_connectors=[denied_connector_id],
         ),
-        llm_provider=_StaticLLM("SELECT orders.order_id FROM orders"),  # type: ignore[arg-type]
+        llm_provider=_StaticLLM("SELECT order_id FROM orders_model"),  # type: ignore[arg-type]
         embedding_provider=None,
         event_emitter=None,
     )
@@ -703,6 +836,7 @@ def test_build_supervisor_orchestrator_wires_response_presentation_from_definiti
         llm_provider=_StaticLLM("SELECT 1"),  # type: ignore[arg-type]
         planning_constraints=factory._build_planning_constraints(tool_config, definition),  # noqa: SLF001
         analyst_tools=[],
+        semantic_search_tools_by_asset={},
         analytical_access_scope=AnalyticalAccessScope(),
         event_emitter=None,
     )
@@ -714,3 +848,104 @@ def test_build_supervisor_orchestrator_wires_response_presentation_from_definiti
     assert supervisor.response_presentation.guardrails is not None
     assert supervisor.response_presentation.guardrails.escalation_message == "Blocked"
     assert supervisor.response_presentation.response_mode.value == "explainer"
+
+
+def test_semantic_scope_executor_classifies_unsupported_shape_as_fallback_eligible() -> None:
+    executor = _SemanticScopeExecutor(
+        workspace_id=uuid.uuid4(),
+        semantic_model_id=uuid.uuid4(),
+        semantic_model_name="orders_model",
+        semantic_model=SemanticModel(version="1.0", name="orders_model", tables={}),
+        semantic_query_service=None,
+        semantic_sql_service=None,
+    )
+
+    failure = executor._semantic_failure(  # noqa: SLF001
+        SemanticSqlUnsupportedExpressionError(
+            "Semantic SQL scope only supports semantic member columns and "
+            "DATE_TRUNC/TIMESTAMP_TRUNC time buckets in SELECT."
+        )
+    )
+
+    assert failure.metadata["scope_fallback_eligible"] is True
+    assert failure.metadata["semantic_failure_kind"] == "unsupported_semantic_sql_shape"
+
+
+def test_semantic_scope_executor_classifies_unknown_member_as_coverage_gap() -> None:
+    executor = _SemanticScopeExecutor(
+        workspace_id=uuid.uuid4(),
+        semantic_model_id=uuid.uuid4(),
+        semantic_model_name="orders_model",
+        semantic_model=SemanticModel(version="1.0", name="orders_model", tables={}),
+        semantic_query_service=None,
+        semantic_sql_service=None,
+    )
+
+    failure = executor._semantic_failure(  # noqa: SLF001
+        SemanticSqlInvalidMemberError("Unknown semantic member 'orders.first_order_date'.")
+    )
+
+    assert failure.metadata["scope_fallback_eligible"] is True
+    assert failure.metadata["semantic_failure_kind"] == "semantic_coverage_gap"
+
+
+class _SemanticQueryServiceResultStub:
+    async def execute_standard_query(self, **kwargs):
+        _ = kwargs
+        return SimpleNamespace(
+            compiled_sql='SELECT t0."country" AS "orders__country", SUM(t0."net_revenue") AS "net_sales_metric"',
+            response=SimpleNamespace(
+                data=[
+                    {
+                        "ORDERS__COUNTRY": "United States",
+                        "NET_SALES_METRIC": 210.0,
+                    }
+                ],
+                metadata=[
+                    {"column": "orders__country", "source": "orders.country", "name": "country"},
+                    {"column": "net_sales_metric", "source": "net_sales_metric", "name": "net_sales_metric"},
+                ],
+            ),
+        )
+
+
+@pytest.mark.anyio
+async def test_semantic_scope_executor_maps_alias_rows_for_agent_results() -> None:
+    semantic_model = SemanticModel.model_validate(
+        {
+            "version": "1",
+            "name": "commerce_performance",
+            "datasets": {
+                "orders": {
+                    "dimensions": [
+                        {"name": "country", "type": "string"},
+                    ],
+                }
+            },
+            "metrics": {
+                "net_sales_metric": {
+                    "expression": "SUM(orders.net_revenue)",
+                }
+            },
+        }
+    )
+    executor = _SemanticScopeExecutor(
+        workspace_id=uuid.uuid4(),
+        semantic_model_id=uuid.uuid4(),
+        semantic_model_name="commerce_performance",
+        semantic_model=semantic_model,
+        semantic_query_service=_SemanticQueryServiceResultStub(),
+        semantic_sql_service=SemanticSqlQueryService(),
+    )
+
+    result = await executor.execute_query(
+        query=(
+            "SELECT country AS market, net_sales_metric "
+            "FROM commerce_performance "
+            "GROUP BY 1"
+        ),
+        query_dialect="postgres",
+    )
+
+    assert result.result.columns == ["market", "net_sales_metric"]
+    assert result.result.rows == [("United States", 210.0)]

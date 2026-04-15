@@ -176,27 +176,34 @@ async def test_synced_stage_cache_reuses_when_revision_is_unchanged(tmp_path) ->
         ),
         materialization_mode="synced",
     )
-    service.register_workspace(
-        workspace_id=workspace_id,
-        workflow=workflow,
-        sources={"file_orders": source},
-    )
 
     handle_one = await service.execute(
         query="SELECT id FROM orders ORDER BY id",
         dialect="duckdb",
         workspace_id=workspace_id,
+        workflow=workflow,
+        sources={"file_orders": source},
     )
     handle_two = await service.execute(
         query="SELECT id FROM orders ORDER BY id",
         dialect="duckdb",
         workspace_id=workspace_id,
+        workflow=workflow,
+        sources={"file_orders": source},
     )
 
     assert source.execute_count == 1
     assert (await service.fetch_arrow(handle_two)).to_pylist() == [{"id": 1}, {"id": 2}, {"id": 3}]
-    assert _stage_metrics_by_id(handle_one)["scan_full_query"].cached is False
-    assert _stage_metrics_by_id(handle_two)["scan_full_query"].cached is True
+    first_metric = _stage_metrics_by_id(handle_one)["scan_full_query"]
+    second_metric = _stage_metrics_by_id(handle_two)["scan_full_query"]
+    assert first_metric.cached is False
+    assert first_metric.stage_type.value == "remote_full_query"
+    assert first_metric.source_id == "file_orders"
+    assert first_metric.cache_status.value == "miss"
+    assert "dataset revision freshness" in str(first_metric.cache_reason or "").lower()
+    assert second_metric.cached is True
+    assert second_metric.cache_status.value == "hit"
+    assert "dataset revision freshness matched" in str(second_metric.cache_reason or "").lower()
 
 
 @pytest.mark.anyio
@@ -224,15 +231,12 @@ async def test_synced_stage_cache_invalidates_when_revision_changes(tmp_path) ->
         ),
         materialization_mode="synced",
     )
-    service.register_workspace(
-        workspace_id=workspace_id,
-        workflow=workflow_one,
-        sources={"file_orders": source},
-    )
     handle_one = await service.execute(
         query="SELECT id FROM orders ORDER BY id",
         dialect="duckdb",
         workspace_id=workspace_id,
+        workflow=workflow_one,
+        sources={"file_orders": source},
     )
 
     workflow_two = _single_table_workflow(
@@ -247,20 +251,20 @@ async def test_synced_stage_cache_invalidates_when_revision_changes(tmp_path) ->
         ),
         materialization_mode="synced",
     )
-    service.register_workspace(
-        workspace_id=workspace_id,
-        workflow=workflow_two,
-        sources={"file_orders": source},
-    )
     handle_two = await service.execute(
         query="SELECT id FROM orders ORDER BY id",
         dialect="duckdb",
         workspace_id=workspace_id,
+        workflow=workflow_two,
+        sources={"file_orders": source},
     )
 
     assert handle_one.plan_id == handle_two.plan_id
     assert source.execute_count == 2
-    assert _stage_metrics_by_id(handle_two)["scan_full_query"].cached is False
+    second_metric = _stage_metrics_by_id(handle_two)["scan_full_query"]
+    assert second_metric.cached is False
+    assert second_metric.cache_status.value == "miss"
+    assert second_metric.cache_inputs[0].freshness_key_present is True
 
     manifest = artifact_store.get_stage_output_manifest(
         workspace_id=workspace_id,
@@ -296,26 +300,30 @@ async def test_live_dataset_stage_cache_is_bypassed(tmp_path) -> None:
         source_kind="api",
         storage_kind="json",
     )
-    service.register_workspace(
-        workspace_id=workspace_id,
-        workflow=workflow,
-        sources={"api_orders": source},
-    )
 
     handle_one = await service.execute(
         query="SELECT id FROM orders ORDER BY id",
         dialect="duckdb",
         workspace_id=workspace_id,
+        workflow=workflow,
+        sources={"api_orders": source},
     )
     handle_two = await service.execute(
         query="SELECT id FROM orders ORDER BY id",
         dialect="duckdb",
         workspace_id=workspace_id,
+        workflow=workflow,
+        sources={"api_orders": source},
     )
 
     assert source.execute_count == 2
-    assert _stage_metrics_by_id(handle_one)["scan_full_query"].cached is False
-    assert _stage_metrics_by_id(handle_two)["scan_full_query"].cached is False
+    first_metric = _stage_metrics_by_id(handle_one)["scan_full_query"]
+    second_metric = _stage_metrics_by_id(handle_two)["scan_full_query"]
+    assert first_metric.cached is False
+    assert first_metric.cache_status.value == "bypass"
+    assert "bypass" in str(first_metric.cache_reason or "").lower()
+    assert second_metric.cached is False
+    assert second_metric.cache_status.value == "bypass"
 
 
 @pytest.mark.anyio
@@ -388,14 +396,6 @@ async def test_local_stage_cache_invalidates_when_dependency_revision_changes(tm
             ),
         )
 
-    service.register_workspace(
-        workspace_id=workspace_id,
-        workflow=build_join_workflow(orders_revision=orders_revision_one),
-        sources={
-            "src_orders": orders_source,
-            "src_customers": customers_source,
-        },
-    )
     query = (
         "SELECT o.id, c.name "
         "FROM orders o "
@@ -403,9 +403,29 @@ async def test_local_stage_cache_invalidates_when_dependency_revision_changes(tm
         "ORDER BY o.id"
     )
 
-    handle_one = await service.execute(query=query, dialect="duckdb", workspace_id=workspace_id)
-    handle_two = await service.execute(query=query, dialect="duckdb", workspace_id=workspace_id)
-    service.register_workspace(
+    handle_one = await service.execute(
+        query=query,
+        dialect="duckdb", 
+        workspace_id=workspace_id,
+        workflow=build_join_workflow(orders_revision=orders_revision_one),
+        sources={
+            "src_orders": orders_source,
+            "src_customers": customers_source,
+        }
+    )
+    handle_two = await service.execute(
+        query=query, 
+        dialect="duckdb", 
+        workspace_id=workspace_id,
+        workflow=build_join_workflow(orders_revision=orders_revision_one),
+        sources={
+            "src_orders": orders_source,
+            "src_customers": customers_source,
+        }
+    )
+    handle_three = await service.execute(
+        query=query, 
+        dialect="duckdb", 
         workspace_id=workspace_id,
         workflow=build_join_workflow(orders_revision=orders_revision_two),
         sources={
@@ -413,7 +433,6 @@ async def test_local_stage_cache_invalidates_when_dependency_revision_changes(tm
             "src_customers": customers_source,
         },
     )
-    handle_three = await service.execute(query=query, dialect="duckdb", workspace_id=workspace_id)
 
     metrics_two = _stage_metrics_by_id(handle_two)
     metrics_three = _stage_metrics_by_id(handle_three)
@@ -423,9 +442,13 @@ async def test_local_stage_cache_invalidates_when_dependency_revision_changes(tm
     assert metrics_two["scan_o"].cached is True
     assert metrics_two["scan_c"].cached is True
     assert metrics_two["local_compute_final"].cached is True
+    assert metrics_two["local_compute_final"].cache_status.value == "hit"
     assert metrics_three["scan_o"].cached is False
     assert metrics_three["scan_c"].cached is True
     assert metrics_three["local_compute_final"].cached is False
+    assert metrics_three["scan_o"].cache_status.value == "miss"
+    assert metrics_three["scan_c"].cache_status.value == "hit"
+    assert metrics_three["local_compute_final"].cache_status.value == "miss"
     assert (await service.fetch_arrow(handle_one)).to_pylist() == [
         {"id": 1, "name": "Acme"},
         {"id": 2, "name": "Globex"},

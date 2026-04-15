@@ -55,14 +55,16 @@
             "args": [
                 "serve",
                 "--config",
-                "examples/snowflake_cortex/langbridge_config.yml",
+                "examples/sdk/udm_snowflake/langbridge_config.yml",
                 "--host",
                 "127.0.0.1",
                 "--port",
                 "8000",
                 "--features",
-                "ui,mcp",
-                "--debug"
+                "ui,mcp,odbc",
+                "--debug",
+                "--odbc-port",
+                "15432"
             ],
             "console": "integratedTerminal",
             "justMyCode": false

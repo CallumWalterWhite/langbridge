@@ -1,13 +1,13 @@
 """
-Protocol and data model definitions for dataset-first analytical tooling.
+Protocol and data model definitions for layered analytical tooling.
 """
 
-
 from enum import Enum
-from typing import Any, List, Literal, Protocol, Sequence
+from typing import Any, Literal, Protocol, Sequence
 
 from pydantic import BaseModel, Field, model_validator
 
+from langbridge.runtime.models import SqlQueryScope
 from langbridge.semantic.model import SemanticModel
 
 
@@ -25,7 +25,7 @@ class ConnectorQueryResult(Protocol):
 
 class QueryResult(BaseModel):
     """
-    Normalised query result returned by the SQL analyst tool.
+    Normalized query result returned by the SQL analyst tool.
     """
 
     columns: list[str]
@@ -87,6 +87,13 @@ class AnalystExecutionOutcome(BaseModel):
     selected_asset_id: str | None = None
     selected_asset_name: str | None = None
     selected_asset_type: Literal["dataset", "semantic_model"] | None = None
+    attempted_query_scope: SqlQueryScope | None = None
+    final_query_scope: SqlQueryScope | None = None
+    fallback_from_query_scope: SqlQueryScope | None = None
+    fallback_to_query_scope: SqlQueryScope | None = None
+    fallback_reason: str | None = None
+    selected_semantic_model_id: str | None = None
+    selected_dataset_ids: list[str] = Field(default_factory=list)
     recovery_actions: list[AnalystRecoveryAction] = Field(default_factory=list)
     metadata: dict[str, Any] = Field(default_factory=dict)
 
@@ -114,12 +121,12 @@ class AnalystQueryRequest(BaseModel):
     )
     filters: dict[str, Any] | None = None
     limit: int | None = Field(default=1000)
-    semantic_search_result_prompts: List[str] | None = Field(
+    semantic_search_result_prompts: list[str] | None = Field(
         default=None,
         description="Optional list of formatted semantic search results to include in the prompt.",
     )
     error_retries: int = Field(default=0, ge=0, description="Number of times the agent should retry on error.")
-    error_history: List[str] = Field(
+    error_history: list[str] = Field(
         default_factory=list,
         description="Optional list of error messages to include in the prompt.",
     )
@@ -154,6 +161,7 @@ class AnalyticalDatasetBinding(BaseModel):
 
 
 class AnalyticalContext(BaseModel):
+    query_scope: SqlQueryScope
     asset_type: Literal["dataset", "semantic_model"]
     asset_id: str
     asset_name: str
@@ -175,10 +183,12 @@ class AnalystQueryResponse(BaseModel):
     """
 
     analysis_path: Literal["dataset", "semantic_model"]
+    query_scope: SqlQueryScope | None = None
     execution_mode: Literal["federated"]
     asset_type: Literal["dataset", "semantic_model"]
     asset_id: str
     asset_name: str
+    selected_semantic_model_id: str | None = None
     sql_canonical: str
     sql_executable: str
     dialect: str
@@ -190,6 +200,9 @@ class AnalystQueryResponse(BaseModel):
 
     @model_validator(mode="after")
     def _ensure_outcome(self) -> "AnalystQueryResponse":
+        if self.selected_semantic_model_id is None and self.asset_type == "semantic_model" and self.asset_id:
+            self.selected_semantic_model_id = self.asset_id
+
         inferred = self.outcome or self._infer_outcome()
         if inferred.selected_asset_id is None and self.asset_id:
             inferred.selected_asset_id = self.asset_id
@@ -197,6 +210,14 @@ class AnalystQueryResponse(BaseModel):
             inferred.selected_asset_name = self.asset_name
         if inferred.selected_asset_type is None and self.asset_type:
             inferred.selected_asset_type = self.asset_type
+        if inferred.attempted_query_scope is None and self.query_scope is not None:
+            inferred.attempted_query_scope = self.query_scope
+        if inferred.final_query_scope is None and self.query_scope is not None:
+            inferred.final_query_scope = self.query_scope
+        if inferred.selected_semantic_model_id is None and self.selected_semantic_model_id:
+            inferred.selected_semantic_model_id = self.selected_semantic_model_id
+        if not inferred.selected_dataset_ids and self.selected_datasets:
+            inferred.selected_dataset_ids = [dataset.dataset_id for dataset in self.selected_datasets]
         self.outcome = inferred
 
         if not self.error and inferred.message:
@@ -224,6 +245,10 @@ class AnalystQueryResponse(BaseModel):
                     original_error=self.error,
                     recoverable=False,
                     terminal=True,
+                    attempted_query_scope=self.query_scope,
+                    final_query_scope=self.query_scope,
+                    selected_semantic_model_id=self.selected_semantic_model_id,
+                    selected_dataset_ids=[dataset.dataset_id for dataset in self.selected_datasets],
                 )
             return AnalystExecutionOutcome(
                 status=AnalystOutcomeStatus.query_error,
@@ -232,6 +257,10 @@ class AnalystQueryResponse(BaseModel):
                 original_error=self.error,
                 recoverable=False,
                 terminal=True,
+                attempted_query_scope=self.query_scope,
+                final_query_scope=self.query_scope,
+                selected_semantic_model_id=self.selected_semantic_model_id,
+                selected_dataset_ids=[dataset.dataset_id for dataset in self.selected_datasets],
             )
 
         row_count = self.row_count
@@ -242,6 +271,10 @@ class AnalystQueryResponse(BaseModel):
                 message="No rows matched the query.",
                 recoverable=False,
                 terminal=True,
+                attempted_query_scope=self.query_scope,
+                final_query_scope=self.query_scope,
+                selected_semantic_model_id=self.selected_semantic_model_id,
+                selected_dataset_ids=[dataset.dataset_id for dataset in self.selected_datasets],
             )
 
         return AnalystExecutionOutcome(
@@ -249,6 +282,10 @@ class AnalystQueryResponse(BaseModel):
             stage=AnalystOutcomeStage.result,
             recoverable=False,
             terminal=True,
+            attempted_query_scope=self.query_scope,
+            final_query_scope=self.query_scope,
+            selected_semantic_model_id=self.selected_semantic_model_id,
+            selected_dataset_ids=[dataset.dataset_id for dataset in self.selected_datasets],
         )
 
     @property
@@ -277,12 +314,40 @@ class AnalystQueryResponse(BaseModel):
         return bool(self.outcome and self.outcome.is_error)
 
 
-class FederatedSqlExecutor(Protocol):
-    async def execute_sql(
+class AnalyticalQueryExecutionResult(BaseModel):
+    executable_query: str
+    result: QueryResult
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class AnalyticalQueryExecutionFailure(RuntimeError):
+    def __init__(
         self,
         *,
-        sql: str,
-        dialect: str,
-        max_rows: int | None = None,
-    ) -> QueryResult:
+        stage: AnalystOutcomeStage,
+        message: str,
+        original_error: str | None = None,
+        recoverable: bool = False,
+        metadata: dict[str, Any] | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.stage = stage
+        self.message = message
+        self.original_error = original_error or message
+        self.recoverable = recoverable
+        self.metadata = dict(metadata or {})
+
+
+class AnalyticalQueryExecutor(Protocol):
+    async def execute_query(
+        self,
+        *,
+        query: str,
+        query_dialect: str,
+        requested_limit: int | None = None,
+    ) -> AnalyticalQueryExecutionResult:
         ...
+
+
+SemanticModelLike = SemanticModel
+

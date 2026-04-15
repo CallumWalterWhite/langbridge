@@ -30,6 +30,14 @@ def test_enforce_read_only_sql_rejects_dml_when_disallowed() -> None:
         enforce_read_only_sql("DELETE FROM dbo.users WHERE id = 1", allow_dml=False)
 
 
+def test_enforce_read_only_sql_allows_select_with_leading_block_comment() -> None:
+    enforce_read_only_sql(
+        "/*** Power BI metadata bootstrap ***/\nSELECT * FROM dbo.users",
+        allow_dml=False,
+        dialect="postgres",
+    )
+
+
 def test_render_sql_with_params_supports_template_and_colon_patterns() -> None:
     rendered = render_sql_with_params(
         "SELECT * FROM dbo.orders WHERE created_at >= :start_date AND region = {{region}}",

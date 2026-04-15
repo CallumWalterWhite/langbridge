@@ -1,8 +1,9 @@
 ﻿
 import uuid
 
+from langbridge.federation.connectors import SourceCapabilities
 from langbridge.federation.models import FederationWorkflow, SMQQuery, VirtualDataset, VirtualRelationship, VirtualTableBinding
-from langbridge.federation.models.plans import QueryType
+from langbridge.federation.models.plans import QueryType, StageType
 from langbridge.federation.planner import FederatedPlanner
 from langbridge.semantic.model import Dimension, Measure, Relationship, SemanticModel, Table
 
@@ -111,3 +112,79 @@ def test_smq_compiles_to_logical_plan() -> None:
     assert len(output.logical_plan.tables) == 2
     assert output.logical_plan.joins
     assert output.physical_plan.result_stage_id
+
+
+def test_smq_pushes_full_query_down_for_single_source_with_logical_relation_names() -> None:
+    planner = FederatedPlanner()
+    workspace_id = str(uuid.uuid4())
+    workflow = FederationWorkflow(
+        id="wf-smq-single-source-rewrite",
+        workspace_id=workspace_id,
+        dataset=VirtualDataset(
+            id="ds-smq-single-source-rewrite",
+            name="single source semantic rewrite",
+            workspace_id=workspace_id,
+            tables={
+                "orders": VirtualTableBinding(
+                    table_key="orders",
+                    source_id="source_warehouse",
+                    connector_id=uuid.uuid4(),
+                    schema="public",
+                    table="orders",
+                    metadata={"physical_table": "fact_orders"},
+                ),
+                "customers": VirtualTableBinding(
+                    table_key="customers",
+                    source_id="source_warehouse",
+                    connector_id=uuid.uuid4(),
+                    schema="public",
+                    table="customers",
+                    metadata={"physical_table": "dim_customers"},
+                ),
+            },
+            relationships=[
+                VirtualRelationship(
+                    name="orders_to_customers",
+                    left_table="orders",
+                    right_table="customers",
+                    join_type="inner",
+                    condition="orders.customer_id = customers.id",
+                )
+            ],
+        ),
+    )
+
+    query = SMQQuery.model_validate(
+        {
+            "measures": ["orders.amount"],
+            "dimensions": ["customers.name"],
+            "filters": [
+                {
+                    "member": "orders.amount",
+                    "operator": "gt",
+                    "values": ["10"],
+                }
+            ],
+            "limit": 25,
+        }
+    )
+
+    output = planner.plan_smq(
+        query=query,
+        semantic_model=_build_semantic_model(),
+        dialect="postgres",
+        workflow=workflow,
+        source_dialects={"source_warehouse": "postgres"},
+        source_capabilities={"source_warehouse": SourceCapabilities(pushdown_join=True)},
+    )
+
+    assert output.physical_plan.pushdown_full_query is True
+    remote_stage = next(
+        stage
+        for stage in output.physical_plan.stages
+        if stage.stage_type == StageType.REMOTE_FULL_QUERY
+    )
+    assert remote_stage.subplan is not None
+    rewritten_sql = remote_stage.subplan.sql.replace('"', "")
+    assert "FROM public.fact_orders AS t0" in rewritten_sql
+    assert "JOIN public.dim_customers AS t1" in rewritten_sql

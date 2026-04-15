@@ -128,15 +128,12 @@ class FederationHarness:
             service = FederatedQueryService(
                 artifact_store=ArtifactStore(base_dir=artifact_dir),
             )
-            service.register_workspace(
-                workspace_id=workflow.workspace_id,
-                workflow=workflow,
-                sources=self.build_mock_sources(workflow),
-            )
             handle = await service.execute(
                 query=sql,
                 dialect="postgres",
                 workspace_id=workflow.workspace_id,
+                workflow=workflow,
+                sources=self.build_mock_sources(workflow),
             )
             table = await service.fetch_arrow(handle)
             return normalize_rows(table.to_pylist())
@@ -153,16 +150,13 @@ class FederationHarness:
             service = FederatedQueryService(
                 artifact_store=ArtifactStore(base_dir=artifact_dir),
             )
-            service.register_workspace(
-                workspace_id=workflow.workspace_id,
-                workflow=workflow,
-                sources=self.build_mock_sources(workflow),
-                semantic_model=model,
-            )
             handle = await service.execute(
                 query=self.load_query_fixture(query_name),
                 dialect=dialect,
                 workspace_id=workflow.workspace_id,
+                workflow=workflow,
+                sources=self.build_mock_sources(workflow),
+                semantic_model=model,
             )
             table = await service.fetch_arrow(handle)
             return normalize_rows(table.to_pylist())
