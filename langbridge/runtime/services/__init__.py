@@ -3,7 +3,10 @@ from typing import Any
 
 __all__ = [
     "AgentExecutionResult",
+    "AgentExecutionResultV2",
     "AgentExecutionService",
+    "AgentExecutionServiceV2",
+    "AgentExecutionServiceV2Tooling",
     "ConnectorSyncRuntime",
     "DatasetExecutionResolver",
     "DatasetQueryService",
@@ -51,6 +54,22 @@ def __getattr__(name: str) -> Any:
         return {
             "AgentExecutionResult": AgentExecutionResult,
             "AgentExecutionService": AgentExecutionService,
+        }[name]
+    if name in {
+        "AgentExecutionResultV2",
+        "AgentExecutionServiceV2",
+        "AgentExecutionServiceV2Tooling",
+    }:
+        from langbridge.runtime.services.agent_execution_service_v2 import (
+            AgentExecutionResultV2,
+            AgentExecutionServiceV2,
+            AgentExecutionServiceV2Tooling,
+        )
+
+        return {
+            "AgentExecutionResultV2": AgentExecutionResultV2,
+            "AgentExecutionServiceV2": AgentExecutionServiceV2,
+            "AgentExecutionServiceV2Tooling": AgentExecutionServiceV2Tooling,
         }[name]
     if name == "DatasetQueryService":
         from langbridge.runtime.services.dataset_query_service import (

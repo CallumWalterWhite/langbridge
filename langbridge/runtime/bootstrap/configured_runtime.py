@@ -103,6 +103,7 @@ from langbridge.runtime.providers import (
 )
 from langbridge.runtime.security import SecretProviderRegistry
 from langbridge.runtime.services.agent_execution_service import AgentExecutionService
+from langbridge.runtime.services.agent_execution_service_v2 import AgentExecutionServiceV2
 from langbridge.runtime.services.dataset_execution import describe_file_source_schema
 from langbridge.runtime.services.dataset_query_service import DatasetQueryService
 from langbridge.runtime.services.dataset_sync_service import ConnectorSyncRuntime
@@ -3330,7 +3331,7 @@ class ConfiguredLocalRuntimeHostFactory:
             lineage_edge_repository=lineage_edge_repository,
             secret_provider_registry=secret_provider_registry,
         )
-        agent_execution_service = (
+        agent_execution_service_v1 = (
             AgentExecutionService(
                 agent_definition_repository=agent_repository,
                 llm_repository=llm_repository,
@@ -3342,6 +3343,17 @@ class ConfiguredLocalRuntimeHostFactory:
                 memory_repository=memory_repository,
                 federated_query_tool=federated_query_tool,
                 semantic_vector_search_service=semantic_vector_search_service,
+            )
+            if agents
+            else None
+        )
+        agent_execution_service_v2 = (
+            AgentExecutionServiceV2(
+                agent_definition_repository=agent_repository,
+                llm_repository=llm_repository,
+                thread_repository=thread_repository,
+                thread_message_repository=thread_message_repository,
+                memory_repository=memory_repository,
             )
             if agents
             else None
@@ -3363,7 +3375,9 @@ class ConfiguredLocalRuntimeHostFactory:
                 sql_query=sql_query_service,
                 dataset_query=dataset_query_service,
                 dataset_sync=dataset_sync_service,
-                agent_execution=agent_execution_service,
+                agent_execution=agent_execution_service_v2,
+                agent_execution_v1=agent_execution_service_v1,
+                agent_execution_v2=agent_execution_service_v2,
                 semantic_sql_query=semantic_sql_query_service,
             ),
         ), thread_repository, thread_message_repository

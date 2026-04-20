@@ -1,0 +1,148 @@
+"""Final response presentation agent for Langbridge AI."""
+
+from __future__ import annotations
+
+import json
+from typing import Any
+
+from langbridge.ai.base import (
+    AgentIOContract,
+    AgentResult,
+    AgentResultStatus,
+    AgentRoutingSpec,
+    AgentSpecification,
+    AgentTask,
+    AgentTaskKind,
+    AgentToolSpecification,
+    BaseAgent,
+)
+from langbridge.ai.llm.base import LLMProvider
+from langbridge.ai.tools.charting import ChartSpec, ChartingTool
+
+
+class PresentationAgent(BaseAgent):
+    """Composes final user-facing responses from verified outputs."""
+
+    def __init__(self, *, llm_provider: LLMProvider, charting_tool: ChartingTool | None = None) -> None:
+        self._llm = llm_provider
+        self._charting_tool = charting_tool
+
+    @property
+    def specification(self) -> AgentSpecification:
+        return AgentSpecification(
+            name="presentation",
+            description="Composes final user-facing responses from verified agent outputs.",
+            task_kinds=[AgentTaskKind.presentation, AgentTaskKind.response],
+            capabilities=["compose final response", "summarize tables", "render research", "request charts"],
+            constraints=["Does not perform source execution directly."],
+            routing=AgentRoutingSpec(keywords=["present", "response", "chart"], direct_threshold=99),
+            can_execute_direct=False,
+            output_contract=AgentIOContract(required_keys=["response"]),
+            tools=[
+                AgentToolSpecification(
+                    name="charting",
+                    description="Builds chart specifications from tabular result data when configured.",
+                    output_contract=AgentIOContract(required_keys=["chart_type"]),
+                )
+            ],
+        )
+
+    async def execute(self, task: AgentTask) -> AgentResult:
+        response = await self.compose(
+            question=task.question,
+            context=task.context,
+            mode=str(task.input.get("mode") or "final"),
+        )
+        return self.build_result(
+            task=task,
+            status=AgentResultStatus.succeeded,
+            output={"response": response},
+        )
+
+    async def compose(self, *, question: str, context: dict[str, Any], mode: str = "final") -> dict[str, Any]:
+        step_results = [item for item in context.get("step_results", []) if isinstance(item, dict)]
+        data_payload = self._find_data_payload(step_results)
+        research_payload = self._find_key_payload(step_results, "synthesis")
+        answer_payload = self._find_key_payload(step_results, "answer")
+        visualization = await self._maybe_chart(question=question, data_payload=data_payload)
+        prompt = (
+            "Compose the final Langbridge response.\n"
+            "Return STRICT JSON only with keys: summary, result, visualization, research, answer, diagnostics.\n"
+            "Do not invent facts beyond provided step outputs/context.\n"
+            f"Mode: {mode}\n"
+            f"Question: {question}\n"
+            f"Context error: {context.get('error') or ''}\n"
+            f"Clarification: {context.get('clarification_question') or ''}\n"
+            f"Data: {json.dumps(data_payload or {}, default=str)}\n"
+            f"Research: {json.dumps(research_payload or {}, default=str)}\n"
+            f"Answer: {json.dumps(answer_payload or {}, default=str)}\n"
+            f"Visualization: {json.dumps(visualization.model_dump(mode='json') if visualization else None, default=str)}\n"
+        )
+        parsed = self._parse_json_object(await self._llm.acomplete(prompt, temperature=0.0, max_tokens=1000))
+        response = {
+            "summary": str(parsed.get("summary") or ""),
+            "result": parsed.get("result") if isinstance(parsed.get("result"), dict) else data_payload or {},
+            "visualization": parsed.get("visualization")
+            if isinstance(parsed.get("visualization"), dict)
+            else (visualization.model_dump(mode="json") if visualization else None),
+            "research": parsed.get("research") if isinstance(parsed.get("research"), dict) else research_payload or {},
+            "answer": parsed.get("answer") if parsed.get("answer") is not None else None,
+            "diagnostics": parsed.get("diagnostics") if isinstance(parsed.get("diagnostics"), dict) else {"mode": mode},
+        }
+        if not response["summary"]:
+            raise ValueError("Presentation LLM response missing summary.")
+        return response
+
+    async def _maybe_chart(
+        self,
+        *,
+        question: str,
+        data_payload: dict[str, Any] | None,
+    ) -> ChartSpec | None:
+        if self._charting_tool is None or not data_payload or not self._question_requests_chart(question):
+            return None
+        return await self._charting_tool.build_chart(data_payload, question=question)
+
+    @staticmethod
+    def _find_data_payload(step_results: list[dict[str, Any]]) -> dict[str, Any] | None:
+        for item in reversed(step_results):
+            output = item.get("output")
+            if not isinstance(output, dict):
+                continue
+            result = output.get("result")
+            if isinstance(result, dict) and {"columns", "rows"}.issubset(result):
+                return result
+            artifact = item.get("artifacts")
+            if isinstance(artifact, dict):
+                tabular = artifact.get("tabular")
+                if isinstance(tabular, dict) and {"columns", "rows"}.issubset(tabular):
+                    return tabular
+        return None
+
+    @staticmethod
+    def _find_key_payload(step_results: list[dict[str, Any]], key: str) -> dict[str, Any] | None:
+        for item in reversed(step_results):
+            output = item.get("output")
+            if isinstance(output, dict) and key in output:
+                return output
+        return None
+
+    @staticmethod
+    def _question_requests_chart(question: str) -> bool:
+        text = question.casefold()
+        return any(token in text for token in ("chart", "graph", "plot", "visual", "bar", "line"))
+
+    @staticmethod
+    def _parse_json_object(raw: str) -> dict[str, Any]:
+        text = raw.strip()
+        start = text.find("{")
+        end = text.rfind("}")
+        if start == -1 or end == -1 or end < start:
+            raise ValueError("Presentation LLM response did not contain a JSON object.")
+        parsed = json.loads(text[start : end + 1])
+        if not isinstance(parsed, dict):
+            raise ValueError("Presentation LLM response JSON must be an object.")
+        return parsed
+
+
+__all__ = ["PresentationAgent"]

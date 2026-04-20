@@ -13,6 +13,7 @@ from langbridge.runtime.providers import (
     SyncStateProvider,
 )
 from langbridge.runtime.services.agent_execution_service import AgentExecutionService
+from langbridge.runtime.services.agent_execution_service_v2 import AgentExecutionServiceV2
 from langbridge.runtime.services.dataset_query_service import DatasetQueryService
 from langbridge.runtime.services.dataset_sync_service import ConnectorSyncRuntime
 from langbridge.runtime.services.semantic_query_execution_service import (
@@ -23,6 +24,8 @@ from langbridge.runtime.services.semantic_vector_search_service import (
     SemanticVectorSearchService,
 )
 from langbridge.runtime.services.sql_query_service import SqlQueryService
+
+AgentExecutionRuntime = AgentExecutionService | AgentExecutionServiceV2
 
 
 @dataclass(slots=True)
@@ -43,7 +46,9 @@ class RuntimeServices:
     sql_query: SqlQueryService
     dataset_query: DatasetQueryService
     dataset_sync: ConnectorSyncRuntime
-    agent_execution: AgentExecutionService
+    agent_execution: AgentExecutionRuntime | None
+    agent_execution_v1: AgentExecutionService | None = None
+    agent_execution_v2: AgentExecutionServiceV2 | None = None
     semantic_sql_query: SemanticSqlQueryService | None = None
 
 

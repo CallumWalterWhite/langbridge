@@ -79,6 +79,9 @@ from langbridge.runtime.security import SecretProviderRegistry
 from langbridge.runtime.services.agent_execution_service import (
     AgentExecutionService,
 )
+from langbridge.runtime.services.agent_execution_service_v2 import (
+    AgentExecutionServiceV2,
+)
 from langbridge.runtime.services.dataset_query_service import DatasetQueryService
 from langbridge.runtime.services.dataset_sync_service import ConnectorSyncRuntime
 from langbridge.runtime.services.runtime_host import (
@@ -296,7 +299,7 @@ def build_local_runtime(
         if connector_sync_state_store is not None
         else None
     )
-    agent_execution_service = (
+    agent_execution_service_v1 = (
         AgentExecutionService(
             agent_definition_repository=agent_definition_store,
             llm_repository=llm_connection_store,
@@ -320,6 +323,22 @@ def build_local_runtime(
         )
         else None
     )
+    agent_execution_service_v2 = (
+        AgentExecutionServiceV2(
+            agent_definition_repository=agent_definition_store,
+            llm_repository=llm_connection_store,
+            thread_repository=thread_store,
+            thread_message_repository=thread_message_store,
+            memory_repository=runtime_memory_store,
+        )
+        if (
+            agent_definition_store is not None
+            and llm_connection_store is not None
+            and thread_store is not None
+            and thread_message_store is not None
+        )
+        else None
+    )
     return RuntimeHost(
         context=context,
         providers=RuntimeProviders(
@@ -337,7 +356,9 @@ def build_local_runtime(
             semantic_vector_search=semantic_vector_search_service,
             sql_query=sql_query_service,
             dataset_sync=dataset_sync_service,
-            agent_execution=agent_execution_service,
+            agent_execution=agent_execution_service_v2,
+            agent_execution_v1=agent_execution_service_v1,
+            agent_execution_v2=agent_execution_service_v2,
         ),
     )
 

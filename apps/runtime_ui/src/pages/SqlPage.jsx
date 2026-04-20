@@ -1087,7 +1087,7 @@ LIMIT 25`
           eyebrow="Query"
           className="compact-panel sql-workbench-panel"
         >
-          <p className="sql-workbench-copy">{queryScopeNote}</p>
+          {/* <p className="sql-workbench-copy">{queryScopeNote}</p>
           <div className="product-panel-meta sql-workbench-meta">
             <span>{queryModeLabel}</span>
             <span>{formatValue(connectors.length)} connectors</span>
@@ -1095,10 +1095,10 @@ LIMIT 25`
             <span>{formatValue(semanticModels.length)} models</span>
             <span>{formatValue(form.requestedLimit)} row limit</span>
           </div>
-          {workspaceNotice ? <div className="sql-inline-note">{workspaceNotice}</div> : null}
+          {workspaceNotice ? <div className="sql-inline-note">{workspaceNotice}</div> : null} */}
 
           <form className="sql-workbench-form" onSubmit={handleSubmit}>
-            <div className="query-mode-grid">
+            {/* <div className="query-mode-grid">
               {QUERY_MODE_CARDS.map((item) => (
                 <button
                   key={item.value}
@@ -1117,9 +1117,9 @@ LIMIT 25`
                   <span>{item.description}</span>
                 </button>
               ))}
-            </div>
+            </div> */}
 
-            <div className="query-starter-grid">
+            {/* <div className="query-starter-grid">
               {starterTemplates.map((template) => (
                 <button
                   key={template.id}
@@ -1132,7 +1132,7 @@ LIMIT 25`
                   <span>{template.description}</span>
                 </button>
               ))}
-            </div>
+            </div> */}
 
             <div className="sql-workbench-toolbar">
               <label className="field sql-toolbar-field">

@@ -31,6 +31,7 @@ class PreparedAgentRun:
     thread: RuntimeThread
     user_message: RuntimeThreadMessage
     job_id: uuid.UUID
+    created_thread: bool = False
 
 
 def _consume_detached_task_exception(task: asyncio.Task[Any]) -> None:
@@ -76,7 +77,10 @@ class AgentApplication:
                 event_emitter=collector,
             )
         except Exception:
-            await self._reset_thread_after_failure(thread_id=prepared.thread.id)
+            await self._reset_thread_after_failure(
+                thread_id=prepared.thread.id,
+                delete_thread=prepared.created_thread,
+            )
             raise
         return self._build_agent_response_payload(
             prepared=prepared,
@@ -150,7 +154,10 @@ class AgentApplication:
                 )
                 await self._host._run_streams.publish(final_event)
             except Exception as exc:
-                await self._reset_thread_after_failure(thread_id=prepared.thread.id)
+                await self._reset_thread_after_failure(
+                    thread_id=prepared.thread.id,
+                    delete_thread=prepared.created_thread,
+                )
                 await self._host._run_streams.publish(
                     RuntimeRunStreamEvent(
                         sequence=emitter.sequence + 1,
@@ -307,6 +314,7 @@ class AgentApplication:
             thread=thread,
             user_message=user_message,
             job_id=job_id,
+            created_thread=existing_thread is None,
         )
 
     async def _execute_prepared_agent_run(
@@ -331,11 +339,18 @@ class AgentApplication:
                 await uow.commit()
             return execution
 
-    async def _reset_thread_after_failure(self, *, thread_id: uuid.UUID) -> None:
+    async def _reset_thread_after_failure(self, *, thread_id: uuid.UUID, delete_thread: bool = False) -> None:
         async with self._host._runtime_operation_scope() as uow:
-            await self._host._runtime_host.services.agent_execution.reset_thread_after_failure(
-                thread_id=thread_id
+            reset = getattr(
+                self._host._runtime_host.services.agent_execution,
+                "reset_thread_after_failure",
+                None,
             )
+            if callable(reset):
+                await reset(thread_id=thread_id)
+            elif delete_thread:
+                await self._host._thread_message_repository.delete_for_thread(thread_id)
+                await self._host._thread_repository.delete(thread_id)
             if uow is not None:
                 await uow.commit()
 
