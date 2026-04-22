@@ -26,8 +26,20 @@ class PlanReviewAction(str, Enum):
     finalize = "finalize"
 
 
+class PlanReviewReasonCode(str, Enum):
+    no_executed_step = "no_executed_step"
+    agent_needs_clarification = "agent_needs_clarification"
+    retryable_step_failure = "retryable_step_failure"
+    deterministic_verification_failed = "deterministic_verification_failed"
+    verification_failed_after_replans = "verification_failed_after_replans"
+    weak_evidence = "weak_evidence"
+    all_steps_completed = "all_steps_completed"
+    pending_steps_remaining = "pending_steps_remaining"
+
+
 class PlanReviewDecision(BaseModel):
     action: PlanReviewAction
+    reason_code: PlanReviewReasonCode
     rationale: str
     updated_context: dict[str, Any] = Field(default_factory=dict)
     retry_step_id: str | None = None
@@ -70,6 +82,7 @@ class PlanReviewAgent(BaseAgent):
         if latest is None:
             return PlanReviewDecision(
                 action=PlanReviewAction.abort,
+                reason_code=PlanReviewReasonCode.no_executed_step,
                 rationale="No executed step is available to review.",
             )
 
@@ -78,6 +91,7 @@ class PlanReviewAgent(BaseAgent):
         if result.status == AgentResultStatus.needs_clarification:
             return PlanReviewDecision(
                 action=PlanReviewAction.ask_clarification,
+                reason_code=PlanReviewReasonCode.agent_needs_clarification,
                 rationale=result.error or "Agent needs clarification.",
                 clarification_question=result.error,
             )
@@ -91,6 +105,7 @@ class PlanReviewAgent(BaseAgent):
             ):
                 return PlanReviewDecision(
                     action=PlanReviewAction.retry_step,
+                    reason_code=PlanReviewReasonCode.retryable_step_failure,
                     rationale="Agent failed with a retryable execution error.",
                     retry_step_id=latest.step.step_id,
                     updated_context={"last_error": result.error},
@@ -98,6 +113,7 @@ class PlanReviewAgent(BaseAgent):
             if state.replan_count < state.max_replans:
                 return PlanReviewDecision(
                     action=PlanReviewAction.revise_plan,
+                    reason_code=PlanReviewReasonCode.deterministic_verification_failed,
                     rationale=verification.message,
                     updated_context={
                         "verification_failure": verification.model_dump(mode="json"),
@@ -106,12 +122,14 @@ class PlanReviewAgent(BaseAgent):
                 )
             return PlanReviewDecision(
                 action=PlanReviewAction.abort,
+                reason_code=PlanReviewReasonCode.verification_failed_after_replans,
                 rationale=f"Verification failed after replanning: {verification.message}",
             )
 
         if self._is_weak_result(result) and state.replan_count < state.max_replans:
             return PlanReviewDecision(
                 action=PlanReviewAction.revise_plan,
+                reason_code=PlanReviewReasonCode.weak_evidence,
                 rationale="Latest step returned weak or empty evidence.",
                 updated_context={"weak_result_agent": latest.step.agent_name},
             )
@@ -119,11 +137,13 @@ class PlanReviewAgent(BaseAgent):
         if state.next_pending_step() is None:
             return PlanReviewDecision(
                 action=PlanReviewAction.finalize,
+                reason_code=PlanReviewReasonCode.all_steps_completed,
                 rationale="All plan steps passed verification.",
             )
 
         return PlanReviewDecision(
             action=PlanReviewAction.continue_plan,
+            reason_code=PlanReviewReasonCode.pending_steps_remaining,
             rationale="Latest step passed verification and plan still has pending work.",
         )
 
@@ -137,9 +157,17 @@ class PlanReviewAgent(BaseAgent):
         ]
         if any(evidence_lists):
             return False
+        nested_result = output.get("result")
+        if isinstance(nested_result, dict):
+            nested_rows = nested_result.get("rows")
+            if isinstance(nested_rows, list) and nested_rows:
+                return False
         if result.diagnostics.get("weak_results") is True:
             return True
         if result.diagnostics.get("weak_evidence") is True:
+            return True
+        outcome = output.get("outcome")
+        if isinstance(outcome, dict) and outcome.get("status") == "empty_result":
             return True
         for key in ("rows", "results", "findings", "sources"):
             value = output.get(key)
@@ -172,4 +200,4 @@ class PlanReviewAgent(BaseAgent):
         )
 
 
-__all__ = ["PlanReviewAction", "PlanReviewAgent", "PlanReviewDecision"]
+__all__ = ["PlanReviewAction", "PlanReviewAgent", "PlanReviewDecision", "PlanReviewReasonCode"]

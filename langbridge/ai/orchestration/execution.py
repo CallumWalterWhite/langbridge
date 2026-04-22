@@ -74,10 +74,24 @@ class PlanExecutionState(BaseModel):
     def completed_step_ids(self) -> set[str]:
         return {record.step.step_id for record in self.completed_steps}
 
+    @property
+    def pending_steps(self) -> list[PlanStep]:
+        completed = self.completed_step_ids
+        return [
+            step
+            for step in self.current_plan.steps
+            if step.step_id not in completed
+        ]
+
+    def has_pending_steps(self) -> bool:
+        return bool(self.pending_steps)
+
     def next_pending_step(self) -> PlanStep | None:
         completed = self.completed_step_ids
         for step in self.current_plan.steps:
-            if step.step_id not in completed:
+            if step.step_id in completed:
+                continue
+            if all(dependency in completed for dependency in step.depends_on):
                 return step
         return None
 

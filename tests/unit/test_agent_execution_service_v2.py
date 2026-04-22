@@ -44,6 +44,12 @@ class _FakeLLMProvider:
             return '{"mode":"context_analysis","reason":"result context is available"}'
         if "Analyze verified Langbridge result data" in prompt:
             return '{"analysis":"Revenue is highest in US.","result":{"columns":["region","revenue"],"rows":[["US",2200]]}}'
+        if "Review the final Langbridge answer package" in prompt:
+            return (
+                '{"action":"approve","reason_code":"grounded_complete",'
+                '"rationale":"Answer is grounded in the supplied evidence.",'
+                '"issues":[],"updated_context":{},"clarification_question":null}'
+            )
         if "Compose the final Langbridge response" in prompt:
             return (
                 '{"summary":"Revenue is highest in US.","result":{"columns":["region","revenue"],'
@@ -78,6 +84,12 @@ class _SqlLLMProvider:
             return "SELECT orders.region, orders.revenue FROM orders"
         if "Summarize verified SQL analysis" in prompt:
             return '{"analysis":"US revenue is 2200."}'
+        if "Review the final Langbridge answer package" in prompt:
+            return (
+                '{"action":"approve","reason_code":"grounded_complete",'
+                '"rationale":"Answer is grounded in the supplied evidence.",'
+                '"issues":[],"updated_context":{},"clarification_question":null}'
+            )
         if "Compose the final Langbridge response" in prompt:
             return (
                 '{"summary":"US revenue is 2200.","result":{"columns":["region","revenue"],'

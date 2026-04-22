@@ -5,6 +5,8 @@ from __future__ import annotations
 from enum import Enum
 from typing import Any
 
+from langbridge.ai.base import AgentIOContract
+
 
 class AnalystAgentMode(str, Enum):
     auto = "auto"
@@ -22,6 +24,23 @@ _ANALYST_MODE_ALIASES = {
     "web_research": AnalystAgentMode.research.value,
     "web-research": AnalystAgentMode.research.value,
 }
+
+_ANALYST_OUTPUT_OPTIONAL_KEYS = [
+    "analysis_path",
+    "sql_canonical",
+    "sql_executable",
+    "selected_datasets",
+    "selected_semantic_models",
+    "query_scope",
+    "outcome",
+    "error_taxonomy",
+    "evidence",
+    "synthesis",
+    "findings",
+    "sources",
+    "follow_ups",
+    "review_hints",
+]
 
 
 def normalize_analyst_mode(
@@ -59,8 +78,37 @@ def normalize_analyst_task_input(
     return normalized
 
 
+def analyst_output_contract_for_task_input(
+    input_payload: dict[str, Any] | None,
+    *,
+    requested_mode: Any = None,
+) -> AgentIOContract:
+    normalized = normalize_analyst_task_input(input_payload, requested_mode=requested_mode)
+    mode = normalize_analyst_mode(normalized.get("agent_mode"), default=AnalystAgentMode.auto)
+    if mode == AnalystAgentMode.research:
+        return AgentIOContract(
+            required_keys=["analysis", "result", "synthesis", "sources", "findings"],
+            optional_keys=list(_ANALYST_OUTPUT_OPTIONAL_KEYS),
+        )
+    if mode == AnalystAgentMode.sql:
+        return AgentIOContract(
+            required_keys=["analysis", "result", "outcome", "evidence", "review_hints"],
+            optional_keys=list(_ANALYST_OUTPUT_OPTIONAL_KEYS),
+        )
+    if mode == AnalystAgentMode.context_analysis:
+        return AgentIOContract(
+            required_keys=["analysis", "result", "evidence", "review_hints"],
+            optional_keys=list(_ANALYST_OUTPUT_OPTIONAL_KEYS),
+        )
+    return AgentIOContract(
+        required_keys=["analysis", "result", "evidence", "review_hints"],
+        optional_keys=list(_ANALYST_OUTPUT_OPTIONAL_KEYS),
+    )
+
+
 __all__ = [
     "AnalystAgentMode",
+    "analyst_output_contract_for_task_input",
     "normalize_analyst_mode",
     "normalize_analyst_task_input",
 ]

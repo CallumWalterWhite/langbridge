@@ -31,6 +31,7 @@ def build_execution_plan_prompt(
         "Planning rules:\n"
         "- Use only available agent names and supported task kinds.\n"
         "- Keep the plan minimal. Use one step when one step is enough.\n"
+        "- Do not split a single analyst's internal evidence-building, optional augmentation, and synthesis into separate plan steps.\n"
         "- Prefer plans that preserve verifiable intermediate outputs.\n"
         "- Use analyst input.agent_mode 'research' only when source-backed or external/current synthesis is truly required.\n"
         "- For analyst steps, input.agent_mode may only be auto, sql, context_analysis, or research.\n"

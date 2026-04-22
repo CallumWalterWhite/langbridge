@@ -51,6 +51,7 @@ class LangbridgeAIFactory:
         max_iterations: int = 8,
         max_replans: int = 2,
         max_step_retries: int = 1,
+        final_review_enabled: bool = True,
     ) -> MetaControllerAgent:
         agents: list[BaseAgent] = [
             AnalystAgent(
@@ -72,6 +73,7 @@ class LangbridgeAIFactory:
                 charting_tool=ChartingTool(llm_provider=self._llm, event_emitter=self._event_emitter),
                 event_emitter=self._event_emitter,
             ),
+            final_review_enabled=final_review_enabled,
             max_iterations=max_iterations,
             max_replans=max_replans,
             max_step_retries=max_step_retries,
@@ -124,6 +126,7 @@ class LangbridgeAIFactory:
                 charting_tool=ChartingTool(llm_provider=self._llm, event_emitter=self._event_emitter),
                 event_emitter=self._event_emitter,
             ),
+            final_review_enabled=resolved_execution.final_review_enabled,
             max_iterations=resolved_execution.max_iterations,
             max_replans=resolved_execution.max_replans,
             max_step_retries=resolved_execution.max_step_retries,

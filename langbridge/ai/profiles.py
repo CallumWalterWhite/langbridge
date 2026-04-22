@@ -133,6 +133,10 @@ class AiAgentExecutionConfig(BaseModel):
     max_iterations: int = 3
     max_replans: int = 2
     max_step_retries: int = 1
+    max_evidence_rounds: int = 2
+    max_governed_attempts: int = 2
+    max_external_augmentations: int = 3
+    final_review_enabled: bool = True
 
 
 class AiAgentProfile(BaseModel):
@@ -237,6 +241,7 @@ class AnalystAgentConfig(BaseModel):
     web_search_scope: AiAgentWebSearchScopeConfig = Field(default_factory=AiAgentWebSearchScopeConfig)
     prompts: AiAgentPromptsConfig = Field(default_factory=AiAgentPromptsConfig)
     access: AiAgentAccessConfig = Field(default_factory=AiAgentAccessConfig)
+    execution: AiAgentExecutionConfig = Field(default_factory=AiAgentExecutionConfig)
 
     @classmethod
     def from_profile(cls, profile: AiAgentProfile) -> "AnalystAgentConfig":
@@ -249,6 +254,7 @@ class AnalystAgentConfig(BaseModel):
                 "web_search_scope": profile.web_search_scope.model_dump(mode="json"),
                 "prompts": profile.prompts.model_dump(mode="json"),
                 "access": profile.access.model_dump(mode="json"),
+                "execution": profile.execution.model_dump(mode="json"),
             }
         )
 
@@ -311,6 +317,22 @@ class AnalystAgentConfig(BaseModel):
     @property
     def web_search_timebox_seconds(self) -> int:
         return self.web_search_scope.timebox_seconds
+
+    @property
+    def max_evidence_rounds(self) -> int:
+        return self.execution.max_evidence_rounds
+
+    @property
+    def max_governed_attempts(self) -> int:
+        return self.execution.max_governed_attempts
+
+    @property
+    def max_external_augmentations(self) -> int:
+        return self.execution.max_external_augmentations
+
+    @property
+    def final_review_enabled(self) -> bool:
+        return self.execution.final_review_enabled
 
 
 def _legacy_query_policy(config: Mapping[str, Any]) -> str:
@@ -512,6 +534,10 @@ def build_execution_from_definition(
         max_iterations=max(profile.execution.max_iterations for profile in profiles),
         max_replans=max(profile.execution.max_replans for profile in profiles),
         max_step_retries=max(profile.execution.max_step_retries for profile in profiles),
+        max_evidence_rounds=max(profile.execution.max_evidence_rounds for profile in profiles),
+        max_governed_attempts=max(profile.execution.max_governed_attempts for profile in profiles),
+        max_external_augmentations=max(profile.execution.max_external_augmentations for profile in profiles),
+        final_review_enabled=any(profile.execution.final_review_enabled for profile in profiles),
     )
 
 

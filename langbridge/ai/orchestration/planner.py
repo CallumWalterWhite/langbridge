@@ -14,7 +14,7 @@ from langbridge.ai.base import (
     AgentTaskKind,
     BaseAgent,
 )
-from langbridge.ai.modes import normalize_analyst_task_input
+from langbridge.ai.modes import analyst_output_contract_for_task_input, normalize_analyst_task_input
 from langbridge.ai.llm.base import LLMProvider
 from langbridge.ai.orchestration.planner_prompts import build_execution_plan_prompt
 
@@ -211,11 +211,17 @@ class PlannerAgent(BaseAgent):
             if not specification.supports(task_kind):
                 raise ValueError(f"Planner selected unsupported task kind '{task_kind.value}' for {agent_name}.")
             input_payload: dict[str, Any] = raw_step.get("input") if isinstance(raw_step.get("input"), dict) else {}
+            expected_output = specification.output_contract
             if task_kind == AgentTaskKind.analyst:
                 input_payload = normalize_analyst_task_input(
                     input_payload,
                     requested_mode=requested_agent_mode,
                 )
+                if PlannerAgent._uses_mode_aware_analyst_contract(specification):
+                    expected_output = analyst_output_contract_for_task_input(
+                        input_payload,
+                        requested_mode=requested_agent_mode,
+                    )
             depends_on = [str(item) for item in raw_step.get("depends_on") or [] if str(item).strip()]
             steps.append(
                 PlanStep(
@@ -224,7 +230,7 @@ class PlannerAgent(BaseAgent):
                     task_kind=task_kind,
                     question=str(raw_step.get("question") or question),
                     input=input_payload,
-                    expected_output=specification.output_contract,
+                    expected_output=expected_output,
                     depends_on=depends_on,
                 )
             )
@@ -244,6 +250,11 @@ class PlannerAgent(BaseAgent):
             "can_execute_direct": specification.can_execute_direct,
             "metadata": dict(specification.metadata or {}),
         }
+
+    @staticmethod
+    def _uses_mode_aware_analyst_contract(specification: AgentSpecification) -> bool:
+        supported_modes = specification.metadata.get("supported_modes")
+        return isinstance(supported_modes, list) and bool(supported_modes)
 
     @staticmethod
     def _optional_string(value: Any) -> str | None:

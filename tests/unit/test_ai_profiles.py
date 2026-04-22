@@ -16,6 +16,7 @@ from langbridge.ai import (
     MetaControllerAgent,
     PlanReviewAction,
     build_ai_profiles_from_definition,
+    build_execution_from_definition,
 )
 from langbridge.ai.agents import AnalystAgent
 from langbridge.ai.agents.presentation import PresentationAgent
@@ -80,6 +81,12 @@ class _FakeLLMProvider:
             if "Search current docs" in prompt:
                 return '{"mode":"research","reason":"web research requested"}'
             return '{"mode":"context_analysis","reason":"structured result available"}'
+        if "Review the final Langbridge answer package" in prompt:
+            return (
+                '{"action":"approve","reason_code":"grounded_complete",'
+                '"rationale":"Answer is grounded in the supplied evidence.",'
+                '"issues":[],"updated_context":{},"clarification_question":null}'
+            )
         if "Create a chart specification" in prompt:
             return '{"chart_type":"bar","title":"Chart","x":"region","y":"revenue"}'
         if "Synthesize source-backed research" in prompt:
@@ -225,6 +232,81 @@ def test_ai_profile_parses_alias_shape() -> None:
     assert profile.research_scope.extended_thinking_enabled is True
     assert profile.prompts.system_prompt == "You are support analyst."
     assert profile.prompts.presentation_prompt == "Be concise."
+
+
+def test_profile_to_analyst_config_preserves_execution_budgets() -> None:
+    profile = AiAgentProfile.from_config(
+        {
+            "name": "ops_analyst",
+            "scope": {"datasets": ["ops_metrics"], "query_policy": "dataset_only"},
+            "execution": {
+                "max_evidence_rounds": 4,
+                "max_governed_attempts": 3,
+                "max_external_augmentations": 0,
+                "final_review_enabled": False,
+            },
+        }
+    )
+
+    analyst_config = profile.to_analyst_config()
+
+    assert analyst_config.max_evidence_rounds == 4
+    assert analyst_config.max_governed_attempts == 3
+    assert analyst_config.max_external_augmentations == 0
+    assert analyst_config.final_review_enabled is False
+
+
+def test_build_execution_from_definition_aggregates_extended_execution_fields() -> None:
+    execution = build_ai_profiles_from_definition(
+        name="support_runtime",
+        description="Support runtime",
+        definition={
+            "profiles": [
+                {
+                    "name": "support_primary",
+                    "scope": {"datasets": ["support_tickets"], "query_policy": "dataset_only"},
+                    "execution": {
+                        "max_iterations": 2,
+                        "max_replans": 1,
+                        "max_step_retries": 1,
+                        "max_evidence_rounds": 3,
+                        "max_governed_attempts": 2,
+                        "max_external_augmentations": 1,
+                        "final_review_enabled": False,
+                    },
+                },
+                {
+                    "name": "support_secondary",
+                    "scope": {"datasets": ["support_tickets"], "query_policy": "dataset_only"},
+                    "execution": {
+                        "max_iterations": 5,
+                        "max_replans": 2,
+                        "max_step_retries": 2,
+                        "max_evidence_rounds": 4,
+                        "max_governed_attempts": 3,
+                        "max_external_augmentations": 5,
+                        "final_review_enabled": True,
+                    },
+                },
+            ]
+        },
+    )
+
+    aggregated = build_execution_from_definition(
+        name="support_runtime",
+        description="Support runtime",
+        definition={
+            "profiles": [profile.model_dump(mode="json") for profile in execution],
+        },
+    )
+
+    assert aggregated.max_iterations == 5
+    assert aggregated.max_replans == 2
+    assert aggregated.max_step_retries == 2
+    assert aggregated.max_evidence_rounds == 4
+    assert aggregated.max_governed_attempts == 3
+    assert aggregated.max_external_augmentations == 5
+    assert aggregated.final_review_enabled is True
 
 
 def test_analyst_research_mode_can_use_web_search_tool_provider() -> None:

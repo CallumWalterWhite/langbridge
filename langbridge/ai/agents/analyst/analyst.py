@@ -21,7 +21,9 @@ from langbridge.ai.agents.analyst.prompts import (
     ANALYST_CONTEXT_ANALYSIS_PROMPT,
     ANALYST_DEEP_RESEARCH_PROMPT,
     ANALYST_MODE_SELECTION_PROMPT,
+    ANALYST_SQL_EVIDENCE_REVIEW_PROMPT,
     ANALYST_SQL_RESPONSE_PROMPT,
+    ANALYST_SQL_SYNTHESIS_PROMPT,
     ANALYST_SQL_TOOL_SELECTION_PROMPT,
 )
 from langbridge.ai.llm.base import LLMProvider
@@ -66,6 +68,42 @@ class SqlFailureTaxonomy:
             "stage": self.stage,
             "message": self.message,
             "fallback_eligible": self.fallback_eligible,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class SqlEvidenceReviewDecision:
+    decision: str
+    reason: str
+    sufficiency: str
+    clarification_question: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "decision": self.decision,
+            "reason": self.reason,
+            "sufficiency": self.sufficiency,
+            "clarification_question": self.clarification_question,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class SqlGovernedAttempt:
+    round_index: int
+    tool_name: str
+    query_scope: str | None
+    status: str | None
+    attempted_tools: tuple[str, ...]
+    fallback_details: dict[str, Any] | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "round_index": self.round_index,
+            "tool_name": self.tool_name,
+            "query_scope": self.query_scope,
+            "status": self.status,
+            "attempted_tools": list(self.attempted_tools),
+            "fallback": self.fallback_details,
         }
 
 
@@ -116,10 +154,13 @@ class AnalystAgent(AIEventSource, BaseAgent):
                     "query_scope",
                     "outcome",
                     "error_taxonomy",
+                    "evidence",
                     "synthesis",
                     "findings",
                     "sources",
                     "follow_ups",
+                    "evidence",
+                    "review_hints",
                 ],
             ),
             tools=self._tool_specifications(),
@@ -202,7 +243,13 @@ class AnalystAgent(AIEventSource, BaseAgent):
 
         raise ValueError(f"Unsupported analyst execution mode: {mode.value}")
 
-    async def _execute_sql(self, task: AgentTask, *, mode_decision: dict[str, Any]) -> AgentResult:
+    async def _execute_sql(
+        self,
+        task: AgentTask,
+        *,
+        mode_decision: dict[str, Any],
+        allow_web_augmentation: bool = True,
+    ) -> AgentResult:
         candidate_tools = self._initial_sql_tools()
         if not candidate_tools:
             return self.build_result(
@@ -212,83 +259,141 @@ class AnalystAgent(AIEventSource, BaseAgent):
                 diagnostics={"agent_mode": AnalystAgentMode.sql.value, "mode_decision": mode_decision},
             )
 
-        await self._emit_ai_event(
-            event_type="AgentToolStarted",
-            message="Selecting SQL analysis tool.",
-            source=self.specification.name,
-        )
-        selected_tool = await self._select_sql_tool(
-            question=task.question,
-            tools=candidate_tools,
-            memory_context=self._memory_context(task.context),
-        )
-        await self._emit_ai_event(
-            event_type="AgentToolSelected",
-            message=f"Selected SQL tool {selected_tool.name}.",
-            source=self.specification.name,
-            details={
-                "tool": selected_tool.name,
-                "asset_type": selected_tool.asset_type,
-                "query_scope": selected_tool.query_scope.value,
-            },
-        )
-
         request = self._sql_request(task)
-        response = await selected_tool.arun(request)
-        taxonomy = self._classify_sql_failure(response=response, tool=selected_tool)
-        final_tool = selected_tool
+        response: AnalystQueryResponse | None = None
+        taxonomy: SqlFailureTaxonomy | None = None
+        final_tool: SqlAnalysisTool | None = None
         fallback_details: dict[str, Any] | None = None
+        sources: list[dict[str, Any]] = []
+        findings: list[dict[str, Any]] = []
+        follow_ups: list[str] = []
+        web_result: WebSearchResult | None = None
+        review: SqlEvidenceReviewDecision | None = None
+        governed_attempts: list[SqlGovernedAttempt] = []
+        tried_tool_names: set[str] = set()
+        governed_round_limit = self._governed_round_limit()
 
-        if taxonomy.fallback_eligible:
-            fallback_tool = await self._select_fallback_tool(
-                question=task.question,
-                current_tool=selected_tool,
-                memory_context=self._memory_context(task.context),
+        for round_index in range(1, governed_round_limit + 1):
+            available_tools = [tool for tool in candidate_tools if tool.name not in tried_tool_names]
+            if not available_tools:
+                break
+
+            final_tool, response, taxonomy, fallback_details, attempted_tools = await self._execute_governed_sql_round(
+                task=task,
+                tools=available_tools,
+                request=request,
             )
-            if fallback_tool is not None:
-                await self._emit_ai_event(
-                    event_type="AnalystScopeFallbackStarted",
-                    message=(
-                        f"Falling back from {selected_tool.query_scope.value} scope to "
-                        f"{fallback_tool.query_scope.value} scope."
-                    ),
-                    source=self.specification.name,
-                    details={
-                        "from_tool": selected_tool.name,
-                        "to_tool": fallback_tool.name,
-                        "reason": taxonomy.message,
-                        "error_kind": taxonomy.kind,
-                    },
+            tried_tool_names.update(attempted_tools)
+            governed_attempts.append(
+                SqlGovernedAttempt(
+                    round_index=round_index,
+                    tool_name=final_tool.name,
+                    query_scope=final_tool.query_scope.value,
+                    status=response.outcome.status.value if response.outcome is not None else None,
+                    attempted_tools=tuple(attempted_tools),
+                    fallback_details=fallback_details,
                 )
-                fallback_request = request.model_copy(
-                    update={
-                        "error_history": [*request.error_history, taxonomy.message or response.error or ""],
-                        "error_retries": 0,
+            )
+
+            if not response.has_error:
+                await self._emit_ai_event(
+                    event_type="AnalystEvidenceReviewStarted",
+                    message="Reviewing governed evidence sufficiency.",
+                    source=self.specification.name,
+                    details={"tool": final_tool.name, "round": round_index},
+                )
+                review = await self._review_sql_evidence(
+                    task=task,
+                    response=response,
+                    memory_context=self._memory_context(task.context),
+                )
+                await self._emit_ai_event(
+                    event_type="AnalystEvidenceReviewCompleted",
+                    message=review.reason,
+                    source=self.specification.name,
+                    details={**review.to_dict(), "round": round_index},
+                )
+                if review.decision == "clarify":
+                    if self._should_retry_governed_sql(
+                        task=task,
+                        response=response,
+                        review=review,
+                        candidate_tools=candidate_tools,
+                        tried_tool_names=tried_tool_names,
+                        round_index=round_index,
+                        round_limit=governed_round_limit,
+                    ):
+                        request = self._next_sql_request_for_governed_retry(
+                            request=request,
+                            response=response,
+                            taxonomy=taxonomy,
+                            review=review,
+                        )
+                        continue
+
+                    clarification_question = (
+                        review.clarification_question
+                        or review.reason
+                        or "Which filters, time period, or entity should I use to answer this question?"
+                    )
+                    output = self._build_sql_output(
+                        summary="",
+                        response=response,
+                        taxonomy=taxonomy,
+                        sources=sources,
+                        findings=findings,
+                        follow_ups=follow_ups,
+                        review=review,
+                        governed_attempts=governed_attempts,
+                    )
+                    diagnostics = {
+                        "agent_mode": AnalystAgentMode.sql.value,
+                        "mode_decision": mode_decision,
+                        "selected_tool": final_tool.name,
+                        "selected_query_scope": final_tool.query_scope.value,
+                        "error_taxonomy": taxonomy.to_dict(),
+                        "web_search": None,
+                        "weak_evidence": True,
+                        "evidence_review": review.to_dict(),
+                        "governed_attempt_count": len(governed_attempts),
+                        "governed_attempts": [attempt.to_dict() for attempt in governed_attempts],
+                        "governed_tools_tried": self._governed_tools_tried(governed_attempts),
                     }
-                )
-                fallback_response = await fallback_tool.arun(fallback_request)
-                response = self._apply_scope_fallback(
-                    fallback_response=fallback_response,
-                    original_response=response,
-                    from_tool=selected_tool,
-                    to_tool=fallback_tool,
+                    if fallback_details is not None:
+                        diagnostics["fallback"] = fallback_details
+                    return self.build_result(
+                        task=task,
+                        status=AgentResultStatus.needs_clarification,
+                        output=output,
+                        diagnostics=diagnostics,
+                        error=clarification_question,
+                    )
+            elif self._should_retry_governed_sql(
+                task=task,
+                response=response,
+                review=None,
+                candidate_tools=candidate_tools,
+                tried_tool_names=tried_tool_names,
+                round_index=round_index,
+                round_limit=governed_round_limit,
+            ):
+                request = self._next_sql_request_for_governed_retry(
+                    request=request,
+                    response=response,
                     taxonomy=taxonomy,
+                    review=review,
                 )
-                final_tool = fallback_tool
-                fallback_details = {
-                    "from_tool": selected_tool.name,
-                    "to_tool": fallback_tool.name,
-                    "from_scope": selected_tool.query_scope.value,
-                    "to_scope": fallback_tool.query_scope.value,
-                    "reason": taxonomy.message,
-                    "error_kind": taxonomy.kind,
-                }
-                await self._emit_ai_event(
-                    event_type="AnalystScopeFallbackCompleted",
-                    message=f"Retrying with dataset-native scope via {fallback_tool.name}.",
-                    source=self.specification.name,
-                    details=fallback_details,
-                )
+                continue
+
+            break
+
+        if response is None or taxonomy is None or final_tool is None:
+            return self.build_result(
+                task=task,
+                status=AgentResultStatus.failed,
+                error="No governed SQL attempt could be completed for this analyst task.",
+                diagnostics={"agent_mode": AnalystAgentMode.sql.value, "mode_decision": mode_decision},
+            )
 
         await self._emit_ai_event(
             event_type="AnalystSummaryStarted",
@@ -301,14 +406,47 @@ class AnalystAgent(AIEventSource, BaseAgent):
             response=response,
             memory_context=self._memory_context(task.context),
         )
-        output = self._build_sql_output(summary=summary, response=response, taxonomy=taxonomy)
+        if allow_web_augmentation and self._should_augment_sql_with_web(task=task, response=response, review=review):
+            web_result = await self._run_web_search_if_needed(task=task, existing_sources=[])
+            if web_result is not None and web_result.results:
+                sources = [item.to_dict() for item in web_result.results][: self._max_external_augmentations()]
+                synthesis = await self._synthesize_sql_with_sources(
+                    question=task.question,
+                    analysis=summary,
+                    response=response,
+                    sources=sources,
+                    memory_context=self._memory_context(task.context),
+                )
+                summary = synthesis["analysis"]
+                findings = synthesis.get("findings", [])
+                follow_ups = synthesis.get("follow_ups", [])
+        output = self._build_sql_output(
+            summary=summary,
+            response=response,
+            taxonomy=taxonomy,
+            sources=sources,
+            findings=findings,
+            follow_ups=follow_ups,
+            review=review,
+            governed_attempts=governed_attempts,
+        )
         status = self._result_status_for_sql(response)
+        weak_evidence = bool(
+            (review is not None and review.sufficiency != "sufficient" and not sources)
+            or (response.is_empty_result and not sources)
+        )
         diagnostics = {
             "agent_mode": AnalystAgentMode.sql.value,
             "mode_decision": mode_decision,
             "selected_tool": final_tool.name,
             "selected_query_scope": final_tool.query_scope.value,
             "error_taxonomy": taxonomy.to_dict(),
+            "web_search": web_result.to_dict() if web_result else None,
+            "weak_evidence": weak_evidence,
+            "evidence_review": review.to_dict() if review is not None else None,
+            "governed_attempt_count": len(governed_attempts),
+            "governed_attempts": [attempt.to_dict() for attempt in governed_attempts],
+            "governed_tools_tried": self._governed_tools_tried(governed_attempts),
         }
         if fallback_details is not None:
             diagnostics["fallback"] = fallback_details
@@ -338,48 +476,100 @@ class AnalystAgent(AIEventSource, BaseAgent):
                 error="Research mode is not enabled for this analyst profile.",
                 diagnostics={"agent_mode": AnalystAgentMode.research.value, "mode_decision": mode_decision},
             )
+        governed_seed: AgentResult | None = None
+        governed_output: dict[str, Any] = {}
+        governed_diagnostics: dict[str, Any] = {}
+        if self._should_attempt_governed_research_seed(task):
+            governed_seed = await self._execute_sql(
+                task,
+                mode_decision={
+                    "agent_mode": AnalystAgentMode.sql.value,
+                    "reason": "Research mode gathers governed evidence first.",
+                },
+                allow_web_augmentation=False,
+            )
+            governed_output = governed_seed.output if isinstance(governed_seed.output, dict) else {}
+            governed_diagnostics = governed_seed.diagnostics if isinstance(governed_seed.diagnostics, dict) else {}
+            if governed_seed.status == AgentResultStatus.needs_clarification:
+                return self._retag_result_for_research(
+                    result=governed_seed,
+                    mode_decision=mode_decision,
+                    research_phase="governed_seed_clarification",
+                )
+
         sources = self._collect_sources(task.context)
         web_result = await self._run_web_search_if_needed(task=task, existing_sources=sources)
         if web_result is not None:
             sources.extend([item.to_dict() for item in web_result.results])
         sources = sources[: self._config.max_sources]
-        if self._config.require_sources and not sources:
+        if self._config.require_sources and not sources and not governed_output:
             return self.build_result(
                 task=task,
                 status=AgentResultStatus.blocked,
-                output={"analysis": "", "result": {}, "synthesis": "", "findings": [], "sources": []},
+                output={"analysis": "", "result": governed_output.get("result") or {}, "synthesis": "", "findings": [], "sources": []},
                 error="Research mode requires sources, but no evidence was available.",
-                diagnostics={"agent_mode": AnalystAgentMode.research.value, "mode_decision": mode_decision},
+                diagnostics={
+                    "agent_mode": AnalystAgentMode.research.value,
+                    "mode_decision": mode_decision,
+                    "governed_seeded": bool(governed_output),
+                },
+            )
+        if governed_seed is not None and governed_seed.status == AgentResultStatus.failed and not sources:
+            return self._retag_result_for_research(
+                result=governed_seed,
+                mode_decision=mode_decision,
+                research_phase="governed_seed_failed",
             )
         research = await self._synthesize_research(
             question=task.question,
             sources=sources,
             memory_context=self._memory_context(task.context),
+            governed_analysis=str(governed_output.get("analysis") or ""),
+            governed_result=governed_output.get("result") if isinstance(governed_output.get("result"), dict) else {},
+            governed_outcome=governed_output.get("outcome") if isinstance(governed_output.get("outcome"), dict) else {},
         )
         await self._emit_ai_event(
             event_type="DeepResearchCompleted",
-            message=f"Synthesized research from {len(sources)} source(s).",
+            message=(
+                f"Synthesized research from {len(sources)} external source(s)"
+                + (" and governed evidence." if governed_output else ".")
+            ),
             source=self.specification.name,
-            details={"source_count": len(sources)},
+            details={"source_count": len(sources), "governed_seeded": bool(governed_output)},
         )
         return self.build_result(
             task=task,
             status=AgentResultStatus.succeeded,
             output={
                 "analysis": research["synthesis"],
-                "result": {},
+                "result": governed_output.get("result") if isinstance(governed_output.get("result"), dict) else {},
                 "synthesis": research["synthesis"],
                 "findings": research.get("findings", []),
                 "sources": sources,
                 "follow_ups": research.get("follow_ups", []),
-                "selected_datasets": self._config.dataset_ids,
-                "selected_semantic_models": self._config.semantic_model_ids,
-                "query_scope": self._config.query_policy,
+                "selected_datasets": governed_output.get("selected_datasets") or self._config.dataset_ids,
+                "selected_semantic_models": governed_output.get("selected_semantic_models") or self._config.semantic_model_ids,
+                "query_scope": governed_output.get("query_scope") or self._config.query_policy,
+                "outcome": governed_output.get("outcome"),
+                "evidence": self._build_research_evidence(
+                    sources=sources,
+                    governed_output=governed_output,
+                    governed_diagnostics=governed_diagnostics,
+                ),
+                "review_hints": self._build_research_review_hints(
+                    sources=sources,
+                    governed_output=governed_output,
+                    governed_diagnostics=governed_diagnostics,
+                ),
             },
             diagnostics={
                 "agent_mode": AnalystAgentMode.research.value,
                 "mode_decision": mode_decision,
                 "web_search": web_result.to_dict() if web_result else None,
+                "weak_evidence": not bool(sources) and not bool(governed_output),
+                "governed_seeded": bool(governed_output),
+                "governed_attempt_count": governed_diagnostics.get("governed_attempt_count", 0),
+                "governed_tools_tried": governed_diagnostics.get("governed_tools_tried", []),
             },
         )
 
@@ -416,7 +606,12 @@ class AnalystAgent(AIEventSource, BaseAgent):
         return self.build_result(
             task=task,
             status=AgentResultStatus.succeeded,
-            output={"analysis": str(parsed.get("analysis") or ""), "result": result},
+            output={
+                "analysis": str(parsed.get("analysis") or ""),
+                "result": result,
+                "evidence": self._build_context_analysis_evidence(result=result),
+                "review_hints": self._build_context_analysis_review_hints(result=result),
+            },
             diagnostics={"agent_mode": AnalystAgentMode.context_analysis.value, "mode_decision": mode_decision},
         )
 
@@ -456,6 +651,98 @@ class AnalystAgent(AIEventSource, BaseAgent):
             return None
         return await self._select_sql_tool(question=question, tools=tools, memory_context=memory_context)
 
+    async def _execute_governed_sql_round(
+        self,
+        *,
+        task: AgentTask,
+        tools: Sequence[SqlAnalysisTool],
+        request: AnalystQueryRequest,
+    ) -> tuple[SqlAnalysisTool, AnalystQueryResponse, SqlFailureTaxonomy, dict[str, Any] | None, list[str]]:
+        await self._emit_ai_event(
+            event_type="AgentToolStarted",
+            message="Selecting SQL analysis tool.",
+            source=self.specification.name,
+        )
+        selected_tool = await self._select_sql_tool(
+            question=task.question,
+            tools=tools,
+            memory_context=self._memory_context(task.context),
+        )
+        await self._emit_ai_event(
+            event_type="AgentToolSelected",
+            message=f"Selected SQL tool {selected_tool.name}.",
+            source=self.specification.name,
+            details={
+                "tool": selected_tool.name,
+                "asset_type": selected_tool.asset_type,
+                "query_scope": selected_tool.query_scope.value,
+            },
+        )
+
+        response = await selected_tool.arun(request)
+        taxonomy = self._classify_sql_failure(response=response, tool=selected_tool)
+        final_tool = selected_tool
+        fallback_details: dict[str, Any] | None = None
+        attempted_tools = [selected_tool.name]
+
+        if taxonomy.fallback_eligible:
+            fallback_tools = [
+                tool
+                for tool in self._fallback_sql_tools(selected_tool)
+                if tool.name not in attempted_tools
+            ]
+            if fallback_tools:
+                fallback_tool = await self._select_sql_tool(
+                    question=task.question,
+                    tools=fallback_tools,
+                    memory_context=self._memory_context(task.context),
+                )
+                await self._emit_ai_event(
+                    event_type="AnalystScopeFallbackStarted",
+                    message=(
+                        f"Falling back from {selected_tool.query_scope.value} scope to "
+                        f"{fallback_tool.query_scope.value} scope."
+                    ),
+                    source=self.specification.name,
+                    details={
+                        "from_tool": selected_tool.name,
+                        "to_tool": fallback_tool.name,
+                        "reason": taxonomy.message,
+                        "error_kind": taxonomy.kind,
+                    },
+                )
+                fallback_request = request.model_copy(
+                    update={
+                        "error_history": [*request.error_history, taxonomy.message or response.error or ""],
+                        "error_retries": request.error_retries + 1,
+                    }
+                )
+                fallback_response = await fallback_tool.arun(fallback_request)
+                response = self._apply_scope_fallback(
+                    fallback_response=fallback_response,
+                    original_response=response,
+                    from_tool=selected_tool,
+                    to_tool=fallback_tool,
+                    taxonomy=taxonomy,
+                )
+                final_tool = fallback_tool
+                attempted_tools.append(fallback_tool.name)
+                fallback_details = {
+                    "from_tool": selected_tool.name,
+                    "to_tool": fallback_tool.name,
+                    "from_scope": selected_tool.query_scope.value,
+                    "to_scope": fallback_tool.query_scope.value,
+                    "reason": taxonomy.message,
+                    "error_kind": taxonomy.kind,
+                }
+                await self._emit_ai_event(
+                    event_type="AnalystScopeFallbackCompleted",
+                    message=f"Retrying with dataset-native scope via {fallback_tool.name}.",
+                    source=self.specification.name,
+                    details=fallback_details,
+                )
+        return final_tool, response, taxonomy, fallback_details, attempted_tools
+
     async def _summarize_sql_response(
         self,
         *,
@@ -478,17 +765,58 @@ class AnalystAgent(AIEventSource, BaseAgent):
             raise ValueError("Analyst SQL summary response missing analysis.")
         return analysis
 
+    async def _review_sql_evidence(
+        self,
+        *,
+        task: AgentTask,
+        response: AnalystQueryResponse,
+        memory_context: str = "",
+    ) -> SqlEvidenceReviewDecision:
+        prompt = self._prompt(
+            ANALYST_SQL_EVIDENCE_REVIEW_PROMPT.format(
+                question=task.question,
+                memory_context=memory_context,
+                web_augmentation_available=self._web_augmentation_available(task=task),
+                sql=response.sql_canonical,
+                result=json.dumps(response.result.model_dump(mode="json") if response.result else {}, default=str),
+                outcome=json.dumps(response.outcome.model_dump(mode="json") if response.outcome else {}, default=str),
+            )
+        )
+        try:
+            parsed = self._parse_json_object(await self._llm.acomplete(prompt, temperature=0.0, max_tokens=500))
+        except Exception:
+            return self._default_sql_evidence_review(task=task, response=response)
+
+        decision = str(parsed.get("decision") or "").strip().lower()
+        sufficiency = str(parsed.get("sufficiency") or "").strip().lower()
+        if decision not in {"answer", "augment_with_web", "clarify"}:
+            return self._default_sql_evidence_review(task=task, response=response)
+        if sufficiency not in {"sufficient", "partial", "insufficient"}:
+            return self._default_sql_evidence_review(task=task, response=response)
+        return SqlEvidenceReviewDecision(
+            decision=decision,
+            reason=str(parsed.get("reason") or "").strip() or "Reviewed governed SQL evidence.",
+            sufficiency=sufficiency,
+            clarification_question=self._optional_string(parsed.get("clarification_question")),
+        )
+
     async def _synthesize_research(
         self,
         *,
         question: str,
         sources: list[dict[str, Any]],
         memory_context: str = "",
+        governed_analysis: str = "",
+        governed_result: dict[str, Any] | None = None,
+        governed_outcome: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         prompt = self._prompt(
             ANALYST_DEEP_RESEARCH_PROMPT.format(
                 question=question,
                 memory_context=memory_context,
+                governed_analysis=governed_analysis,
+                governed_result=json.dumps(governed_result or {}, default=str),
+                governed_outcome=json.dumps(governed_outcome or {}, default=str),
                 sources=json.dumps(sources, default=str),
             )
         )
@@ -501,6 +829,36 @@ class AnalystAgent(AIEventSource, BaseAgent):
         follow_ups = parsed.get("follow_ups")
         if follow_ups is not None and not isinstance(follow_ups, list):
             raise ValueError("Research LLM response follow_ups must be a list.")
+        return parsed
+
+    async def _synthesize_sql_with_sources(
+        self,
+        *,
+        question: str,
+        analysis: str,
+        response: AnalystQueryResponse,
+        sources: list[dict[str, Any]],
+        memory_context: str = "",
+    ) -> dict[str, Any]:
+        prompt = self._prompt(
+            ANALYST_SQL_SYNTHESIS_PROMPT.format(
+                question=question,
+                memory_context=memory_context,
+                analysis=analysis,
+                result=json.dumps(response.result.model_dump(mode="json") if response.result else {}, default=str),
+                outcome=json.dumps(response.outcome.model_dump(mode="json") if response.outcome else {}, default=str),
+                sources=json.dumps(sources, default=str),
+            )
+        )
+        parsed = self._parse_json_object(await self._llm.acomplete(prompt, temperature=0.0, max_tokens=1200))
+        if not isinstance(parsed.get("analysis"), str):
+            raise ValueError("Analyst SQL synthesis response missing analysis.")
+        findings = parsed.get("findings")
+        if findings is not None and not isinstance(findings, list):
+            raise ValueError("Analyst SQL synthesis response findings must be a list.")
+        follow_ups = parsed.get("follow_ups")
+        if follow_ups is not None and not isinstance(follow_ups, list):
+            raise ValueError("Analyst SQL synthesis response follow_ups must be a list.")
         return parsed
 
     async def _run_web_search_if_needed(
@@ -757,7 +1115,15 @@ class AnalystAgent(AIEventSource, BaseAgent):
         summary: str,
         response: AnalystQueryResponse,
         taxonomy: SqlFailureTaxonomy,
+        sources: list[dict[str, Any]] | None = None,
+        findings: list[dict[str, Any]] | None = None,
+        follow_ups: list[str] | None = None,
+        review: SqlEvidenceReviewDecision | None = None,
+        governed_attempts: Sequence[SqlGovernedAttempt] | None = None,
     ) -> dict[str, Any]:
+        source_items = list(sources or [])
+        finding_items = list(findings or [])
+        follow_up_items = list(follow_ups or [])
         return {
             "analysis": summary,
             "result": response.result.model_dump(mode="json") if response.result else {},
@@ -771,7 +1137,347 @@ class AnalystAgent(AIEventSource, BaseAgent):
             "query_scope": response.query_scope.value if response.query_scope else None,
             "outcome": response.outcome.model_dump(mode="json") if response.outcome else None,
             "error_taxonomy": taxonomy.to_dict(),
+            "sources": source_items,
+            "findings": finding_items,
+            "follow_ups": follow_up_items,
+            "evidence": self._build_sql_evidence(
+                response=response,
+                sources=source_items,
+                review=review,
+                governed_attempts=governed_attempts or [],
+            ),
+            "review_hints": self._build_sql_review_hints(
+                response=response,
+                sources=source_items,
+                review=review,
+                governed_attempts=governed_attempts or [],
+            ),
         }
+
+    def _build_sql_evidence(
+        self,
+        *,
+        response: AnalystQueryResponse,
+        sources: list[dict[str, Any]],
+        review: SqlEvidenceReviewDecision | None,
+        governed_attempts: Sequence[SqlGovernedAttempt],
+    ) -> dict[str, Any]:
+        return {
+            "governed": {
+                "attempted": True,
+                "answered_question": response.has_rows,
+                "query_scope": response.query_scope.value if response.query_scope else None,
+                "status": response.outcome.status.value if response.outcome is not None else None,
+                "used_fallback": bool(
+                    response.outcome
+                    and response.outcome.fallback_to_query_scope is not None
+                    and response.outcome.fallback_from_query_scope is not None
+                ),
+                "attempt_count": len(governed_attempts),
+                "tools_tried": self._governed_tools_tried(governed_attempts),
+            },
+            "assessment": review.to_dict() if review is not None else None,
+            "external": {
+                "used": bool(sources),
+                "source_count": len(sources),
+            },
+            "limitations": self._sql_limitations(response=response, sources=sources),
+        }
+
+    def _build_research_evidence(
+        self,
+        *,
+        sources: list[dict[str, Any]],
+        governed_output: dict[str, Any],
+        governed_diagnostics: dict[str, Any],
+    ) -> dict[str, Any]:
+        governed_evidence = governed_output.get("evidence") if isinstance(governed_output.get("evidence"), dict) else {}
+        governed_section = governed_evidence.get("governed") if isinstance(governed_evidence.get("governed"), dict) else {}
+        limitations = list(governed_evidence.get("limitations") or []) if isinstance(governed_evidence, dict) else []
+        if governed_output and not governed_section:
+            outcome = governed_output.get("outcome") if isinstance(governed_output.get("outcome"), dict) else {}
+            governed_section = {
+                "attempted": True,
+                "answered_question": bool(governed_output.get("result")),
+                "query_scope": governed_output.get("query_scope"),
+                "status": outcome.get("status"),
+                "used_fallback": False,
+                "attempt_count": governed_diagnostics.get("governed_attempt_count", 0),
+                "tools_tried": governed_diagnostics.get("governed_tools_tried", []),
+            }
+        if sources:
+            limitations.append("External sources were used to supplement governed or contextual evidence.")
+        if not governed_output and not sources:
+            limitations.append("No governed or external evidence was available.")
+        return {
+            "governed": governed_section
+            or {
+                "attempted": False,
+                "answered_question": False,
+                "query_scope": None,
+                "status": None,
+                "used_fallback": False,
+            },
+            "external": {
+                "used": bool(sources),
+                "source_count": len(sources),
+            },
+            "limitations": limitations or ["Evidence is source-backed only; governed result data was not produced."],
+        }
+
+    @staticmethod
+    def _build_context_analysis_evidence(*, result: dict[str, Any]) -> dict[str, Any]:
+        rows = result.get("rows")
+        return {
+            "governed": {
+                "attempted": False,
+                "answered_question": isinstance(rows, list) and bool(rows),
+                "query_scope": "context_result",
+                "status": "provided_result",
+                "used_fallback": False,
+            },
+            "external": {
+                "used": False,
+                "source_count": 0,
+            },
+            "limitations": [] if isinstance(rows, list) and rows else ["Provided result context is empty."],
+        }
+
+    def _build_sql_review_hints(
+        self,
+        *,
+        response: AnalystQueryResponse,
+        sources: list[dict[str, Any]],
+        review: SqlEvidenceReviewDecision | None,
+        governed_attempts: Sequence[SqlGovernedAttempt],
+    ) -> dict[str, Any]:
+        return {
+            "requires_source_review": bool(sources),
+            "governed_empty_result": response.is_empty_result,
+            "governed_error": response.has_error,
+            "external_augmentation_used": bool(sources),
+            "evidence_review_decision": review.decision if review is not None else None,
+            "governed_attempt_count": len(governed_attempts),
+        }
+
+    @staticmethod
+    def _build_research_review_hints(
+        *,
+        sources: list[dict[str, Any]],
+        governed_output: dict[str, Any],
+        governed_diagnostics: dict[str, Any],
+    ) -> dict[str, Any]:
+        governed_hints = (
+            governed_output.get("review_hints")
+            if isinstance(governed_output.get("review_hints"), dict)
+            else {}
+        )
+        return {
+            "requires_source_review": bool(sources),
+            "governed_empty_result": bool(governed_hints.get("governed_empty_result")),
+            "governed_error": bool(governed_hints.get("governed_error")),
+            "external_augmentation_used": bool(sources),
+            "governed_attempt_count": governed_diagnostics.get("governed_attempt_count", 0),
+            "evidence_review_decision": governed_hints.get("evidence_review_decision"),
+        }
+
+    @staticmethod
+    def _build_context_analysis_review_hints(*, result: dict[str, Any]) -> dict[str, Any]:
+        rows = result.get("rows")
+        return {
+            "requires_source_review": False,
+            "governed_empty_result": isinstance(rows, list) and len(rows) == 0,
+            "governed_error": False,
+            "external_augmentation_used": False,
+        }
+
+    def _sql_limitations(self, *, response: AnalystQueryResponse, sources: list[dict[str, Any]]) -> list[str]:
+        limitations: list[str] = []
+        if response.is_empty_result:
+            limitations.append("Governed SQL returned no matching rows.")
+        if response.has_error:
+            limitations.append(response.error or "Governed SQL execution did not succeed.")
+        if sources:
+            limitations.append("External sources were used to supplement governed evidence.")
+        return limitations
+
+    def _should_retry_governed_sql(
+        self,
+        *,
+        task: AgentTask,
+        response: AnalystQueryResponse,
+        review: SqlEvidenceReviewDecision | None,
+        candidate_tools: Sequence[SqlAnalysisTool],
+        tried_tool_names: set[str],
+        round_index: int,
+        round_limit: int,
+    ) -> bool:
+        if round_index >= round_limit:
+            return False
+        if not any(tool.name not in tried_tool_names for tool in candidate_tools):
+            return False
+        if response.has_error:
+            return True
+        if review is None:
+            return False
+        if review.decision == "augment_with_web" and self._should_augment_sql_with_web(
+            task=task,
+            response=response,
+            review=review,
+        ):
+            return False
+        return review.decision != "answer"
+
+    @staticmethod
+    def _next_sql_request_for_governed_retry(
+        *,
+        request: AnalystQueryRequest,
+        response: AnalystQueryResponse,
+        taxonomy: SqlFailureTaxonomy,
+        review: SqlEvidenceReviewDecision | None,
+    ) -> AnalystQueryRequest:
+        error_history = list(request.error_history)
+        for item in (
+            taxonomy.message,
+            response.error,
+            review.reason if review is not None else None,
+        ):
+            text = str(item or "").strip()
+            if text:
+                error_history.append(text)
+        return request.model_copy(
+            update={
+                "error_retries": request.error_retries + 1,
+                "error_history": error_history,
+            }
+        )
+
+    @staticmethod
+    def _governed_tools_tried(governed_attempts: Sequence[SqlGovernedAttempt]) -> list[str]:
+        seen: list[str] = []
+        for attempt in governed_attempts:
+            for tool_name in attempt.attempted_tools:
+                if tool_name not in seen:
+                    seen.append(tool_name)
+        return seen
+
+    def _default_sql_evidence_review(
+        self,
+        *,
+        task: AgentTask,
+        response: AnalystQueryResponse,
+    ) -> SqlEvidenceReviewDecision:
+        if response.has_error:
+            return SqlEvidenceReviewDecision(
+                decision="answer",
+                reason="Governed SQL returned an execution failure that should not trigger web augmentation.",
+                sufficiency="insufficient",
+            )
+        if task.input.get("force_web_search") and self._web_augmentation_available(task=task):
+            return SqlEvidenceReviewDecision(
+                decision="augment_with_web",
+                reason="Web search was forced by task input.",
+                sufficiency="partial" if response.has_rows else "insufficient",
+            )
+        if self._question_requests_web(task.question) and self._web_augmentation_available(task=task):
+            return SqlEvidenceReviewDecision(
+                decision="augment_with_web",
+                reason="Question asks for current or external context beyond governed SQL.",
+                sufficiency="partial" if response.has_rows else "insufficient",
+            )
+        if response.is_empty_result:
+            return SqlEvidenceReviewDecision(
+                decision="clarify",
+                reason="Governed SQL returned no matching rows for the current request.",
+                sufficiency="insufficient",
+                clarification_question="Which filters, entity, or time period should I use to refine the analysis?",
+            )
+        return SqlEvidenceReviewDecision(
+            decision="answer",
+            reason="Governed SQL evidence is sufficient to answer directly.",
+            sufficiency="sufficient",
+        )
+
+    def _should_attempt_governed_research_seed(self, task: AgentTask) -> bool:
+        if not self._initial_sql_tools():
+            return False
+        if task.input.get("force_web_search"):
+            return False
+        context_result = task.context.get("result")
+        return not isinstance(context_result, dict)
+
+    def _retag_result_for_research(
+        self,
+        *,
+        result: AgentResult,
+        mode_decision: dict[str, Any],
+        research_phase: str,
+    ) -> AgentResult:
+        diagnostics = result.diagnostics if isinstance(result.diagnostics, dict) else {}
+        return result.model_copy(
+            update={
+                "diagnostics": {
+                    **diagnostics,
+                    "agent_mode": AnalystAgentMode.research.value,
+                    "mode_decision": mode_decision,
+                    "research_phase": research_phase,
+                }
+            }
+        )
+
+    def _should_augment_sql_with_web(
+        self,
+        *,
+        task: AgentTask,
+        response: AnalystQueryResponse,
+        review: SqlEvidenceReviewDecision | None,
+    ) -> bool:
+        if response.has_error:
+            return False
+        if review is not None:
+            return review.decision == "augment_with_web" and self._web_augmentation_available(task=task)
+        if task.input.get("force_web_search"):
+            return True
+        if self._question_requests_web(task.question) and self._web_augmentation_available(task=task):
+            return True
+        return response.is_empty_result and self._web_augmentation_available(task=task)
+
+    def _web_augmentation_available(self, *, task: AgentTask) -> bool:
+        if self._web_search_tool is None:
+            return False
+        if not self._config.web_search_enabled:
+            return False
+        if not self._config.supports_research and not task.input.get("force_web_search"):
+            return False
+        return self._max_external_augmentations() > 0
+
+    def _governed_round_limit(self) -> int:
+        return max(1, min(self._max_evidence_rounds(), self._max_governed_attempts()))
+
+    def _max_evidence_rounds(self) -> int:
+        try:
+            return max(1, int(self._config.max_evidence_rounds))
+        except (AttributeError, TypeError, ValueError):
+            return 2
+
+    def _max_governed_attempts(self) -> int:
+        try:
+            return max(1, int(self._config.max_governed_attempts))
+        except (AttributeError, TypeError, ValueError):
+            return 2
+
+    def _max_external_augmentations(self) -> int:
+        try:
+            return max(0, int(self._config.max_external_augmentations))
+        except (AttributeError, TypeError, ValueError):
+            return 3
+
+    @staticmethod
+    def _optional_string(value: Any) -> str | None:
+        if not isinstance(value, str):
+            return None
+        text = value.strip()
+        return text or None
 
     @staticmethod
     def _result_status_for_sql(response: AnalystQueryResponse) -> AgentResultStatus:
@@ -825,6 +1531,19 @@ class AnalystAgent(AIEventSource, BaseAgent):
         memory = context.get("memory_context")
         if isinstance(memory, str) and memory.strip():
             parts.append("Memory:\n" + memory.strip())
+        final_review_rationale = context.get("final_review_rationale")
+        final_review_issues = context.get("final_review_issues")
+        review_lines: list[str] = []
+        if isinstance(final_review_rationale, str) and final_review_rationale.strip():
+            review_lines.append(final_review_rationale.strip())
+        if isinstance(final_review_issues, list):
+            review_lines.extend(
+                str(item).strip()
+                for item in final_review_issues
+                if isinstance(item, str) and str(item).strip()
+            )
+        if review_lines:
+            parts.append("Final review guidance:\n" + "\n".join(f"- {line}" for line in review_lines))
         return "\n\n".join(parts)
 
     @staticmethod

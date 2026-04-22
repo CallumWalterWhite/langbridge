@@ -18,12 +18,23 @@ from langbridge.ai.base import (
 )
 from langbridge.ai.events import AIEventEmitter, AIEventSource
 from langbridge.ai.llm.base import LLMProvider
-from langbridge.ai.modes import normalize_analyst_task_input
+from langbridge.ai.modes import analyst_output_contract_for_task_input, normalize_analyst_task_input
 from langbridge.ai.orchestration.execution import PlanExecutionState
+from langbridge.ai.orchestration.final_review import (
+    FinalReviewAction,
+    FinalReviewAgent,
+    FinalReviewDecision,
+    FinalReviewReasonCode,
+)
 from langbridge.ai.orchestration.meta_controller_prompts import build_meta_controller_route_prompt
-from langbridge.ai.orchestration.plan_review import PlanReviewAction, PlanReviewAgent, PlanReviewDecision
+from langbridge.ai.orchestration.plan_review import (
+    PlanReviewAction,
+    PlanReviewAgent,
+    PlanReviewDecision,
+    PlanReviewReasonCode,
+)
 from langbridge.ai.orchestration.planner import ExecutionPlan, PlannerAgent, PlanStep
-from langbridge.ai.orchestration.verification import AgentVerifier, VerificationOutcome
+from langbridge.ai.orchestration.verification import AgentVerifier, VerificationOutcome, VerificationReasonCode
 from langbridge.ai.registry import AgentRegistry
 
 
@@ -51,6 +62,7 @@ class MetaControllerRun(BaseModel):
     step_results: list[dict[str, Any]] = Field(default_factory=list)
     verification: list[VerificationOutcome] = Field(default_factory=list)
     review_decisions: list[PlanReviewDecision] = Field(default_factory=list)
+    final_review: dict[str, Any] = Field(default_factory=dict)
     final_result: dict[str, Any] = Field(default_factory=dict)
     presentation: dict[str, Any] = Field(default_factory=dict)
     diagnostics: dict[str, Any] = Field(default_factory=dict)
@@ -68,6 +80,8 @@ class MetaControllerAgent(AIEventSource, BaseAgent):
         planner: PlannerAgent | None = None,
         verifier: AgentVerifier | None = None,
         plan_review: PlanReviewAgent | None = None,
+        final_review: FinalReviewAgent | None = None,
+        final_review_enabled: bool = True,
         max_iterations: int = 8,
         max_replans: int = 2,
         max_step_retries: int = 1,
@@ -79,6 +93,8 @@ class MetaControllerAgent(AIEventSource, BaseAgent):
         self._planner = planner or PlannerAgent(llm_provider=llm_provider)
         self._verifier = verifier or AgentVerifier()
         self._plan_review = plan_review or PlanReviewAgent()
+        self._final_review = final_review or FinalReviewAgent(llm_provider=llm_provider)
+        self._final_review_enabled = bool(final_review_enabled)
         self._presentation_agent = presentation_agent
         self._max_iterations = max(1, int(max_iterations))
         self._max_replans = max(0, int(max_replans))
@@ -323,16 +339,23 @@ class MetaControllerAgent(AIEventSource, BaseAgent):
         input_payload: dict[str, Any] | None = None,
         rationale: str | None = None,
     ) -> ExecutionPlan:
+        resolved_task_kind = task_kind or specification.task_kinds[0]
+        expected_output = specification.output_contract
+        if (
+            resolved_task_kind == AgentTaskKind.analyst
+            and MetaControllerAgent._uses_mode_aware_analyst_contract(specification)
+        ):
+            expected_output = analyst_output_contract_for_task_input(input_payload or {})
         return ExecutionPlan(
             route=f"direct:{specification.name}",
             steps=[
                 PlanStep(
                     step_id="step-1",
                     agent_name=specification.name,
-                    task_kind=task_kind or specification.task_kinds[0],
+                    task_kind=resolved_task_kind,
                     question=question,
                     input=input_payload or {},
-                    expected_output=specification.output_contract,
+                    expected_output=expected_output,
                 )
             ],
             rationale=rationale or "Meta-controller LLM selected one direct agent.",
@@ -342,6 +365,24 @@ class MetaControllerAgent(AIEventSource, BaseAgent):
     @staticmethod
     def _build_terminal_plan(*, route: str, rationale: str) -> ExecutionPlan:
         return ExecutionPlan(route=route, steps=[], rationale=rationale, requires_pev=False)
+
+    @staticmethod
+    def _build_revision_plan(
+        *,
+        step: PlanStep,
+        revision_count: int,
+        rationale: str,
+    ) -> ExecutionPlan:
+        revised_step = step.model_copy(
+            update={"step_id": f"r{revision_count}-answer-revision"}
+        )
+        return ExecutionPlan(
+            route="planned:answer_revision",
+            steps=[revised_step],
+            rationale=rationale or "Final review requested a revised answer.",
+            requires_pev=True,
+            revision_count=revision_count,
+        )
 
     async def _finish_before_execution(
         self,
@@ -369,22 +410,27 @@ class MetaControllerAgent(AIEventSource, BaseAgent):
         self,
         *,
         execution_mode: str,
-        plan: ExecutionPlan,
+        plan: ExecutionPlan | None = None,
+        state: PlanExecutionState | None = None,
         question: str,
         context: dict[str, Any],
         diagnostics: dict[str, Any],
     ) -> MetaControllerRun:
-        if not plan.steps:
-            if plan.clarification_question:
+        active_plan = state.current_plan if state is not None else plan
+        if active_plan is None:
+            raise ValueError("Execution requires a plan or existing plan state.")
+
+        if not active_plan.steps:
+            if active_plan.clarification_question:
                 final = await self._present(
                     question=question,
-                    context={**context, "clarification_question": plan.clarification_question},
+                    context={**context, "clarification_question": active_plan.clarification_question},
                     mode="clarification",
                 )
                 return MetaControllerRun(
-                    execution_mode=self._execution_mode_from_plan(plan=plan, requested_mode=execution_mode),
+                    execution_mode=self._execution_mode_from_plan(plan=active_plan, requested_mode=execution_mode),
                     status="clarification_needed",
-                    plan=plan,
+                    plan=active_plan,
                     final_result=final,
                     presentation=final,
                     diagnostics={
@@ -403,6 +449,7 @@ class MetaControllerAgent(AIEventSource, BaseAgent):
                 step_id="plan",
                 agent_name="planner",
                 message="Planner returned no executable steps.",
+                reason_code=VerificationReasonCode.planner_no_steps,
             )
             final = await self._present(
                 question=question,
@@ -410,32 +457,54 @@ class MetaControllerAgent(AIEventSource, BaseAgent):
                 mode="failure",
             )
             return MetaControllerRun(
-                execution_mode=self._execution_mode_from_plan(plan=plan, requested_mode=execution_mode),
+                execution_mode=self._execution_mode_from_plan(plan=active_plan, requested_mode=execution_mode),
                 status="failed",
-                plan=plan,
+                plan=active_plan,
                 verification=[failed],
                 final_result=final,
                 presentation=final,
                 diagnostics=diagnostics,
             )
 
-        state = PlanExecutionState(
-            original_question=question,
-            current_plan=plan,
-            context=dict(context),
-            max_iterations=self._max_iterations,
-            max_replans=self._max_replans,
-            max_step_retries=self._max_step_retries,
-        )
+        if state is None:
+            state = PlanExecutionState(
+                original_question=question,
+                current_plan=active_plan,
+                context=dict(context),
+                max_iterations=self._max_iterations,
+                max_replans=self._max_replans,
+                max_step_retries=self._max_step_retries,
+            )
+        else:
+            state.current_plan = active_plan
 
         while state.iteration < state.max_iterations:
             step = state.next_pending_step()
             if step is None:
+                if state.has_pending_steps():
+                    blocked_steps = [item.step_id for item in state.pending_steps]
+                    return await self._finish_with_mode(
+                        execution_mode=execution_mode,
+                        state=state,
+                        question=question,
+                        context={
+                            "error": (
+                                "Execution plan has pending steps blocked by unresolved dependencies: "
+                                + ", ".join(blocked_steps)
+                            )
+                        },
+                        presentation_mode="failure",
+                        diagnostics={
+                            **diagnostics,
+                            "stop_reason": "blocked_dependencies",
+                            "blocked_step_ids": blocked_steps,
+                        },
+                    )
                 return await self._finalize(
                     execution_mode=execution_mode,
                     state=state,
                     question=question,
-                    context=context,
+                    context={},
                     diagnostics={**diagnostics, "stop_reason": "plan_completed"},
                 )
 
@@ -455,7 +524,7 @@ class MetaControllerAgent(AIEventSource, BaseAgent):
                 task_kind=step.task_kind,
                 question=step.question or question,
                 input=step.input,
-                context={**context, "step_results": state.step_results_payload()},
+                context={**state.context, "step_results": state.step_results_payload()},
                 expected_output=step.expected_output,
             )
             result = await agent.execute(task)
@@ -478,6 +547,7 @@ class MetaControllerAgent(AIEventSource, BaseAgent):
                     "step_id": verification.step_id,
                     "agent_name": verification.agent_name,
                     "passed": verification.passed,
+                    "reason_code": verification.reason_code.value,
                     "missing_output_keys": list(verification.missing_output_keys),
                 },
             )
@@ -485,12 +555,15 @@ class MetaControllerAgent(AIEventSource, BaseAgent):
 
             decision = self._plan_review.review(state)
             state.record_review(decision)
+            if decision.updated_context:
+                state.context = {**state.context, **decision.updated_context}
             await self._emit_ai_event(
                 event_type="PlanReviewDecision",
                 message=decision.rationale,
                 source="plan-review",
                 details={
                     "action": decision.action.value,
+                    "reason_code": decision.reason_code.value,
                     "retry_step_id": decision.retry_step_id,
                 },
             )
@@ -501,7 +574,7 @@ class MetaControllerAgent(AIEventSource, BaseAgent):
                         execution_mode=execution_mode,
                         state=state,
                         question=question,
-                        context=context,
+                        context={},
                         diagnostics=diagnostics,
                         decision=decision,
                     )
@@ -512,7 +585,7 @@ class MetaControllerAgent(AIEventSource, BaseAgent):
                         execution_mode=execution_mode,
                         state=state,
                         question=question,
-                        context=context,
+                        context={},
                         diagnostics=diagnostics,
                         decision=decision,
                     )
@@ -530,12 +603,11 @@ class MetaControllerAgent(AIEventSource, BaseAgent):
                         execution_mode=execution_mode,
                         state=state,
                         question=question,
-                        context=context,
+                        context={},
                         diagnostics=diagnostics,
                         decision=decision,
                     )
                 state.replan_count += 1
-                state.context = {**state.context, **decision.updated_context}
                 await self._emit_ai_event(
                     event_type="PlanReplanStarted",
                     message="Revising execution plan.",
@@ -559,10 +631,7 @@ class MetaControllerAgent(AIEventSource, BaseAgent):
                     execution_mode=execution_mode,
                     state=state,
                     question=question,
-                    context={
-                        **context,
-                        "clarification_question": decision.clarification_question or decision.rationale,
-                    },
+                    context={"clarification_question": decision.clarification_question or decision.rationale},
                     presentation_mode="clarification",
                     diagnostics={**diagnostics, "stop_reason": "clarification"},
                 )
@@ -571,7 +640,7 @@ class MetaControllerAgent(AIEventSource, BaseAgent):
                     execution_mode=execution_mode,
                     state=state,
                     question=question,
-                    context={**context, "error": decision.rationale},
+                    context={"error": decision.rationale},
                     presentation_mode="failure",
                     diagnostics={**diagnostics, "stop_reason": "abort"},
                 )
@@ -580,7 +649,7 @@ class MetaControllerAgent(AIEventSource, BaseAgent):
                     execution_mode=execution_mode,
                     state=state,
                     question=question,
-                    context=context,
+                    context={},
                     diagnostics={**diagnostics, "stop_reason": "finalize"},
                 )
 
@@ -588,7 +657,7 @@ class MetaControllerAgent(AIEventSource, BaseAgent):
             execution_mode=execution_mode,
             state=state,
             question=question,
-            context=context,
+            context={},
             diagnostics=diagnostics,
             decision=None,
         )
@@ -602,6 +671,139 @@ class MetaControllerAgent(AIEventSource, BaseAgent):
         context: dict[str, Any],
         diagnostics: dict[str, Any],
     ) -> MetaControllerRun:
+        answer_package = self._build_answer_package(state=state, context=context)
+        final_review_decision = await self._review_final_answer(
+            question=question,
+            state=state,
+            answer_package=answer_package,
+        )
+        if final_review_decision is not None:
+            if final_review_decision.updated_context:
+                state.context = {**state.context, **final_review_decision.updated_context}
+            final_review_payload = final_review_decision.model_dump(mode="json")
+
+            if final_review_decision.action == FinalReviewAction.ask_clarification:
+                clarification_question = (
+                    final_review_decision.clarification_question
+                    or final_review_decision.rationale
+                    or "Clarification needed."
+                )
+                return await self._finish_with_mode(
+                    execution_mode=execution_mode,
+                    state=state,
+                    question=question,
+                    context={**context, "clarification_question": clarification_question},
+                    presentation_mode="clarification",
+                    diagnostics={
+                        **diagnostics,
+                        "stop_reason": "final_review_clarification",
+                        "final_review": final_review_payload,
+                    },
+                    final_review=final_review_decision,
+                )
+
+            if final_review_decision.action == FinalReviewAction.abort:
+                return await self._finish_with_mode(
+                    execution_mode=execution_mode,
+                    state=state,
+                    question=question,
+                    context={**context, "error": final_review_decision.rationale},
+                    presentation_mode="failure",
+                    diagnostics={
+                        **diagnostics,
+                        "stop_reason": "final_review_abort",
+                        "final_review": final_review_payload,
+                    },
+                    final_review=final_review_decision,
+                )
+
+            if final_review_decision.action in {FinalReviewAction.revise_answer, FinalReviewAction.replan}:
+                if state.replan_count >= state.max_replans:
+                    return await self._finish_with_mode(
+                        execution_mode=execution_mode,
+                        state=state,
+                        question=question,
+                        context={
+                            **context,
+                            "error": (
+                                "Final review requested another analytical pass, "
+                                "but the replan budget is exhausted."
+                            ),
+                        },
+                        presentation_mode="failure",
+                        diagnostics={
+                            **diagnostics,
+                            "stop_reason": "final_review_replan_budget_exhausted",
+                            "final_review": final_review_payload,
+                        },
+                        final_review=final_review_decision,
+                    )
+                state.replan_count += 1
+                replan_updates = {
+                    "final_review_action": final_review_decision.action.value,
+                    "final_review_rationale": final_review_decision.rationale,
+                    "final_review_issues": list(final_review_decision.issues),
+                    "reviewed_answer_package": answer_package,
+                    **final_review_decision.updated_context,
+                }
+                state.context = {**state.context, **replan_updates}
+
+                if final_review_decision.action == FinalReviewAction.revise_answer:
+                    latest = state.latest_record
+                    if latest is not None:
+                        await self._emit_ai_event(
+                            event_type="PlanReplanStarted",
+                            message="Revising the latest answer after final review.",
+                            source=latest.step.agent_name,
+                            details={
+                                "replan_count": state.replan_count,
+                                "trigger": final_review_decision.action.value,
+                            },
+                        )
+                        state.current_plan = self._build_revision_plan(
+                            step=latest.step,
+                            revision_count=state.replan_count,
+                            rationale=final_review_decision.rationale,
+                        )
+                        await self._emit_ai_event(
+                            event_type="PlanReplanCreated",
+                            message="Prepared a direct answer-revision step.",
+                            source=latest.step.agent_name,
+                            details={"step_count": len(state.current_plan.steps)},
+                        )
+                        return await self._execute_plan(
+                            execution_mode=execution_mode,
+                            state=state,
+                            question=question,
+                            context=context,
+                            diagnostics={**diagnostics, "final_review": final_review_payload},
+                        )
+
+                await self._emit_ai_event(
+                    event_type="PlanReplanStarted",
+                    message="Replanning after final review.",
+                    source="planner",
+                    details={"replan_count": state.replan_count, "trigger": final_review_decision.action.value},
+                )
+                state.current_plan = await self._planner.replan(
+                    state=state,
+                    context_updates=replan_updates,
+                    specifications=self._registry.specifications(),
+                )
+                await self._emit_ai_event(
+                    event_type="PlanReplanCreated",
+                    message=f"Revised plan has {len(state.current_plan.steps)} step(s).",
+                    source="planner",
+                    details={"step_count": len(state.current_plan.steps)},
+                )
+                return await self._execute_plan(
+                    execution_mode=execution_mode,
+                    state=state,
+                    question=question,
+                    context=context,
+                    diagnostics={**diagnostics, "final_review": final_review_payload},
+                )
+
         return await self._finish_with_mode(
             execution_mode=execution_mode,
             state=state,
@@ -609,6 +811,7 @@ class MetaControllerAgent(AIEventSource, BaseAgent):
             context=context,
             presentation_mode="final",
             diagnostics=diagnostics,
+            final_review=final_review_decision,
         )
 
     async def _finish_with_mode(
@@ -620,10 +823,12 @@ class MetaControllerAgent(AIEventSource, BaseAgent):
         context: dict[str, Any],
         presentation_mode: str,
         diagnostics: dict[str, Any],
+        final_review: FinalReviewDecision | None = None,
     ) -> MetaControllerRun:
         final = await self._present(
             question=question,
             context={
+                **state.context,
                 **context,
                 "step_results": state.step_results_payload(),
                 "plan": state.current_plan.model_dump(mode="json"),
@@ -636,6 +841,7 @@ class MetaControllerAgent(AIEventSource, BaseAgent):
             final=final,
             diagnostics=diagnostics,
             status=self._status_for_presentation_mode(presentation_mode),
+            final_review=final_review,
         )
 
     async def _finish_iteration_exhausted(
@@ -701,6 +907,7 @@ class MetaControllerAgent(AIEventSource, BaseAgent):
         final: dict[str, Any],
         diagnostics: dict[str, Any],
         status: str,
+        final_review: FinalReviewDecision | None = None,
     ) -> MetaControllerRun:
         resolved_execution_mode = MetaControllerAgent._execution_mode_from_plan(
             plan=state.current_plan,
@@ -715,6 +922,7 @@ class MetaControllerAgent(AIEventSource, BaseAgent):
             review_decisions=[
                 PlanReviewDecision.model_validate(item) for item in state.review_decisions
             ],
+            final_review=final_review.model_dump(mode="json") if final_review is not None else {},
             final_result=final,
             presentation=final,
             diagnostics={
@@ -723,6 +931,86 @@ class MetaControllerAgent(AIEventSource, BaseAgent):
                 "replan_count": state.replan_count,
             },
         )
+
+    async def _review_final_answer(
+        self,
+        *,
+        question: str,
+        state: PlanExecutionState,
+        answer_package: dict[str, Any],
+    ) -> FinalReviewDecision | None:
+        if not self._final_review_enabled:
+            return None
+        if not answer_package:
+            return None
+        evidence = answer_package.get("evidence")
+        result = answer_package.get("result")
+        research = {
+            key: value
+            for key, value in answer_package.items()
+            if key in {"sources", "findings", "follow_ups", "synthesis"}
+        }
+        task = AgentTask(
+            task_id="final-review",
+            task_kind=AgentTaskKind.orchestration,
+            question=question,
+            context={
+                "answer_package": answer_package,
+                "evidence": evidence if isinstance(evidence, dict) else {},
+                "result": result if isinstance(result, dict) else {},
+                "research": research,
+                "step_results": state.step_results_payload(),
+            },
+            expected_output=self._final_review.specification.output_contract,
+        )
+        await self._emit_ai_event(
+            event_type="FinalReviewStarted",
+            message="Reviewing final analytical answer.",
+            source="final-review",
+        )
+        result_payload = await self._final_review.execute(task)
+        await self._emit_ai_event(
+            event_type="FinalReviewCompleted",
+            message=result_payload.diagnostics.get("action") or result_payload.status.value,
+            source="final-review",
+            details={"status": result_payload.status.value},
+        )
+        if result_payload.status != AgentResultStatus.succeeded:
+            return FinalReviewDecision(
+                action=FinalReviewAction.abort,
+                reason_code=FinalReviewReasonCode.review_error,
+                rationale=result_payload.error or "Final review failed.",
+            )
+        decision = result_payload.output.get("decision")
+        if not isinstance(decision, dict):
+            return FinalReviewDecision(
+                action=FinalReviewAction.abort,
+                reason_code=FinalReviewReasonCode.review_error,
+                rationale="Final review returned an invalid decision payload.",
+            )
+        return FinalReviewDecision.model_validate(decision)
+
+    @staticmethod
+    def _build_answer_package(
+        *,
+        state: PlanExecutionState,
+        context: dict[str, Any],
+    ) -> dict[str, Any]:
+        latest_output = state.latest_record.result.output if state.latest_record is not None else {}
+        if not isinstance(latest_output, dict):
+            latest_output = {}
+        answer = (
+            latest_output.get("answer")
+            or latest_output.get("analysis")
+            or context.get("answer")
+            or context.get("analysis")
+            or ""
+        )
+        package = {
+            **latest_output,
+            "answer": answer,
+        }
+        return {key: value for key, value in package.items() if value is not None}
 
     @staticmethod
     def _execution_mode_from_plan(*, plan: ExecutionPlan, requested_mode: str) -> str | None:
@@ -776,6 +1064,11 @@ class MetaControllerAgent(AIEventSource, BaseAgent):
             "can_execute_direct": specification.can_execute_direct,
             "metadata": dict(specification.metadata or {}),
         }
+
+    @staticmethod
+    def _uses_mode_aware_analyst_contract(specification: AgentSpecification) -> bool:
+        supported_modes = specification.metadata.get("supported_modes")
+        return isinstance(supported_modes, list) and bool(supported_modes)
 
     @staticmethod
     def _parse_json_object(raw: str) -> dict[str, Any]:
