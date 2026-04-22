@@ -596,10 +596,17 @@ class AnalystAgent(AIEventSource, BaseAgent):
             ANALYST_CONTEXT_ANALYSIS_PROMPT.format(
                 question=task.question,
                 memory_context=self._memory_context(task.context),
+                detail_expectation=self._detail_expectation(task.question),
                 result=json.dumps(context_result, default=str),
             )
         )
-        parsed = self._parse_json_object(await self._llm.acomplete(prompt, temperature=0.0, max_tokens=800))
+        parsed = self._parse_json_object(
+            await self._llm.acomplete(
+                prompt,
+                temperature=0.0,
+                max_tokens=self._detail_token_limit(task.question, standard=800, detailed=1200),
+            )
+        )
         result = parsed.get("result")
         if not isinstance(result, dict):
             raise ValueError("Analyst LLM response missing object field: result.")
@@ -754,12 +761,19 @@ class AnalystAgent(AIEventSource, BaseAgent):
             ANALYST_SQL_RESPONSE_PROMPT.format(
                 question=question,
                 memory_context=memory_context,
+                detail_expectation=self._detail_expectation(question),
                 sql=response.sql_canonical,
                 result=json.dumps(response.result.model_dump(mode="json") if response.result else {}, default=str),
                 outcome=json.dumps(response.outcome.model_dump(mode="json") if response.outcome else {}, default=str),
             )
         )
-        parsed = self._parse_json_object(await self._llm.acomplete(prompt, temperature=0.0, max_tokens=700))
+        parsed = self._parse_json_object(
+            await self._llm.acomplete(
+                prompt,
+                temperature=0.0,
+                max_tokens=self._detail_token_limit(question, standard=700, detailed=1100),
+            )
+        )
         analysis = str(parsed.get("analysis") or "").strip()
         if not analysis:
             raise ValueError("Analyst SQL summary response missing analysis.")
@@ -814,13 +828,20 @@ class AnalystAgent(AIEventSource, BaseAgent):
             ANALYST_DEEP_RESEARCH_PROMPT.format(
                 question=question,
                 memory_context=memory_context,
+                detail_expectation=self._detail_expectation(question),
                 governed_analysis=governed_analysis,
                 governed_result=json.dumps(governed_result or {}, default=str),
                 governed_outcome=json.dumps(governed_outcome or {}, default=str),
                 sources=json.dumps(sources, default=str),
             )
         )
-        parsed = self._parse_json_object(await self._llm.acomplete(prompt, temperature=0.0, max_tokens=1200))
+        parsed = self._parse_json_object(
+            await self._llm.acomplete(
+                prompt,
+                temperature=0.0,
+                max_tokens=self._detail_token_limit(question, standard=1200, detailed=1600),
+            )
+        )
         if not isinstance(parsed.get("synthesis"), str):
             raise ValueError("Research LLM response missing synthesis.")
         findings = parsed.get("findings")
@@ -844,13 +865,20 @@ class AnalystAgent(AIEventSource, BaseAgent):
             ANALYST_SQL_SYNTHESIS_PROMPT.format(
                 question=question,
                 memory_context=memory_context,
+                detail_expectation=self._detail_expectation(question),
                 analysis=analysis,
                 result=json.dumps(response.result.model_dump(mode="json") if response.result else {}, default=str),
                 outcome=json.dumps(response.outcome.model_dump(mode="json") if response.outcome else {}, default=str),
                 sources=json.dumps(sources, default=str),
             )
         )
-        parsed = self._parse_json_object(await self._llm.acomplete(prompt, temperature=0.0, max_tokens=1200))
+        parsed = self._parse_json_object(
+            await self._llm.acomplete(
+                prompt,
+                temperature=0.0,
+                max_tokens=self._detail_token_limit(question, standard=1200, detailed=1600),
+            )
+        )
         if not isinstance(parsed.get("analysis"), str):
             raise ValueError("Analyst SQL synthesis response missing analysis.")
         findings = parsed.get("findings")
@@ -1471,6 +1499,33 @@ class AnalystAgent(AIEventSource, BaseAgent):
             return max(0, int(self._config.max_external_augmentations))
         except (AttributeError, TypeError, ValueError):
             return 3
+
+    @staticmethod
+    def _detail_expectation(question: str) -> str:
+        text = question.casefold()
+        detail_cues = (
+            "detail",
+            "detailed",
+            "breakdown",
+            "why",
+            "how",
+            "explain",
+            "evidence",
+            "compare",
+            "comparison",
+            "driver",
+            "drivers",
+            "walk me through",
+            "show your work",
+            "step by step",
+            "cite",
+            "source",
+            "sources",
+        )
+        return "detailed" if any(cue in text for cue in detail_cues) else "standard"
+
+    def _detail_token_limit(self, question: str, *, standard: int, detailed: int) -> int:
+        return detailed if self._detail_expectation(question) == "detailed" else standard
 
     @staticmethod
     def _optional_string(value: Any) -> str | None:

@@ -73,10 +73,9 @@ class _FakeLLMProvider:
                 )
             if "Search the web" in prompt:
                 return (
-                    '{"action":"plan","rationale":"External source-backed synthesis needs a plan.",'
-                    '"agent_name":null,"task_kind":null,"input":{},'
-                    '"clarification_question":null,'
-                    '"plan_guidance":"Use source-backed deep research."}'
+                    '{"action":"direct","rationale":"One analyst can perform source-backed research directly.",'
+                    '"agent_name":"analyst","task_kind":"analyst","input":{"agent_mode":"research"},'
+                    '"clarification_question":null,"plan_guidance":null}'
                 )
             if "broken-analyst" in prompt:
                 return (
@@ -265,18 +264,17 @@ def test_meta_controller_routes_simple_analyst_question_directly() -> None:
     assert run.final_result["visualization"] is None
 
 
-def test_meta_controller_uses_planner_for_web_research() -> None:
+def test_meta_controller_routes_single_analyst_web_research_directly() -> None:
     run = _run(
         _controller().handle(
             question="Search the web and then explain latest sources for Langbridge"
         )
     )
 
-    assert run.execution_mode == "planned"
+    assert run.execution_mode == "direct"
     assert run.status == "completed"
-    assert [step.agent_name for step in run.plan.steps] == [
-        "analyst",
-    ]
+    assert run.plan.route == "direct:analyst"
+    assert [step.agent_name for step in run.plan.steps] == ["analyst"]
     assert run.plan.steps[0].task_kind == AgentTaskKind.analyst
     assert run.plan.steps[0].input["agent_mode"] == "research"
     assert run.plan.steps[0].expected_output.required_keys == [

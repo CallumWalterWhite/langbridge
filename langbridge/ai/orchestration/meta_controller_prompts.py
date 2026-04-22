@@ -30,6 +30,7 @@ def build_meta_controller_route_prompt(
         "- abort: choose only when the request is unsupported, unsafe, or impossible with available agents.\n"
         "- Prefer clarify over guesswork when missing detail would materially change the answer.\n"
         "- Prefer direct over plan when one specialist can complete the request cleanly.\n"
+        "- Requests for source-backed, current, or web-augmented synthesis can still be direct when one analyst can do that work inside research mode.\n"
         "- Presentation formatting, chart rendering, or optional source augmentation inside one analyst do not require plan by themselves.\n"
         "- agent_name must exactly match one available agent when action is direct.\n"
         "- task_kind must be one of the selected agent's supported task kinds when action is direct.\n"

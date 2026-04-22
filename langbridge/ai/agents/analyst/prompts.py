@@ -77,6 +77,9 @@ Rules:
 - Do not alter the result object. Put interpretation, caveats, and derived observations in analysis.
 - State limits when the result is empty, truncated, aggregated too coarsely, or too narrow.
 - Mention the key metric values, grouping fields, and filters when they are visible in the result.
+- If Detail expectation is detailed, include the relevant row/group names, concrete values, visible comparisons,
+  and the result limitations that materially affect the answer.
+- Use enough explanation to answer the question fully; do not compress a detailed request into one vague sentence.
 - Keep result JSON valid.
 - If the result cannot answer the question, say what is missing instead of guessing.
 
@@ -85,6 +88,9 @@ Question:
 
 Conversation memory:
 {memory_context}
+
+Detail expectation:
+{detail_expectation}
 
 Result:
 {result}
@@ -138,6 +144,9 @@ Rules:
 - Mention empty results, validation failures, permission limits, and execution errors plainly.
 - Explain the result in business terms first; mention SQL only when it clarifies scope or limits.
 - If result rows are present, summarize the most important values and trends without fabricating causes.
+- If Detail expectation is detailed, include the concrete metric values, relevant periods or groups, important comparisons,
+  and the evidence basis from Result and Outcome instead of a thin high-level summary.
+- Include material caveats, scope limits, or missing detail when they affect interpretation.
 - If the SQL only approximates the question, state that limit.
 
 Question:
@@ -145,6 +154,9 @@ Question:
 
 Conversation memory:
 {memory_context}
+
+Detail expectation:
+{detail_expectation}
 
 SQL:
 {sql}
@@ -214,6 +226,8 @@ Rules:
 - Do not invent values, rows, or source claims.
 - If governed data returned no rows, say so plainly.
 - If governed data and sources disagree, call out the disagreement instead of silently merging them.
+- If Detail expectation is detailed, include the key governed values, sourced context, disagreements, and caveats
+  needed to fully answer the question.
 - Every finding must cite either `governed_result` or an exact source url from Sources.
 - Do not use outside knowledge.
 
@@ -222,6 +236,9 @@ Question:
 
 Conversation memory:
 {memory_context}
+
+Detail expectation:
+{detail_expectation}
 
 Governed SQL summary:
 {analysis}
@@ -255,6 +272,8 @@ Rules:
 - Every finding must cite either `governed_result` or an exact source url or source id from Sources.
 - Do not merge conflicting claims into one finding; call out disagreement or uncertainty.
 - If evidence is weak, stale, duplicated, or one-sided, say what is missing in synthesis.
+- If Detail expectation is detailed, include the most important evidence-backed observations, the evidence each
+  observation depends on, and the main caveats or gaps.
 - Prefer concise synthesis over source-by-source summaries.
 - Do not include uncited claims.
 - Do not use outside knowledge.
@@ -265,6 +284,9 @@ Question:
 
 Conversation memory:
 {memory_context}
+
+Detail expectation:
+{detail_expectation}
 
 Governed analysis:
 {governed_analysis}

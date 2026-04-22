@@ -131,15 +131,23 @@ def test_configured_local_runtime_ask_agent_uses_agent_execution() -> None:
         config_path = _write_config(Path(temp_dir))
         runtime = build_configured_local_runtime(config_path=config_path)
         runtime.services.agent_execution = SimpleNamespace(execute=fake_execute)
-        payload = asyncio.run(runtime.ask_agent(prompt="What is revenue by country?"))
+        payload = asyncio.run(
+            runtime.ask_agent(
+                prompt="What is revenue by country?",
+                agent_mode="sql",
+            )
+        )
 
         request = captured["request"]
         assert payload["summary"] == "Handled by agent execution"
         assert payload["thread_id"] == request.thread_id
         assert request.agent_definition_id == next(iter(runtime._agents.values())).id
+        assert request.agent_mode == "sql"
         messages = asyncio.run(runtime.list_thread_messages(thread_id=payload["thread_id"]))
         assert len(messages) == 1
         assert messages[0]["role"] == RuntimeMessageRole.user
+        assert messages[0]["content"]["agent_mode"] == "sql"
+        assert messages[0]["model_snapshot"]["agent_mode"] == "sql"
 
 
 def test_configured_local_runtime_defaults_metadata_store_to_sqlite(tmp_path: Path) -> None:

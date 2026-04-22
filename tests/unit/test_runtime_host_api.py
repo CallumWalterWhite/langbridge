@@ -631,6 +631,7 @@ def test_runtime_host_api_streams_agent_run_progress_and_persists_final_message(
         json={
             "message": "Summarize revenue",
             "agent_name": "commerce_analyst",
+            "agent_mode": "sql",
         },
     ) as response:
         body = "".join(response.iter_text())
@@ -654,6 +655,8 @@ def test_runtime_host_api_streams_agent_run_progress_and_persists_final_message(
     messages = client.get(f"/api/runtime/v1/threads/{thread_id}/messages")
     assert messages.status_code == 200
     assert messages.json()["total"] == 2
+    assert messages.json()["items"][0]["content"]["agent_mode"] == "sql"
+    assert messages.json()["items"][0]["model_snapshot"]["agent_mode"] == "sql"
     assert messages.json()["items"][1]["role"] == "assistant"
 
 

@@ -45,11 +45,54 @@ export const CHAT_STARTERS = [
   "Show the highest-value runtime signal or operational issue worth checking next.",
 ];
 
+export const RUNTIME_AGENT_MODE_OPTIONS = [
+  {
+    value: "auto",
+    label: "Auto",
+    hint: "Let the runtime choose the best analytical route.",
+  },
+  {
+    value: "sql",
+    label: "Analysis",
+    hint: "Bias toward governed SQL and analytical workflows.",
+  },
+  {
+    value: "research",
+    label: "Research",
+    hint: "Bias toward source-backed synthesis and broader investigation.",
+  },
+  {
+    value: "context_analysis",
+    label: "Context",
+    hint: "Work from the current thread context and verified results.",
+  },
+];
+
 export function createLocalId(prefix = "item") {
   if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
     return `${prefix}-${crypto.randomUUID()}`;
   }
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+}
+
+export function normalizeRuntimeAgentMode(value) {
+  if (
+    value === "auto" ||
+    value === "sql" ||
+    value === "research" ||
+    value === "context_analysis"
+  ) {
+    return value;
+  }
+  return "auto";
+}
+
+export function formatRuntimeAgentModeLabel(value) {
+  const normalized = normalizeRuntimeAgentMode(value);
+  return (
+    RUNTIME_AGENT_MODE_OPTIONS.find((item) => item.value === normalized)?.label ||
+    "Auto"
+  );
 }
 
 export async function copyTextToClipboard(value) {
@@ -791,9 +834,13 @@ export function buildConversationTurns(messages, agents) {
       const assistantError =
         assistant?.error && typeof assistant.error === "object" ? assistant.error : null;
       const agentId = String(assistant?.model_snapshot?.agent_id || "");
+      const agentMode = normalizeRuntimeAgentMode(
+        message?.content?.agent_mode || message?.model_snapshot?.agent_mode,
+      );
       return {
         id: String(message.id || createLocalId("turn")),
         prompt: message?.content?.text || "",
+        agentMode,
         createdAt: message.created_at,
         assistantSummary: assistant ? readAssistantText(assistant) : "",
         assistantTable,

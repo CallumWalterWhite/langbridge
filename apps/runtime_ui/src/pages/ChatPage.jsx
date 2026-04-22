@@ -31,7 +31,10 @@ import {
   DEFAULT_CHAT_MESSAGE,
   buildConversationTurns,
   createLocalId,
+  formatRuntimeAgentModeLabel,
   formatRelativeTime,
+  normalizeRuntimeAgentMode,
+  RUNTIME_AGENT_MODE_OPTIONS,
 } from "../lib/runtimeUi";
 
 function formatStageLabel(stage) {
@@ -158,11 +161,12 @@ function normalizeProgressEvent(event) {
   };
 }
 
-function buildPendingTurn({ prompt, agentId, agentLabel }) {
+function buildPendingTurn({ prompt, agentId, agentLabel, agentMode }) {
   const now = new Date().toISOString();
   return {
     id: createLocalId("pending-turn"),
     prompt,
+    agentMode: normalizeRuntimeAgentMode(agentMode),
     createdAt: now,
     assistantSummary: "Connecting to the runtime stream.",
     assistantTable: null,
@@ -194,6 +198,7 @@ function buildResumedPendingTurn({ turn, agentLabel }) {
   return {
     id: turn?.id || createLocalId("pending-turn"),
     prompt: turn?.prompt || "",
+    agentMode: normalizeRuntimeAgentMode(turn?.agentMode),
     createdAt,
     assistantSummary: "Reconnecting to the runtime stream.",
     assistantTable: null,
@@ -262,7 +267,7 @@ export function ChatPage() {
   const [renamingOpen, setRenamingOpen] = useState(false);
   const [transientTurn, setTransientTurn] = useState(null);
   const [pendingDraftMessage, setPendingDraftMessage] = useState("");
-  const [extendedThinking, setExtendedThinking] = useState(false);
+  const [selectedAgentMode, setSelectedAgentMode] = useState("auto");
   const selectedAgent = agents.find((item) => item.name === selectedAgentName) || null;
   const turns = useMemo(() => buildConversationTurns(messages, agents), [messages, agents]);
   const displayTurns = useMemo(() => {
@@ -307,6 +312,21 @@ export function ChatPage() {
     if (!threadId) {
       return;
     }
+    const storageKey = `runtime-thread-agent-mode:${threadId}`;
+    try {
+      const stored = window.localStorage.getItem(storageKey);
+      if (stored) {
+        setSelectedAgentMode(normalizeRuntimeAgentMode(stored));
+      } else {
+        setSelectedAgentMode("auto");
+      }
+    } catch {}
+  }, [threadId]);
+
+  useEffect(() => {
+    if (!threadId) {
+      return;
+    }
     const storageKey = `runtime-thread-agent:${threadId}`;
     try {
       if (selectedAgentName) {
@@ -316,6 +336,16 @@ export function ChatPage() {
       }
     } catch {}
   }, [selectedAgentName, threadId]);
+
+  useEffect(() => {
+    if (!threadId) {
+      return;
+    }
+    const storageKey = `runtime-thread-agent-mode:${threadId}`;
+    try {
+      window.localStorage.setItem(storageKey, selectedAgentMode);
+    } catch {}
+  }, [selectedAgentMode, threadId]);
 
   useEffect(() => {
     if (agents.length === 0) {
@@ -650,6 +680,7 @@ export function ChatPage() {
       prompt: pendingPrompt,
       agentId: String(selectedAgent?.id || ""),
       agentLabel: selectedAgent?.name || selectedAgentName,
+      agentMode: selectedAgentMode,
     });
     setTransientTurn(pendingTurn);
     setMessage("");
@@ -661,7 +692,7 @@ export function ChatPage() {
         message: pendingPrompt,
         agent_name: selectedAgentName,
         thread_id: threadId,
-        agent_mode: extendedThinking ? "research" : "auto",
+        agent_mode: selectedAgentMode,
       }, {
         signal: controller.signal,
         onEvent: (event) => {
@@ -834,8 +865,8 @@ export function ChatPage() {
           <span className="chip">
             {lastUpdated ? `Updated ${formatRelativeTime(lastUpdated)}` : "New thread"}
           </span>
-          <span className={`chip thread-mode-chip ${extendedThinking ? "active" : ""}`}>
-            {extendedThinking ? "Extended thinking on" : "Standard thinking"}
+          <span className={`chip thread-mode-chip ${selectedAgentMode !== "auto" ? "active" : ""}`}>
+            Mode: {formatRuntimeAgentModeLabel(selectedAgentMode)}
           </span>
         </div>
 
@@ -864,7 +895,12 @@ export function ChatPage() {
                     <div className="thread-user-row">
                       <div className="thread-user-bubble">
                         <p>{turn.prompt}</p>
-                        <span>{formatRelativeTime(turn.createdAt)}</span>
+                        <div className="thread-user-meta">
+                          <span className={`thread-user-mode-pill ${turn.agentMode !== "auto" ? "active" : ""}`}>
+                            {formatRuntimeAgentModeLabel(turn.agentMode)}
+                          </span>
+                          <span>{formatRelativeTime(turn.createdAt)}</span>
+                        </div>
                       </div>
                     </div>
 
@@ -997,17 +1033,42 @@ export function ChatPage() {
                 ))}
               </select>
             </label>
+            <div className="thread-mode-selector" role="group" aria-label="Agent mode">
+              {RUNTIME_AGENT_MODE_OPTIONS.map((mode) => (
+                <button
+                  key={mode.value}
+                  className={`thread-mode-option ${selectedAgentMode === mode.value ? "active" : ""}`}
+                  type="button"
+                  onClick={() => setSelectedAgentMode(mode.value)}
+                  disabled={submitting}
+                  title={mode.hint}
+                  aria-pressed={selectedAgentMode === mode.value}
+                >
+                  {mode.label}
+                </button>
+              ))}
+            </div>
           </div>
 
           <div className="thread-composer-input-shell">
             <button
-              className={`thread-composer-utility ${extendedThinking ? "active" : ""}`}
+              className={`thread-composer-utility ${selectedAgentMode === "research" ? "active" : ""}`}
               type="button"
-              onClick={() => setExtendedThinking((current) => !current)}
+              onClick={() =>
+                setSelectedAgentMode((current) => (current === "research" ? "auto" : "research"))
+              }
               disabled={submitting}
-              aria-label={extendedThinking ? "Disable extended thinking" : "Enable extended thinking"}
-              aria-pressed={extendedThinking}
-              title={extendedThinking ? "Extended thinking enabled" : "Enable extended thinking"}
+              aria-label={
+                selectedAgentMode === "research"
+                  ? "Switch back to auto mode"
+                  : "Quick switch to research mode"
+              }
+              aria-pressed={selectedAgentMode === "research"}
+              title={
+                selectedAgentMode === "research"
+                  ? "Research mode selected"
+                  : "Quick switch to research mode"
+              }
             >
               <Plus className="button-icon" aria-hidden="true" />
             </button>

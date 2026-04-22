@@ -73,6 +73,17 @@ class _AlternativeGovernedLLMProvider(_FakeLLMProvider):
         return await super().acomplete(prompt, **kwargs)
 
 
+class _DetailedAnswerLLMProvider(_FakeLLMProvider):
+    async def acomplete(self, prompt: str, **kwargs):
+        if "Summarize verified SQL analysis" in prompt and "Detail expectation:\ndetailed" in prompt:
+            return (
+                '{"analysis":"Detailed governed answer: the returned result shows 12 orders for 2026-01-01 in the month '
+                'grouping, so the answer should reference that governed evidence directly and note that only the returned '
+                'period is visible."}'
+            )
+        return await super().acomplete(prompt, **kwargs)
+
+
 class _FakeWebSearchProvider:
     name = "fake-web"
 
@@ -627,3 +638,41 @@ def test_analyst_research_mode_allows_governed_only_evidence_when_sources_requir
     assert result.output["evidence"]["external"]["used"] is False
     assert result.diagnostics["weak_evidence"] is False
     assert result.diagnostics["governed_seeded"] is True
+
+
+def test_analyst_sql_uses_detailed_prompt_for_evidence_heavy_questions() -> None:
+    dataset_tool = _FakeSqlTool(
+        name="dataset-orders",
+        asset_type="dataset",
+        query_scope=SqlQueryScope.dataset,
+        response=_dataset_success_response(),
+    )
+    agent = AnalystAgent(
+        llm_provider=_DetailedAnswerLLMProvider(),
+        config=AnalystAgentConfig.model_validate(
+            {
+                "name": "commerce",
+                "analyst_scope": {
+                    "semantic_models": ["commerce"],
+                    "datasets": ["orders"],
+                    "query_policy": "dataset_preferred",
+                },
+            }
+        ),
+        sql_analysis_tools=[dataset_tool],
+    )
+
+    result = _run(
+        agent.execute(
+            AgentTask(
+                task_id="analyst-detailed-answer",
+                task_kind=AgentTaskKind.analyst,
+                question="Provide detailed evidence for the order trend",
+                input={"mode": "sql"},
+            )
+        )
+    )
+
+    assert result.status.value == "succeeded"
+    assert result.output["analysis"].startswith("Detailed governed answer:")
+    assert "12 orders for 2026-01-01" in result.output["analysis"]

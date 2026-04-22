@@ -299,7 +299,11 @@ class AgentApplication:
                 id=uuid.uuid4(),
                 thread_id=thread_id,
                 role=RuntimeMessageRole.user,
-                content={"text": str(prompt or "").strip()},
+                content={
+                    "text": str(prompt or "").strip(),
+                    "agent_mode": str(agent_mode or "auto").strip() or "auto",
+                },
+                model_snapshot={"agent_mode": str(agent_mode or "auto").strip() or "auto"},
                 created_at=timestamp,
             )
             user_message = self._host._thread_message_repository.add(user_message)

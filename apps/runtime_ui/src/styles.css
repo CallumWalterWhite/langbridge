@@ -3434,11 +3434,40 @@ pre {
   line-height: 1.65;
 }
 
-.thread-detail-shell--chat .thread-user-bubble span {
+.thread-user-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 8px;
+}
+
+.thread-user-mode-pill {
+  display: inline-flex;
+  align-items: center;
+  min-height: 22px;
+  padding: 0 9px;
+  border: 1px solid color-mix(in srgb, var(--chat-border) 82%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--chat-panel) 82%, transparent);
+  color: var(--text-secondary);
+  font-size: 0.66rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.thread-user-mode-pill.active {
+  border-color: color-mix(in srgb, var(--accent) 58%, var(--chat-border));
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+}
+
+.thread-detail-shell--chat .thread-user-meta span {
   font-size: 0.76rem;
 }
 
-.thread-detail-shell--chat .thread-user-bubble span {
+.thread-detail-shell--chat .thread-user-meta span:not(.thread-user-mode-pill) {
   color: var(--text-muted);
 }
 
@@ -3775,6 +3804,41 @@ pre {
   padding-block: 6px;
 }
 
+.thread-mode-selector {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.thread-mode-option {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 34px;
+  padding: 0 12px;
+  border: 1px solid var(--chat-border);
+  border-radius: 999px;
+  background: var(--chat-panel);
+  color: var(--text-secondary);
+  font-size: 0.78rem;
+  font-weight: 600;
+  transition: transform 140ms ease, border-color 140ms ease, background 140ms ease, color 140ms ease;
+}
+
+.thread-mode-option:hover:not(:disabled) {
+  transform: translateY(-1px);
+  border-color: var(--border-strong);
+  background: var(--chat-subtle-bg);
+  color: var(--text-primary);
+}
+
+.thread-mode-option.active {
+  border-color: color-mix(in srgb, var(--accent) 58%, var(--chat-border));
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+}
+
 .thread-composer-input-shell {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
@@ -3928,6 +3992,10 @@ pre {
 
   .thread-composer-input-shell {
     gap: 8px;
+  }
+
+  .thread-mode-selector {
+    width: 100%;
   }
 }
 

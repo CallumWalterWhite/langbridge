@@ -74,6 +74,7 @@ class PresentationAgent(AIEventSource, BaseAgent):
         )
         step_results = [item for item in context.get("step_results", []) if isinstance(item, dict)]
         data_payload = self._find_data_payload(step_results)
+        analysis_payload = self._find_key_payload(step_results, "analysis")
         research_payload = self._find_key_payload(step_results, "synthesis")
         answer_payload = self._find_key_payload(step_results, "answer")
         visualization = await self._maybe_chart(question=question, data_payload=data_payload)
@@ -82,19 +83,40 @@ class PresentationAgent(AIEventSource, BaseAgent):
             mode=mode,
             context=context,
             data_payload=data_payload,
+            analysis_payload=analysis_payload,
             research_payload=research_payload,
             answer_payload=answer_payload,
             visualization=visualization,
         )
-        parsed = self._parse_json_object(await self._llm.acomplete(prompt, temperature=0.0, max_tokens=1000))
+        parsed = self._parse_json_object(
+            await self._llm.acomplete(
+                prompt,
+                temperature=0.0,
+                max_tokens=1600,
+            )
+        )
+        parsed_result = parsed.get("result")
+        parsed_research = parsed.get("research")
         response = {
             "summary": str(parsed.get("summary") or ""),
-            "result": parsed.get("result") if isinstance(parsed.get("result"), dict) else data_payload or {},
+            "result": parsed_result if isinstance(parsed_result, dict) and parsed_result else data_payload or {},
             "visualization": parsed.get("visualization")
             if isinstance(parsed.get("visualization"), dict)
             else (visualization.model_dump(mode="json") if visualization else None),
-            "research": parsed.get("research") if isinstance(parsed.get("research"), dict) else research_payload or {},
-            "answer": parsed.get("answer") if parsed.get("answer") is not None else None,
+            "research": (
+                parsed_research
+                if isinstance(parsed_research, dict) and parsed_research
+                else research_payload or {}
+            ),
+            "answer": self._resolve_answer(
+                parsed=parsed,
+                mode=mode,
+                context=context,
+                summary=str(parsed.get("summary") or ""),
+                analysis_payload=analysis_payload,
+                research_payload=research_payload,
+                answer_payload=answer_payload,
+            ),
             "diagnostics": parsed.get("diagnostics") if isinstance(parsed.get("diagnostics"), dict) else {"mode": mode},
         }
         if not response["summary"]:
@@ -140,6 +162,35 @@ class PresentationAgent(AIEventSource, BaseAgent):
             if isinstance(output, dict) and key in output:
                 return output
         return None
+
+    @staticmethod
+    def _resolve_answer(
+        *,
+        parsed: dict[str, Any],
+        mode: str,
+        context: dict[str, Any],
+        summary: str,
+        analysis_payload: dict[str, Any] | None,
+        research_payload: dict[str, Any] | None,
+        answer_payload: dict[str, Any] | None,
+    ) -> Any:
+        if parsed.get("answer") is not None:
+            return parsed.get("answer")
+        if mode == "clarification":
+            return context.get("clarification_question") or summary or None
+        if mode == "failure":
+            return context.get("error") or summary or None
+        for payload, key in (
+            (answer_payload, "answer"),
+            (analysis_payload, "analysis"),
+            (research_payload, "synthesis"),
+        ):
+            if not isinstance(payload, dict):
+                continue
+            value = payload.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+        return summary or None
 
     @staticmethod
     def _question_requests_chart(question: str) -> bool:
