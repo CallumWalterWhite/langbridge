@@ -1,7 +1,5 @@
 """Semantic search tool for query grounding."""
 
-from __future__ import annotations
-
 import json
 import logging
 import uuid
@@ -9,6 +7,7 @@ from typing import Any, Protocol
 
 from pydantic import BaseModel, Field
 
+from langbridge.ai.events import AIEventEmitter, AIEventSource
 from langbridge.ai.llm.base import LLMProvider
 from langbridge.runtime.embeddings import EmbeddingProvider
 from langbridge.runtime.services.semantic_vector_search_service import SemanticVectorSearchService
@@ -45,7 +44,7 @@ class SemanticSearchResultCollection(BaseModel):
         return [result.to_prompt_string() for result in self.results]
 
 
-class SemanticSearchTool:
+class SemanticSearchTool(AIEventSource):
     """Runs semantic/vector search for grounding SQL generation."""
 
     def __init__(
@@ -64,7 +63,9 @@ class SemanticSearchTool:
         semantic_vector_search_dataset_key: str | None = None,
         semantic_vector_search_dimension_name: str | None = None,
         embedding_provider: EmbeddingProvider | None = None,
+        event_emitter: AIEventEmitter | None = None,
     ) -> None:
+        super().__init__(event_emitter=event_emitter)
         self._name = name
         self._llm = llm_provider
         self._embedding_model = embedding_model
@@ -87,9 +88,23 @@ class SemanticSearchTool:
     async def search(self, query: str, top_k: int = 5) -> SemanticSearchResultCollection:
         if top_k <= 0:
             raise ValueError("Semantic search top_k must be greater than zero.")
+        await self._emit_ai_event(
+            event_type="SemanticSearchStarted",
+            message=f"Searching semantic index {self.name}.",
+            source=self.name,
+            details={"tool": self.name, "top_k": top_k},
+        )
         if self._semantic_vector_search_service is not None:
-            return await self._search_runtime_vectors(query=query, top_k=top_k)
-        return await self._search_vector_store(query=query, top_k=top_k)
+            result = await self._search_runtime_vectors(query=query, top_k=top_k)
+        else:
+            result = await self._search_vector_store(query=query, top_k=top_k)
+        await self._emit_ai_event(
+            event_type="SemanticSearchCompleted",
+            message=f"Semantic search returned {len(result.results)} result(s).",
+            source=self.name,
+            details={"tool": self.name, "result_count": len(result.results)},
+        )
+        return result
 
     async def search_prompts(self, query: str, top_k: int = 5) -> list[str]:
         return (await self.search(query=query, top_k=top_k)).to_prompt_strings()

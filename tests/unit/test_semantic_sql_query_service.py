@@ -125,6 +125,30 @@ def test_semantic_sql_query_service_preserves_ilike_filters() -> None:
     assert plan.semantic_query.filters[0].values == ["Fulfilled%"]
 
 
+def test_semantic_sql_query_service_normalizes_year_filter_for_time_dimension() -> None:
+    service = SemanticSqlQueryService()
+    parsed = service.parse_query(
+        query=(
+            "SELECT DATE_TRUNC('month', order_date) AS month, net_sales "
+            "FROM commerce_performance "
+            "WHERE order_date = 2025 "
+            "GROUP BY 1 "
+            "ORDER BY month ASC"
+        ),
+        query_dialect="postgres",
+    )
+
+    plan = service.build_query_plan(
+        parsed_query=parsed,
+        semantic_model=_semantic_model(),
+    )
+
+    assert len(plan.semantic_query.filters) == 1
+    assert plan.semantic_query.filters[0].member == "orders.order_date"
+    assert plan.semantic_query.filters[0].operator == "indaterange"
+    assert plan.semantic_query.filters[0].values == ["2025-01-01", "2025-12-31"]
+
+
 def test_semantic_sql_query_service_surfaces_actionable_parse_errors() -> None:
     service = SemanticSqlQueryService()
 

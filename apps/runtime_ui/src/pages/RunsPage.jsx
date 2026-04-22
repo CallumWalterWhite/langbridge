@@ -1,7 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
 import {
-  Activity,
-  Bot,
   LayoutGrid,
   MessageSquareText,
   Table2,
@@ -11,7 +9,6 @@ import { Link } from "react-router-dom";
 import { RuntimeResultPanel } from "../components/RuntimeResultPanel";
 import {
   DetailList,
-  MetricCard,
   PageEmpty,
   Panel,
   SectionTabs,
@@ -308,6 +305,24 @@ export function RunsPage() {
     allRuns[0] ||
     null;
   const failedRuns = allRuns.filter((run) => run.status === "error").length;
+  const runSummaryItems = [
+    {
+      label: "Recent runs",
+      value: formatValue(allRuns.length),
+      detail: activeFilter === "all" ? "Across runtime surfaces." : `${RUN_KIND_META[activeFilter]?.label || "Run"} history.`,
+    },
+    {
+      label: "Failures",
+      value: formatValue(failedRuns),
+      detail: failedRuns > 0 ? "Needs review." : "Nothing failing right now.",
+      tone: failedRuns > 0 ? "warning" : "",
+    },
+    {
+      label: "Latest activity",
+      value: allRuns[0]?.timestamp ? formatRelativeTime(allRuns[0].timestamp) : "None yet",
+      detail: selectedRun ? `${RUN_KIND_META[selectedRun.kind]?.label || "Run"} selected.` : "Pick a run to inspect.",
+    },
+  ];
 
   return (
     <div className="page-stack runs-shell">
@@ -315,7 +330,7 @@ export function RunsPage() {
         <div className="product-command-bar-main">
           <div className="product-command-bar-copy">
             <p className="eyebrow">Execution</p>
-            <h2>Runtime runs and execution history</h2>
+            <h2>Review recent runtime executions</h2>
             <div className="product-command-bar-meta">
               <span className="chip">{formatValue(allRuns.length)} recent runs</span>
               <span className="chip">{formatValue(agentRuns.length)} agent turns</span>
@@ -331,32 +346,14 @@ export function RunsPage() {
         </div>
       </section>
 
-      <section className="metric-grid metric-grid--compact">
-        <MetricCard
-          icon={Activity}
-          label="Recent executions"
-          value={formatValue(allRuns.length)}
-          detail="Combined thread, query, and dashboard widget execution history."
-        />
-        <MetricCard
-          icon={Bot}
-          label="Agent turns"
-          value={formatValue(agentRuns.length)}
-          detail="Recent ask flows captured from runtime threads."
-        />
-        <MetricCard
-          icon={Table2}
-          label="Query runs"
-          value={formatValue(queryRuns.length)}
-          detail="Local Query Workspace execution memory for this browser."
-        />
-        <MetricCard
-          icon={LayoutGrid}
-          label="Run issues"
-          value={formatValue(failedRuns)}
-          detail="Executions that completed with an error or failure state."
-          tone={failedRuns > 0 ? "warning" : ""}
-        />
+      <section className="runs-summary-grid">
+        {runSummaryItems.map((item) => (
+          <article key={item.label} className={`runs-summary-card ${item.tone || ""}`.trim()}>
+            <span>{item.label}</span>
+            <strong>{item.value}</strong>
+            <p>{item.detail}</p>
+          </article>
+        ))}
       </section>
 
       {error ? <div className="error-banner">{error}</div> : null}
@@ -366,7 +363,7 @@ export function RunsPage() {
           <div className="thread-section-head">
             <div>
               <h3>Recent execution feed</h3>
-              <p>Review recent runtime activity and jump back into the surface that produced it.</p>
+              <p>Pick a run, inspect the result, and jump back in.</p>
             </div>
           </div>
 
@@ -404,12 +401,15 @@ export function RunsPage() {
                             .filter(Boolean)
                             .join(" | ")}
                         </span>
-                        <span>{run.description}</span>
+                        <span className="runs-feed-description">{run.description}</span>
                       </span>
                     </button>
-                    <Link className="ghost-button" to={run.href}>
-                      {run.cta}
-                    </Link>
+                    <div className="runs-feed-card-foot">
+                      <span>{meta.label}</span>
+                      <Link className="runs-feed-link" to={run.href}>
+                        {run.cta}
+                      </Link>
+                    </div>
                   </article>
                 );
               })}
@@ -465,21 +465,25 @@ export function RunsPage() {
             )}
           </Panel>
 
-          <Panel title="Execution detail" eyebrow="Metadata" className="compact-panel">
+          <Panel title="Context" eyebrow="Selection" className="compact-panel">
             {selectedRun ? (
               <div className="page-stack">
                 <DetailList items={selectedRun.detailItems || []} />
                 {selectedRun.prompt ? (
-                  <div className="detail-card">
-                    <strong>{selectedRun.kind === "query" ? "Submitted query" : "Submitted prompt"}</strong>
-                    <pre className="code-block compact">{selectedRun.prompt}</pre>
-                  </div>
+                  <details className="inline-disclosure">
+                    <summary>{selectedRun.kind === "query" ? "Submitted query" : "Submitted prompt"}</summary>
+                    <div className="inline-disclosure-body">
+                      <pre className="code-block compact">{selectedRun.prompt}</pre>
+                    </div>
+                  </details>
                 ) : null}
                 {selectedRun.generatedSql ? (
-                  <div className="detail-card">
-                    <strong>Generated SQL</strong>
-                    <pre className="code-block compact">{selectedRun.generatedSql}</pre>
-                  </div>
+                  <details className="inline-disclosure">
+                    <summary>Generated SQL</summary>
+                    <div className="inline-disclosure-body">
+                      <pre className="code-block compact">{selectedRun.generatedSql}</pre>
+                    </div>
+                  </details>
                 ) : null}
               </div>
             ) : (

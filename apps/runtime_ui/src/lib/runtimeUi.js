@@ -728,8 +728,16 @@ export function buildDiagnosticsNotes(diagnostics, visualization) {
 function readAssistantText(message) {
   const content =
     message?.content && typeof message.content === "object" ? message.content : {};
+  const diagnostics =
+    content.diagnostics && typeof content.diagnostics === "object" ? content.diagnostics : null;
+  const aiRun = diagnostics?.ai_run && typeof diagnostics.ai_run === "object" ? diagnostics.ai_run : null;
+  const isClarification =
+    (typeof diagnostics?.clarifying_question === "string" && diagnostics.clarifying_question.trim()) ||
+    String(aiRun?.mode || "").trim().toLowerCase() === "clarification";
   return (
+    (isClarification && typeof content.answer === "string" ? content.answer : "") ||
     content.summary ||
+    content.answer ||
     content.text ||
     (typeof content.result?.text === "string" ? content.result.text : "") ||
     ""

@@ -11,36 +11,62 @@ from langbridge.ai.base import (
     AgentToolSpecification,
     BaseAgent,
 )
-from langbridge.ai.factory import AnalystToolBundle, LangbridgeAIFactory
-from langbridge.ai.meta_controller import MetaControllerAgent, MetaControllerRun
-from langbridge.ai.planner import ExecutionPlan, PlannerAgent, PlanStep
-from langbridge.ai.plan_review import PlanReviewAction, PlanReviewAgent, PlanReviewDecision
+from langbridge.ai.factory import AiProfileRuntime, AnalystToolBundle, LangbridgeAIFactory
+from langbridge.ai.modes import AnalystAgentMode, normalize_analyst_mode, normalize_analyst_task_input
+from langbridge.ai.orchestration import (
+    AgentVerifier,
+    ExecutionPlan,
+    MetaControllerAction,
+    MetaControllerAgent,
+    MetaControllerRun,
+    PlanExecutionState,
+    PlanReviewAction,
+    PlanReviewAgent,
+    PlanReviewDecision,
+    PlannerAgent,
+    PlanStep,
+    PlanStepRecord,
+    VerificationOutcome,
+)
 from langbridge.ai.profiles import (
-    AgentProfile,
-    AgentProfileAccessPolicy,
-    AgentProfileExecution,
-    AgentProfileFeatures,
-    AgentProfileRegistryBuilder,
-    AgentProfileRuntime,
-    AnalystAgentScope,
-    WebSearchToolScope,
+    AiAgentAccessConfig,
+    AiAgentAnalystScopeConfig,
+    AiAgentExecutionConfig,
+    AiAgentLLMScopeConfig,
+    AiAgentProfile,
+    AiAgentPromptsConfig,
+    AiAgentResearchScopeConfig,
+    AiAgentWebSearchScopeConfig,
+    AnalystAgentConfig,
+    build_ai_profiles_from_definition,
+    build_analyst_configs_from_definition,
+    build_execution_from_definition,
 )
 from langbridge.ai.registry import AgentRegistry
 from langbridge.ai.routing import AgentRouteMatch, QuestionProfile, SpecificationRouter
 from langbridge.ai.tools.web_search import DuckDuckGoWebSearchProvider, create_web_search_provider
-from langbridge.ai.verification import AgentVerifier, VerificationOutcome
-from langbridge.ai.execution import PlanExecutionState, PlanStepRecord
+from langbridge.ai.events import AIEventEmitter, AIEventSource
 
 __all__ = [
+    "AIEventEmitter",
+    "AIEventSource",
+    "AiAgentAccessConfig",
+    "AiAgentAnalystScopeConfig",
+    "AiAgentExecutionConfig",
+    "AiAgentLLMScopeConfig",
+    "AiAgentProfile",
+    "AiAgentPromptsConfig",
+    "AiAgentResearchScopeConfig",
+    "AiAgentWebSearchScopeConfig",
+    "AiProfileRuntime",
+    "AnalystAgentMode",
+    "AnalystAgentConfig",
+    "build_ai_profiles_from_definition",
+    "build_analyst_configs_from_definition",
+    "build_execution_from_definition",
     "AgentCostLevel",
     "AgentIOContract",
     "AgentRegistry",
-    "AgentProfile",
-    "AgentProfileAccessPolicy",
-    "AgentProfileExecution",
-    "AgentProfileFeatures",
-    "AgentProfileRegistryBuilder",
-    "AgentProfileRuntime",
     "AgentResult",
     "AgentResultStatus",
     "AgentRiskLevel",
@@ -52,13 +78,15 @@ __all__ = [
     "AgentToolSpecification",
     "AgentVerifier",
     "AnalystToolBundle",
-    "AnalystAgentScope",
     "BaseAgent",
     "DuckDuckGoWebSearchProvider",
     "ExecutionPlan",
     "LangbridgeAIFactory",
+    "MetaControllerAction",
     "MetaControllerAgent",
     "MetaControllerRun",
+    "normalize_analyst_mode",
+    "normalize_analyst_task_input",
     "PlanExecutionState",
     "PlanReviewAction",
     "PlanReviewAgent",
@@ -69,6 +97,5 @@ __all__ = [
     "QuestionProfile",
     "SpecificationRouter",
     "VerificationOutcome",
-    "WebSearchToolScope",
     "create_web_search_provider",
 ]

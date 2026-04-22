@@ -1,7 +1,4 @@
 """Agent registry used by the Langbridge AI meta-controller."""
-
-from __future__ import annotations
-
 from collections.abc import Iterable
 
 from langbridge.ai.base import AgentSpecification, AgentTaskKind, BaseAgent

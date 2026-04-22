@@ -891,43 +891,20 @@ llm_connections:
     model: gpt-4o-mini
     api_key: test-key
     default: true
-agents:
-  - name: commerce_analyst
-    llm_connection: local_openai
-    default: true
-    definition:
-      prompt:
-        system_prompt: You are a commerce analytics agent.
-      memory:
-        strategy: database
-      features:
-        bi_copilot_enabled: false
-        deep_research_enabled: false
-        visualization_enabled: true
-        mcp_enabled: false
-      tools:
-        - name: commerce_semantic_sql
-          tool_type: sql
-          config:
-            semantic_model_ids: [commerce_performance]
-      access_policy:
+ai:
+  profiles:
+    - name: commerce_analyst
+      llm:
+        llm_connection: local_openai
+      scope:
+        semantic_models: [commerce_performance]
+      prompts:
+        system: You are a commerce analytics agent.
+      access:
         allowed_connectors: [commerce_demo]
         denied_connectors: []
       execution:
-        mode: iterative
-        response_mode: analyst
         max_iterations: 3
-        max_steps_per_iteration: 5
-        allow_parallel_tools: false
-      output:
-        format: markdown
-      guardrails:
-        moderation_enabled: true
-      observability:
-        log_level: info
-        emit_traces: false
-        capture_prompts: false
-        audit_fields: []
 """.strip(),
         encoding="utf-8",
     )

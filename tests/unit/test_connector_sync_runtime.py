@@ -216,6 +216,7 @@ class _ApiQueueConnector:
         self._resource = resource
         self._responses = list(responses)
         self.calls: list[dict[str, Any]] = []
+        self.request_calls: list[dict[str, Any]] = []
 
     async def test_connection(self) -> None:
         return None
@@ -237,6 +238,31 @@ class _ApiQueueConnector:
                 "since": since,
                 "cursor": cursor,
                 "limit": limit,
+            }
+        )
+        if not self._responses:
+            raise AssertionError("No queued API response available.")
+        response = self._responses.pop(0)
+        if isinstance(response, Exception):
+            raise response
+        return response
+
+    async def extract_request(
+        self,
+        request: dict[str, Any],
+        *,
+        since: str | None = None,
+        cursor: str | None = None,
+        limit: int | None = None,
+        extraction: dict[str, Any] | None = None,
+    ) -> ApiExtractResult:
+        self.request_calls.append(
+            {
+                "request": dict(request),
+                "since": since,
+                "cursor": cursor,
+                "limit": limit,
+                "extraction": dict(extraction or {}),
             }
         )
         if not self._responses:
@@ -339,7 +365,7 @@ def _resource(
 
 
 def _sync_source_kind(sync_source: dict[str, Any]) -> DatasetSourceKind:
-    if sync_source.get("resource"):
+    if sync_source.get("resource") or sync_source.get("request"):
         return DatasetSourceKind.API
     if sync_source.get("table") or sync_source.get("sql"):
         return DatasetSourceKind.DATABASE
@@ -527,7 +553,11 @@ async def test_connector_sync_runtime_flattens_only_explicit_one_to_one_children
     )
 
     assert summary["source_key"] == "resource:orders"
-    assert summary["source"] == {"resource": "orders", "flatten": ["customer"]}
+    assert summary["source"] == {
+        "kind": "resource",
+        "resource": "orders",
+        "flatten": ["customer"],
+    }
     assert summary["resource_name"] == "orders"
     assert summary["records_synced"] == 1
     assert summary["dataset_names"] == ["shopify_orders"]
@@ -637,6 +667,84 @@ async def test_connector_sync_runtime_materializes_explicit_child_resource_path_
         {"_child_index": 0, "_parent_id": 101, "id": 9001, "title": "Hat"},
         {"_child_index": 1, "_parent_id": 101, "id": 9002, "title": "Scarf"},
     ]
+
+
+@pytest.mark.anyio
+async def test_connector_sync_runtime_materializes_request_source_dataset(
+    dataset_storage_dir: Path,
+) -> None:
+    runtime, state_repository, dataset_repository, _, lineage_edge_repository = _build_runtime()
+
+    workspace_id = uuid.uuid4()
+    actor_id = uuid.uuid4()
+    connection_id = uuid.uuid4()
+    connector_record = _connector_record(
+        connection_id=connection_id,
+        workspace_id=workspace_id,
+        name="FX demo",
+        connector_type=ConnectorRuntimeType.BASIC_HTTP,
+    )
+    dataset = _declared_synced_dataset(
+        workspace_id=workspace_id,
+        actor_id=actor_id,
+        connection_id=connection_id,
+        connector_type=ConnectorRuntimeType.BASIC_HTTP,
+        name="latest_usd_rates_snapshot",
+        sync_source={
+            "request": {
+                "method": "get",
+                "path": "/latest",
+                "params": {"base": "USD"},
+            },
+            "extraction": {
+                "type": "json",
+                "options": {"path": "rates"},
+            },
+        },
+        strategy=SYNC_MODE_FULL_REFRESH,
+    )
+    dataset_repository.add(dataset)
+    resource = _resource(name="latest", supports_incremental=False)
+    connector = _ApiQueueConnector(
+        resource,
+        ApiExtractResult(
+            resource="/latest",
+            records=[{"GBP": 0.8, "EUR": 0.92}],
+            status="success",
+        ),
+    )
+    _wire_api_runtime(runtime, connector=connector, resource=resource)
+
+    summary = await runtime.sync_dataset(
+        workspace_id=workspace_id,
+        actor_id=actor_id,
+        connector_record=connector_record,
+        dataset=dataset,
+        sync_mode=SYNC_MODE_FULL_REFRESH,
+    )
+    state = await state_repository.get_for_resource(
+        workspace_id=workspace_id,
+        connection_id=connection_id,
+        resource_name=summary["source_key"],
+    )
+
+    assert summary["resource_name"] == "latest"
+    assert summary["root_resource_name"] == "latest"
+    assert summary["records_synced"] == 1
+    assert summary["source"]["kind"] == "request"
+    assert summary["source_key"].startswith("request:")
+    assert connector.request_calls[0]["request"]["path"] == "/latest"
+    assert connector.request_calls[0]["extraction"]["options"]["path"] == "rates"
+    assert state is not None
+    assert state.status == SYNC_STATUS_SUCCEEDED
+    rows = _parquet_rows(
+        runtime,
+        workspace_id=workspace_id,
+        connection_id=connection_id,
+        dataset_name=dataset.name,
+    )
+    assert rows == [{"EUR": 0.92, "GBP": 0.8}]
+    assert any(edge.source_type == "api_resource" for edge in lineage_edge_repository.items)
 
 
 @pytest.mark.anyio
@@ -981,7 +1089,7 @@ async def test_connector_sync_runtime_materializes_sql_table_source(
 
     assert connector.calls[0]["sql"] == "SELECT * FROM orders"
     assert summary["source_key"] == "table:orders"
-    assert summary["source"] == {"table": "orders"}
+    assert summary["source"] == {"kind": "table", "table": "orders"}
     assert summary["records_synced"] == 2
     assert state is not None
     assert state.source_kind == DatasetSourceKind.DATABASE
@@ -1068,7 +1176,7 @@ async def test_connector_sync_runtime_materializes_sql_query_source_with_cursor_
         "SELECT * FROM (SELECT id, updated_at, total_amount FROM orders) AS langbridge_sync_source"
     )
     assert summary["source_key"] == f"sql:{stable_payload_hash(source_sql)}"
-    assert summary["source"] == {"sql": source_sql}
+    assert summary["source"] == {"kind": "sql", "sql": source_sql}
     assert summary["records_synced"] == 1
     assert reloaded_state is not None
     assert reloaded_state.last_cursor == "2026-03-02T01:00:00Z"

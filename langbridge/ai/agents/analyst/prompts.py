@@ -9,7 +9,7 @@ and visible context. Do not assume hidden data exists.
 Modes:
 - sql: use configured SQL analysis tools for governed dataset or semantic model analysis.
 - context_analysis: analyze already verified tabular/context result data.
-- deep_research: synthesize source evidence, optionally using configured web search.
+- research: synthesize source evidence, optionally using configured web search.
 - clarify: ask for missing required detail.
 
 Decision rules:
@@ -17,18 +17,22 @@ Decision rules:
   SQL, datasets, or semantic model analysis and at least one SQL tool is available.
 - Choose context_analysis only when structured result context is already available and
   the request can be answered from that result without executing a fresh query.
-- Choose deep_research only when research is enabled in scope and the request requires
+- Choose research only when research is enabled in scope and the request requires
   source-backed synthesis, current/external information, web evidence, or multi-source review.
 - Choose clarify when required inputs, tools, permissions, or evidence are missing.
 - Never choose a mode that is disabled by scope or impossible with configured tools.
-- Do not call web search directly from this decision; only choose deep_research when web-backed
+- Do not call web search directly from this decision; only choose research when web-backed
   research is appropriate and available through the analyst scope.
+- Prefer SQL when the question can be answered through governed data, even when research is enabled.
+- If semantic-first scope is configured, assume semantic SQL should be tried before dataset-native SQL.
+- If governed semantic SQL is likely too restrictive for the requested query shape, still choose sql.
+  Analyst execution can fall back from semantic SQL to dataset-native SQL after real tool feedback.
 
 Return STRICT JSON and nothing else:
 {{
-  "mode": "sql|context_analysis|deep_research|clarify",
+  "agent_mode": "sql|context_analysis|research|clarify",
   "reason": "<short reason>",
-  "clarification_question": "<only when mode is clarify>"
+  "clarification_question": "<only when agent_mode is clarify>"
 }}
 
 Question:
@@ -46,9 +50,6 @@ Scope:
 Available SQL tools:
 {sql_tools}
 
-Available semantic search tools:
-{semantic_search_tools}
-
 Web search configured:
 {web_search_configured}
 
@@ -57,6 +58,9 @@ Structured result context available:
 
 Source evidence available:
 {has_sources}
+
+Conversation memory:
+{memory_context}
 """.strip()
 
 ANALYST_CONTEXT_ANALYSIS_PROMPT = """
@@ -78,6 +82,9 @@ Rules:
 
 Question:
 {question}
+
+Conversation memory:
+{memory_context}
 
 Result:
 {result}
@@ -107,6 +114,9 @@ Return STRICT JSON and nothing else:
 Question:
 {question}
 
+Conversation memory:
+{memory_context}
+
 Filters:
 {filters}
 
@@ -132,6 +142,9 @@ Rules:
 
 Question:
 {question}
+
+Conversation memory:
+{memory_context}
 
 SQL:
 {sql}
@@ -166,6 +179,9 @@ Rules:
 
 Question:
 {question}
+
+Conversation memory:
+{memory_context}
 
 Sources:
 {sources}

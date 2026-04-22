@@ -1,7 +1,4 @@
 """LLM-backed SQL analyst tool for Langbridge AI."""
-
-from __future__ import annotations
-
 import asyncio
 import inspect
 import logging
@@ -9,6 +6,7 @@ import re
 import time
 from typing import Any
 
+from langbridge.ai.events import AIEventEmitter, AIEventSource
 from langbridge.ai.llm.base import LLMProvider
 from langbridge.ai.tools.semantic_search import SemanticSearchTool
 from langbridge.ai.tools.sql.interfaces import (
@@ -22,6 +20,7 @@ from langbridge.ai.tools.sql.interfaces import (
     AnalystQueryRequest,
     AnalystQueryResponse,
     SemanticModelLike,
+    SqlQueryScope,
 )
 from langbridge.ai.tools.sql.prompts import (
     DATASET_SQL_ORCHESTRATION_INSTRUCTION,
@@ -29,12 +28,11 @@ from langbridge.ai.tools.sql.prompts import (
     SQL_ORCHESTRATION_INSTRUCTION,
 )
 from langbridge.ai.tools.sql.renderer import render_analysis_context
-from langbridge.runtime.models import SqlQueryScope
 
 SQL_FENCE_RE = re.compile(r"```(?:sql)?\s*(.*?)```", re.IGNORECASE | re.DOTALL)
 
 
-class SqlAnalysisTool:
+class SqlAnalysisTool(AIEventSource):
     """Generates governed SQL with an LLM and executes it through a runtime executor."""
 
     def __init__(
@@ -49,7 +47,9 @@ class SqlAnalysisTool:
         description: str | None = None,
         llm_temperature: float = 0.0,
         logger: logging.Logger | None = None,
+        event_emitter: AIEventEmitter | None = None,
     ) -> None:
+        super().__init__(event_emitter=event_emitter)
         self._llm = llm_provider
         self.context = context
         self.semantic_model = semantic_model
@@ -97,21 +97,70 @@ class SqlAnalysisTool:
 
     async def arun(self, request: AnalystQueryRequest) -> AnalystQueryResponse:
         started = time.perf_counter()
+        await self._emit_ai_event(
+            event_type="SqlAnalysisStarted",
+            message=f"Preparing {self.context.query_scope.value} SQL analysis.",
+            source=self.name,
+            details={
+                "tool": self.name,
+                "asset_type": self.context.asset_type,
+                "asset_name": self.context.asset_name,
+                "query_scope": self.context.query_scope.value,
+            },
+        )
         active_request = await self._augment_request(request)
+        await self._emit_ai_event(
+            event_type="SqlGenerationStarted",
+            message="Generating governed SQL.",
+            source=self.name,
+            details={"tool": self.name, "query_scope": self.context.query_scope.value},
+        )
         canonical_sql = self._extract_sql(await self._generate_sql(active_request))
+        await self._emit_ai_event(
+            event_type="SqlGenerated",
+            message="SQL generated.",
+            source=self.name,
+            details={"tool": self.name, "query_scope": self.context.query_scope.value},
+        )
         execution_result: AnalyticalQueryExecutionResult | None = None
         execution_outcome: AnalystExecutionOutcome | None = None
         executable_sql = ""
 
         try:
+            await self._emit_ai_event(
+                event_type="SqlExecutionStarted",
+                message="Running query through Langbridge runtime.",
+                source=self.name,
+                details={"tool": self.name, "query_scope": self.context.query_scope.value},
+            )
             execution_result = await self._query_executor.execute_query(
                 query=canonical_sql,
                 query_dialect=self.context.dialect,
                 requested_limit=active_request.limit,
             )
             executable_sql = execution_result.executable_query
+            await self._emit_ai_event(
+                event_type="SqlExecutionCompleted",
+                message=f"Query returned {execution_result.result.rowcount} row(s).",
+                source=self.name,
+                details={
+                    "tool": self.name,
+                    "rowcount": execution_result.result.rowcount,
+                    "columns": list(execution_result.result.columns),
+                },
+            )
         except AnalyticalQueryExecutionFailure as exc:
             executable_sql = str(exc.metadata.get("executable_query") or "")
+            await self._emit_ai_event(
+                event_type="SqlExecutionFailed",
+                message=exc.message,
+                source=self.name,
+                details={
+                    "tool": self.name,
+                    "stage": exc.stage.value,
+                    "recoverable": exc.recoverable,
+                },
+            )
             execution_outcome = self._outcome(
                 status=(
                     AnalystOutcomeStatus.query_error
@@ -139,6 +188,16 @@ class SqlAnalysisTool:
                 metadata=execution_result.metadata,
             )
 
+        await self._emit_ai_event(
+            event_type="SqlAnalysisCompleted",
+            message="SQL analysis complete.",
+            source=self.name,
+            details={
+                "tool": self.name,
+                "status": execution_outcome.status.value if execution_outcome else None,
+                "elapsed_ms": elapsed_ms,
+            },
+        )
         return AnalystQueryResponse(
             analysis_path=self.context.asset_type,
             query_scope=self.context.query_scope,

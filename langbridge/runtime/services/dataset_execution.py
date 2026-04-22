@@ -442,7 +442,7 @@ class DatasetExecutionResolver:
                 sync_source = dict(sync_config.get("source") or {})
                 source_detail = ""
                 if str(sync_source.get("resource") or "").strip():
-                    source_detail = f" (resource path '{str(sync_source.get('resource')).strip()}')"
+                    source_detail = f" (resource '{str(sync_source.get('resource')).strip()}')"
                 elif str(sync_source.get("table") or "").strip():
                     source_detail = f" (table '{str(sync_source.get('table')).strip()}')"
                 elif str(sync_source.get("sql") or "").strip():

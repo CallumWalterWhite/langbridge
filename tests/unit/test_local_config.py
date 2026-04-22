@@ -80,46 +80,24 @@ llm_connections:
     api_key: test-key
     default: true
 
-agents:
-  - name: analyst
-    llm_connection: local_openai
-    default: true
-    definition:
-      prompt:
-        system_prompt: You are a local analytics agent.
-        user_instructions: Answer analytical questions.
-        style_guidance: Keep answers concise and clearly grounded in query results.
-      memory:
-        strategy: database
-      features:
-        bi_copilot_enabled: false
-        deep_research_enabled: false
-        visualization_enabled: true
-        mcp_enabled: false
-      tools:
-        - name: analyst_semantic_sql
-          tool_type: sql
-          description: Governed semantic analytics access.
-          config:
-            semantic_model_ids: [commerce]
-      access_policy:
+ai:
+  profiles:
+    - name: analyst
+      default: true
+      scope:
+        semantic_models: [commerce]
+        query_policy: semantic_only
+      llm:
+        llm_connection: local_openai
+      prompts:
+        system: You are a local analytics agent.
+        user: Answer analytical questions.
+        presentation: Keep answers concise and clearly grounded in query results.
+      access:
         allowed_connectors: [local_demo]
         denied_connectors: []
       execution:
-        mode: iterative
-        response_mode: analyst
         max_iterations: 3
-        max_steps_per_iteration: 5
-        allow_parallel_tools: false
-      output:
-        format: markdown
-      guardrails:
-        moderation_enabled: true
-      observability:
-        log_level: info
-        emit_traces: false
-        capture_prompts: false
-        audit_fields: []
 """.strip(),
         encoding="utf-8",
     )
@@ -302,8 +280,8 @@ def test_local_runtime_config_uses_explicit_source_resource_for_synced_datasets(
                 {
                     "name": "billing_customers",
                     "connector": "billing_demo",
-                    "materialization_mode": "synced",
-                    "sync": {"source": {"resource": "customers"}},
+                    "materialization": {"mode": "synced", "sync": {}},
+                    "source": {"kind": "resource", "resource": "customers"},
                 }
             ],
         }
@@ -312,7 +290,8 @@ def test_local_runtime_config_uses_explicit_source_resource_for_synced_datasets(
     assert config.datasets[0].materialization_mode.value == "synced"
     assert config.datasets[0].sync is not None
     assert config.datasets[0].sync.source.resource == "customers"
-    assert config.datasets[0].source is None
+    assert config.datasets[0].source.resource == "customers"
+    assert config.datasets[0].source.kind.value == "resource"
 
 
 def test_local_runtime_config_normalizes_dataset_sync_schedule_fields() -> None:
@@ -551,10 +530,12 @@ connectors:
 datasets:
   - name: billing_customers
     connector: billing_demo
-    materialization_mode: synced
-    sync:
-      source:
-        resource: customers
+    source:
+      kind: resource
+      resource: customers
+    materialization:
+      mode: synced
+      sync: {}
 """.strip(),
         encoding="utf-8",
     )
@@ -575,15 +556,205 @@ datasets:
     assert dataset_model.storage_kind == "parquet"
     assert dataset_model.storage_uri is None
     assert dataset_model.status == "pending_sync"
-    assert dataset_model.source_json is None
-    assert dataset_model.sync_json == {
-        "source": {"resource": "customers"},
-        "strategy": "INCREMENTAL",
-        "sync_on_start": False,
+    assert dataset_model.source_json == {
+        "kind": "resource",
+        "resource": "customers",
+    }
+    assert dataset_model.materialization_json == {
+        "mode": "synced",
+        "sync": {
+            "strategy": "INCREMENTAL",
+            "sync_on_start": False,
+        },
     }
     assert dataset_model.file_config == {
         "format": "parquet",
         "managed_dataset": True,
+    }
+
+
+def test_configured_local_runtime_preserves_live_api_source_request_extraction_and_schema_hint(
+    tmp_path: Path,
+) -> None:
+    config_path = tmp_path / "langbridge_config.yml"
+    config_path.write_text(
+        """
+version: 1
+connectors:
+  - name: fx_demo
+    type: basic_http
+    connection:
+      api_base_url: https://api.example.com
+      resources:
+        - key: latest_usd
+          path: /latest
+          request_params:
+            base: USD
+datasets:
+  - name: fx_latest_live
+    connector: fx_demo
+    materialization:
+      mode: live
+    schema_hint:
+      dynamic: true
+      columns:
+        - name: currency_code
+          type: string
+          nullable: false
+          description: ISO code
+        - name: rate
+          type: number
+          nullable: false
+    source:
+      kind: request
+      request:
+        method: get
+        path: /latest
+        params:
+          base: USD
+      extraction:
+        type: json
+        options:
+          root_path: $.rates
+""".strip(),
+        encoding="utf-8",
+    )
+
+    runtime = build_configured_local_runtime(config_path=config_path)
+
+    dataset_record = runtime._datasets["fx_latest_live"]
+    dataset_model = asyncio.run(
+        runtime.providers.dataset_metadata.get_dataset(
+            workspace_id=runtime.context.workspace_id,
+            dataset_id=dataset_record.id,
+        )
+    )
+
+    assert dataset_model is not None
+    assert dataset_model.source_json == {
+        "kind": "request",
+        "request": {
+            "method": "get",
+            "path": "/latest",
+            "params": {"base": "USD"},
+            "body": {},
+            "headers": {},
+        },
+        "extraction": {
+            "type": "json",
+            "options": {"root_path": "$.rates"},
+        },
+    }
+    assert dataset_model.schema_hint_json == {
+        "columns": [
+            {
+                "name": "currency_code",
+                "type": "string",
+                "nullable": False,
+                "description": "ISO code",
+            },
+            {
+                "name": "rate",
+                "type": "number",
+                "nullable": False,
+            },
+        ],
+        "dynamic": True,
+    }
+
+
+def test_configured_local_runtime_preserves_synced_api_source_request_extraction_and_schema_hint(
+    tmp_path: Path,
+) -> None:
+    config_path = tmp_path / "langbridge_config.yml"
+    config_path.write_text(
+        """
+version: 1
+connectors:
+  - name: fx_demo
+    type: basic_http
+    connection:
+      api_base_url: https://api.example.com
+      resources:
+        - key: latest_usd
+          path: /latest
+          request_params:
+            base: USD
+datasets:
+  - name: fx_latest_snapshot
+    connector: fx_demo
+    source:
+      kind: request
+      request:
+        method: get
+        path: /latest
+        params:
+          base: USD
+      extraction:
+        type: json
+        options:
+          root_path: $.rates
+    schema_hint:
+      columns:
+        - name: currency_code
+          type: string
+          nullable: false
+        - name: rate
+          type: number
+    materialization:
+      mode: synced
+      sync:
+        strategy: FULL_REFRESH
+""".strip(),
+        encoding="utf-8",
+    )
+
+    runtime = build_configured_local_runtime(config_path=config_path)
+
+    dataset_record = runtime._datasets["fx_latest_snapshot"]
+    dataset_model = asyncio.run(
+        runtime.providers.dataset_metadata.get_dataset(
+            workspace_id=runtime.context.workspace_id,
+            dataset_id=dataset_record.id,
+        )
+    )
+
+    assert dataset_model is not None
+    assert dataset_model.source_json == {
+        "kind": "request",
+        "request": {
+            "method": "get",
+            "path": "/latest",
+            "params": {"base": "USD"},
+            "body": {},
+            "headers": {},
+        },
+        "extraction": {
+            "type": "json",
+            "options": {"root_path": "$.rates"},
+        },
+    }
+    assert dataset_model.schema_hint_json == {
+        "columns": [
+            {
+                "name": "currency_code",
+                "type": "string",
+                "nullable": False,
+            },
+            {
+                "name": "rate",
+                "type": "number",
+                "nullable": True,
+            },
+        ],
+        "dynamic": False,
+    }
+    assert dataset_model.materialization_json == {
+        "mode": "synced",
+        "sync": {
+            "strategy": "FULL_REFRESH",
+            "sync_on_start": False,
+        },
     }
 
 
@@ -602,12 +773,14 @@ connectors:
 datasets:
   - name: billing_customers
     connector: billing_demo
-    materialization_mode: synced
-    sync:
-      source:
-        resource: customers
-      cadence: 5m
-      sync_on_start: true
+    source:
+      kind: resource
+      resource: customers
+    materialization:
+      mode: synced
+      sync:
+        cadence: 5m
+        sync_on_start: true
 """.strip(),
         encoding="utf-8",
     )
@@ -622,11 +795,17 @@ datasets:
         )
     )
 
-    assert dataset_model.sync_json == {
-        "source": {"resource": "customers"},
-        "strategy": "INCREMENTAL",
-        "cadence": "5m",
-        "sync_on_start": True,
+    assert dataset_model.source_json == {
+        "kind": "resource",
+        "resource": "customers",
+    }
+    assert dataset_model.materialization_json == {
+        "mode": "synced",
+        "sync": {
+            "strategy": "INCREMENTAL",
+            "cadence": "5m",
+            "sync_on_start": True,
+        },
     }
 
 
@@ -704,12 +883,14 @@ connectors:
 datasets:
   - name: orders_snapshot
     connector: warehouse
-    materialization_mode: synced
-    sync:
-      source:
-        table: orders
-      strategy: INCREMENTAL
-      cursor_field: updated_at
+    source:
+      kind: table
+      table: orders
+    materialization:
+      mode: synced
+      sync:
+        strategy: INCREMENTAL
+        cursor_field: updated_at
 """.strip(),
         encoding="utf-8",
     )
@@ -725,11 +906,17 @@ datasets:
     )
 
     assert dataset_model is not None
-    assert dataset_model.sync_json == {
-        "source": {"table": "orders"},
-        "strategy": "INCREMENTAL",
-        "cursor_field": "updated_at",
-        "sync_on_start": False,
+    assert dataset_model.source_json == {
+        "kind": "table",
+        "table": "orders",
+    }
+    assert dataset_model.materialization_json == {
+        "mode": "synced",
+        "sync": {
+            "strategy": "INCREMENTAL",
+            "cursor_field": "updated_at",
+            "sync_on_start": False,
+        },
     }
     assert dataset_model.source_kind == "database"
 
@@ -752,13 +939,15 @@ connectors:
 datasets:
   - name: orders_report
     connector: warehouse
-    materialization_mode: synced
-    sync:
-      source:
-        sql: |
-          SELECT *
-          FROM orders
-      strategy: FULL_REFRESH
+    source:
+      kind: sql
+      sql: |
+        SELECT *
+        FROM orders
+    materialization:
+      mode: synced
+      sync:
+        strategy: FULL_REFRESH
 """.strip(),
         encoding="utf-8",
     )
@@ -774,10 +963,16 @@ datasets:
     )
 
     assert dataset_model is not None
-    assert dataset_model.sync_json == {
-        "source": {"sql": "SELECT *\nFROM orders"},
-        "strategy": "FULL_REFRESH",
-        "sync_on_start": False,
+    assert dataset_model.source_json == {
+        "kind": "sql",
+        "sql": "SELECT *\nFROM orders",
+    }
+    assert dataset_model.materialization_json == {
+        "mode": "synced",
+        "sync": {
+            "strategy": "FULL_REFRESH",
+            "sync_on_start": False,
+        },
     }
     assert dataset_model.source_kind == "database"
 
@@ -1044,11 +1239,15 @@ llm_connections:
       identifier: OPENAI_API_KEY
     default: true
 
-agents:
-  - name: analyst
-    llm_connection: local_openai
-    semantic_model: commerce
-    default: true
+ai:
+  profiles:
+    - name: analyst
+      default: true
+      scope:
+        semantic_models: [commerce]
+        query_policy: semantic_only
+      llm:
+        llm_connection: local_openai
 """.strip(),
             encoding="utf-8",
         )
@@ -1137,43 +1336,24 @@ llm_connections:
     api_key: test-key
     default: true
 
-agents:
-  - name: analyst
-    llm_connection: local_openai
-    default: true
-    definition:
-      prompt:
-        system_prompt: You are a local analytics agent.
-        style_guidance: Keep answers concise and clearly grounded in query results.
-      memory:
-        strategy: database
-      features:
-        bi_copilot_enabled: false
-        deep_research_enabled: false
-        visualization_enabled: true
-        mcp_enabled: false
-      tools:
-        - name: governed_sql
-          tool_type: sql
-          description: Governed semantic analytics access.
-          config:
-            semantic_model_ids: [commerce, customers_model]
-        - name: dataset_sql
-          tool_type: sql
-          description: Dataset analytics access.
-          config:
-            dataset_ids: [orders, customers]
-      access_policy:
+ai:
+  profiles:
+    - name: analyst
+      default: true
+      scope:
+        semantic_models: [commerce, customers_model]
+        datasets: [orders, customers]
+        query_policy: semantic_preferred
+      llm:
+        llm_connection: local_openai
+      prompts:
+        system: You are a local analytics agent.
+        presentation: Keep answers concise and clearly grounded in query results.
+      access:
         allowed_connectors: [local_demo]
         denied_connectors: []
       execution:
-        mode: iterative
-        response_mode: analyst
         max_iterations: 3
-        max_steps_per_iteration: 5
-        allow_parallel_tools: false
-      output:
-        format: markdown
       guardrails:
         moderation_enabled: true
       observability:
@@ -1191,35 +1371,126 @@ agents:
     datasets = runtime._datasets
     connector_id = str(runtime._connectors["local_demo"].id)
 
-    assert definition["tools"] == [
-        {
-            "name": "governed_sql",
-            "tool_type": "sql",
-            "description": "Governed semantic analytics access.",
-            "config": {
-                "dataset_ids": [],
-                "semantic_model_ids": [
-                    str(semantic_models["commerce"].id),
-                    str(semantic_models["customers_model"].id),
-                ],
-            },
-        },
-        {
-            "name": "dataset_sql",
-            "tool_type": "sql",
-            "description": "Dataset analytics access.",
-            "config": {
-                "dataset_ids": [
-                    str(datasets["orders"].id),
-                    str(datasets["customers"].id),
-                ],
-                "semantic_model_ids": [],
-            },
-        },
-    ]
-    assert definition["access_policy"] == {
+    assert definition["analyst_scope"] == {
+        "semantic_models": [
+            str(semantic_models["commerce"].id),
+            str(semantic_models["customers_model"].id),
+        ],
+        "datasets": [
+            str(datasets["orders"].id),
+            str(datasets["customers"].id),
+        ],
+        "query_policy": "semantic_preferred",
+        "allow_source_scope": False,
+    }
+    assert definition["access"] == {
         "allowed_connectors": [connector_id],
         "denied_connectors": [],
+    }
+
+
+def test_build_configured_local_runtime_builds_agents_from_ai_profiles() -> None:
+    with TemporaryDirectory() as temp_dir:
+        directory = Path(temp_dir)
+        config_path = directory / "langbridge_config.yml"
+        config_path.write_text(
+            """
+version: 1
+connectors:
+  - name: local_demo
+    type: sqlite
+    connection:
+      location: ./example.db
+
+datasets:
+  - name: orders
+    connector: local_demo
+    materialization:
+      mode: live
+    source:
+      kind: table
+      table: orders
+
+semantic_models:
+  - name: commerce
+    default: true
+    model:
+      version: "1"
+      name: commerce
+      datasets:
+        orders:
+          relation_name: orders
+          dimensions:
+            - name: country
+              expression: country
+              type: string
+          measures:
+            - name: revenue
+              expression: revenue
+              type: number
+              aggregation: sum
+
+llm_connections:
+  - name: local_openai
+    provider: openai
+    model: gpt-4o-mini
+    api_key: test-key
+    default: true
+
+ai:
+  profiles:
+    - name: commerce_agent
+      description: Commerce analyst
+      default: true
+      scope:
+        semantic_models: [commerce]
+        datasets: [orders]
+        query_policy: semantic_preferred
+      llm:
+        llm_connection: local_openai
+      research:
+        enabled: true
+      web_search:
+        enabled: true
+        provider: duckduckgo
+      prompts:
+        system: You are commerce analyst.
+        presentation: Keep answers concise.
+      access:
+        allowed_connectors: [local_demo]
+      execution:
+        max_iterations: 4
+        max_replans: 3
+        max_step_retries: 2
+""".strip(),
+            encoding="utf-8",
+        )
+        runtime = build_configured_local_runtime(config_path=config_path)
+
+    definition = runtime._agents["commerce_agent"].agent_definition.definition
+    semantic_model_id = str(runtime._semantic_models["commerce"].id)
+    dataset_id = str(runtime._datasets["orders"].id)
+    connector_id = str(runtime._connectors["local_demo"].id)
+
+    assert runtime._default_agent is not None
+    assert runtime._default_agent.config.name == "commerce_agent"
+    assert definition["analyst_scope"] == {
+        "semantic_models": [semantic_model_id],
+        "datasets": [dataset_id],
+        "query_policy": "semantic_preferred",
+        "allow_source_scope": False,
+    }
+    assert definition["web_search_scope"]["provider"] == "duckduckgo"
+    assert definition["prompts"]["system_prompt"] == "You are commerce analyst."
+    assert definition["prompts"]["presentation_prompt"] == "Keep answers concise."
+    assert definition["access"] == {
+        "allowed_connectors": [connector_id],
+        "denied_connectors": [],
+    }
+    assert definition["execution"] == {
+        "max_iterations": 4,
+        "max_replans": 3,
+        "max_step_retries": 2,
     }
 
 
@@ -1379,13 +1650,28 @@ def test_configured_local_runtime_syncs_declared_synced_dataset_from_dataset_sur
                 "id": declared_dataset.id,
                 "name": "billing_customers",
                 "label": declared_dataset.label,
-                "description": "Configured synced dataset awaiting dataset sync for resource path 'customers'.",
+                "description": "Configured synced dataset awaiting dataset sync for resource 'customers'.",
                 "connector": "billing_demo",
+                "semantic_models": [],
                 "semantic_model": None,
+                "materialization": {
+                    "mode": "synced",
+                    "sync": {
+                        "strategy": "INCREMENTAL",
+                        "sync_on_start": False,
+                    },
+                },
                 "materialization_mode": "synced",
-                "source": None,
+                "source": {
+                    "kind": "resource",
+                    "resource": "customers",
+                },
+                "schema_hint": None,
                 "sync": {
-                    "source": {"resource": "customers"},
+                    "source": {
+                        "kind": "resource",
+                        "resource": "customers",
+                    },
                     "strategy": "INCREMENTAL",
                     "sync_on_start": False,
                 },
@@ -1399,24 +1685,30 @@ def test_configured_local_runtime_syncs_declared_synced_dataset_from_dataset_sur
 
         detail_before = asyncio.run(runtime.get_dataset(dataset_ref="billing_customers"))
         assert detail_before["status"] == "pending_sync"
-        assert detail_before["source"] is None
+        assert detail_before["source"] == {"kind": "resource", "resource": "customers"}
+        assert detail_before["materialization"] == {
+            "mode": "synced",
+            "sync": {
+                "strategy": "INCREMENTAL",
+                "sync_on_start": False,
+            },
+        }
         assert detail_before["sync"] == {
-            "source": {"resource": "customers"},
+            "source": {"kind": "resource", "resource": "customers"},
             "strategy": "INCREMENTAL",
             "sync_on_start": False,
         }
         assert detail_before["sync_state"]["status"] == "never_synced"
         assert detail_before["storage_uri"] is None
-
         sync_status_before = asyncio.run(runtime.get_dataset_sync(dataset_ref="billing_customers"))
         assert sync_status_before["dataset_name"] == "billing_customers"
         assert sync_status_before["source_key"] == "resource:customers"
-        assert sync_status_before["source"] == {"resource": "customers"}
+        assert sync_status_before["source"] == {"kind": "resource", "resource": "customers"}
         assert sync_status_before["sync_state"]["status"] == "never_synced"
 
         with pytest.raises(ExecutionValidationError, match=(
             "Synced dataset 'billing_customers' has not been populated yet. "
-            "Run dataset sync for dataset 'billing_customers' \\(resource path 'customers'\\) before querying it."
+            "Run dataset sync for dataset 'billing_customers' \\(resource 'customers'\\) before querying it."
         )):
             asyncio.run(
                 runtime.query_dataset(
@@ -1448,9 +1740,9 @@ def test_configured_local_runtime_syncs_declared_synced_dataset_from_dataset_sur
         assert listed_after[0]["id"] == declared_dataset.id
         assert listed_after[0]["name"] == "billing_customers"
         assert listed_after[0]["status"] == "published"
-        assert listed_after[0]["source"] is None
+        assert listed_after[0]["source"] == {"kind": "resource", "resource": "customers"}
         assert listed_after[0]["sync"] == {
-            "source": {"resource": "customers"},
+            "source": {"kind": "resource", "resource": "customers"},
             "strategy": "INCREMENTAL",
             "sync_on_start": False,
         }
@@ -1460,9 +1752,9 @@ def test_configured_local_runtime_syncs_declared_synced_dataset_from_dataset_sur
 
         detail_after = asyncio.run(runtime.get_dataset(dataset_ref="billing_customers"))
         assert detail_after["status"] == "published"
-        assert detail_after["source"] is None
+        assert detail_after["source"] == {"kind": "resource", "resource": "customers"}
         assert detail_after["sync"] == {
-            "source": {"resource": "customers"},
+            "source": {"kind": "resource", "resource": "customers"},
             "strategy": "INCREMENTAL",
             "sync_on_start": False,
         }
@@ -1523,13 +1815,13 @@ connectors:
 datasets:
   - name: order_line_items
     connector: commerce_warehouse
-    materialization_mode: synced
-    semantic_model: commerce
-    default_time_dimension: order_date
-    sync:
-      source:
-        table: order_items
-      strategy: FULL_REFRESH
+    source:
+      kind: table
+      table: order_items
+    materialization:
+      mode: synced
+      sync:
+        strategy: FULL_REFRESH
 
 semantic_models:
   - name: commerce

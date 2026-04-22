@@ -105,10 +105,7 @@ class RuntimeHost:
     async def create_agent(self, *args: Any, **kwargs: Any) -> Any:
         if self.services.agent_execution is None:
             raise RuntimeError("AgentExecutionService is not configured for this runtime host.")
-        execute = getattr(self.services.agent_execution, "execute", None)
-        if execute is None:
-            raise RuntimeError("AgentExecutionService does not expose an execute method.")
-        return await execute(*args, **kwargs)
+        return await self.services.agent_execution.execute(*args, **kwargs)
 
     async def query_semantic(self, *args: Any, **kwargs: Any) -> Any:
         if self.services.semantic_query is None:
@@ -143,22 +140,12 @@ class RuntimeHost:
         kwargs.setdefault("workspace_id", self.context.workspace_id)
         return await self.services.semantic_vector_search.search(*args, **kwargs)
 
-    def can_refresh_semantic_vector_search(self) -> bool:
+    async def can_refresh_semantic_vector_search(self) -> bool:
         if self.services.semantic_vector_search is None:
             return False
-        capability = getattr(self.services.semantic_vector_search, "can_refresh", None)
-        if callable(capability):
-            return bool(capability())
-        return True
+        capability = await self.services.semantic_vector_search.can_refresh()
+        return capability
 
-    def semantic_vector_refresh_unavailable_reason(self) -> str | None:
-        if self.services.semantic_vector_search is None:
-            return "SemanticVectorSearchService is not configured for this runtime host."
-        reason = getattr(
-            self.services.semantic_vector_search,
-            "refresh_unavailable_reason",
-            None,
-        )
-        if callable(reason):
-            return reason()
-        return None
+    async def cleanup_resources(self) -> None:
+        # Placeholder for any cleanup logic that might be needed in the future
+        pass

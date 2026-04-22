@@ -452,6 +452,7 @@ LIMIT 25`;
 
 export function SqlPage() {
   const queryInputRef = useRef(null);
+  const autocompleteItemRefs = useRef([]);
   const datasetDetailRequestsRef = useRef(new Set());
   const semanticModelDetailRequestsRef = useRef(new Set());
   const seededStarterRef = useRef(false);
@@ -584,12 +585,12 @@ LIMIT 25`
     (form.queryScope === "semantic" ? "Semantic models" : "Dataset aliases");
   const autocompleteHintLabel =
     autocomplete.kind === "column"
-      ? "Tab to insert column name"
+      ? "Tab to move, Enter to insert column name"
       : autocomplete.kind === "semantic-member"
-        ? "Tab to insert member name"
+        ? "Tab to move, Enter to insert member name"
         : form.queryScope === "semantic"
-          ? "Tab to insert model name"
-          : "Tab to insert";
+          ? "Tab to move, Enter to insert model name"
+          : "Tab to move, Enter to insert";
   const autocompleteStatusLabel =
     form.queryScope === "source"
       ? "Autocomplete is available for semantic and dataset SQL only."
@@ -701,8 +702,38 @@ LIMIT 25`
     };
   }, [semanticModels]);
 
+  useEffect(() => {
+    autocompleteItemRefs.current = autocomplete.items.map(
+      (_, index) => autocompleteItemRefs.current[index] || null,
+    );
+  }, [autocomplete.items]);
+
+  useEffect(() => {
+    if (!autocomplete.open) {
+      return;
+    }
+    const activeItem = autocompleteItemRefs.current[autocomplete.selectedIndex];
+    if (!activeItem || typeof activeItem.scrollIntoView !== "function") {
+      return;
+    }
+    activeItem.scrollIntoView({ block: "nearest" });
+  }, [autocomplete.open, autocomplete.selectedIndex]);
+
   function closeAutocomplete() {
     setAutocomplete(CLOSED_DATASET_AUTOCOMPLETE);
+  }
+
+  function moveAutocompleteSelection(offset) {
+    setAutocomplete((current) => {
+      if (!current.open || current.items.length === 0) {
+        return current;
+      }
+      const itemCount = current.items.length;
+      return {
+        ...current,
+        selectedIndex: (current.selectedIndex + offset + itemCount) % itemCount,
+      };
+    });
   }
 
   function focusQueryInput(cursorIndex) {
@@ -1017,6 +1048,23 @@ LIMIT 25`
     refreshAutocomplete(event.target.value, cursorIndex);
   }
 
+  function handleEditorKeyUp(event) {
+    if (
+      [
+        "ArrowDown",
+        "ArrowUp",
+        "Enter",
+        "Escape",
+        "Tab",
+        "PageDown",
+        "PageUp",
+      ].includes(event.key)
+    ) {
+      return;
+    }
+    handleEditorSelectionChange(event);
+  }
+
   function handleEditorKeyDown(event) {
     if (event.ctrlKey && event.key === " ") {
       event.preventDefault();
@@ -1034,24 +1082,23 @@ LIMIT 25`
 
     if (event.key === "ArrowDown") {
       event.preventDefault();
-      setAutocomplete((current) => ({
-        ...current,
-        selectedIndex: (current.selectedIndex + 1) % current.items.length,
-      }));
+      moveAutocompleteSelection(1);
       return;
     }
 
     if (event.key === "ArrowUp") {
       event.preventDefault();
-      setAutocomplete((current) => ({
-        ...current,
-        selectedIndex:
-          (current.selectedIndex - 1 + current.items.length) % current.items.length,
-      }));
+      moveAutocompleteSelection(-1);
       return;
     }
 
     if (event.key === "Tab") {
+      event.preventDefault();
+      moveAutocompleteSelection(event.shiftKey ? -1 : 1);
+      return;
+    }
+
+    if (event.key === "Enter") {
       event.preventDefault();
       acceptAutocomplete(activeSuggestion);
       return;
@@ -1276,7 +1323,7 @@ LIMIT 25`
                   onChange={handleEditorChange}
                   onClick={handleEditorSelectionChange}
                   onKeyDown={handleEditorKeyDown}
-                  onKeyUp={handleEditorSelectionChange}
+                  onKeyUp={handleEditorKeyUp}
                   onSelect={handleEditorSelectionChange}
                   disabled={running}
                   rows={14}
@@ -1291,14 +1338,27 @@ LIMIT 25`
                       <span>{autocompleteHeaderLabel}</span>
                       <small>{autocompleteHintLabel}</small>
                     </div>
-                    <div className="sql-autocomplete-list">
+                    <div
+                      className="sql-autocomplete-list"
+                      onWheel={(event) => event.stopPropagation()}
+                    >
                 {autocomplete.items.map((item, index) => (
                   <button
                     key={item.key || item.value}
+                    ref={(element) => {
+                      autocompleteItemRefs.current[index] = element;
+                    }}
                     type="button"
                     className={`sql-autocomplete-item ${index === autocomplete.selectedIndex ? "active" : ""}`.trim()}
                     role="option"
                           aria-selected={index === autocomplete.selectedIndex}
+                          tabIndex={-1}
+                          onMouseEnter={() =>
+                            setAutocomplete((current) => ({
+                              ...current,
+                              selectedIndex: index,
+                            }))
+                          }
                           onMouseDown={(event) => {
                             event.preventDefault();
                             acceptAutocomplete(item);

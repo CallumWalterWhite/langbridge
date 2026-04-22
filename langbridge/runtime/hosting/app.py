@@ -24,6 +24,8 @@ from langbridge.runtime.hosting.background import (
     RuntimeBackgroundTaskDefinition,
     RuntimeBackgroundTaskManager,
     build_semantic_vector_refresh_default_task,
+    build_dataset_sync_default_task,
+    build_cleanup_default_task,
 )
 from langbridge.runtime.bootstrap import (
     ConfiguredLocalRuntimeHost,
@@ -80,6 +82,7 @@ _DEBUG_ENV = "LANGBRIDGE_RUNTIME_DEBUG"
 _ODBC_HOST_ENV = "LANGBRIDGE_RUNTIME_ODBC_HOST"
 _ODBC_PORT_ENV = "LANGBRIDGE_RUNTIME_ODBC_PORT"
 _SEMANTIC_VECTOR_REFRESH_TASK_NAME = "semantic-vector-refresh"
+_RUNTIME_CLEANUP_TASK_NAME = "runtime-cleanup"
 _RUNTIME_LOG_FORMAT = "%(asctime)s %(levelname)s [%(name)s] %(message)s"
 _DEBUG_HANDLER_MARKER = "_langbridge_runtime_debug_handler"
 
@@ -148,6 +151,10 @@ def create_runtime_api_app(
             runtime_host=host,
         )
         await _register_runtime_semantic_vector_refresh_task(
+            task_manager=task_manager,
+            runtime_host=host,
+        )
+        await _register_runtime_cleanup_task(
             task_manager=task_manager,
             runtime_host=host,
         )
@@ -727,12 +734,15 @@ def create_runtime_api_app(
             agent_name=body.agent_name,
         )
         try:
-            result = await configured_host.ask_agent(
-                prompt=body.message,
-                agent_name=agent_name,
-                thread_id=body.thread_id,
-                title=body.title,
-            )
+            ask_kwargs = {
+                "prompt": body.message,
+                "agent_name": agent_name,
+                "thread_id": body.thread_id,
+                "title": body.title,
+            }
+            if body.agent_mode is not None:
+                ask_kwargs["agent_mode"] = body.agent_mode
+            result = await configured_host.ask_agent(**ask_kwargs)
         except HTTPException:
             raise
         except Exception as exc:
@@ -767,16 +777,19 @@ def create_runtime_api_app(
             agent_id=body.agent_id,
             agent_name=body.agent_name,
         )
-
+        stream_kwargs = {
+            "prompt": body.message,
+            "agent_name": agent_name,
+            "thread_id": body.thread_id,
+            "title": body.title,
+            "agent_mode": body.agent_mode,
+        }
+        if body.agent_mode is not None:
+            stream_kwargs["agent_mode"] = body.agent_mode
         return _build_runtime_sse_response(
             _stream_runtime_run_events(
                 request=request,
-                events=configured_host.ask_agent_stream(
-                    prompt=body.message,
-                    agent_name=agent_name,
-                    thread_id=body.thread_id,
-                    title=body.title,
-                ),
+                events=configured_host.ask_agent_stream(**stream_kwargs),
             )
         )
 
@@ -957,61 +970,60 @@ def create_runtime_api_app(
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         return RuntimeSyncStateListResponse(items=items, total=len(items))
 
+    @app.get("/api/runtime/ui/v1/summary")
+    async def runtime_ui_summary(request: Request) -> dict[str, Any]:
+        configured_host = await _resolve_request_host(request)
+        connector_items = await configured_host.list_connectors()
+        dataset_items = await configured_host.list_datasets()
+        semantic_model_items = await configured_host.list_semantic_models()
+        agent_items = await configured_host.list_agents()
+        thread_items = await configured_host.list_threads()
+        return {
+            "health": {"status": "ok"},
+            "features": list(enabled_features),
+            "auth": await _build_runtime_auth_status(auth_resolver),
+            "runtime": {
+                "mode": "configured_local",
+                "workspace_id": str(configured_host.context.workspace_id),
+                "actor_id": str(configured_host.context.actor_id) if configured_host.context.actor_id else None,
+                "default_semantic_model": configured_host._default_semantic_model_name,
+                "default_agent": configured_host._default_agent.config.name if configured_host._default_agent else None,
+            },
+            "counts": {
+                "datasets": len(dataset_items),
+                "connectors": len(connector_items),
+                "semantic_models": len(semantic_model_items),
+                "agents": len(agent_items),
+                "threads": len(thread_items),
+            },
+            "datasets": [
+                {
+                    "id": _stringify_optional_uuid(item.get("id")),
+                    "name": item.get("name"),
+                    "connector": item.get("connector"),
+                    "semantic_model": item.get("semantic_model"),
+                    "management_mode": item.get("management_mode"),
+                    "managed": bool(item.get("managed")),
+                }
+                for item in dataset_items[:8]
+            ],
+            "connectors": [
+                {
+                    "id": _stringify_optional_uuid(item.get("id")),
+                    "name": item.get("name"),
+                    "connector_type": item.get("connector_type"),
+                    "supports_sync": bool(item.get("supports_sync")),
+                    "management_mode": item.get("management_mode"),
+                    "managed": bool(item.get("managed")),
+                }
+                for item in connector_items[:8]
+            ],
+            "semantic_models": semantic_model_items[:6],
+            "agents": agent_items[:6],
+            "threads": thread_items[:6],
+        }
+
     if ui_enabled:
-        @app.get("/api/runtime/ui/v1/summary")
-        async def runtime_ui_summary(request: Request) -> dict[str, Any]:
-            configured_host = await _resolve_request_host(request)
-            connector_items = await configured_host.list_connectors()
-            dataset_items = await configured_host.list_datasets()
-            semantic_model_items = await configured_host.list_semantic_models()
-            agent_items = await configured_host.list_agents()
-            thread_items = await configured_host.list_threads()
-            return {
-                "health": {"status": "ok"},
-                "features": list(enabled_features),
-                "auth": await _build_runtime_auth_status(auth_resolver),
-                "runtime": {
-                    "mode": "configured_local",
-                    "workspace_id": str(configured_host.context.workspace_id),
-                    "actor_id": str(configured_host.context.actor_id) if configured_host.context.actor_id else None,
-                    "default_semantic_model": configured_host._default_semantic_model_name,
-                    "default_agent": (
-                        configured_host._default_agent.config.name if configured_host._default_agent else None
-                    ),
-                },
-                "counts": {
-                    "datasets": len(dataset_items),
-                    "connectors": len(connector_items),
-                    "semantic_models": len(semantic_model_items),
-                    "agents": len(agent_items),
-                    "threads": len(thread_items),
-                },
-                "datasets": [
-                    {
-                        "id": _stringify_optional_uuid(item.get("id")),
-                        "name": item.get("name"),
-                        "connector": item.get("connector"),
-                        "semantic_model": item.get("semantic_model"),
-                        "management_mode": item.get("management_mode"),
-                        "managed": bool(item.get("managed")),
-                    }
-                    for item in dataset_items[:8]
-                ],
-                "connectors": [
-                    {
-                        "id": _stringify_optional_uuid(item.get("id")),
-                        "name": item.get("name"),
-                        "connector_type": item.get("connector_type"),
-                        "supports_sync": bool(item.get("supports_sync")),
-                        "management_mode": item.get("management_mode"),
-                        "managed": bool(item.get("managed")),
-                    }
-                    for item in connector_items[:8]
-                ],
-                "semantic_models": semantic_model_items[:6],
-                "agents": agent_items[:6],
-                "threads": thread_items[:6],
-            }
 
         register_runtime_ui(app)
 
@@ -1344,7 +1356,10 @@ async def _register_runtime_semantic_vector_refresh_task(
 ) -> None:
     if not isinstance(runtime_host, ConfiguredLocalRuntimeHost):
         return
-    if runtime_host.services.semantic_vector_search is None or not runtime_host.can_refresh_semantic_vector_search():
+    if runtime_host.services.semantic_vector_search is None:
+        return
+    can_refresh = await runtime_host.can_refresh_semantic_vector_search()
+    if not can_refresh:
         return
     existing_names = {
         str(task.name or "").strip()
@@ -1364,6 +1379,30 @@ async def _register_runtime_semantic_vector_refresh_task(
         )
     )
 
+async def _register_runtime_cleanup_task(
+    *,
+    task_manager: RuntimeBackgroundTaskManager,
+    runtime_host: RuntimeHost,
+) -> None:
+    if not isinstance(runtime_host, ConfiguredLocalRuntimeHost):
+        return
+    existing_names = {
+        str(task.name or "").strip()
+        for task in task_manager.list_tasks()
+        if str(task.name or "").strip()
+    }
+    if _RUNTIME_CLEANUP_TASK_NAME in existing_names:
+        return
+    task_manager.register_default_task(
+        build_cleanup_default_task(
+            name=_RUNTIME_CLEANUP_TASK_NAME,
+            run_on_startup=True,
+            schedule=BackgroundTaskSchedule.interval(seconds=300),
+            description=(
+                "Perform routine cleanup of runtime resources every 5 minutes."
+            ),
+        )
+    )
 
 def _normalize_runtime_features(features: Iterable[str] | None) -> tuple[str, ...]:
     normalized: list[str] = []

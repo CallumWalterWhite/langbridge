@@ -1,4 +1,5 @@
 import copy
+import json
 import logging
 import re
 import uuid
@@ -15,13 +16,21 @@ from langbridge.runtime.application import build_runtime_applications
 from langbridge.runtime.application.connectors import _extract_connection_metadata
 from langbridge.runtime.config import load_runtime_config, resolve_metadata_store_config
 from langbridge.runtime.config.models import (
-    LocalRuntimeAgentConfig,
     LocalRuntimeConfig,
     LocalRuntimeConnectorConfig,
     LocalRuntimeDatasetConfig,
     LocalRuntimeDatasetPolicyConfig,
     LocalRuntimeLLMConnectionConfig,
     LocalRuntimeSemanticModelConfig,
+
+    LocalRuntimeAiProfileAnalystScopeConfig,
+    LocalRuntimeAiProfileLLMScopeConfig,
+    LocalRuntimeAiProfilePromptsConfig,
+    LocalRuntimeAiProfileWebSearchScopeConfig,
+    LocalRuntimeAiProfileResearchScopeConfig,
+    LocalRuntimeAiProfileAccessConfig,
+    LocalRuntimeAiProfileConfig,
+    
     ResolvedLocalRuntimeMetadataStoreConfig,
 )
 from langbridge.runtime.models.metadata import DatasetStatus, DatasetType, LifecycleState, ManagementMode
@@ -36,6 +45,7 @@ from langbridge.runtime.ports import (
 from langbridge.runtime.utils.connector_runtime import (
     build_connector_runtime_payload,
     resolve_connector_capabilities,
+    resolve_supported_resources,
 )
 from langbridge.connectors.base.resource_paths import (
     normalize_api_flatten_paths,
@@ -131,7 +141,6 @@ from langbridge.runtime.services.semantic_vector_search_service import (
 )
 from langbridge.runtime.services.sql_query_service import SqlQueryService
 from langbridge.runtime.settings import runtime_settings as settings
-from langbridge.orchestrator.definitions import AgentDefinitionFactory
 from langbridge.semantic.loader import (
     SemanticModelError,
     load_semantic_graph,
@@ -178,7 +187,7 @@ class LocalRuntimeLLMConnectionRecord:
 @dataclass(slots=True, frozen=True)
 class LocalRuntimeAgentRecord:
     id: uuid.UUID
-    config: LocalRuntimeAgentConfig
+    config: LocalRuntimeAiProfileConfig
     agent_definition: RuntimeAgentDefinition
 
 
@@ -272,7 +281,9 @@ def _merge_dataset_tags(*, existing: list[str], required: list[str]) -> list[str
 
 def _sync_source_key(*, source: DatasetSource) -> str:
     if source.resource:
-        return f"resource:{str(source.resource).strip()}"
+        return f"resource:{_dataset_resource_identity(source.resource)}"
+    if getattr(source, "request", None):
+        return f"request:{_dataset_request_identity(source.request)}"
     if source.table:
         return f"table:{str(source.table).strip()}"
     if source.sql:
@@ -293,7 +304,14 @@ def _sync_source_tags(*, connector: ConnectorMetadata, source: DatasetSource) ->
             "managed",
             "api-connector",
             connector_type,
-            f"resource:{str(source.resource).strip().lower()}",
+            f"resource:{_dataset_resource_identity(source.resource).lower()}",
+        ]
+    if getattr(source, "request", None):
+        return [
+            "managed",
+            "api-connector",
+            connector_type,
+            f"resource:{_dataset_request_identity(source.request).lower()}",
         ]
     if source.table:
         return [
@@ -314,7 +332,9 @@ def _sync_source_tags(*, connector: ConnectorMetadata, source: DatasetSource) ->
 
 def _sync_source_description(*, source: DatasetSource) -> str:
     if source.resource:
-        return f"resource path '{str(source.resource).strip()}'"
+        return f"resource '{_dataset_resource_identity(source.resource)}'"
+    if getattr(source, "request", None):
+        return f"request '{_dataset_request_identity(source.request)}'"
     if source.table:
         return f"table '{str(source.table).strip()}'"
     if source.sql:
@@ -322,6 +342,178 @@ def _sync_source_description(*, source: DatasetSource) -> str:
     if source.storage_uri:
         return f"storage source '{str(source.storage_uri).strip()}'"
     return "sync source"
+
+
+def _dataset_resource_identity(resource: Any) -> str:
+    if isinstance(resource, str):
+        normalized = normalize_api_resource_path(resource)
+        return normalized
+    if hasattr(resource, "path"):
+        path = str(getattr(resource, "path", "") or "").strip()
+        if path:
+            return path
+    if isinstance(resource, Mapping):
+        path = str(resource.get("path", "") or "").strip()
+        if path:
+            return path
+        return f"request:{stable_payload_hash(json.dumps(dict(resource), sort_keys=True, default=str))}"
+    return str(resource).strip()
+
+
+def _dataset_request_identity(request: Any) -> str:
+    if request is None:
+        return ""
+    if hasattr(request, "path"):
+        path = str(getattr(request, "path", "") or "").strip()
+        if path:
+            return path
+    if isinstance(request, Mapping):
+        path = str(request.get("path", "") or "").strip()
+        if path:
+            return path
+        return f"request:{stable_payload_hash(json.dumps(dict(request), sort_keys=True, default=str))}"
+    return str(request).strip()
+
+
+def _resolve_source_storage_uri(source_config: Any | None) -> str | None:
+    storage_uri = str(getattr(source_config, "storage_uri", "") or "").strip() or None
+    if storage_uri is not None:
+        return storage_uri
+    path = str(getattr(source_config, "path", "") or "").strip()
+    if not path:
+        return None
+    return Path(path).resolve().as_uri()
+
+
+def _serialize_dataset_resource(resource: Any) -> Any:
+    if resource is None:
+        return None
+    if isinstance(resource, str):
+        return normalize_api_resource_path(resource)
+    if hasattr(resource, "model_dump"):
+        payload = resource.model_dump(mode="json", exclude_none=True)
+        path = str(payload.get("path", "") or "").strip()
+        if path:
+            payload["path"] = path
+        return payload
+    if isinstance(resource, Mapping):
+        payload = {
+            str(key): value
+            for key, value in dict(resource).items()
+            if value is not None
+        }
+        path = str(payload.get("path", "") or "").strip()
+        if path:
+            payload["path"] = path
+        return payload
+    return normalize_api_resource_path(str(resource))
+
+
+def _serialize_dataset_extraction(extraction: Any | None) -> dict[str, Any] | None:
+    if extraction is None:
+        return None
+    if hasattr(extraction, "model_dump"):
+        return extraction.model_dump(mode="json", exclude_none=True)
+    if isinstance(extraction, Mapping):
+        return {
+            str(key): value
+            for key, value in dict(extraction).items()
+            if value is not None
+        }
+    return None
+
+
+def _serialize_dataset_schema_hint(schema_config: Any | None) -> dict[str, Any] | None:
+    if schema_config is None:
+        return None
+    raw_columns = getattr(schema_config, "columns", None)
+    if raw_columns is None and isinstance(schema_config, Mapping):
+        raw_columns = schema_config.get("columns")
+    columns: list[dict[str, Any]] = []
+    for column in raw_columns or []:
+        if hasattr(column, "model_dump"):
+            payload = column.model_dump(mode="json", exclude_none=True)
+        elif isinstance(column, Mapping):
+            payload = {
+                str(key): value
+                for key, value in dict(column).items()
+                if value is not None
+            }
+        else:
+            continue
+        if "type" in payload and "data_type" not in payload:
+            payload["data_type"] = payload.pop("type")
+        columns.append(payload)
+    dynamic = bool(getattr(schema_config, "dynamic", False))
+    if isinstance(schema_config, Mapping):
+        dynamic = bool(schema_config.get("dynamic", dynamic))
+    if not columns and not dynamic:
+        return None
+    return {
+        "schema_hint": columns or None,
+        "schema_hint_dynamic": dynamic if dynamic else None,
+    }
+
+
+def _build_dataset_source_payload(
+    source_config: Any | None,
+    *,
+    schema_hint_config: Any | None = None,
+) -> dict[str, Any]:
+    if source_config is None:
+        return {}
+    payload: dict[str, Any] = {}
+    raw_source_kind = getattr(source_config, "kind", None)
+    source_kind = str(getattr(raw_source_kind, "value", raw_source_kind) or "").strip().lower()
+    table = str(getattr(source_config, "table", "") or "").strip()
+    resource = _serialize_dataset_resource(getattr(source_config, "resource", None))
+    request_config = getattr(source_config, "request", None)
+    sql = str(getattr(source_config, "sql", "") or "").strip()
+    storage_uri = _resolve_source_storage_uri(source_config)
+    if source_kind:
+        payload["kind"] = source_kind
+    if table:
+        payload["table"] = table
+    elif resource:
+        payload["resource"] = resource
+        flatten_paths = normalize_api_flatten_paths(getattr(source_config, "flatten", None))
+        if flatten_paths:
+            payload["flatten"] = flatten_paths
+    elif request_config is not None:
+        request_payload = _serialize_dataset_resource(request_config)
+        if request_payload is not None:
+            payload["request"] = request_payload
+        flatten_paths = normalize_api_flatten_paths(getattr(source_config, "flatten", None))
+        if flatten_paths:
+            payload["flatten"] = flatten_paths
+    elif sql:
+        payload["sql"] = sql
+    elif storage_uri:
+        payload["storage_uri"] = storage_uri
+        requested_format = str(
+            getattr(source_config, "format", None) or getattr(source_config, "file_format", None) or ""
+        ).strip().lower()
+        if requested_format:
+            payload["format"] = requested_format
+        if getattr(source_config, "header", None) is not None:
+            payload["header"] = source_config.header
+        if getattr(source_config, "delimiter", None) is not None:
+            payload["delimiter"] = source_config.delimiter
+        if getattr(source_config, "quote", None) is not None:
+            payload["quote"] = source_config.quote
+    extraction_payload = _serialize_dataset_extraction(getattr(source_config, "extraction", None))
+    if extraction_payload is not None:
+        payload["extraction"] = extraction_payload
+    schema_hint_payload = _serialize_dataset_schema_hint(schema_hint_config)
+    if schema_hint_payload is not None:
+        payload.update(
+            {
+                key: value
+                for key, value in schema_hint_payload.items()
+                if value is not None
+            }
+        )
+    return payload
 
 
 class ConfiguredLocalRuntimeHost(RuntimeHost):
@@ -822,12 +1014,14 @@ class ConfiguredLocalRuntimeHost(RuntimeHost):
         agent_name: str | None = None,
         thread_id: uuid.UUID | None = None,
         title: str | None = None,
+        agent_mode: str | None = None,
     ) -> dict[str, Any]:
         return await self._applications.agents.ask_agent(
             prompt=prompt,
             agent_name=agent_name,
             thread_id=thread_id,
             title=title,
+            agent_mode=agent_mode,
         )
 
     def ask_agent_stream(
@@ -837,12 +1031,14 @@ class ConfiguredLocalRuntimeHost(RuntimeHost):
         agent_name: str | None = None,
         thread_id: uuid.UUID | None = None,
         title: str | None = None,
+        agent_mode: str | None = None,
     ):
         return self._applications.agents.ask_agent_stream(
             prompt=prompt,
             agent_name=agent_name,
             thread_id=thread_id,
             title=title,
+            agent_mode=agent_mode,
         )
 
     async def stream_run(
@@ -1544,13 +1740,18 @@ class ConfiguredLocalRuntimeHost(RuntimeHost):
     ) -> list[dict[str, Any]]:
         if "quarter" not in prompt.lower():
             return []
-        time_dimension = dataset_record.default_time_dimension
-        if not time_dimension:
-            dataset = semantic_model.datasets[dataset_record.name]
-            time_dimension = next(
-                (dimension.name for dimension in (dataset.dimensions or []) if dimension.type == "time"),
-                None,
-            )
+        semantic_dataset = None
+        for dataset_key, dataset_entry in semantic_model.datasets.items():
+            relation_name = str(dataset_entry.get_relation_name(dataset_key) or "").strip()
+            if relation_name == dataset_record.relation_name:
+                semantic_dataset = dataset_entry
+                break
+        if semantic_dataset is None:
+            return []
+        time_dimension = next(
+            (dimension.name for dimension in (semantic_dataset.dimensions or []) if dimension.type == "time"),
+            None,
+        )
         if not time_dimension:
             return []
         max_date = await self._get_max_date(
@@ -2084,7 +2285,10 @@ class ConfiguredLocalRuntimeHostFactory:
                 if isinstance(connector.policy, Mapping)
                 else None
             ),
-            supported_resources=list(plugin.supported_resources) if plugin is not None else [],
+            supported_resources=resolve_supported_resources(
+                plugin=plugin,
+                connector_config=connection_payload,
+            ),
             default_sync_strategy=(
                 plugin.default_sync_strategy
                 if plugin is not None and plugin.default_sync_strategy is not None
@@ -2143,64 +2347,33 @@ class ConfiguredLocalRuntimeHostFactory:
             )
             source_config = dataset.source
             sync_config = dataset.sync
-            source_table = str(source_config.table or "").strip() if source_config is not None else ""
+            live_source_payload = _build_dataset_source_payload(
+                source_config,
+                schema_hint_config=dataset.schema_hint,
+            )
+            source_table = str(live_source_payload.get("table") or "").strip()
+            source_resource = live_source_payload.get("resource")
+            source_request = live_source_payload.get("request")
             source_resource_name = (
-                normalize_api_resource_path(str(source_config.resource or "").strip())
-                if source_config is not None and str(source_config.resource or "").strip()
+                _dataset_resource_identity(source_resource)
+                if source_resource is not None
+                else _dataset_request_identity(source_request)
+                if source_request is not None
                 else ""
             )
-            source_flatten_paths = (
-                normalize_api_flatten_paths(source_config.flatten)
-                if source_config is not None
-                else []
-            )
-            source_sql = str(source_config.sql or "").strip() if source_config is not None else ""
-            source_storage_uri = (
-                str(source_config.storage_uri or "").strip() or None
-                if source_config is not None
-                else None
-            )
-            if source_storage_uri is None and source_config is not None and source_config.path:
-                source_storage_uri = Path(str(source_config.path)).resolve().as_uri()
+            source_sql = str(live_source_payload.get("sql") or "").strip()
+            source_storage_uri = str(live_source_payload.get("storage_uri") or "").strip() or None
             sync_source_config = sync_config.source if sync_config is not None else None
             sync_source: DatasetSource | None = None
             sync_source_key: str | None = None
             if sync_source_config is not None:
-                sync_source_payload: dict[str, Any] = {}
-                sync_table = str(sync_source_config.table or "").strip()
-                sync_resource = str(sync_source_config.resource or "").strip()
-                sync_sql = str(sync_source_config.sql or "").strip()
-                sync_storage_uri = str(sync_source_config.storage_uri or "").strip() or None
-                if sync_storage_uri is None and sync_source_config.path:
-                    sync_storage_uri = Path(str(sync_source_config.path)).resolve().as_uri()
-                if sync_table:
-                    sync_source_payload["table"] = sync_table
-                elif sync_resource:
-                    sync_source_payload["resource"] = normalize_api_resource_path(sync_resource)
-                    flatten_paths = normalize_api_flatten_paths(sync_source_config.flatten)
-                    if flatten_paths:
-                        sync_source_payload["flatten"] = flatten_paths
-                elif sync_sql:
-                    sync_source_payload["sql"] = sync_sql
-                elif sync_storage_uri:
-                    sync_source_payload["storage_uri"] = sync_storage_uri
-                    requested_format = str(
-                        sync_source_config.format or sync_source_config.file_format or ""
-                    ).strip().lower()
-                    if requested_format:
-                        sync_source_payload["format"] = requested_format
-                    if sync_source_config.header is not None:
-                        sync_source_payload["header"] = sync_source_config.header
-                    if sync_source_config.delimiter is not None:
-                        sync_source_payload["delimiter"] = sync_source_config.delimiter
-                    if sync_source_config.quote is not None:
-                        sync_source_payload["quote"] = sync_source_config.quote
+                sync_source_payload = _build_dataset_source_payload(sync_source_config)
                 if sync_source_payload:
                     sync_source = DatasetSource.model_validate(sync_source_payload)
                     sync_source_key = _sync_source_key(source=sync_source)
             requires_connector = (
                 materialization_mode == DatasetMaterializationMode.SYNCED
-                or bool(source_table or source_resource_name or source_sql)
+                or bool(source_table or source_resource is not None or source_request is not None or source_sql)
             )
             if requires_connector and connector is None:
                 raise ValueError(
@@ -2235,7 +2408,7 @@ class ConfiguredLocalRuntimeHostFactory:
                         f"Dataset '{dataset.name}' requests materialization_mode 'synced', "
                         "but is missing sync.source."
                     )
-                if sync_source.resource:
+                if sync_source.resource or getattr(sync_source, "request", None):
                     plugin = ConfiguredLocalRuntimeHostFactory._resolve_connector_plugin_for_type(
                         connector.connector_type_value
                     )
@@ -2300,6 +2473,7 @@ class ConfiguredLocalRuntimeHostFactory:
                         f"'{sync_source_key}'. Sync source keys must be unique per connector."
                     )
                 synced_source_bindings.add(binding_key)
+                live_source = sync_source
             elif connector is not None and not connector_capabilities.supports_live_datasets and requires_connector:
                 raise ValueError(
                     f"Dataset '{dataset.name}' requests materialization_mode 'live', "
@@ -2317,7 +2491,7 @@ class ConfiguredLocalRuntimeHostFactory:
                 storage_kind = DatasetStorageKind.PARQUET
                 if sync_source is None:
                     raise ValueError(f"Dataset '{dataset.name}' is missing sync.source.")
-                if sync_source.resource:
+                if sync_source.resource or getattr(sync_source, "request", None):
                     source_kind = DatasetSourceKind.API
                 elif sync_source.table or sync_source.sql:
                     source_kind = DatasetSourceKind.DATABASE
@@ -2329,7 +2503,7 @@ class ConfiguredLocalRuntimeHostFactory:
                     "format": "parquet",
                     "managed_dataset": True,
                 }
-            elif source_resource_name:
+            elif source_resource is not None or source_request is not None:
                 if connector is None:
                     raise ValueError(
                         f"Dataset '{dataset.name}' requires a connector for live API resource sources."
@@ -2358,10 +2532,7 @@ class ConfiguredLocalRuntimeHostFactory:
                 dialect = "duckdb"
                 storage_uri = None
                 file_config = None
-                live_source = DatasetSource(
-                    resource=source_resource_name,
-                    flatten=source_flatten_paths or None,
-                )
+                live_source = DatasetSource.model_validate(live_source_payload)
             elif source_table:
                 if connector is None:
                     raise ValueError(
@@ -2441,20 +2612,10 @@ class ConfiguredLocalRuntimeHostFactory:
                         file_config["delimiter"] = source_config.delimiter
                     if source_config is not None and source_config.quote is not None:
                         file_config["quote"] = source_config.quote
-                    live_source_payload = {
-                        "storage_uri": storage_uri,
-                        "format": file_format,
-                        "header": source_config.header if source_config is not None else None,
-                        "delimiter": source_config.delimiter if source_config is not None else None,
-                        "quote": source_config.quote if source_config is not None else None,
-                    }
-                    live_source = DatasetSource.model_validate(
-                        {
-                            key: value
-                            for key, value in live_source_payload.items()
-                            if value is not None
-                        }
-                    )
+                    file_source_payload = dict(live_source_payload)
+                    file_source_payload["storage_uri"] = storage_uri
+                    file_source_payload["format"] = file_format
+                    live_source = DatasetSource.model_validate(file_source_payload)
 
             relation_identity = build_dataset_relation_identity(
                 dataset_id=dataset_id,
@@ -2500,9 +2661,21 @@ class ConfiguredLocalRuntimeHostFactory:
                     ),
                 ),
                 dataset_type=dataset_type,
-                materialization_mode=materialization_mode,
+                materialization={
+                    "mode": materialization_mode,
+                    "sync": None if sync_contract is None else {
+                        "strategy": sync_contract.strategy,
+                        "cadence": sync_contract.cadence,
+                        "sync_on_start": sync_contract.sync_on_start,
+                        "cursor_field": sync_contract.cursor_field,
+                        "initial_cursor": sync_contract.initial_cursor,
+                        "lookback_window": sync_contract.lookback_window,
+                        "backfill_start": sync_contract.backfill_start,
+                        "backfill_end": sync_contract.backfill_end,
+                    },
+                },
                 source=live_source,
-                sync=sync_contract,
+                schema_hint=dataset.schema_hint.model_dump(mode="json") if dataset.schema_hint is not None else None,
                 source_kind=source_kind,
                 connector_kind=connector_kind,
                 storage_kind=storage_kind,
@@ -2548,8 +2721,8 @@ class ConfiguredLocalRuntimeHostFactory:
                 description=dataset.description,
                 connector_name=None if connector is None else connector.name,
                 relation_name=relation_name,
-                semantic_model_name=dataset.semantic_model,
-                default_time_dimension=dataset.default_time_dimension,
+                semantic_model_name=None,
+                default_time_dimension=None,
             )
         return datasets, dataset_records
 
@@ -2650,32 +2823,47 @@ class ConfiguredLocalRuntimeHostFactory:
             (item.name for item in config.llm_connections if item.default),
             config.llm_connections[0].name if config.llm_connections else None,
         )
-        for agent in config.agents:
-            llm_connection_name = str(agent.llm_connection or default_llm_connection_name or "").strip()
+        for profile in config.ai.profiles:
+            if not profile.enabled:
+                continue
+            llm_connection_name = ConfiguredLocalRuntimeHostFactory._resolve_ai_profile_llm_connection_name(
+                profile=profile,
+                config=config,
+                default_llm_connection_name=default_llm_connection_name,
+            )
             if not llm_connection_name:
                 raise ValueError(
-                    f"Agent '{agent.name}' requires an llm_connection or a default llm_connections entry."
+                    f"AI profile '{profile.name}' requires llm_scope.llm_connection or a resolvable provider/model."
                 )
             llm_connection = llm_connections.get(llm_connection_name)
             if llm_connection is None:
                 raise ValueError(
-                    f"Agent '{agent.name}' references unknown llm connection '{llm_connection_name}'."
+                    f"AI profile '{profile.name}' references unknown llm connection '{llm_connection_name}'."
                 )
-
-            agent_id = _stable_uuid("agent", f"{config_path}:{agent.name}")
-            definition = ConfiguredLocalRuntimeHostFactory._build_agent_definition_payload(
-                agent=agent,
+            if profile.name in records:
+                raise ValueError(f"Duplicate runtime agent name '{profile.name}'.")
+            agent_id = _stable_uuid("agent", f"{config_path}:{profile.name}")
+            definition = ConfiguredLocalRuntimeHostFactory._build_ai_profile_definition_payload(
+                profile=profile,
                 datasets=datasets,
                 connectors=connectors,
                 semantic_models=semantic_models,
             )
-            records[agent.name] = LocalRuntimeAgentRecord(
+            records[profile.name] = LocalRuntimeAgentRecord(
                 id=agent_id,
-                config=agent,
+                config=profile.model_copy(
+                    update={
+                        "llm_scope": profile.llm_scope.model_copy(
+                            update={"llm_connection": llm_connection_name}
+                        )
+                        if profile.llm_scope is not None
+                        else None
+                    }
+                ),
                 agent_definition=RuntimeAgentDefinition(
                     id=agent_id,
-                    name=agent.name,
-                    description=agent.description,
+                    name=profile.name,
+                    description=profile.description,
                     llm_connection_id=llm_connection.id,
                     definition=definition,
                     is_active=True,
@@ -2688,298 +2876,120 @@ class ConfiguredLocalRuntimeHostFactory:
         return records
 
     @staticmethod
-    def _build_agent_definition_payload(
+    def _resolve_ai_profile_llm_connection_name(
         *,
-        agent: LocalRuntimeAgentConfig,
+        profile: LocalRuntimeAiProfileConfig,
+        config: LocalRuntimeConfig,
+        default_llm_connection_name: str | None,
+    ) -> str | None:
+        llm_scope = profile.llm_scope
+        if llm_scope is None:
+            return default_llm_connection_name
+        direct_name = str(llm_scope.llm_connection or "").strip()
+        if direct_name:
+            return direct_name
+        provider = str(llm_scope.provider or "").strip().lower()
+        model = str(llm_scope.model or "").strip()
+        if not provider or not model:
+            return default_llm_connection_name
+        matches = [
+            connection.name
+            for connection in config.llm_connections
+            if str(connection.provider or "").strip().lower() == provider
+            and str(connection.model or "").strip() == model
+        ]
+        if not matches:
+            raise ValueError(
+                f"AI profile '{profile.name}' could not resolve llm connection for provider '{provider}' and model '{model}'."
+            )
+        default_match = next(
+            (
+                connection.name
+                for connection in config.llm_connections
+                if connection.default
+                and str(connection.provider or "").strip().lower() == provider
+                and str(connection.model or "").strip() == model
+            ),
+            None,
+        )
+        if default_match is not None:
+            return default_match
+        if len(matches) == 1:
+            return matches[0]
+        raise ValueError(
+            f"AI profile '{profile.name}' matched multiple llm connections for provider '{provider}' and model '{model}'. Use llm_scope.llm_connection."
+        )
+
+    @staticmethod
+    def _build_ai_profile_definition_payload(
+        *,
+        profile: LocalRuntimeAiProfileConfig,
         datasets: dict[str, DatasetMetadata],
         connectors: dict[str, ConnectorMetadata],
         semantic_models: dict[str, LocalRuntimeSemanticModelRecord],
     ) -> dict[str, Any]:
-        payload = (
-            copy.deepcopy(agent.definition)
-            if agent.definition
-            else ConfiguredLocalRuntimeHostFactory._build_shorthand_agent_definition_payload(
-                agent=agent,
-                datasets=datasets,
-                semantic_models=semantic_models,
-            )
-        )
-        normalized = ConfiguredLocalRuntimeHostFactory._normalize_agent_definition_payload(
-            agent=agent,
-            definition=payload,
-            datasets=datasets,
-            connectors=connectors,
-            semantic_models=semantic_models,
-        )
-        definition_model = AgentDefinitionFactory().create_agent_definition(normalized)
-        return definition_model.model_dump(mode="json", exclude_none=True)
+        semantic_model_ids: list[str] = []
+        for semantic_model_name in profile.analyst_scope.semantic_models:
+            semantic_model = semantic_models.get(semantic_model_name)
+            if semantic_model is None:
+                raise ValueError(
+                    f"AI profile '{profile.name}' references unknown semantic model '{semantic_model_name}'."
+                )
+            semantic_model_ids.append(str(semantic_model.id))
 
-    @staticmethod
-    def _build_shorthand_agent_definition_payload(
-        *,
-        agent: LocalRuntimeAgentConfig,
-        datasets: dict[str, DatasetMetadata],
-        semantic_models: dict[str, LocalRuntimeSemanticModelRecord],
-    ) -> dict[str, Any]:
-        semantic_model_name = str(agent.semantic_model or "").strip()
-        dataset_name = str(agent.dataset or "").strip()
-        semantic_model = semantic_models.get(semantic_model_name) if semantic_model_name else None
-        dataset = datasets.get(dataset_name) if dataset_name else None
-        if semantic_model_name and semantic_model is None:
-            raise ValueError(
-                f"Agent '{agent.name}' references unknown semantic model '{semantic_model_name}'."
-            )
-        if dataset_name and dataset is None:
-            raise ValueError(f"Agent '{agent.name}' references unknown dataset '{dataset_name}'.")
+        dataset_ids: list[str] = []
+        for dataset_name in profile.analyst_scope.datasets:
+            dataset = datasets.get(dataset_name)
+            if dataset is None:
+                raise ValueError(
+                    f"AI profile '{profile.name}' references unknown dataset '{dataset_name}'."
+                )
+            dataset_ids.append(str(dataset.id))
 
-        selected_connector_ids: list[str] = []
-        if dataset is not None and dataset.connection_id is not None:
-            selected_connector_ids.append(str(dataset.connection_id))
-        if semantic_model is not None:
-            for dataset_key in semantic_model.semantic_model.datasets.keys():
-                semantic_dataset = datasets.get(dataset_key)
-                if semantic_dataset is None or semantic_dataset.connection_id is None:
-                    continue
-                connector_id = str(semantic_dataset.connection_id)
-                if connector_id not in selected_connector_ids:
-                    selected_connector_ids.append(connector_id)
+        allowed_connectors: list[str] = []
+        for connector_name in profile.access.allowed_connectors:
+            connector = connectors.get(connector_name)
+            if connector is None:
+                raise ValueError(
+                    f"AI profile '{profile.name}' references unknown allowed connector '{connector_name}'."
+                )
+            allowed_connectors.append(str(connector.id))
 
-        tool_name_suffix = semantic_model_name or dataset_name or agent.name
-        tool_config: dict[str, list[str]]
-        tool_description: str
-        if semantic_model is not None:
-            tool_config = {"semantic_model_ids": [str(semantic_model.id)]}
-            tool_description = f"Semantic analytics access for '{semantic_model.name}'."
-        elif dataset is not None:
-            tool_config = {"dataset_ids": [str(dataset.id)]}
-            tool_description = f"Dataset analytics access for '{dataset.name}'."
-        else:
-            raise ValueError(
-                f"Agent '{agent.name}' must define definition or a shorthand semantic_model/dataset binding."
-            )
+        denied_connectors: list[str] = []
+        for connector_name in profile.access.denied_connectors:
+            connector = connectors.get(connector_name)
+            if connector is None:
+                raise ValueError(
+                    f"AI profile '{profile.name}' references unknown denied connector '{connector_name}'."
+                )
+            denied_connectors.append(str(connector.id))
 
-        system_prompt = (
-            "You are a Langbridge analytics agent. Use the configured tools "
-            "to answer questions with grounded, concise analysis."
-        )
-        user_instructions = str(agent.instructions or "").strip() or None
-        return {
-            "prompt": {
-                "system_prompt": system_prompt,
-                "user_instructions": user_instructions,
-                "style_guidance": "Keep answers concise and clearly grounded in query results.",
+        definition: dict[str, Any] = {
+            "name": profile.name,
+            "description": profile.description,
+            "default": profile.default,
+            "enabled": profile.enabled,
+            "mcp_enabled": profile.mcp_enabled,
+            "analyst_scope": {
+                "semantic_models": semantic_model_ids,
+                "datasets": dataset_ids,
+                "query_policy": profile.analyst_scope.query_policy,
+                "allow_source_scope": profile.analyst_scope.allow_source_scope,
             },
-            "memory": {
-                "strategy": "database",
+            "research_scope": profile.research_scope.model_dump(mode="json", exclude_none=True),
+            "web_search_scope": profile.web_search_scope.model_dump(mode="json", exclude_none=True),
+            "prompts": profile.prompts.model_dump(mode="json", exclude_none=True),
+            "access": {
+                "allowed_connectors": allowed_connectors,
+                "denied_connectors": denied_connectors,
             },
-            "features": {
-                "bi_copilot_enabled": False,
-                "deep_research_enabled": False,
-                "visualization_enabled": True,
-                "mcp_enabled": False,
-            },
-            "tools": [
-                {
-                    "name": f"{agent.name}_{_dataset_sql_alias(tool_name_suffix)}_sql",
-                    "tool_type": "sql",
-                    "description": tool_description,
-                    "config": tool_config,
-                }
-            ],
-            "access_policy": {
-                "allowed_connectors": selected_connector_ids,
-                "denied_connectors": [],
-            },
-            "execution": {
-                "mode": "iterative",
-                "response_mode": "analyst",
-                "max_iterations": 3,
-                "max_steps_per_iteration": 5,
-                "allow_parallel_tools": False,
-            },
-            "output": {
-                "format": "markdown",
-            },
-            "guardrails": {
-                "moderation_enabled": True,
-            },
-            "observability": {
-                "log_level": "info",
-                "emit_traces": False,
-                "capture_prompts": False,
-                "audit_fields": [],
-            },
+            "execution": profile.execution.model_dump(mode="json", exclude_none=True),
         }
+        llm_scope = profile.llm_scope
+        if llm_scope is not None:
+            definition["llm_scope"] = llm_scope.model_dump(mode="json", exclude_none=True)
+        return definition
 
-    @staticmethod
-    def _normalize_agent_definition_payload(
-        *,
-        agent: LocalRuntimeAgentConfig,
-        definition: Mapping[str, Any],
-        datasets: dict[str, DatasetMetadata],
-        connectors: dict[str, ConnectorMetadata],
-        semantic_models: dict[str, LocalRuntimeSemanticModelRecord],
-    ) -> dict[str, Any]:
-        payload = copy.deepcopy(dict(definition))
-
-        tools_payload = payload.get("tools")
-        if tools_payload is not None:
-            if not isinstance(tools_payload, list):
-                raise ValueError(f"Agent '{agent.name}' definition.tools must be a list.")
-            normalized_tools: list[dict[str, Any]] = []
-            for raw_tool in tools_payload:
-                if not isinstance(raw_tool, Mapping):
-                    raise ValueError(f"Agent '{agent.name}' definition.tools entries must be mappings.")
-                tool_payload = copy.deepcopy(dict(raw_tool))
-                if str(tool_payload.get("tool_type") or "").strip().lower() == "sql":
-                    config_payload = tool_payload.get("config") or {}
-                    if not isinstance(config_payload, Mapping):
-                        raise ValueError(
-                            f"Agent '{agent.name}' SQL tool '{tool_payload.get('name')}' must define a mapping config."
-                        )
-                    tool_payload["config"] = ConfiguredLocalRuntimeHostFactory._normalize_local_sql_tool_config(
-                        agent_name=agent.name,
-                        tool_name=str(tool_payload.get("name") or "").strip() or "sql_tool",
-                        config=dict(config_payload),
-                        datasets=datasets,
-                        semantic_models=semantic_models,
-                    )
-                normalized_tools.append(tool_payload)
-            payload["tools"] = normalized_tools
-
-        access_policy_payload = payload.get("access_policy")
-        if isinstance(access_policy_payload, Mapping):
-            normalized_access_policy = copy.deepcopy(dict(access_policy_payload))
-            for field_name in ("allowed_connectors", "denied_connectors"):
-                if field_name in normalized_access_policy:
-                    normalized_access_policy[field_name] = (
-                        ConfiguredLocalRuntimeHostFactory._normalize_local_connector_refs(
-                            agent_name=agent.name,
-                            field_name=field_name,
-                            raw_values=normalized_access_policy.get(field_name),
-                            connectors=connectors,
-                        )
-                    )
-            payload["access_policy"] = normalized_access_policy
-
-        return payload
-
-    @staticmethod
-    def _normalize_local_sql_tool_config(
-        *,
-        agent_name: str,
-        tool_name: str,
-        config: dict[str, Any],
-        datasets: dict[str, DatasetMetadata],
-        semantic_models: dict[str, LocalRuntimeSemanticModelRecord],
-    ) -> dict[str, Any]:
-        normalized = copy.deepcopy(config)
-        normalized.setdefault("dataset_ids", [])
-        normalized.setdefault("semantic_model_ids", [])
-        if "dataset_ids" in normalized:
-            normalized["dataset_ids"] = ConfiguredLocalRuntimeHostFactory._normalize_named_uuid_refs(
-                agent_name=agent_name,
-                field_name=f"tool '{tool_name}' dataset_ids",
-                raw_values=normalized.get("dataset_ids"),
-                by_name=datasets,
-                by_id={record.id: record for record in datasets.values()},
-            )
-        if "semantic_model_ids" in normalized:
-            normalized["semantic_model_ids"] = ConfiguredLocalRuntimeHostFactory._normalize_named_uuid_refs(
-                agent_name=agent_name,
-                field_name=f"tool '{tool_name}' semantic_model_ids",
-                raw_values=normalized.get("semantic_model_ids"),
-                by_name=semantic_models,
-                by_id={record.id: record for record in semantic_models.values()},
-            )
-        if "preferred_dataset_id" in normalized and normalized.get("preferred_dataset_id") is not None:
-            preferred_dataset_ids = ConfiguredLocalRuntimeHostFactory._normalize_named_uuid_refs(
-                agent_name=agent_name,
-                field_name=f"tool '{tool_name}' preferred_dataset_id",
-                raw_values=[normalized.get("preferred_dataset_id")],
-                by_name=datasets,
-                by_id={record.id: record for record in datasets.values()},
-            )
-            normalized["preferred_dataset_id"] = (
-                preferred_dataset_ids[0]
-                if preferred_dataset_ids
-                else None
-            )
-        if (
-            "preferred_semantic_model_id" in normalized
-            and normalized.get("preferred_semantic_model_id") is not None
-        ):
-            preferred_semantic_model_ids = ConfiguredLocalRuntimeHostFactory._normalize_named_uuid_refs(
-                agent_name=agent_name,
-                field_name=f"tool '{tool_name}' preferred_semantic_model_id",
-                raw_values=[normalized.get("preferred_semantic_model_id")],
-                by_name=semantic_models,
-                by_id={record.id: record for record in semantic_models.values()},
-            )
-            normalized["preferred_semantic_model_id"] = (
-                preferred_semantic_model_ids[0]
-                if preferred_semantic_model_ids
-                else None
-            )
-        return normalized
-
-    @staticmethod
-    def _normalize_local_connector_refs(
-        *,
-        agent_name: str,
-        field_name: str,
-        raw_values: Any,
-        connectors: dict[str, ConnectorMetadata],
-    ) -> list[str]:
-        return ConfiguredLocalRuntimeHostFactory._normalize_named_uuid_refs(
-            agent_name=agent_name,
-            field_name=field_name,
-            raw_values=raw_values,
-            by_name=connectors,
-            by_id={record.id: record for record in connectors.values()},
-        )
-
-    @staticmethod
-    def _normalize_named_uuid_refs(
-        *,
-        agent_name: str,
-        field_name: str,
-        raw_values: Any,
-        by_name: Mapping[str, Any],
-        by_id: Mapping[uuid.UUID, Any],
-    ) -> list[str]:
-        if raw_values is None:
-            return []
-        if not isinstance(raw_values, list):
-            raise ValueError(f"Agent '{agent_name}' {field_name} must be a list.")
-
-        normalized_values: list[str] = []
-        for raw_value in raw_values:
-            normalized_ref = str(raw_value or "").strip()
-            if not normalized_ref:
-                raise ValueError(f"Agent '{agent_name}' {field_name} must not contain empty values.")
-            resolved_id: uuid.UUID | None = None
-            try:
-                candidate_id = uuid.UUID(normalized_ref)
-            except (TypeError, ValueError):
-                candidate_id = None
-            if candidate_id is not None:
-                if candidate_id not in by_id:
-                    raise ValueError(
-                        f"Agent '{agent_name}' {field_name} references unknown id '{normalized_ref}'."
-                    )
-                resolved_id = candidate_id
-            else:
-                referenced_item = by_name.get(normalized_ref)
-                if referenced_item is None:
-                    raise ValueError(
-                        f"Agent '{agent_name}' {field_name} references unknown name '{normalized_ref}'."
-                    )
-                resolved_id = referenced_item.id
-            resolved_id_str = str(resolved_id)
-            if resolved_id_str not in normalized_values:
-                normalized_values.append(resolved_id_str)
-        return normalized_values
 
     @staticmethod
     def _build_file_dataset_bootstrap_columns(
@@ -3354,6 +3364,14 @@ class ConfiguredLocalRuntimeHostFactory:
                 thread_repository=thread_repository,
                 thread_message_repository=thread_message_repository,
                 memory_repository=memory_repository,
+                semantic_model_store=semantic_model_store,
+                dataset_repository=dataset_repository,
+                dataset_column_repository=dataset_column_repository,
+                federated_query_tool=federated_query_tool,
+                semantic_vector_search_service=semantic_vector_search_service,
+                semantic_query_service=semantic_query_service,
+                semantic_sql_service=semantic_sql_query_service,
+                embedding_provider=default_embedding_provider,
             )
             if agents
             else None

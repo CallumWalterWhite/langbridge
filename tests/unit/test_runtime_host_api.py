@@ -111,39 +111,22 @@ llm_connections:
     model: gpt-4o-mini
     api_key: test-key
     default: true
-agents:
-  - name: commerce_analyst
-    llm_connection: local_openai
-    default: true
-    definition:
-      prompt:
-        system_prompt: You are a commerce analytics agent.
-      memory:
-        strategy: database
-      features:
-        bi_copilot_enabled: false
-        deep_research_enabled: false
-        visualization_enabled: true
-        mcp_enabled: false
-      tools:
-        - name: commerce_semantic_sql
-          tool_type: sql
-          config:
-            semantic_model_ids: [commerce_performance]
-      access_policy:
+ai:
+  profiles:
+    - name: commerce_analyst
+      default: true
+      scope:
+        semantic_models: [commerce_performance]
+        query_policy: semantic_only
+      llm:
+        llm_connection: local_openai
+      prompts:
+        system: You are a commerce analytics agent.
+      access:
         allowed_connectors: [commerce_demo]
         denied_connectors: []
       execution:
-        mode: iterative
-        response_mode: analyst
         max_iterations: 3
-        max_steps_per_iteration: 5
-        allow_parallel_tools: false
-      output:
-        format: markdown
-      guardrails:
-        moderation_enabled: true
-      observability:
         log_level: info
         emit_traces: false
         capture_prompts: false
@@ -907,6 +890,88 @@ def test_runtime_host_api_streams_access_denied_and_persists_canonical_message(t
     assert messages.json()["items"][1]["content"]["summary"] == "Access denied summary."
 
 
+def test_runtime_host_api_streams_specific_clarification_question(tmp_path: Path) -> None:
+    runtime = _build_runtime(tmp_path)
+    app = _create_runtime_app(runtime)
+    client = TestClient(app)
+
+    clarification_question = (
+        "Which time period should I use, and should I rank product categories by total gross "
+        "margin dollars or by gross margin percentage?"
+    )
+
+    async def _clarification_execute(*, job_id, request, event_emitter=None):
+        thread = await runtime._thread_repository.get_by_id(request.thread_id)
+        assert thread is not None
+        assistant_message = RuntimeThreadMessage(
+            id=uuid.uuid4(),
+            thread_id=request.thread_id,
+            parent_message_id=thread.last_message_id,
+            role=RuntimeMessageRole.assistant,
+            content={
+                "summary": "I need one clarification before I can answer.",
+                "answer": clarification_question,
+                "result": {},
+                "visualization": None,
+                "diagnostics": {
+                    "ai_run": {
+                        "mode": "clarification",
+                        "route": "clarification",
+                    },
+                    "clarifying_question": clarification_question,
+                },
+            },
+            created_at=datetime.now(timezone.utc),
+        )
+        runtime._thread_message_repository.add(assistant_message)
+        thread.last_message_id = assistant_message.id
+        thread.state = "awaiting_user_input"
+        _clear_active_run_metadata(thread)
+        await runtime._thread_repository.save(thread)
+        return SimpleNamespace(
+            response={
+                "summary": "I need one clarification before I can answer.",
+                "answer": clarification_question,
+                "result": {},
+                "visualization": None,
+                "error": None,
+                "diagnostics": {
+                    "ai_run": {
+                        "mode": "clarification",
+                        "route": "clarification",
+                    },
+                    "clarifying_question": clarification_question,
+                },
+            },
+            assistant_message=assistant_message,
+        )
+
+    runtime._runtime_host.services.agent_execution.execute = _clarification_execute  # type: ignore[assignment]
+
+    with client.stream(
+        "POST",
+        "/api/runtime/v1/agents/ask/stream",
+        json={
+            "message": "Rank product categories by margin",
+            "agent_name": "commerce_analyst",
+        },
+    ) as response:
+        body = "".join(response.iter_text())
+
+    assert response.status_code == 200
+    payloads = _extract_sse_payloads(body)
+    assert payloads[-1]["event"] == "run.completed"
+    assert payloads[-1]["stage"] == "clarification"
+    assert payloads[-1]["message"] == clarification_question
+    assert payloads[-1]["details"]["clarifying_question"] == clarification_question
+
+    thread_id = payloads[-1]["thread_id"]
+    messages = client.get(f"/api/runtime/v1/threads/{thread_id}/messages")
+    assert messages.status_code == 200
+    assert messages.json()["items"][1]["content"]["summary"] == "I need one clarification before I can answer."
+    assert messages.json()["items"][1]["content"]["answer"] == clarification_question
+
+
 def test_runtime_host_api_executes_joined_semantic_query_with_runtime_response_shape(tmp_path: Path) -> None:
     runtime = _build_runtime_with_relational_semantic_models(tmp_path)
     app = _create_runtime_app(runtime)
@@ -1425,7 +1490,12 @@ def test_runtime_host_api_does_not_serve_ui_by_default(tmp_path: Path) -> None:
     assert shell.status_code == 404
 
     summary = client.get("/api/runtime/ui/v1/summary")
-    assert summary.status_code == 404
+    assert summary.status_code == 200
+    payload = summary.json()
+    assert payload["health"]["status"] == "ok"
+    assert "ui" not in payload["features"]
+    assert payload["counts"]["datasets"] == 1
+    assert payload["counts"]["connectors"] == 1
 
 
 def test_remote_sdk_can_use_runtime_host_api(tmp_path: Path) -> None:
@@ -1580,17 +1650,32 @@ def test_runtime_host_api_supports_dataset_owned_sync_for_declared_synced_datase
         datasets_before = client.get("/api/runtime/v1/datasets")
         assert datasets_before.status_code == 200
         assert datasets_before.json()["items"] == [
-                {
-                    "id": str(runtime._datasets["billing_customers"].id),
-                    "name": "billing_customers",
-                    "label": runtime._datasets["billing_customers"].label,
-                "description": "Configured synced dataset awaiting dataset sync for resource path 'customers'.",
+            {
+                "id": str(runtime._datasets["billing_customers"].id),
+                "name": "billing_customers",
+                "label": runtime._datasets["billing_customers"].label,
+                "description": "Configured synced dataset awaiting dataset sync for resource 'customers'.",
                 "connector": "billing_demo",
+                "semantic_models": [],
                 "semantic_model": None,
+                "materialization": {
+                    "mode": "synced",
+                    "sync": {
+                        "strategy": "INCREMENTAL",
+                        "sync_on_start": False,
+                    },
+                },
                 "materialization_mode": "synced",
-                "source": None,
+                "source": {
+                    "kind": "resource",
+                    "resource": "customers",
+                },
+                "schema_hint": None,
                 "sync": {
-                    "source": {"resource": "customers"},
+                    "source": {
+                        "kind": "resource",
+                        "resource": "customers",
+                    },
                     "strategy": "INCREMENTAL",
                     "sync_on_start": False,
                 },
@@ -1610,7 +1695,10 @@ def test_runtime_host_api_supports_dataset_owned_sync_for_declared_synced_datase
         assert dataset_sync_before.status_code == 200
         assert dataset_sync_before.json()["dataset_name"] == "billing_customers"
         assert dataset_sync_before.json()["source_key"] == "resource:customers"
-        assert dataset_sync_before.json()["source"] == {"resource": "customers"}
+        assert dataset_sync_before.json()["source"] == {
+            "kind": "resource",
+            "resource": "customers",
+        }
         assert dataset_sync_before.json()["sync_state"]["status"] == "never_synced"
 
         preview_before = client.post(
@@ -1620,7 +1708,7 @@ def test_runtime_host_api_supports_dataset_owned_sync_for_declared_synced_datase
         assert preview_before.status_code == 400
         assert preview_before.json()["detail"] == (
             "Synced dataset 'billing_customers' has not been populated yet. "
-            "Run dataset sync for dataset 'billing_customers' (resource path 'customers') before querying it."
+            "Run dataset sync for dataset 'billing_customers' (resource 'customers') before querying it."
         )
 
         resources = client.get("/api/runtime/v1/connectors/billing_demo/sync/resources")
@@ -1715,8 +1803,14 @@ def test_runtime_host_api_runs_dataset_sync_on_startup_when_requested(tmp_path: 
             assert task.schedule is None
             assert task.run_on_startup is True
 
-            dataset_sync = client.get("/api/runtime/v1/datasets/billing_customers/sync")
-            assert dataset_sync.status_code == 200
+            dataset_sync = None
+            for _ in range(20):
+                dataset_sync = client.get("/api/runtime/v1/datasets/billing_customers/sync")
+                assert dataset_sync.status_code == 200
+                if dataset_sync.json()["sync_state"]["status"] == "succeeded":
+                    break
+                time.sleep(0.1)
+            assert dataset_sync is not None
             assert dataset_sync.json()["sync_state"]["status"] == "succeeded"
 
             dataset_detail = client.get("/api/runtime/v1/datasets/billing_customers")

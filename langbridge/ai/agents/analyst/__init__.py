@@ -1,4 +1,4 @@
 from langbridge.ai.agents.analyst.analyst import AnalystAgent, SemanticAnalystAgent
-from langbridge.ai.profiles import AnalystAgentScope
+from langbridge.ai.profiles import AnalystAgentConfig
 
-__all__ = ["AnalystAgent", "AnalystAgentScope", "SemanticAnalystAgent"]
+__all__ = ["AnalystAgent", "AnalystAgentConfig", "SemanticAnalystAgent"]

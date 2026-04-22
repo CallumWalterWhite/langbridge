@@ -1,14 +1,17 @@
 """
 Protocol and data model definitions for layered analytical tooling.
 """
-
 from enum import Enum
 from typing import Any, Literal, Protocol, Sequence
 
 from pydantic import BaseModel, Field, model_validator
-
-from langbridge.runtime.models import SqlQueryScope
 from langbridge.semantic.model import SemanticModel
+
+
+class SqlQueryScope(str, Enum):
+    semantic = "semantic"
+    dataset = "dataset"
+    source = "source"
 
 
 class ConnectorQueryResult(Protocol):

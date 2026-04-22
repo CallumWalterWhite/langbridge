@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 import logging
 from pathlib import Path
 from typing import Any, Mapping
+from urllib.parse import urlencode
 
 import pyarrow as pa
 import pyarrow.parquet as pq
@@ -36,16 +37,17 @@ from langbridge.runtime.utils.datasets import (
 )
 from langbridge.connectors.base.connector import ApiResource
 from langbridge.connectors.base.config import ConnectorRuntimeType, ConnectorSyncStrategy
+from langbridge.runtime.datasets.contracts import DatasetSyncPolicy
 from langbridge.runtime.models import (
     ConnectorSyncState,
     DatasetColumnMetadata,
+    DatasetMaterializationConfig,
     DatasetMaterializationMode,
     DatasetMetadata,
     DatasetPolicyMetadata,
     DatasetStatus,
     DatasetType,
     DatasetRevision,
-    DatasetSyncConfig,
     LineageEdge,
 )
 from langbridge.runtime.ports import (
@@ -163,16 +165,21 @@ class ConnectorSyncRuntime:
 
     @staticmethod
     def _sync_source(dataset: DatasetMetadata) -> DatasetSource:
+        source = dataset.source_json
+        if isinstance(source, dict) and source:
+            return DatasetSource.model_validate(source)
         sync_meta = dict(dataset.sync_json or {})
-        source = sync_meta.get("source")
-        if not isinstance(source, dict) or not source:
-            raise ValueError(f"Dataset '{dataset.name}' is missing sync.source.")
-        return DatasetSource.model_validate(source)
+        legacy_source = sync_meta.get("source")
+        if isinstance(legacy_source, dict) and legacy_source:
+            return DatasetSource.model_validate(legacy_source)
+        raise ValueError(f"Dataset '{dataset.name}' is missing source.")
 
     @staticmethod
     def _sync_source_key(source: DatasetSource) -> str:
         if source.resource:
             return f"resource:{str(source.resource).strip()}"
+        if source.request:
+            return f"request:{ConnectorSyncRuntime._request_signature(source)}"
         if source.table:
             return f"table:{str(source.table).strip()}"
         if source.sql:
@@ -183,7 +190,7 @@ class ConnectorSyncRuntime:
 
     @staticmethod
     def _sync_source_kind(source: DatasetSource) -> DatasetSourceKind:
-        if source.resource:
+        if source.resource or source.request:
             return DatasetSourceKind.API
         if source.table or source.sql:
             return DatasetSourceKind.DATABASE
@@ -199,6 +206,8 @@ class ConnectorSyncRuntime:
     def _sync_source_label(source: DatasetSource) -> str:
         if source.resource:
             return f"resource path '{str(source.resource).strip()}'"
+        if source.request:
+            return f"request '{ConnectorSyncRuntime._request_display_path(source)}'"
         if source.table:
             return f"table '{str(source.table).strip()}'"
         if source.sql:
@@ -206,6 +215,39 @@ class ConnectorSyncRuntime:
         if source.storage_uri:
             return f"storage source '{str(source.storage_uri).strip()}'"
         return "sync source"
+
+    @staticmethod
+    def _request_display_path(source: DatasetSource) -> str:
+        request = source.request
+        if request is None:
+            return ""
+        path = str(request.path or "").strip()
+        if not path:
+            return ""
+        params = dict(request.params or {})
+        if not params:
+            return path
+        return f"{path}?{urlencode(sorted((str(key), value) for key, value in params.items()), doseq=True)}"
+
+    @staticmethod
+    def _request_signature(source: DatasetSource) -> str:
+        request = source.request
+        if request is None:
+            return ""
+        payload = request.model_dump(mode="json", exclude_none=True)
+        if source.extraction is not None:
+            payload["extraction"] = source.extraction.model_dump(mode="json", exclude_none=True)
+        return stable_payload_hash(payload)
+
+    @staticmethod
+    def _request_resource_path(source: DatasetSource) -> str:
+        request = source.request
+        if request is None:
+            raise ValueError("Dataset request source is missing request config.")
+        path = str(request.path or "").strip().split("?", 1)[0].strip("/")
+        if not path:
+            return "request"
+        return ".".join(segment for segment in path.split("/") if segment)
 
     def _build_api_connector(self, connector_record: ConnectorMetadata) -> ApiConnector:
         if connector_record.connector_type is None:
@@ -316,49 +358,85 @@ class ConnectorSyncRuntime:
         state.source = source_payload
         await self._connector_sync_state_repository.save(state)
 
-        if sync_source.resource:
+        if sync_source.resource or sync_source.request:
             api_connector = self._build_api_connector(connector_record)
-            await api_connector.test_connection()
-            resource_path = normalize_api_resource_path(str(sync_source.resource).strip())
-            resolved_resource = await self._resolve_api_root_resource(
-                dataset=dataset,
-                connector=connector_record,
-                api_connector=api_connector,
-                resource_name=api_resource_root(resource_path),
-            )
-            effective_sync_mode = normalized_sync_mode
-            if normalized_sync_mode == ConnectorSyncMode.INCREMENTAL and not resolved_resource.supports_incremental:
-                effective_sync_mode = ConnectorSyncMode.FULL_REFRESH
-
-            since = None
-            if effective_sync_mode == ConnectorSyncMode.INCREMENTAL and resolved_resource.supports_incremental:
-                since = state.last_cursor
-
-            page_cursor: str | None = None
             page_count = 0
             extracted_records: list[dict[str, Any]] = []
             checkpoint_cursor = state.last_cursor
-            for _ in range(max_sync_retry):
-                extract_result = await api_connector.extract_resource(
-                    resolved_resource.name,
-                    since=since,
-                    cursor=page_cursor,
+            if sync_source.resource:
+                await api_connector.test_connection()
+                resource_path = normalize_api_resource_path(str(sync_source.resource).strip())
+                resolved_resource = await self._resolve_api_root_resource(
+                    dataset=dataset,
+                    connector=connector_record,
+                    api_connector=api_connector,
+                    resource_name=api_resource_root(resource_path),
+                )
+                effective_sync_mode = normalized_sync_mode
+                if (
+                    normalized_sync_mode == ConnectorSyncMode.INCREMENTAL
+                    and not resolved_resource.supports_incremental
+                ):
+                    effective_sync_mode = ConnectorSyncMode.FULL_REFRESH
+
+                since = None
+                if (
+                    effective_sync_mode == ConnectorSyncMode.INCREMENTAL
+                    and resolved_resource.supports_incremental
+                ):
+                    since = state.last_cursor
+
+                page_cursor: str | None = None
+                for _ in range(max_sync_retry):
+                    extract_result = await api_connector.extract_resource(
+                        resolved_resource.name,
+                        since=since,
+                        cursor=page_cursor,
+                        limit=None,
+                    )
+                    extracted_records.extend(list(extract_result.records or []))
+                    checkpoint_cursor = self._pick_newer_cursor(
+                        checkpoint_cursor, extract_result.checkpoint_cursor
+                    )
+                    page_count += 1
+                    page_cursor = extract_result.next_cursor
+                    if not page_cursor:
+                        break
+                root_resource_name = resolved_resource.name
+                root_primary_key = resolved_resource.primary_key
+                supports_incremental = resolved_resource.supports_incremental
+            else:
+                resource_path = normalize_api_resource_path(self._request_resource_path(sync_source))
+                extract_result = await api_connector.extract_request(
+                    sync_source.request.model_dump(mode="json", exclude_none=True),  # type: ignore[union-attr]
+                    since=(
+                        state.last_cursor
+                        if normalized_sync_mode == ConnectorSyncMode.INCREMENTAL
+                        else None
+                    ),
+                    cursor=None,
                     limit=None,
+                    extraction=(
+                        sync_source.extraction.model_dump(mode="json", exclude_none=True)
+                        if sync_source.extraction is not None
+                        else None
+                    ),
                 )
                 extracted_records.extend(list(extract_result.records or []))
                 checkpoint_cursor = self._pick_newer_cursor(
                     checkpoint_cursor, extract_result.checkpoint_cursor
                 )
                 page_count += 1
-                page_cursor = extract_result.next_cursor
-                if not page_cursor:
-                    break
+                effective_sync_mode = ConnectorSyncMode.FULL_REFRESH
+                root_resource_name = api_resource_root(resource_path)
+                root_primary_key = None
+                supports_incremental = False
 
             now = datetime.now(timezone.utc)
             materialized_rows = materialize_api_resource_rows(
                 resource_path=resource_path,
                 records=extracted_records,
-                primary_key=resolved_resource.primary_key,
+                primary_key=root_primary_key,
                 flatten=source_payload.get("flatten"),
             )
             materialized = await self._materialize_existing_dataset(
@@ -372,8 +450,8 @@ class ConnectorSyncRuntime:
                 rows=materialized_rows.rows,
                 primary_key=self._materialization_primary_key(
                     resource_path=resource_path,
-                    root_resource_name=resolved_resource.name,
-                    root_primary_key=resolved_resource.primary_key,
+                    root_resource_name=root_resource_name,
+                    root_primary_key=root_primary_key,
                     rows=materialized_rows.rows,
                 ),
                 sync_mode=effective_sync_mode,
@@ -383,7 +461,7 @@ class ConnectorSyncRuntime:
             state.last_cursor = (
                 checkpoint_cursor
                 if effective_sync_mode == ConnectorSyncMode.INCREMENTAL
-                and resolved_resource.supports_incremental
+                and supports_incremental
                 else state.last_cursor
             )
             state.last_sync_at = now
@@ -394,7 +472,7 @@ class ConnectorSyncRuntime:
             state.state = {
                 "page_count": page_count,
                 "resource_path": resource_path,
-                "root_resource_name": resolved_resource.name,
+                "root_resource_name": root_resource_name,
                 "dataset_id": str(materialized.dataset_id),
                 "dataset_name": materialized.dataset_name,
                 "cardinality": materialized_rows.cardinality.value,
@@ -418,7 +496,7 @@ class ConnectorSyncRuntime:
                 "source_key": source_key,
                 "source": source_payload,
                 "resource_name": resource_path,
-                "root_resource_name": resolved_resource.name,
+                "root_resource_name": root_resource_name,
                 "sync_mode": _enum_value(effective_sync_mode),
                 "records_synced": int(state.records_synced or 0),
                 "bytes_synced": materialized.bytes_written,
@@ -512,7 +590,7 @@ class ConnectorSyncRuntime:
 
         raise ValueError(
             f"Dataset '{dataset.name}' uses unsupported sync.source shape. "
-            "Supported synced sources are resource, table, and sql."
+            "Supported synced sources are resource, request, table, and sql."
         )
 
     async def mark_failed(self, *, state: ConnectorSyncState, error_message: str) -> None:
@@ -577,18 +655,19 @@ class ConnectorSyncRuntime:
             required=self._dataset_tags(connector_type=connector_type, source=sync_source),
         )
         dataset.dataset_type = DatasetType.FILE
-        dataset.materialization_mode = DatasetMaterializationMode.SYNCED
-        dataset.source = None
-        dataset.sync = DatasetSyncConfig(
-            source=self._sync_source_payload(sync_source),
-            strategy=existing_sync.strategy or ConnectorSyncStrategy(_enum_value(normalized_sync_mode)),
-            cadence=existing_sync.cadence,
-            sync_on_start=bool(existing_sync.sync_on_start),
-            cursor_field=existing_sync.cursor_field,
-            initial_cursor=existing_sync.initial_cursor,
-            lookback_window=existing_sync.lookback_window,
-            backfill_start=existing_sync.backfill_start,
-            backfill_end=existing_sync.backfill_end,
+        dataset.source = DatasetSource.model_validate(sync_source.model_dump(mode="json", exclude_none=True))
+        dataset.materialization = DatasetMaterializationConfig(
+            mode=DatasetMaterializationMode.SYNCED,
+            sync=DatasetSyncPolicy(
+                strategy=existing_sync.strategy or ConnectorSyncStrategy(_enum_value(normalized_sync_mode)),
+                cadence=existing_sync.cadence,
+                sync_on_start=bool(existing_sync.sync_on_start),
+                cursor_field=existing_sync.cursor_field,
+                initial_cursor=existing_sync.initial_cursor,
+                lookback_window=existing_sync.lookback_window,
+                backfill_start=existing_sync.backfill_start,
+                backfill_end=existing_sync.backfill_end,
+            ),
         )
         dataset.source_kind = self._sync_source_kind(sync_source)
         dataset.connector_kind = connector_type.value.lower()
@@ -769,6 +848,8 @@ class ConnectorSyncRuntime:
                 )
             )
         resource_name = str(sync_source.get("resource") or "").strip()
+        request_payload = sync_source.get("request")
+        request_path = str(request_payload.get("path") or "").strip() if isinstance(request_payload, dict) else ""
         table_name = str(sync_source.get("table") or "").strip()
         if dataset.connection_id is not None and resource_name:
             edges.append(
@@ -786,6 +867,27 @@ class ConnectorSyncRuntime:
                         "connection_id": str(dataset.connection_id),
                         "resource_name": resource_name,
                         "source": sync_source,
+                        "strategy": sync_meta.get("strategy"),
+                        "cadence": sync_meta.get("cadence"),
+                    },
+                )
+            )
+        if dataset.connection_id is not None and request_path:
+            edges.append(
+                LineageEdge(
+                    workspace_id=dataset.workspace_id,
+                    source_type=LineageNodeType.API_RESOURCE.value,
+                    source_id=build_api_resource_id(
+                        connection_id=dataset.connection_id,
+                        resource_name=f"request:{request_path}",
+                    ),
+                    target_type=LineageNodeType.DATASET.value,
+                    target_id=str(dataset.id),
+                    edge_type=LineageEdgeType.MATERIALIZES_FROM.value,
+                    metadata={
+                        "connection_id": str(dataset.connection_id),
+                        "request": request_payload,
+                        "extraction": sync_source.get("extraction"),
                         "strategy": sync_meta.get("strategy"),
                         "cadence": sync_meta.get("cadence"),
                     },
@@ -928,6 +1030,8 @@ class ConnectorSyncRuntime:
             source_binding_type = "sync_source"
             if sync_source.get("resource"):
                 source_binding_type = "api_resource"
+            elif sync_source.get("request"):
+                source_binding_type = "api_request"
             elif sync_source.get("table"):
                 source_binding_type = "source_table"
             elif sync_source.get("sql"):
@@ -1024,6 +1128,13 @@ class ConnectorSyncRuntime:
                 "api-connector",
                 connector_type.value.lower(),
                 f"resource:{str(source.resource).strip().lower()}",
+                "managed",
+            ]
+        if source.request:
+            return [
+                "api-connector",
+                connector_type.value.lower(),
+                "request-sync",
                 "managed",
             ]
         if source.table:

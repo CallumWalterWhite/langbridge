@@ -1,7 +1,4 @@
 """Final response presentation agent for Langbridge AI."""
-
-from __future__ import annotations
-
 import json
 from typing import Any
 
@@ -16,14 +13,23 @@ from langbridge.ai.base import (
     AgentToolSpecification,
     BaseAgent,
 )
+from langbridge.ai.events import AIEventEmitter, AIEventSource
 from langbridge.ai.llm.base import LLMProvider
+from langbridge.ai.agents.presentation.prompts import build_presentation_prompt
 from langbridge.ai.tools.charting import ChartSpec, ChartingTool
 
 
-class PresentationAgent(BaseAgent):
+class PresentationAgent(AIEventSource, BaseAgent):
     """Composes final user-facing responses from verified outputs."""
 
-    def __init__(self, *, llm_provider: LLMProvider, charting_tool: ChartingTool | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        llm_provider: LLMProvider,
+        charting_tool: ChartingTool | None = None,
+        event_emitter: AIEventEmitter | None = None,
+    ) -> None:
+        super().__init__(event_emitter=event_emitter)
         self._llm = llm_provider
         self._charting_tool = charting_tool
 
@@ -32,7 +38,7 @@ class PresentationAgent(BaseAgent):
         return AgentSpecification(
             name="presentation",
             description="Composes final user-facing responses from verified agent outputs.",
-            task_kinds=[AgentTaskKind.presentation, AgentTaskKind.response],
+            task_kinds=[AgentTaskKind.presentation],
             capabilities=["compose final response", "summarize tables", "render research", "request charts"],
             constraints=["Does not perform source execution directly."],
             routing=AgentRoutingSpec(keywords=["present", "response", "chart"], direct_threshold=99),
@@ -60,23 +66,25 @@ class PresentationAgent(BaseAgent):
         )
 
     async def compose(self, *, question: str, context: dict[str, Any], mode: str = "final") -> dict[str, Any]:
+        await self._emit_ai_event(
+            event_type="PresentationCompositionStarted",
+            message="Composing final answer.",
+            source="presentation",
+            details={"mode": mode},
+        )
         step_results = [item for item in context.get("step_results", []) if isinstance(item, dict)]
         data_payload = self._find_data_payload(step_results)
         research_payload = self._find_key_payload(step_results, "synthesis")
         answer_payload = self._find_key_payload(step_results, "answer")
         visualization = await self._maybe_chart(question=question, data_payload=data_payload)
-        prompt = (
-            "Compose the final Langbridge response.\n"
-            "Return STRICT JSON only with keys: summary, result, visualization, research, answer, diagnostics.\n"
-            "Do not invent facts beyond provided step outputs/context.\n"
-            f"Mode: {mode}\n"
-            f"Question: {question}\n"
-            f"Context error: {context.get('error') or ''}\n"
-            f"Clarification: {context.get('clarification_question') or ''}\n"
-            f"Data: {json.dumps(data_payload or {}, default=str)}\n"
-            f"Research: {json.dumps(research_payload or {}, default=str)}\n"
-            f"Answer: {json.dumps(answer_payload or {}, default=str)}\n"
-            f"Visualization: {json.dumps(visualization.model_dump(mode='json') if visualization else None, default=str)}\n"
+        prompt = build_presentation_prompt(
+            question=question,
+            mode=mode,
+            context=context,
+            data_payload=data_payload,
+            research_payload=research_payload,
+            answer_payload=answer_payload,
+            visualization=visualization,
         )
         parsed = self._parse_json_object(await self._llm.acomplete(prompt, temperature=0.0, max_tokens=1000))
         response = {
@@ -91,6 +99,12 @@ class PresentationAgent(BaseAgent):
         }
         if not response["summary"]:
             raise ValueError("Presentation LLM response missing summary.")
+        await self._emit_ai_event(
+            event_type="PresentationCompositionCompleted",
+            message="Answer composed.",
+            source="presentation",
+            details={"has_visualization": isinstance(response.get("visualization"), dict)},
+        )
         return response
 
     async def _maybe_chart(

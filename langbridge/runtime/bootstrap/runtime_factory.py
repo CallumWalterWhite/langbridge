@@ -92,6 +92,7 @@ from langbridge.runtime.services.runtime_host import (
 from langbridge.runtime.services.semantic_query_execution_service import (
     SemanticQueryExecutionService,
 )
+from langbridge.runtime.services.semantic_sql_query_service import SemanticSqlQueryService
 from langbridge.runtime.services.semantic_vector_search_service import (
     SemanticVectorSearchService,
 )
@@ -323,6 +324,7 @@ def build_local_runtime(
         )
         else None
     )
+    semantic_sql_query_service = SemanticSqlQueryService()
     agent_execution_service_v2 = (
         AgentExecutionServiceV2(
             agent_definition_repository=agent_definition_store,
@@ -330,6 +332,13 @@ def build_local_runtime(
             thread_repository=thread_store,
             thread_message_repository=thread_message_store,
             memory_repository=runtime_memory_store,
+            semantic_model_store=runtime_semantic_model_store,
+            dataset_repository=dataset_store,
+            dataset_column_repository=dataset_column_store,
+            federated_query_tool=federated_query_tool,
+            semantic_vector_search_service=semantic_vector_search_service,
+            semantic_query_service=semantic_query_service,
+            semantic_sql_service=semantic_sql_query_service,
         )
         if (
             agent_definition_store is not None
@@ -359,6 +368,7 @@ def build_local_runtime(
             agent_execution=agent_execution_service_v2,
             agent_execution_v1=agent_execution_service_v1,
             agent_execution_v2=agent_execution_service_v2,
+            semantic_sql_query=semantic_sql_query_service,
         ),
     )
 

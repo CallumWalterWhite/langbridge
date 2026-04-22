@@ -1,12 +1,12 @@
 """Provider-backed web search tool for Langbridge AI."""
 
-from __future__ import annotations
-
 import html
 import re
 from dataclasses import dataclass
 from typing import Any, Iterable, Protocol
 from urllib.parse import parse_qs, unquote, urljoin, urlparse
+
+from langbridge.ai.events import AIEventEmitter, AIEventSource
 
 try:  # pragma: no cover - exercised only when dependency is absent
     import httpx
@@ -414,10 +414,17 @@ def create_web_search_provider(name: str | None = None) -> WebSearchProvider:
     raise ValueError(f"Unsupported web search provider: {name}")
 
 
-class WebSearchTool:
+class WebSearchTool(AIEventSource):
     """Runs web search through a configured provider and enforces source policy."""
 
-    def __init__(self, *, provider: WebSearchProvider, policy: WebSearchPolicy | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        provider: WebSearchProvider,
+        policy: WebSearchPolicy | None = None,
+        event_emitter: AIEventEmitter | None = None,
+    ) -> None:
+        super().__init__(event_emitter=event_emitter)
         self._provider = provider
         self._policy = policy or WebSearchPolicy(allowed_domains=[], denied_domains=[])
 
@@ -427,6 +434,16 @@ class WebSearchTool:
 
     async def search(self, query: str) -> WebSearchResult:
         focused_query = self._focused_query(query)
+        await self._emit_ai_event(
+            event_type="WebSearchStarted",
+            message="Searching allowed web sources.",
+            source="web-search",
+            details={
+                "provider": self.provider_name,
+                "max_results": self._policy.max_results,
+                "allowed_domains": list(self._policy.allowed_domains),
+            },
+        )
         raw_items = await self._provider.search_async(
             focused_query,
             max_results=self._policy.max_results,
@@ -435,6 +452,16 @@ class WebSearchTool:
             timebox_seconds=self._policy.timebox_seconds,
         )
         filtered, warnings = self._filter_items(raw_items)
+        await self._emit_ai_event(
+            event_type="WebSearchCompleted",
+            message=f"Web search returned {len(filtered)} allowed result(s).",
+            source="web-search",
+            details={
+                "provider": self.provider_name,
+                "result_count": len(filtered),
+                "warning_count": len(warnings),
+            },
+        )
         return WebSearchResult(
             query=focused_query,
             provider=self.provider_name,

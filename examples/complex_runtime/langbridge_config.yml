@@ -37,11 +37,11 @@ datasets:
     label: Sales Orders
     description: Order-level commerce facts for revenue, refunds, channel mix, and margin analysis.
     connector: commerce_warehouse
-    materialization_mode: live
-    semantic_model: commerce_performance
-    default_time_dimension: order_date
+    materialization:
+      mode: live
     tags: [commerce, revenue, finance]
     source:
+      kind: sql
       sql: |
         SELECT
           o.order_id,
@@ -69,49 +69,49 @@ datasets:
     label: Order Line Items
     description: Product-level line item facts with product hierarchy and realized margin.
     connector: commerce_warehouse
-    materialization_mode: synced
-    semantic_model: commerce_performance
-    default_time_dimension: order_date
+    source:
+      kind: sql
+      sql: |
+        SELECT
+          li.line_id,
+          li.line_id AS id,
+          li.order_id,
+          o.order_date,
+          date(substr(o.order_date, 1, 7) || '-01') AS order_month,
+          o.customer_id,
+          o.order_channel,
+          p.product_sku,
+          p.product_name,
+          p.category,
+          p.subcategory,
+          li.quantity,
+          li.unit_price,
+          li.net_line_revenue,
+          li.line_margin
+        FROM order_items AS li
+        JOIN orders AS o
+          ON o.order_id = li.order_id
+        JOIN products AS p
+          ON p.product_sku = li.product_sku
+    materialization:
+      mode: synced
+      sync:
+        strategy: INCREMENTAL
+        cursor_field: order_date
+        initial_cursor: "2025-01-01"
+        sync_on_start: true
+        cadence: 1h
     tags: [commerce, product]
-    sync:
-      strategy: INCREMENTAL
-      cursor_field: order_date
-      initial_cursor: "2025-01-01"
-      sync_on_start: true
-      cadence: 1h
-      source:
-        sql: |
-          SELECT
-            li.line_id,
-            li.line_id AS id,
-            li.order_id,
-            o.order_date,
-            date(substr(o.order_date, 1, 7) || '-01') AS order_month,
-            o.customer_id,
-            o.order_channel,
-            p.product_sku,
-            p.product_name,
-            p.category,
-            p.subcategory,
-            li.quantity,
-            li.unit_price,
-            li.net_line_revenue,
-            li.line_margin
-          FROM order_items AS li
-          JOIN orders AS o
-            ON o.order_id = li.order_id
-          JOIN products AS p
-            ON p.product_sku = li.product_sku
 
   - name: customer_month_revenue
     label: Customer Month Revenue
     description: Customer-month-channel revenue rollup used for growth efficiency and conversion analysis.
     connector: commerce_warehouse
-    materialization_mode: live
-    semantic_model: growth_performance
-    default_time_dimension: revenue_month
+    materialization:
+      mode: live
     tags: [growth, revenue, cohort]
     source:
+      kind: sql
       sql: |
         SELECT
           CAST(customer_id AS TEXT) || '|' || substr(order_date, 1, 7) || '|' || order_channel AS customer_month_channel_key,
@@ -131,31 +131,33 @@ datasets:
     label: Customer Profiles
     description: Shared customer dimension with segment, lifecycle stage, region, and acquisition context.
     connector: growth_warehouse
-    materialization_mode: live
-    default_time_dimension: signup_date
+    materialization:
+      mode: live
     tags: [customer, dimension]
     source:
+      kind: table
       table: customer_profiles
 
   - name: campaign_attribution
     label: Campaign Attribution
     description: Customer-month-channel attribution rollup with pipeline influence and assisted signups.
     connector: growth_warehouse
-    materialization_mode: live
-    semantic_model: growth_performance
-    default_time_dimension: attribution_month
+    materialization:
+      mode: live
     tags: [growth, marketing]
     source:
+      kind: table
       table: campaign_attribution_monthly
 
   - name: customer_month_support
     label: Customer Month Support
     description: Customer-month support load for pairing marketing and revenue outcomes with service pressure.
     connector: growth_warehouse
-    materialization_mode: live
-    default_time_dimension: support_month
+    materialization:
+      mode: live
     tags: [support, customer]
     source:
+      kind: sql
       sql: |
         SELECT
           CAST(customer_id AS TEXT) || '|' || substr(opened_date, 1, 7) AS customer_month_key,
@@ -172,10 +174,11 @@ datasets:
     label: Channel Spend Targets
     description: Monthly channel spend plan and demand targets from a local CSV file.
     connector: planning_files
-    materialization_mode: live
-    default_time_dimension: spend_month
+    materialization:
+      mode: live
     tags: [growth, finance, planning]
     source:
+      kind: file
       path: ./data/channel_spend_targets.csv
       format: csv
       header: true
@@ -533,55 +536,30 @@ llm_connections:
       provider_type: env
       identifier: OPENAI_API_KEY
 
-agents:
-  - name: commerce_analyst
-    description: Operator-focused commerce analyst for order mix, revenue, refunds, and product profitability.
-    llm_connection: self_hosted_openai
-    default: true
-    definition:
-      prompt:
-        system_prompt: You are a Langbridge commerce analyst embedded in a self-hosted analytics runtime.
-        user_instructions: |
+ai:
+  profiles:
+    - name: commerce_analyst
+      description: Operator-focused commerce analyst for order mix, revenue, refunds, and product profitability.
+      llm:
+        llm_connection: self_hosted_openai
+      scope:
+        semantic_models: [commerce_performance]
+        datasets: [sales_orders, order_line_items, customer_profiles]
+      prompts:
+        system: You are a Langbridge commerce analyst embedded in a self-hosted analytics runtime.
+        user: |
           Prioritize sales, margin, refunds, fulfillment region, and product mix analysis.
           Stay inside the commerce domain unless the user explicitly asks for customer segmentation context.
           When comparing periods, point out the main operational driver behind the change.
-        style_guidance: Keep answers structured, quantify changes, and cite the dimensions used in the query.
-      memory:
-        strategy: database
-      features:
-        bi_copilot_enabled: false
-        deep_research_enabled: false
-        visualization_enabled: true
-        mcp_enabled: true
-      tools:
-        - name: commerce_semantic_sql
-          tool_type: sql
-          description: Governed semantic access to the commerce model.
-          config:
-            semantic_model_ids: [commerce_performance]
-        - name: commerce_dataset_sql
-          tool_type: sql
-          description: Dataset-level SQL access for raw order and line-item analysis.
-          config:
-            dataset_ids: [sales_orders, order_line_items, customer_profiles]
-      access_policy:
+        presentation: Keep answers structured, quantify changes, and cite the dimensions used in the query.
+      exposure:
+        runtime: true
+        mcp: true
+      access:
         allowed_connectors: [commerce_warehouse, growth_warehouse]
         denied_connectors: [planning_files]
       execution:
-        mode: iterative
-        response_mode: analyst
         max_iterations: 3
-        max_steps_per_iteration: 5
-        allow_parallel_tools: false
-      output:
-        format: markdown
-      guardrails:
-        moderation_enabled: true
-      observability:
-        log_level: info
-        emit_traces: false
-        capture_prompts: false
-        audit_fields: []
 
   - name: growth_analyst
     description: Growth and customer operations analyst for acquisition, spend efficiency, and lifecycle conversion.

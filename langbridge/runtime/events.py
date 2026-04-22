@@ -69,7 +69,19 @@ def normalize_agent_stream_stage(*, event_type: str, message: str = "", source: 
         return "clarification"
     if "visual" in normalized or "chart" in message_text:
         return "rendering_chart"
+    if "charting" in normalized:
+        return "rendering_chart"
+    if "websearch" in normalized:
+        return "searching_web"
+    if "semanticsearch" in normalized:
+        return "searching_semantic"
+    if "deepresearch" in normalized:
+        return "researching"
+    if "presentation" in normalized:
+        return "composing_response"
     if "sqlgeneration" in normalized or "sqlgenerated" in normalized:
+        return "generating_sql"
+    if "sqlanalysis" in normalized:
         return "generating_sql"
     if "sqlexecution" in normalized or "query" in message_text:
         return "running_query"

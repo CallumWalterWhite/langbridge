@@ -1,35 +1,11 @@
-"""Profile-scoped registry construction for Langbridge AI agents."""
+"""Simple Langbridge AI profile contracts."""
 
 from __future__ import annotations
 
-import re
-from dataclasses import dataclass
-from typing import Any, Mapping
+from collections.abc import Mapping, Sequence
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field, model_validator
-
-from langbridge.ai.registry import AgentRegistry
-
-_TOKEN_RE = re.compile(r"[a-z0-9_]+")
-
-
-def _string_list(value: Any) -> list[str]:
-    if value is None:
-        return []
-    if not isinstance(value, list):
-        value = [value]
-    return [str(item).strip() for item in value if str(item).strip()]
-
-
-def _routing_terms(values: list[str]) -> list[str]:
-    seen: set[str] = set()
-    terms: list[str] = []
-    for value in values:
-        for token in _TOKEN_RE.findall(value.casefold()):
-            if token not in seen:
-                seen.add(token)
-                terms.append(token)
-    return terms
 
 
 def _config_value(config: Any, key: str, default: Any = None) -> Any:
@@ -45,176 +21,186 @@ def _scoped_agent_name(kind: str, name: str) -> str:
     return f"{kind}.{clean_name}"
 
 
-class AgentProfileFeatures(BaseModel):
-    bi_copilot_enabled: bool = False
-    deep_research_enabled: bool = False
-    visualization_enabled: bool = True
-    mcp_enabled: bool = False
-
-
-class AgentProfileExecution(BaseModel):
-    mode: str = "iterative"
-    response_mode: str = "analyst"
-    max_iterations: int = 3
-    max_steps_per_iteration: int = 5
-    allow_parallel_tools: bool = False
-
-
-class AgentProfileAccessPolicy(BaseModel):
-    allowed_connectors: list[str] = Field(default_factory=list)
-    denied_connectors: list[str] = Field(default_factory=list)
-    pii_handling: str | None = None
-    row_level_filter: str | None = None
-
-
-class AnalystAgentScope(BaseModel):
-    name: str = "analyst"
-    description: str | None = None
-    enabled_modes: list[str] = Field(default_factory=lambda: ["quick", "semantic", "sql"])
-    deep_research_enabled: bool = False
-    semantic_model_ids: list[str] = Field(default_factory=list)
-    dataset_ids: list[str] = Field(default_factory=list)
-    query_scope_policy: str = "semantic_preferred"
+class AiAgentAnalystScopeConfig(BaseModel):
+    semantic_models: list[str] = Field(default_factory=list)
+    datasets: list[str] = Field(default_factory=list)
+    query_policy: Literal[
+        "semantic_preferred",
+        "dataset_preferred",
+        "semantic_only",
+        "dataset_only",
+    ] = "semantic_preferred"
     allow_source_scope: bool = False
-    allowed_evidence_agents: list[str] = Field(default_factory=list)
-    max_sources: int = 8
-    require_sources: bool = False
-    web_search_enabled: bool = False
-    web_search_name: str | None = None
-    web_search_provider: str | None = None
-    web_search_allowed_domains: list[str] = Field(default_factory=list)
-    web_search_denied_domains: list[str] = Field(default_factory=list)
-    web_search_require_allowed_domain: bool = False
-    web_search_provider_required: bool = False
-    web_search_focus_terms: list[str] = Field(default_factory=list)
-    web_search_max_results: int = 6
-    web_search_region: str | None = None
-    web_search_safe_search: str | None = None
-    web_search_timebox_seconds: int = 10
-    preferred_dataset_id: str | None = None
-    preferred_semantic_model_id: str | None = None
-    allowed_connectors: list[str] = Field(default_factory=list)
-    denied_connectors: list[str] = Field(default_factory=list)
-    routing_keywords: list[str] = Field(default_factory=list)
-    routing_phrases: list[str] = Field(default_factory=list)
 
     @model_validator(mode="after")
-    def _enable_requested_modes(self) -> "AnalystAgentScope":
-        modes = list(self.enabled_modes)
-        if self.deep_research_enabled:
-            modes.extend(["research", "deep_research", "hybrid"])
-        if self.web_search_enabled:
-            modes.extend(["research", "hybrid"])
-        self.enabled_modes = list(dict.fromkeys(modes))
-        if self.web_search_require_allowed_domain and not self.web_search_allowed_domains:
-            raise ValueError("web_search_require_allowed_domain requires at least one allowed domain.")
+    def _validate_scope(self) -> "AiAgentAnalystScopeConfig":
+        has_semantic_models = bool(self.semantic_models)
+        has_datasets = bool(self.datasets)
+        if self.query_policy in {"semantic_only", "semantic_preferred"} and not has_semantic_models and has_datasets:
+            raise ValueError(
+                "AI agent analyst scope with semantic-only or semantic-preferred policy must define semantic_models."
+            )
+        if self.query_policy in {"dataset_only", "dataset_preferred"} and not has_datasets and has_semantic_models:
+            raise ValueError(
+                "AI agent analyst scope with dataset-only or dataset-preferred policy must define datasets."
+            )
         return self
 
-    @property
-    def agent_name(self) -> str:
-        return _scoped_agent_name("analyst", self.name)
 
-    @property
-    def routing_terms(self) -> list[str]:
-        return [
-            *self.routing_keywords,
-            *_routing_terms([
-                self.name,
-                self.description or "",
-                *self.enabled_modes,
-                *self.semantic_model_ids,
-                *self.dataset_ids,
-                *(self.web_search_focus_terms if self.web_search_enabled else []),
-                *(self.web_search_allowed_domains if self.web_search_enabled else []),
-            ]),
-        ]
+class AiAgentLLMScopeConfig(BaseModel):
+    llm_connection: str | None = None
+    provider: str | None = None
+    model: str | None = None
+    temperature: float | None = None
+    reasoning_effort: str | None = None
+    max_completion_tokens: int | None = None
 
-    @property
-    def supports_research(self) -> bool:
-        return self.deep_research_enabled or any(
-            mode in {"research", "deep_research", "hybrid"} for mode in self.enabled_modes
-        )
+    @model_validator(mode="after")
+    def _validate_shape(self) -> "AiAgentLLMScopeConfig":
+        if str(self.llm_connection or "").strip():
+            return self
+        if str(self.provider or "").strip() and str(self.model or "").strip():
+            return self
+        raise ValueError("AI agent llm scope must define llm_connection or provider + model.")
 
 
-class WebSearchToolScope(BaseModel):
-    name: str = "web-search"
-    description: str | None = None
+class AiAgentResearchScopeConfig(BaseModel):
+    enabled: bool = False
+    extended_thinking_enabled: bool = False
+    max_sources: int = 5
+    require_sources: bool = False
+
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize_aliases(cls, value: Any) -> Any:
+        if not isinstance(value, Mapping):
+            return value
+        payload = dict(value)
+        if payload.get("extended_thinking_enabled") is None and payload.get("extended_thinking") is not None:
+            payload["extended_thinking_enabled"] = payload.get("extended_thinking")
+        return payload
+
+
+class AiAgentWebSearchScopeConfig(BaseModel):
+    enabled: bool = False
     provider: str | None = None
     allowed_domains: list[str] = Field(default_factory=list)
-    denied_domains: list[str] = Field(default_factory=list)
     require_allowed_domain: bool = False
-    provider_required: bool = False
-    focus_terms: list[str] = Field(default_factory=list)
-    max_results: int = 6
-    region: str | None = None
-    safe_search: str | None = None
+    max_results: int = 10
     timebox_seconds: int = 10
-    routing_keywords: list[str] = Field(default_factory=list)
-    routing_phrases: list[str] = Field(default_factory=list)
 
     @model_validator(mode="after")
-    def _validate_domain_policy(self) -> "WebSearchToolScope":
+    def _validate_web_search(self) -> "AiAgentWebSearchScopeConfig":
         if self.require_allowed_domain and not self.allowed_domains:
-            raise ValueError("require_allowed_domain requires at least one allowed domain.")
+            raise ValueError(
+                "AI agent web_search_scope with require_allowed_domain must define allowed_domains."
+            )
         return self
 
-    @property
-    def routing_terms(self) -> list[str]:
-        return [
-            *self.routing_keywords,
-            *_routing_terms([
-                self.name,
-                self.description or "",
-                *self.allowed_domains,
-                *self.focus_terms,
-            ]),
-        ]
+
+class AiAgentPromptsConfig(BaseModel):
+    system_prompt: str | None = None
+    user_prompt: str | None = None
+    response_format_prompt: str | None = None
+    planning_prompt: str | None = None
+    presentation_prompt: str | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize_aliases(cls, value: Any) -> Any:
+        if not isinstance(value, Mapping):
+            return value
+        payload = dict(value)
+        aliases = {
+            "system": "system_prompt",
+            "user": "user_prompt",
+            "response_format": "response_format_prompt",
+            "planning": "planning_prompt",
+            "presentation": "presentation_prompt",
+        }
+        for source, target in aliases.items():
+            if payload.get(target) is None and payload.get(source) is not None:
+                payload[target] = payload.get(source)
+        return payload
 
 
-class AgentProfile(BaseModel):
+class AiAgentAccessConfig(BaseModel):
+    allowed_connectors: list[str] = Field(default_factory=list)
+    denied_connectors: list[str] = Field(default_factory=list)
+
+
+class AiAgentExecutionConfig(BaseModel):
+    max_iterations: int = 3
+    max_replans: int = 2
+    max_step_retries: int = 1
+
+
+class AiAgentProfile(BaseModel):
     name: str
     description: str | None = None
     default: bool = False
-    instructions: str | None = None
-    features: AgentProfileFeatures = Field(default_factory=AgentProfileFeatures)
-    execution: AgentProfileExecution = Field(default_factory=AgentProfileExecution)
-    access_policy: AgentProfileAccessPolicy = Field(default_factory=AgentProfileAccessPolicy)
-    analyst_scopes: list[AnalystAgentScope] = Field(default_factory=list)
-    web_search_scopes: list[WebSearchToolScope] = Field(default_factory=list)
+    enabled: bool = True
+    mcp_enabled: bool = False
+    analyst_scope: AiAgentAnalystScopeConfig = Field(default_factory=AiAgentAnalystScopeConfig)
+    llm_scope: AiAgentLLMScopeConfig | None = None
+    research_scope: AiAgentResearchScopeConfig = Field(default_factory=AiAgentResearchScopeConfig)
+    web_search_scope: AiAgentWebSearchScopeConfig = Field(default_factory=AiAgentWebSearchScopeConfig)
+    prompts: AiAgentPromptsConfig = Field(default_factory=AiAgentPromptsConfig)
+    access: AiAgentAccessConfig = Field(default_factory=AiAgentAccessConfig)
+    execution: AiAgentExecutionConfig = Field(default_factory=AiAgentExecutionConfig)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize_aliases(cls, value: Any) -> Any:
+        if isinstance(value, Mapping):
+            payload = dict(value)
+        elif hasattr(value, "model_dump"):
+            payload = value.model_dump(mode="json", exclude_none=True)
+        else:
+            payload = {
+                "name": _config_value(value, "name"),
+                "description": _config_value(value, "description"),
+                "default": _config_value(value, "default", False),
+                "enabled": _config_value(value, "enabled", True),
+                "mcp_enabled": _config_value(value, "mcp_enabled", False),
+                "analyst_scope": _config_value(value, "analyst_scope"),
+                "llm_scope": _config_value(value, "llm_scope"),
+                "research_scope": _config_value(value, "research_scope"),
+                "web_search_scope": _config_value(value, "web_search_scope"),
+                "prompts": _config_value(value, "prompts"),
+                "access": _config_value(value, "access"),
+                "execution": _config_value(value, "execution"),
+            }
+
+        aliases = {
+            "scope": "analyst_scope",
+            "research": "research_scope",
+            "web_search": "web_search_scope",
+            "llm": "llm_scope",
+        }
+        for source, target in aliases.items():
+            if payload.get(target) is None and payload.get(source) is not None:
+                payload[target] = payload.get(source)
+
+        exposure = payload.get("exposure")
+        if isinstance(exposure, Mapping):
+            if payload.get("enabled") is None and exposure.get("runtime") is not None:
+                payload["enabled"] = bool(exposure.get("runtime"))
+            if payload.get("mcp_enabled") is None and exposure.get("mcp") is not None:
+                payload["mcp_enabled"] = bool(exposure.get("mcp"))
+
+        return payload
+
+    @model_validator(mode="after")
+    def _validate_profile(self) -> "AiAgentProfile":
+        has_data_scope = bool(self.analyst_scope.semantic_models or self.analyst_scope.datasets)
+        if not has_data_scope and not self.web_search_scope.enabled:
+            raise ValueError("AI agent profile must define analyst scope datasets/semantic models or enable web search.")
+        return self
 
     @classmethod
-    def from_config(cls, config: Mapping[str, Any] | Any) -> "AgentProfile":
-        name = str(_config_value(config, "name") or "").strip()
-        if not name:
-            raise ValueError("Agent profile config requires a name.")
-        definition = _config_value(config, "definition")
-        if isinstance(definition, Mapping) and definition:
-            return cls.from_definition(
-                name=name,
-                description=_config_value(config, "description"),
-                default=bool(_config_value(config, "default", False)),
-                definition=definition,
-            )
-
-        semantic_model = str(_config_value(config, "semantic_model") or "").strip()
-        dataset = str(_config_value(config, "dataset") or "").strip()
-        if not semantic_model and not dataset:
-            raise ValueError(
-                "Agent profile config requires definition, semantic_model, or dataset."
-            )
-        scope = AnalystAgentScope(
-            name=f"{name}_sql",
-            description=_config_value(config, "description"),
-            semantic_model_ids=[semantic_model] if semantic_model else [],
-            dataset_ids=[dataset] if dataset else [],
-        )
-        return cls(
-            name=name,
-            description=_config_value(config, "description"),
-            default=bool(_config_value(config, "default", False)),
-            instructions=_config_value(config, "instructions"),
-            analyst_scopes=[scope],
-        )
+    def from_config(cls, config: Mapping[str, Any] | Any) -> "AiAgentProfile":
+        return cls.model_validate(config)
 
     @classmethod
     def from_definition(
@@ -224,238 +210,322 @@ class AgentProfile(BaseModel):
         description: str | None = None,
         default: bool = False,
         definition: Mapping[str, Any],
-    ) -> "AgentProfile":
+    ) -> "AiAgentProfile":
         payload = dict(definition)
-        features = AgentProfileFeatures.model_validate(payload.get("features") or {})
-        execution = AgentProfileExecution.model_validate(payload.get("execution") or {})
-        access_policy = AgentProfileAccessPolicy.model_validate(payload.get("access_policy") or {})
+        payload.setdefault("name", name)
+        payload.setdefault("description", description)
+        payload.setdefault("default", default)
+        return cls.from_config(payload)
 
-        analyst_scopes: list[AnalystAgentScope] = []
-        web_search_scopes: list[WebSearchToolScope] = []
-        for tool in payload.get("tools") or []:
-            if not isinstance(tool, Mapping):
-                continue
-            tool_type = str(tool.get("tool_type") or "").strip().casefold()
-            config = tool.get("config") if isinstance(tool.get("config"), Mapping) else {}
-            tool_name = str(tool.get("name") or "").strip()
-            tool_description = str(tool.get("description") or "").strip() or None
-            if tool_type == "sql":
-                tool_deep_research_enabled = bool(
-                    config.get("deep_research_enabled", features.deep_research_enabled)
-                )
-                enabled_modes = ["quick", "semantic", "sql"]
-                if tool_deep_research_enabled:
-                    enabled_modes.extend(["research", "deep_research", "hybrid"])
-                analyst_scopes.append(
-                    AnalystAgentScope(
-                        name=tool_name or f"{name}_sql",
-                        description=tool_description,
-                        enabled_modes=enabled_modes,
-                        deep_research_enabled=tool_deep_research_enabled,
-                        semantic_model_ids=_string_list(config.get("semantic_model_ids")),
-                        dataset_ids=_string_list(config.get("dataset_ids")),
-                        query_scope_policy=str(
-                            config.get("query_scope_policy") or "semantic_preferred"
-                        ),
-                        allow_source_scope=bool(config.get("allow_source_scope")),
-                        preferred_dataset_id=(
-                            str(config.get("preferred_dataset_id"))
-                            if config.get("preferred_dataset_id") is not None
-                            else None
-                        ),
-                        preferred_semantic_model_id=(
-                            str(config.get("preferred_semantic_model_id"))
-                            if config.get("preferred_semantic_model_id") is not None
-                            else None
-                        ),
-                        allowed_connectors=list(access_policy.allowed_connectors),
-                        denied_connectors=list(access_policy.denied_connectors),
-                    )
-                )
-            elif tool_type in {"web", "web_search"}:
-                web_scope = WebSearchToolScope(
-                    name=tool_name or f"{name}_web_search",
-                    description=tool_description,
-                    provider=(
-                        str(config.get("provider")) if config.get("provider") is not None else None
-                    ),
-                    allowed_domains=_string_list(config.get("allowed_domains")),
-                    denied_domains=_string_list(config.get("denied_domains")),
-                    require_allowed_domain=bool(config.get("require_allowed_domain")),
-                    provider_required=bool(config.get("provider_required", True)),
-                    focus_terms=_string_list(config.get("focus_terms")),
-                    max_results=int(config.get("max_results") or 6),
-                    region=(
-                        str(config.get("region")) if config.get("region") is not None else None
-                    ),
-                    safe_search=(
-                        str(config.get("safe_search"))
-                        if config.get("safe_search") is not None
-                        else None
-                    ),
-                    timebox_seconds=int(config.get("timebox_seconds") or 10),
-                )
-                web_search_scopes.append(web_scope)
+    @property
+    def available_via_runtime(self) -> bool:
+        return self.enabled
 
-        if web_search_scopes and not analyst_scopes:
-            analyst_scopes.append(
-                AnalystAgentScope(
-                    name=f"{name}_analyst",
-                    description=description,
-                    deep_research_enabled=features.deep_research_enabled,
-                )
+    @property
+    def available_via_mcp(self) -> bool:
+        return self.enabled and self.mcp_enabled
+
+    def to_analyst_config(self) -> "AnalystAgentConfig":
+        return AnalystAgentConfig.from_profile(self)
+
+
+class AnalystAgentConfig(BaseModel):
+    name: str
+    description: str | None = None
+    analyst_scope: AiAgentAnalystScopeConfig = Field(default_factory=AiAgentAnalystScopeConfig)
+    research_scope: AiAgentResearchScopeConfig = Field(default_factory=AiAgentResearchScopeConfig)
+    web_search_scope: AiAgentWebSearchScopeConfig = Field(default_factory=AiAgentWebSearchScopeConfig)
+    prompts: AiAgentPromptsConfig = Field(default_factory=AiAgentPromptsConfig)
+    access: AiAgentAccessConfig = Field(default_factory=AiAgentAccessConfig)
+
+    @classmethod
+    def from_profile(cls, profile: AiAgentProfile) -> "AnalystAgentConfig":
+        return cls.model_validate(
+            {
+                "name": profile.name,
+                "description": profile.description,
+                "analyst_scope": profile.analyst_scope.model_dump(mode="json"),
+                "research_scope": profile.research_scope.model_dump(mode="json"),
+                "web_search_scope": profile.web_search_scope.model_dump(mode="json"),
+                "prompts": profile.prompts.model_dump(mode="json"),
+                "access": profile.access.model_dump(mode="json"),
+            }
+        )
+
+    @property
+    def agent_name(self) -> str:
+        return _scoped_agent_name("analyst", self.name)
+
+    @property
+    def semantic_model_ids(self) -> list[str]:
+        return list(self.analyst_scope.semantic_models)
+
+    @property
+    def dataset_ids(self) -> list[str]:
+        return list(self.analyst_scope.datasets)
+
+    @property
+    def query_policy(self) -> str:
+        return self.analyst_scope.query_policy
+
+    @property
+    def allow_source_scope(self) -> bool:
+        return self.analyst_scope.allow_source_scope
+
+    @property
+    def supports_research(self) -> bool:
+        return self.research_scope.enabled
+
+    @property
+    def supports_extended_thinking(self) -> bool:
+        return self.research_scope.extended_thinking_enabled
+
+    @property
+    def max_sources(self) -> int:
+        return self.research_scope.max_sources
+
+    @property
+    def require_sources(self) -> bool:
+        return self.research_scope.require_sources
+
+    @property
+    def web_search_enabled(self) -> bool:
+        return self.web_search_scope.enabled
+
+    @property
+    def web_search_provider(self) -> str | None:
+        return self.web_search_scope.provider
+
+    @property
+    def web_search_allowed_domains(self) -> list[str]:
+        return list(self.web_search_scope.allowed_domains)
+
+    @property
+    def web_search_require_allowed_domain(self) -> bool:
+        return self.web_search_scope.require_allowed_domain
+
+    @property
+    def web_search_max_results(self) -> int:
+        return self.web_search_scope.max_results
+
+    @property
+    def web_search_timebox_seconds(self) -> int:
+        return self.web_search_scope.timebox_seconds
+
+
+def _legacy_query_policy(config: Mapping[str, Any]) -> str:
+    query_policy = str(config.get("query_scope_policy") or "semantic_preferred").strip().lower()
+    has_semantic_models = bool(config.get("semantic_model_ids"))
+    has_datasets = bool(config.get("dataset_ids"))
+    if has_datasets and not has_semantic_models and query_policy in {"semantic_only", "semantic_preferred"}:
+        return "dataset_only" if query_policy == "semantic_only" else "dataset_preferred"
+    if has_semantic_models and not has_datasets and query_policy in {"dataset_only", "dataset_preferred"}:
+        return "semantic_only" if query_policy == "dataset_only" else "semantic_preferred"
+    return query_policy
+
+
+def _build_legacy_profiles(
+    *,
+    name: str,
+    description: str | None,
+    definition: Mapping[str, Any],
+) -> list[AiAgentProfile]:
+    payload = dict(definition)
+    prompt = payload.get("prompt") if isinstance(payload.get("prompt"), Mapping) else {}
+    features = payload.get("features") if isinstance(payload.get("features"), Mapping) else {}
+    access_policy = payload.get("access_policy") if isinstance(payload.get("access_policy"), Mapping) else {}
+    execution = payload.get("execution") if isinstance(payload.get("execution"), Mapping) else {}
+    tools = payload.get("tools") if isinstance(payload.get("tools"), list) else []
+
+    web_search_payload: dict[str, Any] | None = None
+    profiles: list[AiAgentProfile] = []
+
+    for raw_tool in tools:
+        if not isinstance(raw_tool, Mapping):
+            continue
+        tool_type = str(raw_tool.get("tool_type") or "").strip().casefold()
+        tool_config = raw_tool.get("config") if isinstance(raw_tool.get("config"), Mapping) else {}
+        if tool_type in {"web", "web_search"}:
+            web_search_payload = {
+                "enabled": True,
+                "provider": tool_config.get("provider"),
+                "allowed_domains": list(tool_config.get("allowed_domains") or []),
+                "require_allowed_domain": bool(tool_config.get("require_allowed_domain")),
+                "max_results": int(tool_config.get("max_results") or 10),
+                "timebox_seconds": int(tool_config.get("timebox_seconds") or 10),
+            }
+            continue
+        if tool_type != "sql":
+            continue
+        profile_name = str(raw_tool.get("name") or f"{name}_analyst").strip() or f"{name}_analyst"
+        scope_payload = {
+            "semantic_models": list(tool_config.get("semantic_model_ids") or []),
+            "datasets": list(tool_config.get("dataset_ids") or []),
+            "query_policy": _legacy_query_policy(tool_config),
+            "allow_source_scope": bool(tool_config.get("allow_source_scope")),
+        }
+        profiles.append(
+            AiAgentProfile.model_validate(
+                {
+                    "name": profile_name,
+                    "description": str(raw_tool.get("description") or description or "").strip() or None,
+                    "analyst_scope": scope_payload,
+                    "research_scope": {
+                        "enabled": bool(
+                            features.get("supports_deep_research")
+                            or features.get("deep_research_enabled")
+                        ),
+                        "extended_thinking_enabled": bool(
+                            features.get("supports_extended_thinking")
+                            or features.get("extended_thinking_enabled")
+                        ),
+                    },
+                    "web_search_scope": web_search_payload or {"enabled": False},
+                    "prompts": {
+                        "system_prompt": prompt.get("system_prompt"),
+                        "user_prompt": prompt.get("user_instructions"),
+                        "response_format_prompt": prompt.get("style_guidance"),
+                    },
+                    "access": {
+                        "allowed_connectors": list(access_policy.get("allowed_connectors") or []),
+                        "denied_connectors": list(access_policy.get("denied_connectors") or []),
+                    },
+                    "execution": execution or {},
+                }
             )
+        )
 
-        if features.deep_research_enabled or web_search_scopes:
-            for scope in analyst_scopes:
-                scope.deep_research_enabled = scope.deep_research_enabled or features.deep_research_enabled
-                scope.enabled_modes = list(
-                    dict.fromkeys([*scope.enabled_modes, "research", "deep_research", "hybrid"])
+    if profiles:
+        if web_search_payload is not None:
+            for index, profile in enumerate(profiles):
+                profiles[index] = profile.model_copy(
+                    update={
+                        "research_scope": profile.research_scope.model_copy(update={"enabled": True}),
+                        "web_search_scope": AiAgentWebSearchScopeConfig.model_validate(web_search_payload),
+                    }
                 )
-                scope.require_sources = bool(web_search_scopes)
-                for web_scope in web_search_scopes:
-                    scope.web_search_enabled = True
-                    scope.web_search_name = web_scope.name
-                    scope.web_search_provider = web_scope.provider
-                    scope.web_search_allowed_domains = list(
-                        dict.fromkeys([*scope.web_search_allowed_domains, *web_scope.allowed_domains])
-                    )
-                    scope.web_search_denied_domains = list(
-                        dict.fromkeys([*scope.web_search_denied_domains, *web_scope.denied_domains])
-                    )
-                    scope.web_search_require_allowed_domain = (
-                        scope.web_search_require_allowed_domain or web_scope.require_allowed_domain
-                    )
-                    scope.web_search_provider_required = (
-                        scope.web_search_provider_required or web_scope.provider_required
-                    )
-                    scope.web_search_focus_terms = list(
-                        dict.fromkeys([*scope.web_search_focus_terms, *web_scope.focus_terms])
-                    )
-                    scope.web_search_max_results = web_scope.max_results
-                    scope.web_search_region = web_scope.region
-                    scope.web_search_safe_search = web_scope.safe_search
-                    scope.web_search_timebox_seconds = web_scope.timebox_seconds
-                    scope.routing_keywords = list(dict.fromkeys([*scope.routing_keywords, *web_scope.routing_terms]))
+        return profiles
 
-        prompt = payload.get("prompt") if isinstance(payload.get("prompt"), Mapping) else {}
-        instructions = str(prompt.get("user_instructions") or "").strip() or None
-        return cls(
+    if web_search_payload is not None:
+        return [
+            AiAgentProfile.model_validate(
+                {
+                    "name": name,
+                    "description": description,
+                    "analyst_scope": {},
+                    "research_scope": {
+                        "enabled": True,
+                        "extended_thinking_enabled": bool(
+                            features.get("supports_extended_thinking")
+                            or features.get("extended_thinking_enabled")
+                        ),
+                    },
+                    "web_search_scope": web_search_payload,
+                    "prompts": {
+                        "system_prompt": prompt.get("system_prompt"),
+                        "user_prompt": prompt.get("user_instructions"),
+                        "response_format_prompt": prompt.get("style_guidance"),
+                    },
+                    "access": {
+                        "allowed_connectors": list(access_policy.get("allowed_connectors") or []),
+                        "denied_connectors": list(access_policy.get("denied_connectors") or []),
+                    },
+                    "execution": execution or {},
+                }
+            )
+        ]
+
+    raise ValueError("Legacy Langbridge AI definition did not resolve to any analyst profile.")
+
+
+def build_ai_profiles_from_definition(
+    *,
+    name: str,
+    description: str | None,
+    definition: Mapping[str, Any],
+    runtime_only: bool = True,
+) -> list[AiAgentProfile]:
+    payload = dict(definition or {})
+    profiles_payload = payload.get("profiles")
+
+    if isinstance(profiles_payload, list) and profiles_payload:
+        profiles = [
+            AiAgentProfile.from_definition(
+                name=str(item.get("name") or f"{name}_{index}").strip() or f"{name}_{index}",
+                description=str(item.get("description") or description or "").strip() or None,
+                definition=item,
+            )
+            for index, item in enumerate(profiles_payload, start=1)
+            if isinstance(item, Mapping)
+        ]
+    elif isinstance(payload.get("analyst_scope"), Mapping) or isinstance(payload.get("scope"), Mapping):
+        profiles = [AiAgentProfile.from_definition(name=name, description=description, definition=payload)]
+    else:
+        profiles = _build_legacy_profiles(name=name, description=description, definition=payload)
+
+    if runtime_only:
+        profiles = [profile for profile in profiles if profile.available_via_runtime]
+    return profiles
+
+
+def build_analyst_configs_from_definition(
+    *,
+    name: str,
+    description: str | None,
+    definition: Mapping[str, Any],
+    runtime_only: bool = True,
+) -> list[AnalystAgentConfig]:
+    return [
+        profile.to_analyst_config()
+        for profile in build_ai_profiles_from_definition(
             name=name,
             description=description,
-            default=default,
-            instructions=instructions,
-            features=features,
-            execution=execution,
-            access_policy=access_policy,
-            analyst_scopes=analyst_scopes,
-            web_search_scopes=web_search_scopes,
+            definition=definition,
+            runtime_only=runtime_only,
         )
+    ]
 
 
-@dataclass(frozen=True)
-class AgentProfileRuntime:
-    profile: AgentProfile
-    registry: AgentRegistry
-    meta_controller: Any
+def build_execution_from_definition(
+    *,
+    definition: Mapping[str, Any],
+    name: str | None = None,
+    description: str | None = None,
+) -> AiAgentExecutionConfig:
+    payload = dict(definition or {})
+    execution_payload = payload.get("execution")
+    if isinstance(execution_payload, Mapping):
+        return AiAgentExecutionConfig.model_validate(execution_payload)
 
-
-class AgentProfileRegistryBuilder:
-    """Builds one scoped specialist registry for one configured agent profile."""
-
-    def build_registry(
-        self,
-        profile: AgentProfile,
-        *,
-        llm_provider: Any,
-        sql_analysis_tools: Mapping[str, list[Any]] | None = None,
-        semantic_search_tools: Mapping[str, list[Any]] | None = None,
-        web_search_providers: Mapping[str, Any] | None = None,
-    ) -> AgentRegistry:
-        from langbridge.ai.agents.analyst import AnalystAgent
-        from langbridge.ai.tools.web_search import WebSearchPolicy, WebSearchTool, create_web_search_provider
-
-        sql_tools = dict(sql_analysis_tools or {})
-        semantic_tools = dict(semantic_search_tools or {})
-        providers = dict(web_search_providers or {})
-        agents = []
-        for scope in profile.analyst_scopes:
-            provider = (
-                providers.get(scope.web_search_name or "")
-                or providers.get(scope.web_search_provider or "")
-                or providers.get(scope.name)
-                or providers.get(scope.agent_name)
-            )
-            web_tool = None
-            if scope.web_search_enabled:
-                provider = provider or create_web_search_provider(scope.web_search_provider)
-                web_tool = WebSearchTool(
-                    provider=provider,
-                    policy=WebSearchPolicy(
-                        allowed_domains=list(scope.web_search_allowed_domains),
-                        denied_domains=list(scope.web_search_denied_domains),
-                        require_allowed_domain=scope.web_search_require_allowed_domain,
-                        focus_terms=list(scope.web_search_focus_terms),
-                        max_results=scope.web_search_max_results,
-                        region=scope.web_search_region,
-                        safe_search=scope.web_search_safe_search,
-                        timebox_seconds=scope.web_search_timebox_seconds,
-                    ),
-                )
-            agents.append(
-                AnalystAgent(
-                    llm_provider=llm_provider,
-                    scope=scope,
-                    sql_analysis_tools=sql_tools.get(scope.name) or sql_tools.get(scope.agent_name) or [],
-                    semantic_search_tools=semantic_tools.get(scope.name) or semantic_tools.get(scope.agent_name) or [],
-                    web_search_tool=web_tool,
-                )
-            )
-        return AgentRegistry(agents)
-
-    def build_runtime(
-        self,
-        profile: AgentProfile,
-        *,
-        llm_provider: Any,
-        sql_analysis_tools: Mapping[str, list[Any]] | None = None,
-        semantic_search_tools: Mapping[str, list[Any]] | None = None,
-        web_search_providers: Mapping[str, Any] | None = None,
-    ) -> AgentProfileRuntime:
-        from langbridge.ai.agents.presentation import PresentationAgent
-        from langbridge.ai.tools.charting import ChartingTool
-        from langbridge.ai.meta_controller import MetaControllerAgent
-
-        registry = self.build_registry(
-            profile,
-            llm_provider=llm_provider,
-            sql_analysis_tools=sql_analysis_tools,
-            semantic_search_tools=semantic_search_tools,
-            web_search_providers=web_search_providers,
+    try:
+        profiles = build_ai_profiles_from_definition(
+            name=name or "agent",
+            description=description,
+            definition=payload,
+            runtime_only=True,
         )
-        controller = MetaControllerAgent(
-            registry=registry,
-            presentation_agent=PresentationAgent(
-                llm_provider=llm_provider,
-                charting_tool=ChartingTool(llm_provider=llm_provider),
-            ),
-            max_iterations=profile.execution.max_iterations,
-            max_step_retries=1,
-        )
-        return AgentProfileRuntime(
-            profile=profile,
-            registry=registry,
-            meta_controller=controller,
-        )
+    except ValueError:
+        return AiAgentExecutionConfig()
+    if not profiles:
+        return AiAgentExecutionConfig()
+    return AiAgentExecutionConfig(
+        max_iterations=max(profile.execution.max_iterations for profile in profiles),
+        max_replans=max(profile.execution.max_replans for profile in profiles),
+        max_step_retries=max(profile.execution.max_step_retries for profile in profiles),
+    )
 
 
 __all__ = [
-    "AgentProfile",
-    "AgentProfileAccessPolicy",
-    "AgentProfileExecution",
-    "AgentProfileFeatures",
-    "AgentProfileRegistryBuilder",
-    "AgentProfileRuntime",
-    "AnalystAgentScope",
-    "WebSearchToolScope",
+    "AiAgentAccessConfig",
+    "AiAgentAnalystScopeConfig",
+    "AiAgentExecutionConfig",
+    "AiAgentLLMScopeConfig",
+    "AiAgentProfile",
+    "AiAgentPromptsConfig",
+    "AiAgentResearchScopeConfig",
+    "AiAgentWebSearchScopeConfig",
+    "AnalystAgentConfig",
+    "build_ai_profiles_from_definition",
+    "build_analyst_configs_from_definition",
+    "build_execution_from_definition",
 ]

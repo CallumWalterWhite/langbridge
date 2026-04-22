@@ -8,6 +8,7 @@ import {
   DatabaseZap,
   Edit3,
   History,
+  Plus,
   SearchCode,
   ShieldAlert,
   Sparkles,
@@ -121,19 +122,39 @@ function clearStoredRunState(threadId) {
 }
 
 function normalizeProgressEvent(event) {
+  const details =
+    event?.details && typeof event.details === "object" ? event.details : null;
+  const diagnostics =
+    details?.diagnostics && typeof details.diagnostics === "object"
+      ? details.diagnostics
+      : null;
+  const clarifyingQuestion =
+    (typeof details?.clarifying_question === "string" && details.clarifying_question.trim()) ||
+    (typeof diagnostics?.clarifying_question === "string" && diagnostics.clarifying_question.trim()) ||
+    "";
+  const answer =
+    typeof details?.answer === "string" && details.answer.trim() ? details.answer.trim() : "";
+  const summary =
+    typeof details?.summary === "string" && details.summary.trim() ? details.summary.trim() : "";
+  const eventMessage =
+    clarifyingQuestion ||
+    answer ||
+    summary ||
+    (typeof event?.message === "string" ? event.message : "");
   return {
     sequence: Number(event?.sequence || 0),
     id: event?.id || "",
     event: event?.event || "run.progress",
     stage: event?.stage || "planning",
     status: event?.status || "in_progress",
-    message: event?.message || "",
+    message: eventMessage,
     timestamp: event?.timestamp || new Date().toISOString(),
     source: event?.source || "",
     rawEventType: event?.raw_event_type || "",
     runId: event?.run_id || event?.job_id || "",
     runType: event?.run_type || "agent",
     terminal: Boolean(event?.terminal),
+    details,
   };
 }
 
@@ -241,6 +262,7 @@ export function ChatPage() {
   const [renamingOpen, setRenamingOpen] = useState(false);
   const [transientTurn, setTransientTurn] = useState(null);
   const [pendingDraftMessage, setPendingDraftMessage] = useState("");
+  const [extendedThinking, setExtendedThinking] = useState(false);
   const selectedAgent = agents.find((item) => item.name === selectedAgentName) || null;
   const turns = useMemo(() => buildConversationTurns(messages, agents), [messages, agents]);
   const displayTurns = useMemo(() => {
@@ -639,6 +661,7 @@ export function ChatPage() {
         message: pendingPrompt,
         agent_name: selectedAgentName,
         thread_id: threadId,
+        agent_mode: extendedThinking ? "research" : "auto",
       }, {
         signal: controller.signal,
         onEvent: (event) => {
@@ -811,11 +834,15 @@ export function ChatPage() {
           <span className="chip">
             {lastUpdated ? `Updated ${formatRelativeTime(lastUpdated)}` : "New thread"}
           </span>
+          <span className={`chip thread-mode-chip ${extendedThinking ? "active" : ""}`}>
+            {extendedThinking ? "Extended thinking on" : "Standard thinking"}
+          </span>
         </div>
 
         {threadLoading ? (
           <div className="empty-box">Loading thread messages...</div>
-        ) : displayTurns.length > 0 ? (
+        ) : null}
+        {!threadLoading && displayTurns.length > 0 ? (
           <div className="thread-transcript-scroll thread-transcript-scroll--chat">
             <div className="conversation-stack thread-conversation-stack">
               {displayTurns.map((turn, index) => {
@@ -825,6 +852,9 @@ export function ChatPage() {
                 const latestStatus = latestProgressEvent?.status || "in_progress";
                 const LatestStageIcon = getProgressIcon(latestStage, latestStatus);
                 const thinkingEvents = progressEvents.slice().reverse();
+                const isPending = turn.status === "pending";
+                const isReady = turn.status === "ready";
+                const isError = turn.status === "error";
                 return (
                   <article
                     key={turn.id}
@@ -845,12 +875,12 @@ export function ChatPage() {
                             <strong>{turn.agentLabel || "Langbridge Runtime"}</strong>
                           </div>
                           <span className={`message-status-badge ${turn.status}`}>
-                            {turn.status === "ready" ? "responded" : turn.status}
+                            {isReady ? "responded" : turn.status}
                           </span>
                         </header>
 
                         <div className="thread-assistant-body">
-                          {turn.status === "pending" ? (
+                          {isPending ? (
                             <div className="thread-progress-inline">
                               <div className="thread-progress-current">
                                 <div className="thread-progress-current-top">
@@ -901,7 +931,7 @@ export function ChatPage() {
                               ) : null}
                             </div>
                           ) : null}
-                          {turn.status !== "pending" ? (
+                          {!isPending ? (
                             <RuntimeResultPanel
                               summary={turn.assistantSummary}
                               result={turn.assistantTable}
@@ -914,7 +944,7 @@ export function ChatPage() {
                               variant="chat"
                             />
                           ) : null}
-                          {turn.status === "error" && !turn.assistantTable && !turn.assistantSummary ? (
+                          {isError && !turn.assistantTable && !turn.assistantSummary ? (
                             <div className="error-banner">{turn.errorMessage || "Run failed."}</div>
                           ) : null}
                         </div>
@@ -926,7 +956,8 @@ export function ChatPage() {
               <div ref={timelineEndRef} />
             </div>
           </div>
-        ) : (
+        ) : null}
+        {!threadLoading && displayTurns.length === 0 ? (
           <div className="thread-empty-state thread-empty-state--chat">
             <Sparkles className="thread-empty-icon" aria-hidden="true" />
             <div>
@@ -947,7 +978,7 @@ export function ChatPage() {
               ))}
             </div>
           </div>
-        )}
+        ) : null}
 
         <form className="thread-composer-form thread-composer-form--chat" onSubmit={handleSubmit}>
           <div className="thread-composer-meta thread-composer-meta--chat">
@@ -969,6 +1000,17 @@ export function ChatPage() {
           </div>
 
           <div className="thread-composer-input-shell">
+            <button
+              className={`thread-composer-utility ${extendedThinking ? "active" : ""}`}
+              type="button"
+              onClick={() => setExtendedThinking((current) => !current)}
+              disabled={submitting}
+              aria-label={extendedThinking ? "Disable extended thinking" : "Enable extended thinking"}
+              aria-pressed={extendedThinking}
+              title={extendedThinking ? "Extended thinking enabled" : "Enable extended thinking"}
+            >
+              <Plus className="button-icon" aria-hidden="true" />
+            </button>
             <input
               className="text-input thread-composer-input thread-composer-input--singleline"
               type="text"

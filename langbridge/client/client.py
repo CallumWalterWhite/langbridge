@@ -412,6 +412,7 @@ class _SdkAdapter(Protocol):
         agent_name: str | None,
         thread_id: uuid.UUID | None,
         title: str | None,
+        agent_mode: str | None,
         metadata_json: dict[str, Any] | None,
         timeout_s: float,
         poll_interval_s: float,
@@ -745,6 +746,7 @@ class RuntimeHostApiAdapter(_BaseHttpApiAdapter, _SdkAdapter):
         agent_name: str | None,
         thread_id: uuid.UUID | None,
         title: str | None,
+        agent_mode: str | None,
         metadata_json: dict[str, Any] | None,
         timeout_s: float,
         poll_interval_s: float,
@@ -759,6 +761,7 @@ class RuntimeHostApiAdapter(_BaseHttpApiAdapter, _SdkAdapter):
                     **({"agent_name": agent_name} if agent_name else {}),
                     **({"thread_id": str(thread_id)} if thread_id else {}),
                     **({"title": title} if title else {}),
+                    **({"agent_mode": agent_mode} if agent_mode else {}),
                     **({"metadata_json": metadata_json} if metadata_json else {}),
                 },
             )
@@ -1039,6 +1042,7 @@ class RemoteApiAdapter(_BaseHttpApiAdapter, _SdkAdapter):
         agent_name: str | None,
         thread_id: uuid.UUID | None,
         title: str | None,
+        agent_mode: str | None,
         metadata_json: dict[str, Any] | None,
         timeout_s: float,
         poll_interval_s: float,
@@ -1459,6 +1463,7 @@ class LocalRuntimeAdapter(_SdkAdapter):
         agent_name: str | None,
         thread_id: uuid.UUID | None,
         title: str | None,
+        agent_mode: str | None,
         metadata_json: dict[str, Any] | None,
         timeout_s: float,
         poll_interval_s: float,
@@ -1467,11 +1472,14 @@ class LocalRuntimeAdapter(_SdkAdapter):
         if ask_agent_method is None:
             raise ValueError("Local runtime host does not expose ask_agent().")
         try:
+            ask_kwargs = {
+                "prompt": message,
+                "agent_name": agent_name,
+            }
+            if agent_mode is not None:
+                ask_kwargs["agent_mode"] = agent_mode
             payload = _run_awaitable(
-                ask_agent_method(
-                    prompt=message,
-                    agent_name=agent_name,
-                )
+                ask_agent_method(**ask_kwargs)
             )
         except Exception as exc:
             return AgentAskResult(
@@ -1770,6 +1778,7 @@ class _AgentClient:
         actor_id: uuid.UUID | None = None,
         thread_id: uuid.UUID | None = None,
         title: str | None = None,
+        agent_mode: str | None = None,
         metadata_json: dict[str, Any] | None = None,
         timeout_s: float = 60.0,
         poll_interval_s: float = 0.5,
@@ -1786,6 +1795,7 @@ class _AgentClient:
             message=message,
             thread_id=thread_id,
             title=title,
+            agent_mode=agent_mode,
             metadata_json=metadata_json,
             timeout_s=timeout_s,
             poll_interval_s=poll_interval_s,

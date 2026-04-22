@@ -1,12 +1,11 @@
 """LLM-backed chart specification tool."""
 
-from __future__ import annotations
-
 import json
 from typing import Any
 
 from pydantic import BaseModel, Field
 
+from langbridge.ai.events import AIEventEmitter, AIEventSource
 from langbridge.ai.llm.base import LLMProvider
 
 
@@ -20,10 +19,11 @@ class ChartSpec(BaseModel):
     rationale: str | None = None
 
 
-class ChartingTool:
+class ChartingTool(AIEventSource):
     """Builds chart specifications through an LLM provider."""
 
-    def __init__(self, *, llm_provider: LLMProvider) -> None:
+    def __init__(self, *, llm_provider: LLMProvider, event_emitter: AIEventEmitter | None = None) -> None:
+        super().__init__(event_emitter=event_emitter)
         self._llm = llm_provider
 
     async def build_chart(
@@ -38,6 +38,12 @@ class ChartingTool:
         rows = data.get("rows")
         if not isinstance(columns, list) or not isinstance(rows, list) or not columns or not rows:
             return None
+        await self._emit_ai_event(
+            event_type="ChartingStarted",
+            message="Building chart specification.",
+            source="charting",
+            details={"column_count": len(columns), "row_count": len(rows)},
+        )
         prompt = self._build_prompt(
             columns=[str(column) for column in columns],
             rows=rows[:20],
@@ -46,7 +52,14 @@ class ChartingTool:
             user_intent=user_intent,
         )
         raw = await self._llm.acomplete(prompt, temperature=0.0, max_tokens=700)
-        return ChartSpec.model_validate(self._parse_json_object(raw))
+        chart = ChartSpec.model_validate(self._parse_json_object(raw))
+        await self._emit_ai_event(
+            event_type="ChartingCompleted",
+            message=f"Chart specification ready: {chart.chart_type}.",
+            source="charting",
+            details={"chart_type": chart.chart_type},
+        )
+        return chart
 
     @staticmethod
     def _build_prompt(

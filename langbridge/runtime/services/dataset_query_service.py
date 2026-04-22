@@ -12,6 +12,7 @@ import sqlglot
 from sqlglot import exp
 from .errors import ExecutionValidationError
 
+from langbridge.runtime.datasets.contracts import DatasetMaterializationConfig
 from langbridge.runtime.execution import DuckDbExecutionEngine, ExecutionEngine, FederatedQueryTool
 from langbridge.runtime.models import (
     CreateDatasetBulkCreateJobRequest,
@@ -431,9 +432,8 @@ class DatasetQueryService:
             storage_uri=dataset.storage_uri,
             format="parquet",
         )
-        dataset.sync = None
         dataset.status = DatasetStatus.PUBLISHED
-        dataset.materialization_mode = DatasetMaterializationMode.LIVE
+        dataset.materialization = DatasetMaterializationConfig(mode=DatasetMaterializationMode.LIVE)
         dataset.table_name = dataset.table_name or dataset.name
         dataset.schema_name = dataset.schema_name or None
         dataset.row_count_estimate = int(count_rows[0][0]) if count_rows else None

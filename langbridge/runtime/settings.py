@@ -44,9 +44,9 @@ class RuntimeSettings:
     )
     SQL_FEDERATION_ENABLED: bool = _read_bool("SQL_FEDERATION_ENABLED", True)
     SQL_FEDERATION_MAX_ELIGIBLE_DATASETS: int = _read_int("SQL_FEDERATION_MAX_ELIGIBLE_DATASETS", 200)
-    DATASET_FILE_LOCAL_DIR: str = os.getenv("DATASET_FILE_LOCAL_DIR", ".langbridge-data/datasets")
-    FEDERATION_ARTIFACT_DIR: str = os.getenv("FEDERATION_ARTIFACT_DIR", ".langbridge-data/federation")
-    MANAGED_VECTOR_FAISS_DB_DIR: str = os.getenv("MANAGED_VECTOR_FAISS_DB_DIR", ".langbridge-data/vector_faiss_dbs")
+    DATASET_FILE_LOCAL_DIR: str = os.getenv("DATASET_FILE_LOCAL_DIR", "./.langbridge/.langbridge-data/datasets")
+    FEDERATION_ARTIFACT_DIR: str = os.getenv("FEDERATION_ARTIFACT_DIR", "./.langbridge/.langbridge-data/federation")
+    MANAGED_VECTOR_FAISS_DB_DIR: str = os.getenv("MANAGED_VECTOR_FAISS_DB_DIR", "./.langbridge/.langbridge-data/vector_faiss_dbs")
     FEDERATION_BROADCAST_THRESHOLD_BYTES: int = _read_int(
         "FEDERATION_BROADCAST_THRESHOLD_BYTES",
         64 * 1024 * 1024,

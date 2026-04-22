@@ -2,25 +2,22 @@ import asyncio
 
 from langbridge.ai import (
     AgentIOContract,
-    AgentProfile,
-    AgentProfileRegistryBuilder,
-    AnalystToolBundle,
     AgentRegistry,
     AgentResultStatus,
     AgentRoutingSpec,
     AgentSpecification,
     AgentTask,
     AgentTaskKind,
+    AiAgentProfile,
+    AnalystToolBundle,
+    AnalystAgentConfig,
     BaseAgent,
+    LangbridgeAIFactory,
     MetaControllerAgent,
     PlanReviewAction,
-    WebSearchToolScope,
-    LangbridgeAIFactory,
+    build_ai_profiles_from_definition,
 )
-from langbridge.ai.agents import (
-    AnalystAgent,
-    AnalystAgentScope,
-)
+from langbridge.ai.agents import AnalystAgent
 from langbridge.ai.agents.presentation import PresentationAgent
 from langbridge.ai.tools.charting import ChartingTool
 from langbridge.ai.tools.web_search import WebSearchPolicy, WebSearchResultItem, WebSearchTool
@@ -30,11 +27,58 @@ def _run(coro):
     return asyncio.run(coro)
 
 
+def _analyst_config(
+    *,
+    name: str = "analyst",
+    semantic_models: list[str] | None = None,
+    datasets: list[str] | None = None,
+    query_policy: str = "semantic_preferred",
+    research_enabled: bool = False,
+    web_search_enabled: bool = False,
+) -> AnalystAgentConfig:
+    return AnalystAgentConfig.model_validate(
+        {
+            "name": name,
+            "analyst_scope": {
+                "semantic_models": semantic_models or ["commerce"],
+                "datasets": datasets or ["orders"],
+                "query_policy": query_policy,
+            },
+            "research_scope": {"enabled": research_enabled, "max_sources": 3},
+            "web_search_scope": {"enabled": web_search_enabled},
+        }
+    )
+
+
 class _FakeLLMProvider:
     async def acomplete(self, prompt: str, **kwargs):
+        if "Decide Langbridge agent route" in prompt:
+            if "Show factory result" in prompt:
+                return (
+                    '{"action":"plan","rationale":"Factory runtime test exercises planner path.",'
+                    '"agent_name":null,"task_kind":null,"input":{},'
+                    '"clarification_question":null,"plan_guidance":"Use factory analyst."}'
+                )
+            if "analyst.commerce_semantic_sql" in prompt:
+                return (
+                    '{"action":"direct","rationale":"Scoped commerce analyst can answer.",'
+                    '"agent_name":"analyst.commerce_semantic_sql","task_kind":"analyst","input":{},'
+                    '"clarification_question":null,"plan_guidance":null}'
+                )
+            return (
+                '{"action":"direct","rationale":"Single analyst can answer.",'
+                '"agent_name":"analyst","task_kind":"analyst","input":{},'
+                '"clarification_question":null,"plan_guidance":null}'
+            )
+        if "Build Langbridge execution plan" in prompt:
+            return (
+                '{"route":"planned:factory","rationale":"Use configured factory analyst.",'
+                '"steps":[{"agent_name":"analyst.factory_analyst","task_kind":"analyst",'
+                '"question":"Show factory result","input":{},"depends_on":[]}]}'
+            )
         if "Choose the next execution mode" in prompt:
             if "Search current docs" in prompt:
-                return '{"mode":"deep_research","reason":"web research requested"}'
+                return '{"mode":"research","reason":"web research requested"}'
             return '{"mode":"context_analysis","reason":"structured result available"}'
         if "Create a chart specification" in prompt:
             return '{"chart_type":"bar","title":"Chart","x":"region","y":"revenue"}'
@@ -83,73 +127,47 @@ def _presentation(llm: _FakeLLMProvider) -> PresentationAgent:
     return PresentationAgent(llm_provider=llm, charting_tool=ChartingTool(llm_provider=llm))
 
 
-def test_profile_builder_creates_profile_scoped_registries() -> None:
-    commerce = AgentProfile.from_definition(
+def test_build_ai_profiles_from_definition_supports_legacy_tool_shape() -> None:
+    profiles = build_ai_profiles_from_definition(
         name="commerce_analyst",
+        description="Commerce analyst",
         definition={
-            "features": {"deep_research_enabled": False, "visualization_enabled": True},
+            "features": {"deep_research_enabled": True},
+            "prompt": {"system_prompt": "You are commerce analyst."},
             "tools": [
                 {
                     "name": "commerce_semantic_sql",
                     "tool_type": "sql",
                     "description": "Governed commerce semantic model.",
                     "config": {"semantic_model_ids": ["commerce_performance"]},
-                }
+                },
+                {
+                    "name": "docs_search",
+                    "tool_type": "web_search",
+                    "config": {"provider": "duckduckgo", "allowed_domains": ["docs.langbridge.dev"]},
+                },
             ],
             "access_policy": {"allowed_connectors": ["commerce_warehouse"]},
         },
     )
-    growth = AgentProfile.from_definition(
-        name="growth_analyst",
-        definition={
-            "features": {"deep_research_enabled": True, "visualization_enabled": True},
-            "tools": [
-                {
-                    "name": "growth_analytical_sql",
-                    "tool_type": "sql",
-                    "description": "Growth analytics model and datasets.",
-                    "config": {
-                        "semantic_model_ids": ["growth_performance"],
-                        "dataset_ids": ["campaign_attribution", "channel_spend_targets"],
-                    },
-                }
-            ],
-            "access_policy": {"allowed_connectors": ["growth_warehouse"]},
-        },
-    )
 
-    builder = AgentProfileRegistryBuilder()
-    llm = _FakeLLMProvider()
-    commerce_registry = builder.build_registry(commerce, llm_provider=llm)
-    growth_registry = builder.build_registry(growth, llm_provider=llm)
-
-    commerce_names = [spec.name for spec in commerce_registry.specifications()]
-    growth_names = [spec.name for spec in growth_registry.specifications()]
-
-    assert "analyst.commerce_semantic_sql" in commerce_names
-    assert "analyst.growth_analytical_sql" not in commerce_names
-    assert "analyst.growth_analytical_sql" in growth_names
-    growth_analyst = growth_registry.get("analyst.growth_analytical_sql")
-    assert "deep_research" in growth_analyst.specification.metadata["scope"]["enabled_modes"]
-    assert not any(name.startswith("deep-research.") for name in growth_names)
+    assert len(profiles) == 1
+    assert profiles[0].name == "commerce_semantic_sql"
+    assert profiles[0].research_scope.enabled is True
+    assert profiles[0].web_search_scope.provider == "duckduckgo"
+    assert profiles[0].access.allowed_connectors == ["commerce_warehouse"]
 
 
-def test_profile_runtime_routes_to_scoped_analyst() -> None:
-    profile = AgentProfile.from_definition(
-        name="commerce_analyst",
-        definition={
+def test_factory_profile_runtime_routes_to_scoped_analyst() -> None:
+    profile = AiAgentProfile.from_config(
+        {
+            "name": "commerce_semantic_sql",
+            "description": "Commerce revenue and order analytics.",
+            "scope": {"semantic_models": ["commerce_performance"], "query_policy": "semantic_only"},
             "execution": {"max_iterations": 4},
-            "tools": [
-                {
-                    "name": "commerce_semantic_sql",
-                    "tool_type": "sql",
-                    "description": "Commerce revenue and order analytics.",
-                    "config": {"semantic_model_ids": ["commerce_performance"]},
-                }
-            ],
-        },
+        }
     )
-    runtime = AgentProfileRegistryBuilder().build_runtime(profile, llm_provider=_FakeLLMProvider())
+    runtime = LangbridgeAIFactory(llm_provider=_FakeLLMProvider()).create_profile_runtime(profile)
 
     run = _run(
         runtime.meta_controller.handle(
@@ -158,7 +176,8 @@ def test_profile_runtime_routes_to_scoped_analyst() -> None:
         )
     )
 
-    assert run.mode == "direct"
+    assert run.execution_mode == "direct"
+    assert run.status == "completed"
     assert run.plan.route == "direct:analyst.commerce_semantic_sql"
     assert run.step_results[0]["agent_name"] == "analyst.commerce_semantic_sql"
     assert run.step_results[0]["output"]["result"] == {"columns": [], "rows": []}
@@ -169,7 +188,7 @@ def test_ai_factory_builds_meta_controller_without_runtime_wiring() -> None:
     controller = LangbridgeAIFactory(llm_provider=llm).create_meta_controller(
         analysts=[
             AnalystToolBundle(
-                scope=AnalystAgentScope(name="factory_analyst"),
+                config=_analyst_config(name="factory_analyst"),
             )
         ]
     )
@@ -181,56 +200,37 @@ def test_ai_factory_builds_meta_controller_without_runtime_wiring() -> None:
         )
     )
 
-    assert run.mode == "planned"
+    assert run.execution_mode == "planned"
+    assert run.status == "completed"
     assert run.step_results[0]["agent_name"] == "analyst.factory_analyst"
     assert run.final_result["summary"] == "Profile runtime answer."
 
 
-def test_profile_from_shorthand_config_builds_scoped_analyst() -> None:
-    profile = AgentProfile.from_config(
+def test_ai_profile_parses_alias_shape() -> None:
+    profile = AiAgentProfile.from_config(
         {
             "name": "support_analyst",
             "description": "Support ticket analyst.",
-            "semantic_model": "support_performance",
-            "default": True,
+            "scope": {"datasets": ["support_tickets"], "query_policy": "dataset_only"},
+            "research": {"enabled": True, "extended_thinking": True},
+            "web_search": {"enabled": True, "provider": "duckduckgo"},
+            "prompts": {"system": "You are support analyst.", "presentation": "Be concise."},
+            "exposure": {"runtime": True, "mcp": True},
         }
     )
 
-    registry = AgentProfileRegistryBuilder().build_registry(profile, llm_provider=_FakeLLMProvider())
-
-    assert profile.default is True
-    assert [spec.name for spec in registry.specifications()] == [
-        "analyst.support_analyst_sql",
-    ]
-    assert registry.get("analyst.support_analyst_sql").specification.metadata["scope"][
-        "semantic_model_ids"
-    ] == ["support_performance"]
-
-
-def test_web_search_config_is_tool_scope_not_agent_scope() -> None:
-    scope = WebSearchToolScope(
-        name="docs_search",
-        allowed_domains=["docs.langbridge.dev"],
-        denied_domains=["blocked.example"],
-        require_allowed_domain=True,
-        focus_terms=["langbridge"],
-    )
-
-    assert "docs" in scope.routing_terms
-    assert "dev" in scope.routing_terms
-    assert "langbridge" in scope.routing_terms
+    assert profile.available_via_runtime is True
+    assert profile.available_via_mcp is True
+    assert profile.analyst_scope.datasets == ["support_tickets"]
+    assert profile.research_scope.extended_thinking_enabled is True
+    assert profile.prompts.system_prompt == "You are support analyst."
+    assert profile.prompts.presentation_prompt == "Be concise."
 
 
 def test_analyst_research_mode_can_use_web_search_tool_provider() -> None:
     agent = AnalystAgent(
         llm_provider=_FakeLLMProvider(),
-        scope=AnalystAgentScope(
-            name="docs_research",
-            deep_research_enabled=True,
-            web_search_enabled=True,
-            web_search_focus_terms=["langbridge"],
-            max_sources=3,
-        ),
+        config=_analyst_config(name="docs_research", research_enabled=True, web_search_enabled=True),
         web_search_tool=WebSearchTool(
             provider=_FakeWebSearchProvider(),
             policy=WebSearchPolicy(
@@ -245,8 +245,9 @@ def test_analyst_research_mode_can_use_web_search_tool_provider() -> None:
         agent.execute(
             AgentTask(
                 task_id="research",
-                task_kind=AgentTaskKind.deep_research,
+                task_kind=AgentTaskKind.analyst,
                 question="Search current docs",
+                input={"mode": "research"},
             )
         )
     )
@@ -257,24 +258,26 @@ def test_analyst_research_mode_can_use_web_search_tool_provider() -> None:
     assert result.diagnostics["web_search"]["provider"] == "fake-web"
 
 
-def test_analyst_research_uses_only_allowed_evidence_agents() -> None:
+def test_analyst_research_uses_context_sources() -> None:
     agent = AnalystAgent(
         llm_provider=_FakeLLMProvider(),
-        scope=AnalystAgentScope(
-            name="growth_research",
-            deep_research_enabled=True,
-            allowed_evidence_agents=["tool.web.docs_search"],
-            max_sources=3,
-            require_sources=True,
-        )
+        config=AnalystAgentConfig.model_validate(
+            {
+                "name": "growth_research",
+                "analyst_scope": {},
+                "research_scope": {"enabled": True, "max_sources": 3, "require_sources": True},
+                "web_search_scope": {"enabled": True, "provider": "duckduckgo"},
+            }
+        ),
     )
 
     result = _run(
         agent.execute(
             AgentTask(
                 task_id="research",
-                task_kind=AgentTaskKind.deep_research,
+                task_kind=AgentTaskKind.analyst,
                 question="Research runtime docs",
+                input={"mode": "research"},
                 context={
                     "step_results": [
                         {
@@ -307,13 +310,9 @@ def test_analyst_research_uses_only_allowed_evidence_agents() -> None:
         )
     )
 
-    assert result.output["sources"] == [
-        {
-            "title": "Docs",
-            "url": "https://docs.langbridge.dev/runtime",
-            "snippet": "Runtime docs.",
-        }
-    ]
+    assert len(result.output["sources"]) == 2
+    assert result.output["sources"][0]["url"] == "https://docs.langbridge.dev/runtime"
+    assert result.output["sources"][1]["url"] == "https://example.test/general"
 
 
 class _FlakyAnalystAgent(BaseAgent):
@@ -349,6 +348,7 @@ def test_retry_success_reviews_latest_record() -> None:
     llm = _FakeLLMProvider()
     controller = MetaControllerAgent(
         registry=AgentRegistry([_FlakyAnalystAgent()]),
+        llm_provider=llm,
         presentation_agent=_presentation(llm),
         max_step_retries=1,
     )

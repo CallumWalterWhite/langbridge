@@ -412,3 +412,7 @@ class CreateAgentJobRequest(RuntimeJobRequestModel):
     workspace_id: uuid.UUID
     actor_id: uuid.UUID = _actor_id_field()
     thread_id: uuid.UUID
+    correlation_id: str | None = None
+    mcp: bool = False
+    
+    agent_mode: Literal["auto", "sql", "context_analysis", "research"] = "auto"

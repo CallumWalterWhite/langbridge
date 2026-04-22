@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
+import re
 from typing import Any, Iterable
 
 import sqlglot
@@ -21,6 +23,11 @@ from langbridge.semantic.model import SemanticModel
 
 from .query_model import SemanticQuery
 from .resolver import MetricRef, SemanticModelResolver
+
+_YEAR_PATTERN = re.compile(r"^\d{4}$")
+_YEAR_MONTH_PATTERN = re.compile(r"^\d{4}-\d{2}$")
+_ISO_DATE_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+_TIME_DATA_TYPES = {"date", "datetime", "timestamp", "time"}
 
 
 @dataclass(frozen=True)
@@ -558,10 +565,16 @@ class SemanticSqlFrontend:
                     relation_names=relation_names,
                     default_operator=operator,
                 )
+                resolved_member = self._resolve_member(member=member, resolver=resolver)
+                normalized_operator, normalized_values = self._normalize_filter_values(
+                    operator=normalized_operator,
+                    values=[value],
+                    data_type=resolved_member.data_type,
+                )
                 return {
-                    "member": self._resolve_member(member=member, resolver=resolver).member,
+                    "member": resolved_member.member,
                     "operator": normalized_operator,
-                    "values": [value],
+                    "values": normalized_values,
                 }
 
         raise SemanticSqlInvalidFilterError(
@@ -973,6 +986,63 @@ class SemanticSqlFrontend:
             "or literal lists. Raw SQL expressions are not supported in semantic filters.",
             construct="filter_literal",
         )
+
+    @classmethod
+    def _normalize_filter_values(
+        cls,
+        *,
+        operator: str,
+        values: list[Any],
+        data_type: str | None,
+    ) -> tuple[str, list[str]]:
+        normalized_values = [cls._stringify_filter_value(value) for value in values]
+        if (data_type or "").strip().lower() not in _TIME_DATA_TYPES or len(normalized_values) != 1:
+            return operator, normalized_values
+        normalized_operator, time_values = cls._normalize_time_filter_value(
+            operator=operator,
+            value=normalized_values[0],
+        )
+        return normalized_operator, time_values
+
+    @staticmethod
+    def _stringify_filter_value(value: Any) -> str:
+        if value is None:
+            return ""
+        if isinstance(value, bool):
+            return "true" if value else "false"
+        return str(value)
+
+    @classmethod
+    def _normalize_time_filter_value(cls, *, operator: str, value: str) -> tuple[str, list[str]]:
+        op = operator.strip().lower()
+        if op not in {"equals", "equal", "eq", "notequals", "not_equals", "ne"}:
+            return operator, [value]
+        normalized = cls._normalize_single_date_like_value(value)
+        if normalized is None:
+            return operator, [value]
+        return ("notindaterange" if op in {"notequals", "not_equals", "ne"} else "indaterange"), normalized
+
+    @staticmethod
+    def _normalize_single_date_like_value(value: str) -> list[str] | None:
+        trimmed = value.strip()
+        if not trimmed:
+            return None
+        if _YEAR_PATTERN.match(trimmed):
+            return [f"{trimmed}-01-01", f"{trimmed}-12-31"]
+        year_month_match = _YEAR_MONTH_PATTERN.match(trimmed)
+        if year_month_match:
+            year_str, month_str = trimmed.split("-")
+            year = int(year_str)
+            month = int(month_str)
+            if month == 12:
+                next_year, next_month = year + 1, 1
+            else:
+                next_year, next_month = year, month + 1
+            last_day = (datetime(next_year, next_month, 1) - datetime(year, month, 1)).days
+            return [f"{trimmed}-01", f"{trimmed}-{last_day:02d}"]
+        if _ISO_DATE_PATTERN.match(trimmed):
+            return [f"on:{trimmed}"]
+        return None
 
     @staticmethod
     def _require_column(expression: exp.Expression) -> exp.Column:

@@ -40,6 +40,7 @@ DATASET_SQL_ORCHESTRATION_INSTRUCTION = (
     "- If the context includes relationships, use only those relationships.\n"
     "- If the context includes metrics, expand them faithfully.\n"
     "- Treat semantic measures as logical aliases and expand them to their configured expressions.\n"
+    "- When a column used for date filtering or time bucketing is typed TEXT, VARCHAR, or STRING, cast the column before comparing or truncating it.\n"
     "- Group only by non-aggregated selected dimensions.\n"
     "- Prefer a single query; Use CTEs rather than subqueries if needed for complex logic.\n"
     "- Do not invent columns, tables, metrics, or joins.\n"

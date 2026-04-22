@@ -131,6 +131,10 @@ export function RuntimeResultPanel({
     errorStatus,
   });
   const summaryText = String(summary || "").trim() || buildSummaryFallback(state);
+  const suppressSummarySection =
+    state.kind === "needs_clarification" &&
+    Boolean(summaryText) &&
+    summaryText === String(state.description || "").trim();
   const diagnosticsHighlights = buildDiagnosticsHighlights(diagnostics);
   const diagnosticsNotes = buildDiagnosticsNotes(diagnostics, normalizedVisualization);
   const statePills = buildStatePills({
@@ -249,7 +253,7 @@ export function RuntimeResultPanel({
         </div>
       ) : null}
 
-      {summaryText ? (
+      {!suppressSummarySection && summaryText ? (
         <section className={`runtime-result-section ${variant === "chat" ? "runtime-result-section--chat-answer" : ""}`}>
           {variant !== "chat" ? (
             <div className="runtime-result-section-head">

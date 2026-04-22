@@ -2,14 +2,12 @@ import {
   Activity,
   Blocks,
   Bot,
-  Cable,
-  Database,
   MessageSquareText,
   Table2,
 } from "lucide-react";
 import { Link } from "react-router-dom";
 
-import { MetricCard, FeatureCard, PageEmpty } from "../components/PagePrimitives";
+import { MetricCard, PageEmpty } from "../components/PagePrimitives";
 import { useAsyncData } from "../hooks/useAsyncData";
 import { readStoredJson } from "../hooks/usePersistentState";
 import {
@@ -142,41 +140,57 @@ export function OverviewPage() {
       to: latestThread ? `/chat/${encodeURIComponent(String(latestThread.id))}` : "/chat",
       label: latestThread ? "Continue analysis" : "Ask the runtime",
       description: latestThread
-        ? `Resume ${buildThreadTitle(latestThread)} and keep the investigation moving.`
-        : "Start a question-first runtime thread with an execution agent.",
+        ? `Resume ${buildThreadTitle(latestThread)}.`
+        : "Start a new runtime thread.",
       icon: MessageSquareText,
       emphasis: "primary",
     },
     {
-      to: "/runs",
-      label: "Inspect recent runs",
-      description: "Review thread turns, query executions, and dashboard widget runs in one place.",
-      icon: Activity,
-    },
-    {
       to: "/query-workspace",
-      label: "Open Query Workspace",
-      description: "Use semantic querying first, with dataset and source SQL available when needed.",
+      label: "Run a query",
+      description: "Move straight into semantic or SQL analysis.",
       icon: Table2,
     },
     {
+      to: "/runs",
+      label: "Review runs",
+      description: "Pick up recent executions and failures.",
+      icon: Activity,
+    },
+    {
       to: "/semantic-models",
-      label: "Shape semantic models",
-      description: "Keep the semantic layer central to how the runtime answers questions.",
+      label: "Refine models",
+      description: "Keep governed metrics and dimensions aligned.",
       icon: Blocks,
     },
+  ];
+  const runtimeStatusItems = [
     {
-      to: "/datasets",
-      label: "Review datasets",
-      description: "Inspect dataset bindings, previews, and runtime execution resources.",
-      icon: Database,
+      label: "Default agent",
+      value: summary.runtime?.default_agent || "Not set",
+      detail: "Current ask path.",
     },
     {
-      to: "/connectors",
-      label: "Inspect connectors",
-      description: "Check source posture, sync scope, and runtime ingress state.",
-      icon: Cable,
+      label: "Default semantic model",
+      value: summary.runtime?.default_semantic_model || "Not set",
+      detail: "Primary governed model.",
     },
+    {
+      label: "Saved queries",
+      value: formatValue(savedQueries.length),
+      detail: "Local query history kept in this browser.",
+    },
+    {
+      label: "Dashboard drafts",
+      value: formatValue(boards.length),
+      detail: "Local dashboard work still available.",
+    },
+  ];
+  const buildLinks = [
+    { to: "/semantic-models", label: "Semantic models" },
+    { to: "/datasets", label: "Datasets" },
+    { to: "/connectors", label: "Connectors" },
+    { to: "/dashboards", label: "Dashboards" },
   ];
 
   return (
@@ -185,7 +199,7 @@ export function OverviewPage() {
         <div className="product-command-bar-main">
           <div className="product-command-bar-copy">
             <p className="eyebrow">Command Center</p>
-            <h2>Runtime that answers questions over data</h2>
+            <h2>Keep runtime work moving</h2>
             <div className="product-command-bar-meta">
               <span className="chip">{formatValue(counts.connectors ?? connectors.length)} connectors</span>
               <span className="chip">{formatValue(counts.datasets ?? datasets.length)} datasets</span>
@@ -211,75 +225,69 @@ export function OverviewPage() {
       <section className="metric-grid metric-grid--compact">
         <MetricCard
           icon={MessageSquareText}
-          label="Active threads"
+          label="Threads"
           value={formatValue(threads.length)}
           detail={
             latestThread
               ? `Latest activity ${formatRelativeTime(latestThread.updated_at || latestThread.created_at)}`
-              : "No active threads yet"
+              : "No active thread yet"
           }
         />
         <MetricCard
           icon={Table2}
-          label="Local query runs"
-          value={formatValue(sqlHistory.length)}
-          detail="Recent Query Workspace executions stored in this browser."
+          label="Local runs"
+          value={formatValue(sqlHistory.length + boards.length)}
+          detail="Saved query and dashboard work."
         />
         <MetricCard
           icon={Blocks}
-          label="Semantic models"
-          value={formatValue(models.length)}
-          detail="Governed analytical layer available to ask flows and the query workspace."
+          label="Governed assets"
+          value={formatValue(models.length + datasets.length)}
+          detail="Semantic models and datasets in play."
         />
         <MetricCard
           icon={Bot}
-          label="Runtime agents"
+          label="Agents"
           value={formatValue(agents.length)}
-          detail={summary.runtime?.default_agent ? `Default: ${summary.runtime.default_agent}` : "No default agent exposed"}
+          detail={summary.runtime?.default_agent ? `Default: ${summary.runtime.default_agent}` : "No default agent"}
         />
       </section>
 
       {error ? <div className="error-banner">{error}</div> : null}
 
-      <section className="command-center-grid">
+      <section className="command-center-grid command-center-grid--balanced">
         <section className="surface-panel command-primary-panel">
           <div className="command-panel-head-row">
             <div>
-              <p className="command-panel-eyebrow">Primary workflows</p>
-              <h3>Move from question to execution</h3>
+              <p className="command-panel-eyebrow">Start</p>
+              <h3>Move from question to result</h3>
             </div>
           </div>
-          <QuickActionPanel actions={quickActions} />
+          <QuickActionPanel actions={quickActions} showHeader={false} />
         </section>
 
-        <section className="surface-panel command-activity-panel">
+        <section className="surface-panel command-state-panel">
           <div className="command-panel-heading">
             <div>
-              <p className="command-panel-eyebrow">Operational signals</p>
-              <h3>Runtime posture</h3>
+              <p className="command-panel-eyebrow">Runtime status</p>
+              <h3>Keep the main context in view</h3>
             </div>
           </div>
-          <div className="command-memory-list">
-            <article className="command-memory-card">
-              <span>Default agent</span>
-              <strong>{summary.runtime?.default_agent || "No default agent"}</strong>
-              <p>The default execution context exposed by this runtime.</p>
-            </article>
-            <article className="command-memory-card">
-              <span>Default semantic model</span>
-              <strong>{summary.runtime?.default_semantic_model || "No default model"}</strong>
-              <p>The semantic layer most ready for governed analytical questions.</p>
-            </article>
-            <article className="command-memory-card">
-              <span>Saved queries</span>
-              <strong>{formatValue(savedQueries.length)}</strong>
-              <p>Local query workspace snippets kept in this browser.</p>
-            </article>
-            <article className="command-memory-card">
-              <span>Dashboard drafts</span>
-              <strong>{formatValue(boards.length)}</strong>
-              <p>Runtime-local dashboard work remains available without driving the main story.</p>
-            </article>
+          <div className="command-status-list">
+            {runtimeStatusItems.map((item) => (
+              <article key={item.label} className="command-status-item">
+                <span>{item.label}</span>
+                <strong>{item.value}</strong>
+                <p>{item.detail}</p>
+              </article>
+            ))}
+          </div>
+          <div className="command-link-row">
+            {buildLinks.map((item) => (
+              <Link key={item.to} className="ghost-button command-link-chip" to={item.to}>
+                {item.label}
+              </Link>
+            ))}
           </div>
         </section>
       </section>
@@ -287,62 +295,18 @@ export function OverviewPage() {
       <section className="command-center-grid secondary">
         <ActivityPanel
           title="Recent activity"
-          eyebrow="Runtime resources"
+          eyebrow="Resources"
           items={activityItems}
           emptyTitle="No recent activity"
-          emptyMessage="Connectors, datasets, models, agents, and threads will appear here as the runtime fills out."
+          emptyMessage="Recent runtime changes will appear here."
         />
         <ActivityPanel
-          title="Recent threads and runs"
+          title="Recent runs"
           eyebrow="Execution"
           items={recentExecutionItems}
-          emptyTitle="No recent execution"
-          emptyMessage="Ask flows, query runs, and dashboard refreshes will appear here once the runtime is in use."
+          emptyTitle="No recent run"
+          emptyMessage="Recent runtime execution will appear here."
         />
-      </section>
-
-      <section className="surface-panel command-activity-panel">
-        <div className="command-panel-heading">
-          <div>
-            <p className="command-panel-eyebrow">Build layer</p>
-            <h3>Shape the runtime resources that answer questions</h3>
-          </div>
-        </div>
-        <div className="feature-grid">
-          <FeatureCard
-            to="/semantic-models"
-            icon={Blocks}
-            metric={`${formatValue(models.length)} models`}
-            title="Semantic models"
-            description="Keep the semantic layer central to how the runtime understands measures, dimensions, and governed analysis."
-            cta="Open semantic models"
-          />
-          <FeatureCard
-            to="/datasets"
-            icon={Database}
-            metric={`${formatValue(datasets.length)} datasets`}
-            title="Datasets"
-            description="Manage the runtime datasets that semantic models, ask flows, and query execution depend on."
-            cta="Open datasets"
-          />
-          <FeatureCard
-            to="/connectors"
-            icon={Cable}
-            metric={`${formatValue(connectors.length)} connectors`}
-            title="Connectors"
-            description="Control source connectivity, sync posture, and the runtime ingress layer."
-            cta="Open connectors"
-          />
-        </div>
-        <div className="callout command-secondary-callout">
-          <strong>Dashboard Builder stays available</strong>
-          <span>
-            Dashboard Builder remains part of the runtime, but now sits behind the main ask, execution, and semantic-model story as a secondary build surface.
-          </span>
-          <Link className="ghost-button" to="/dashboards">
-            Open Dashboard Builder
-          </Link>
-        </div>
       </section>
 
       {!loading &&

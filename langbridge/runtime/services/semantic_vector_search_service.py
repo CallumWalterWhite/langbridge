@@ -74,7 +74,7 @@ class SemanticVectorSearchService:
         dataset_provider: DatasetMetadataProvider | None = None,
         connector_provider: ConnectorMetadataProvider | None = None,
         credential_provider: CredentialProvider | None = None,
-        llm_connection_store: LLMConnectionStore = None,
+        llm_connection_store: LLMConnectionStore | None = None,
         embedding_provider: EmbeddingProvider | None = None,
     ) -> None:
         self._dataset_repository = dataset_repository
@@ -93,10 +93,10 @@ class SemanticVectorSearchService:
             dataset_provider=dataset_provider,
         )
 
-    def can_refresh(self) -> bool:
-        return self.refresh_unavailable_reason() is None
+    async def can_refresh(self) -> bool:
+        return await self.refresh_unavailable_reason() is None
 
-    def refresh_unavailable_reason(self) -> str | None:
+    async def refresh_unavailable_reason(self) -> str | None:
         if self._embedding_provider is None and self._llm_connection_store is None: # default embedding provider can be created if llm connection repository is available
             return "Semantic vector refresh requires an embedding provider."
         if self._federated_query_tool is None:
@@ -105,6 +105,9 @@ class SemanticVectorSearchService:
             return "Semantic vector refresh requires a semantic model provider."
         if self._semantic_vector_index_store is None:
             return "Semantic vector refresh requires a semantic vector index store."
+        llm_connections = await self._llm_connection_store.list_llm_connections()
+        if not llm_connections:
+            return "At least one LLM connection is required to resolve an embedding provider for semantic vector refresh."
         return None
 
     async def refresh_workspace(

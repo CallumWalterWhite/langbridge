@@ -11,13 +11,9 @@ from pydantic import BaseModel, Field, model_validator
 
 class AgentTaskKind(str, Enum):
     """Typed task families understood by the AI gateway."""
-
     orchestration = "orchestration"
-    semantic_analysis = "semantic_analysis"
     analyst = "analyst"
-    deep_research = "deep_research"
     presentation = "presentation"
-    response = "response"
 
 
 class AgentRiskLevel(str, Enum):
@@ -83,8 +79,6 @@ class AgentSpecification(BaseModel):
     can_execute_direct: bool = True
     has_side_effects: bool = False
     supports_dry_run: bool = False
-    risk_level: AgentRiskLevel = AgentRiskLevel.low
-    cost_level: AgentCostLevel = AgentCostLevel.low
     metadata: dict[str, Any] = Field(default_factory=dict)
     specification_prompt: str = ""
 
