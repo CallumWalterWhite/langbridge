@@ -129,10 +129,17 @@ class PlannerAgent(BaseAgent):
         specifications: list[AgentSpecification],
         revision_count: int,
     ) -> ExecutionPlan:
-        runnable_specs = self._runnable_specifications(specifications, avoid_agents=context.get("avoid_agents") or [])
+        runnable_specs, effective_avoid_agents = self._runnable_specifications(
+            specifications,
+            avoid_agents=context.get("avoid_agents") or [],
+        )
+        prompt_context = {
+            **context,
+            "avoid_agents": effective_avoid_agents,
+        }
         payload = await self._complete_plan(
             question=question,
-            context=context,
+            context=prompt_context,
             specifications=runnable_specs,
             revision_count=revision_count,
         )
@@ -157,15 +164,18 @@ class PlannerAgent(BaseAgent):
         specifications: list[AgentSpecification],
         *,
         avoid_agents: list[str],
-    ) -> list[AgentSpecification]:
-        avoided = set(avoid_agents)
-        return [
+    ) -> tuple[list[AgentSpecification], list[str]]:
+        runnable = [
             specification
             for specification in specifications
             if AgentTaskKind.orchestration not in specification.task_kinds
             and AgentTaskKind.presentation not in specification.task_kinds
-            and specification.name not in avoided
         ]
+        avoided = set(avoid_agents)
+        filtered = [specification for specification in runnable if specification.name not in avoided]
+        if filtered:
+            return filtered, sorted(specification.name for specification in runnable if specification.name in avoided)
+        return runnable, []
 
     async def _complete_plan(
         self,

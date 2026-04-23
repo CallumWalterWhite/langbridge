@@ -254,12 +254,34 @@ class _SemanticScopeExecutor:
         recoverable = (
             isinstance(exc, SemanticSqlError) and exc.category == "parse_error"
         ) or normalized.startswith("semantic sql parse failed")
+        fallback_eligible = _is_semantic_runtime_scope_fallback_eligible(message)
+        metadata: dict[str, Any] = {}
+        if fallback_eligible:
+            metadata = {
+                "scope_fallback_eligible": True,
+                "semantic_failure_kind": "semantic_runtime_type_mismatch",
+            }
         return AnalyticalQueryExecutionFailure(
             stage=AnalystOutcomeStage.query if recoverable else AnalystOutcomeStage.execution,
             message=message,
             original_error=message,
             recoverable=recoverable,
+            metadata=metadata,
         )
+
+
+def _is_semantic_runtime_scope_fallback_eligible(error_message: str) -> bool:
+    normalized = str(error_message or "").strip().lower()
+    return any(
+        marker in normalized
+        for marker in (
+            "binder error",
+            "cannot compare values of type",
+            "explicit cast is required",
+            "type mismatch",
+            "conversion error",
+        )
+    )
 
 
 class RuntimeToolFactory:

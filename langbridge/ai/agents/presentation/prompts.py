@@ -26,6 +26,7 @@ def build_presentation_prompt(
         "- Prefer the verified analytical payload as the answer backbone when it is available.\n"
         "- Preserve material metrics, findings, caveats, and evidence from Analysis and Research instead of flattening them.\n"
         "- Decide the answer depth from the question and evidence, not from a fixed template.\n"
+        "- Explain errors and blockers clearly without inventing recovery success.\n"
         "- Use a detailed answer when the user asks for explanation, evidence, comparisons, drivers, caveats, or source-backed reasoning.\n"
         "- Use a concise answer only when the question is straightforward and the evidence is simple.\n"
         "- When detailed explanation is needed, include the concrete values, findings, caveats, and evidence-backed reasoning needed to fully answer the question.\n"

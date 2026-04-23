@@ -563,62 +563,35 @@ ai:
         max_iterations: 3
         audit_fields: []
 
-  - name: growth_analyst
-    description: Growth and customer operations analyst for acquisition, spend efficiency, and lifecycle conversion.
-    llm_connection: self_hosted_openai
-    definition:
-      prompt:
-        system_prompt: You are a Langbridge growth analyst embedded in a self-hosted analytics runtime.
-        user_instructions: |
+    - name: growth_analyst
+      description: Growth and customer operations analyst for acquisition, spend efficiency, and lifecycle conversion.
+      llm:
+        llm_connection: self_hosted_openai
+      scope:
+        semantic_models: [growth_performance]
+        datasets: [customer_month_revenue, campaign_attribution, channel_spend_targets, customer_month_support, customer_profiles]
+        query_policy: semantic_preferred
+      research:
+        enabled: true
+      web_search:
+        enabled: true
+        provider: duckduckgo
+        allowed_domains: [shopify.com, stripe.com, nrf.com, census.gov]
+        require_allowed_domain: true
+        max_results: 5
+        timebox_seconds: 10
+      prompts:
+        system: You are a Langbridge growth analyst embedded in a self-hosted analytics runtime.
+        user: |
           Focus on campaign efficiency, influenced pipeline, segment performance, customer conversion, and support burden.
           Prefer the growth semantic model for governed answers and fall back to scoped dataset SQL only when needed.
           Treat spend, pipeline, and revenue as one joined story and call out data grain when it matters.
-        style_guidance: Explain tradeoffs between efficiency and scale, and separate proven findings from inference.
-      memory:
-        strategy: database
-      features:
-        bi_copilot_enabled: false
-        deep_research_enabled: true
-        visualization_enabled: true
-        mcp_enabled: true
-      tools:
-        - name: growth_analytical_sql
-          tool_type: sql
-          description: Layered growth analytics with semantic-first routing and scoped dataset fallback.
-          config:
-            semantic_model_ids: [growth_performance]
-            dataset_ids: [customer_month_revenue, campaign_attribution, channel_spend_targets, customer_month_support, customer_profiles]
-            query_scope_policy: semantic_preferred
-            deep_research_enabled: true
-        - name: growth_web_research
-          tool_type: web
-          description: Whitelisted web evidence for growth benchmark and market-context research.
-          config:
-            provider: duckduckgo
-            allowed_domains: [shopify.com, stripe.com, nrf.com, census.gov]
-            denied_domains: []
-            require_allowed_domain: true
-            provider_required: true
-            focus_terms: [commerce benchmarks, paid acquisition benchmarks, retention benchmarks, ecommerce growth]
-            max_results: 5
-            region: us-en
-            safe_search: moderate
-            timebox_seconds: 10
-      access_policy:
+        presentation: Explain tradeoffs between efficiency and scale, and separate proven findings from inference.
+      exposure:
+        runtime: true
+        mcp: true
+      access:
         allowed_connectors: [commerce_warehouse, growth_warehouse, planning_files]
         denied_connectors: []
       execution:
-        mode: iterative
-        response_mode: analyst
         max_iterations: 4
-        max_steps_per_iteration: 6
-        allow_parallel_tools: true
-      output:
-        format: markdown
-      guardrails:
-        moderation_enabled: true
-      observability:
-        log_level: info
-        emit_traces: false
-        capture_prompts: false
-        audit_fields: []

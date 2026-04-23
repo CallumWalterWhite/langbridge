@@ -24,7 +24,7 @@ from langbridge.ai.agents import (
 )
 from langbridge.ai.orchestration.execution import PlanExecutionState
 from langbridge.ai.orchestration.plan_review import PlanReviewAgent
-from langbridge.ai.orchestration.planner import ExecutionPlan, PlanStep
+from langbridge.ai.orchestration.planner import ExecutionPlan, PlannerAgent, PlanStep
 from langbridge.ai.orchestration.verification import VerificationOutcome
 from langbridge.ai.tools.charting import ChartingTool
 from langbridge.ai.tools.web_search import WebSearchResultItem, WebSearchTool
@@ -352,6 +352,96 @@ def test_planner_can_return_clarification_instead_of_empty_plan_failure() -> Non
     assert run.plan.route == "planned:clarification"
     assert run.final_result["answer"] == "Which metric and dataset should I use?"
     assert run.diagnostics["clarification_source"] == "planner"
+
+
+def test_planner_replan_keeps_only_analyst_available_when_avoid_list_would_empty_candidates() -> None:
+    llm = _FakeLLMProvider()
+    planner = PlannerAgent(llm_provider=llm)
+    analyst = AnalystAgent(llm_provider=llm, config=_analyst_config())
+    failed_step = PlanStep(
+        step_id="step-1",
+        agent_name=analyst.specification.name,
+        task_kind=AgentTaskKind.analyst,
+        question="Analyze commerce performance",
+        input={},
+        expected_output=analyst.specification.output_contract,
+    )
+    state = PlanExecutionState(
+        original_question="Analyze commerce performance",
+        current_plan=ExecutionPlan(
+            route="direct:analyst",
+            steps=[failed_step],
+            rationale="Use the only analyst.",
+            requires_pev=True,
+        ),
+        replan_count=1,
+        context={"failed_agent": analyst.specification.name},
+    )
+    state.record(
+        step=failed_step,
+        result=analyst.build_result(
+            task=AgentTask(task_id="step-1", task_kind=AgentTaskKind.analyst, question="Analyze commerce performance"),
+            status=AgentResultStatus.failed,
+            output={},
+            error="Execution failed: Binder Error: Cannot compare VARCHAR and DATE.",
+        ),
+        verification=VerificationOutcome(
+            passed=False,
+            step_id="step-1",
+            agent_name=analyst.specification.name,
+            message="Execution failed: Binder Error: Cannot compare VARCHAR and DATE.",
+            reason_code=VerificationReasonCode.non_succeeded_status,
+        ),
+    )
+
+    plan = _run(
+        planner.replan(
+            state=state,
+            context_updates={"retry_hint": "Cast the date column before filtering."},
+            specifications=[analyst.specification],
+        )
+    )
+
+    assert [step.agent_name for step in plan.steps] == [analyst.specification.name]
+
+
+def test_planner_does_not_emit_stale_avoid_agents_when_only_candidate_remains() -> None:
+    class _RecordingPlannerLLM(_FakeLLMProvider):
+        def __init__(self) -> None:
+            self.prompts: list[str] = []
+
+        async def acomplete(self, prompt: str, **kwargs):
+            self.prompts.append(prompt)
+            return (
+                '{"route":"planned","rationale":"Retry with the only analyst.",'
+                '"steps":[{"agent_name":"analyst","task_kind":"analyst","question":"Retry analysis","input":{},"depends_on":[]}]}'
+            )
+
+    llm = _RecordingPlannerLLM()
+    planner = PlannerAgent(llm_provider=llm)
+    analyst = AnalystAgent(llm_provider=llm, config=_analyst_config())
+    state = PlanExecutionState(
+        original_question="Retry analysis",
+        current_plan=ExecutionPlan(
+            route="planned",
+            steps=[],
+            rationale="initial",
+            requires_pev=True,
+        ),
+        replan_count=1,
+        context={"failed_agent": analyst.specification.name},
+    )
+
+    _run(
+        planner.replan(
+            state=state,
+            context_updates={"failed_agent": analyst.specification.name},
+            specifications=[analyst.specification],
+        )
+    )
+
+    assert llm.prompts
+    assert "Avoid agents: []" in llm.prompts[-1]
 
 
 def test_registry_rejects_duplicate_agent_names() -> None:
