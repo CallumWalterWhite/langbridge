@@ -12,7 +12,7 @@
             "args": [
                 "serve",
                 "--config",
-                "examples/golden/langbridge_config.yml",
+                "examples\\connectors\\shopify_resource_paths\\sync_resource_paths\\langbridge_config.yml",
                 "--host",
                 "127.0.0.1",
                 "--port",

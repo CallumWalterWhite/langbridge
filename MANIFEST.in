@@ -1,0 +1,31 @@
+include LICENSE
+include README.md
+include pyproject.toml
+
+recursive-include langbridge *.py
+recursive-include langbridge/runtime/persistence/alembic *.ini *.py *.mako
+recursive-include langbridge/ui/static *.html
+recursive-include langbridge/ui/static/assets *.css *.js
+
+prune .cache
+prune .github
+prune .langbridge
+prune .langbridge-data
+prune .pytest_cache
+prune .vscode
+prune apps
+prune build
+prune dist
+prune docs
+prune examples
+prune langbridge-connectors
+prune packages
+prune requirements
+prune scripts
+prune tests
+prune venv
+
+global-exclude __pycache__
+global-exclude *.py[cod]
+global-exclude *.db
+global-exclude *.log

@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "langbridge-connectors"
+version = "0.1.0a1"
+description = "Connector framework and builtin connectors for Langbridge."
+requires-python = ">=3.12"
+dependencies = [
+    "pyarrow>=14.0",
+    "pydantic>=2.0",
+]
+
+[project.optional-dependencies]
+postgres = ["asyncpg>=0.29"]
+mysql = ["aiomysql>=0.2"]
+all = [
+    "asyncpg>=0.29",
+    "aiomysql>=0.2",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["langbridge.connectors*"]
